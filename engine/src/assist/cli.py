@@ -203,6 +203,70 @@ def sheet_make(obj, task_path, roster_path, out, no_watermark, workspace, verbos
         click.echo(str(f))
 
 
+# ---------------- M5 成绩管理（docs/05-D17/D18） ----------------
+
+@cli.group(help="M5 成绩管理：点名册/多源成绩导入 → 打分层 tag → 导出带 tag 名单")
+def roster():
+    pass
+
+
+def _parse_scores(specs):
+    """--score 可多份，格式 "文件[:列[:权重]]"；解析为成绩行列表。"""
+    from .roster import read_score_xlsx
+    rows = []
+    for spec in specs:
+        parts = spec.rsplit(":", 2)
+        if len(parts) == 3:
+            try:
+                fn, col, weight = parts[0], parts[1], float(parts[2])
+            except ValueError:
+                fn, col, weight = spec, "", 1.0
+        elif len(parts) == 2:
+            try:
+                fn, col, weight = parts[0], "", float(parts[1])
+            except ValueError:
+                fn, col, weight = parts[0], parts[1], 1.0
+        else:
+            fn, col, weight = spec, "", 1.0
+        p = Path(fn).expanduser().resolve()
+        rows = rows + read_score_xlsx(p, col=col, weight=weight)
+    return rows
+
+
+@roster.command("tag")
+@click.option("--roster", "roster_fn", required=True, help="点名册 xlsx（姓名/学号/班级）")
+@click.option("--score", "score_specs", multiple=True,
+              help='成绩源，格式 "xlsx:列[:权重]"，可多份；列空则自动识别')
+@click.option("--ratios", default=None, help='分组比例 JSON（缺省用 D18 默认模板），如 {"qa":0.3,...}')
+@click.option("--special", default=None, help='人工覆盖 JSON，如 {"punish":["学生A"]}')
+@click.option("--out", "-o", required=True, help="输出带 tag 名单 xlsx 路径")
+@click.option("--no-weight-normalize", is_flag=True, help="不按权重归一（默认加权均值）")
+@click.option("--workspace", "-w", default=None)
+@click.option("--verbose", "-v", is_flag=True)
+@click.pass_obj
+def roster_tag(obj, roster_fn, score_specs, ratios, special, out, no_weight_normalize, workspace, verbose):
+    """M5：多源成绩 → 学生打分层 tag → 带 tag 名单 xlsx（sheet make --roster 直接可用）。"""
+    import json as _json
+    from .files.roster import read_roster
+    from .roster import (DEFAULT_GROUP_CFG, merge_scores, tag_students,
+                         tag_summary, tagged_xlsx)
+    _setup(verbose or obj.get("verbose"), workspace)
+    students = read_roster(Path(roster_fn).expanduser().resolve())
+    if not students:
+        raise click.ClickException(f"名单为空: {roster_fn}")
+    score_rows = _parse_scores(list(score_specs))
+    merged = merge_scores(students, score_rows, weight_normalize=not no_weight_normalize)
+    group_cfg = DEFAULT_GROUP_CFG
+    if ratios:
+        group_cfg = [{"group_name": k, "group_ratio": v} for k, v in _json.loads(ratios).items()]
+    special_cfg = _json.loads(special) if special else None
+    rows = tag_students(students, merged, group_cfg=group_cfg,
+                        special_tag_cfg=special_cfg)
+    tagged = tagged_xlsx(Path(out).expanduser().resolve(), rows)
+    click.echo(str(tagged))
+    click.echo(_json.dumps(tag_summary(rows), ensure_ascii=False, indent=1))
+
+
 @cli.command()
 @click.pass_obj
 def serve(obj):  # 阶段4 占位
