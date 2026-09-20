@@ -136,7 +136,7 @@ const fixedSourceCount = computed(() => roster.sources.filter((s) => isFixedFami
 <template>
   <section>
     <div class="card">
-      <h2>班级与成绩 <small style="font-weight:400;color:var(--c-muted)">M5 成绩管理（阶段3.5，docs/05-D18）· 纯前端闭环，不依赖学习通/引擎</small></h2>
+      <h2>数据导入（名单 + 成绩源） <small style="font-weight:400;color:var(--c-muted)">M5 成绩管理（阶段3.5，docs/05-D18）· 纯前端闭环，不依赖学习通/引擎</small></h2>
       <p class="hint">
         名单列自适应（姓名|name、学号|number、班级|class、tag|tag，引擎 files/roster.py 同款宽松映射）；
         成绩源支持<b>格式预设</b>（docs/05-D19）：固定四类（教务期末 / 学习通作业统计 / 学习通章节测验 /
@@ -155,33 +155,6 @@ const fixedSourceCount = computed(() => roster.sources.filter((s) => isFixedFami
         {{ writeHint }}
       </div>
       <p class="hint" v-if="status">{{ status }}</p>
-    </div>
-
-    <div class="card" v-if="roster.students.length">
-      <h2>名单表（可手动增删改）</h2>
-      <table class="grid">
-        <thead>
-          <tr><th style="width:120px">姓名</th><th style="width:150px">学号</th><th style="width:150px">班级</th><th style="width:180px">tag</th><th style="width:60px">punish</th><th style="width:40px"></th></tr>
-        </thead>
-        <tbody>
-          <tr v-for="(s, i) in roster.students" :key="i">
-            <td><input v-model="s.name" @change="roster.touch()" /></td>
-            <td><input v-model="s.number" @change="roster.touch()" /></td>
-            <td><input v-model="s.class" @change="roster.touch()" /></td>
-            <td>
-              <select :value="s.tag" @change="setTag(i, $event)">
-                <option value="">（未打）</option>
-                <option v-for="t in STUDENT_TAGS" :key="t" :value="t">{{ STUDENT_TAG_LABELS[t] }}</option>
-              </select>
-            </td>
-            <td style="text-align:center"><input type="checkbox" :checked="s.punish" @change="setPunish(i, $event)" title="punish：期末补作业统一题集（不参与比例）" /></td>
-            <td><button class="btn small" @click="roster.removeStudent(i)">✕</button></td>
-          </tr>
-        </tbody>
-      </table>
-      <p class="hint" style="margin-top:8px">
-        手动改 tag = special_tag 覆盖（等价 _legacy special_tag_cfg）；重算自动切分时手动覆盖不被冲掉。
-      </p>
     </div>
 
     <div class="card">
@@ -262,6 +235,33 @@ const fixedSourceCount = computed(() => roster.sources.filter((s) => isFixedFami
       </p>
       <p class="hint" v-if="dirHandle && writeHint">{{ writeHint }}</p>
       <p class="hint">{{ summaryText }}</p>
+    </div>
+
+    <div class="card" v-if="roster.students.length">
+      <h2>特殊标签（手动覆盖 special_tag_cfg，导出前可改）</h2>
+      <table class="grid">
+        <thead>
+          <tr><th style="width:120px">姓名</th><th style="width:150px">学号</th><th style="width:150px">班级</th><th style="width:180px">tag</th><th style="width:60px">punish</th><th style="width:40px"></th></tr>
+        </thead>
+        <tbody>
+          <tr v-for="(s, i) in roster.students" :key="i">
+            <td><input v-model="s.name" @change="roster.touch()" /></td>
+            <td><input v-model="s.number" @change="roster.touch()" /></td>
+            <td><input v-model="s.class" @change="roster.touch()" /></td>
+            <td>
+              <select :value="s.tag" @change="setTag(i, $event)">
+                <option value="">（未打）</option>
+                <option v-for="t in STUDENT_TAGS" :key="t" :value="t">{{ STUDENT_TAG_LABELS[t] }}</option>
+              </select>
+            </td>
+            <td style="text-align:center"><input type="checkbox" :checked="s.punish" @change="setPunish(i, $event)" title="punish：期末补作业统一题集（不参与比例）" /></td>
+            <td><button class="btn small" @click="roster.removeStudent(i)">✕</button></td>
+          </tr>
+        </tbody>
+      </table>
+      <p class="hint" style="margin-top:8px">
+        手动改 tag = special_tag 覆盖（等价 _legacy special_tag_cfg）；重算自动切分时手动覆盖不被冲掉。
+      </p>
     </div>
 
     <div class="card">
