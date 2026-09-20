@@ -141,3 +141,20 @@ CLI 是完整能力本体；PWA 是 CLI 的"参数化界面 + 结果展示器"�
   - 备选（延后验证）：PyInstaller/Nuitka 单文件可执行，体验更"零依赖"，
     但体积/杀软误报/调试成本高，仅作为后段可选懒人包；
 - 多 workspace 共用引擎的需求降级为可选（用户明确更看重"一处删除即卸载"）。
+
+## D15 · 开源字体替代与教师覆盖（2026-09-20，用户提出"字体可选择开源对应字体"）
+
+- 中文字体 fallback 链改为"版权字体 → 开源替代 → 系统字体"三级：
+  - 黑体类：文泉驿微米黑（wqy-microhei.ttc，GPL+字体例外，多数 Linux 自带；
+    Windows 教师可继续用 simsun.ttc/simkai.ttf）;
+  - 楷体类：霞鹜文楷 LXGW WenKai（SIL OFL），不入库，`tools/fonts-download.sh` 下载到
+    engine/assets/fonts/；
+  - 映射表 engine/assets/fonts/fonts.json；教师可用 settings.local.json 的
+    "fonts" 键覆盖任意键（指向自备字体路径）。
+- 字体文件一律不随仓库分发（脱敏+版权双约束）。
+
+## D16 · 横版版式先与竖版完全一致（2026-09-20，用户决定）
+
+- 边距、字号、头部/页脚带区比例横竖统一（实现：landscape_frames 与
+  _make_onpage 全部沿用 portrait 常量；标题字号横竖均 18pt）；
+- 生成真实文档后统一验收时再按效果细调（先一致、后调优）。
