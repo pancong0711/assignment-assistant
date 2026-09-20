@@ -7,7 +7,6 @@ import json
 import os
 import shutil
 import pathlib
-import sys
 from pathlib import Path
 
 import click
@@ -170,6 +169,28 @@ def sheet_demo(obj, out, orientation, no_watermark, workspace, verbose):
         students, items_of, ws / out_dir, orientation,
         assets_dir=ASSIST_ROOT / "assets",
         title="大学物理-作业纸(demo)", watermark=not no_watermark,
+    )
+    for f in files:
+        click.echo(str(f))
+
+
+@sheet.command("make")
+@click.option("--task", "task_path", required=True, help="任务包 JSON 路径")
+@click.option("--roster", "roster_path", default=None, help="点名册 xlsx（缺省找 classes/<class>/roster/）")
+@click.option("--out", "-o", default=None, help="输出目录（缺省 classes/<class>/sheets/out）")
+@click.option("--no-watermark", is_flag=True)
+@click.option("--workspace", "-w", default=None)
+@click.option("--verbose", "-v", is_flag=True)
+@click.pass_obj
+def sheet_make(obj, task_path, roster_path, out, no_watermark, workspace, verbose):
+    """按任务包生成每生一份作业纸 PDF（xlsx 名单驱动）。"""
+    from .paper import sheets_from_task
+    ws = _setup(verbose or obj.get("verbose"))
+    files = sheets_from_task(
+        Path(task_path).expanduser().resolve(), ws,
+        out_dir=Path(out).expanduser().resolve() if out else None,
+        no_watermark=no_watermark,
+        roster_path=str(roster_path) if roster_path else None,
     )
     for f in files:
         click.echo(str(f))
