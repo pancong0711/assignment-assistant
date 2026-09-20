@@ -1,4 +1,7 @@
 {
+  "_说明": "fonts.json: 缺省(版权字体不可得时的开源映射)。教师可用 settings.local.json 的 fonts 覆盖任意键。",
   "simsun.ttc": "wqy-microhei.ttc",
-  "simkai.ttf": "wqy-microhei.ttc"
+  "simkai.ttf": "LXGWWenKai-Regular.ttf",
+  "NotoSerifCJKsc-Regular.otf": "wqy-microhei.ttc",
+  "NotoSansCJKsc-Regular.otf": "wqy-microhei.ttc"
 }

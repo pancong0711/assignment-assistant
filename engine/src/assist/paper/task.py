@@ -52,7 +52,8 @@ def resolve_items(kb_data: dict, task_items: list[dict], kb_dir: Path) -> list[t
 def sheets_from_task(task_path: Path, ws: Path, out_dir: Path | None = None,
                      title_default: str = "大学物理-作业纸", assets_dir=None,
                      no_watermark: bool = False,
-                     roster_path: str | None = None) -> list[Path]:
+                     roster_path: str | None = None,
+                     user_cfg: dict | None = None) -> list[Path]:
     """根据任务包生成每个学生一份 pdf。"""
     task = load_task(task_path)
     kb_dir = ws / "kb"
@@ -87,7 +88,8 @@ def sheets_from_task(task_path: Path, ws: Path, out_dir: Path | None = None,
         assets_dir=assets_dir,
         title=title,
         notes_prefix=f"{task['id']}",
-        watermark=not no_watermark and True,
+        watermark=not no_watermark,
+        user_cfg=user_cfg,
     )
 
 

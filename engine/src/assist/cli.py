@@ -190,12 +190,14 @@ def sheet_demo(obj, out, orientation, no_watermark, workspace, verbose):
 def sheet_make(obj, task_path, roster_path, out, no_watermark, workspace, verbose):
     """按任务包生成每生一份作业纸 PDF（xlsx 名单驱动）。"""
     from .paper import sheets_from_task
+    from .workspace import load_workspace_settings
     ws = _setup(verbose or obj.get("verbose"))
     files = sheets_from_task(
         Path(task_path).expanduser().resolve(), ws,
         out_dir=Path(out).expanduser().resolve() if out else None,
         no_watermark=no_watermark,
         roster_path=str(roster_path) if roster_path else None,
+        user_cfg=load_workspace_settings(ws),
     )
     for f in files:
         click.echo(str(f))

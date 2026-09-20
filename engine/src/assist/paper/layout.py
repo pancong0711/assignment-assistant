@@ -52,14 +52,17 @@ def portrait_frames():
 
 
 def landscape_frames():
-    """横版：中部左右两个内容 frame，各一道题；头/页脚由 onPage 画。"""
+    """横版：中部左右两个内容 frame，各一道题。
+
+    边距/字号与竖版保持一致（用户决定，2026-09-20：先一致，实生成后统一细调）：
+    x1=0.04*pw、宽 0.92*pw；头部/页脚带区比例与 portrait_frames 相同。"""
     pw, ph = landscape(A4)
-    x1 = 0.03 * pw
-    margin_w = 0.94 * pw
+    x1 = 0.04 * pw
+    width = 0.92 * pw
     gap = 0.02 * pw
-    half = (margin_w - gap) / 2
-    top = 0.845 * ph
-    bottom = 0.075 * ph
+    half = (width - gap) / 2
+    top = 0.885 * ph
+    bottom = 0.055 * ph
     left = Frame(x1=x1, y1=bottom, width=half, height=top - bottom,
                  topPadding=0, id="content_left_id", showBoundary=False)
     right = Frame(x1=x1 + half + gap, y1=bottom, width=half, height=top - bottom,
@@ -75,16 +78,17 @@ def _make_onpage(stu: dict, title: str, notes_prefix: str, orientation: str,
     页脚（左注记 + 签名 + 日期 + 上划线），替代旧 Table 版式。"""
     size = A4 if orientation == "portrait" else landscape(A4)
     pw, ph = size
-    x1 = 0.04 * pw if orientation == "portrait" else 0.03 * pw
-    width = 0.92 * pw if orientation == "portrait" else 0.94 * pw
-    info_y = 0.925 * ph if orientation == "portrait" else 0.875 * ph
+    # 边距/字号横竖一致（用户决定：先一致，实文档后统一细调）
+    x1 = 0.04 * pw
+    width = 0.92 * pw
+    info_y = 0.925 * ph
     title_y = ph - 0.028 * ph - 18
-    foot_line_y = 0.075 * ph if orientation == "portrait" else 0.065 * ph
+    foot_line_y = 0.075 * ph
     foot_text_y = foot_line_y - 14
 
     def on_page(canvas, doc):
         canvas.saveState()
-        fs = 18 if orientation == "portrait" else 16
+        fs = 18  # 横竖一致（用户决定）
         canvas.setFont("simkai", fs)
         canvas.drawCentredString(pw / 2, title_y, title)
         canvas.setFont("simsun", 12)
@@ -108,14 +112,15 @@ def _make_onpage(stu: dict, title: str, notes_prefix: str, orientation: str,
 def make_pdf(students: list[dict], items_of_student, out_dir: Path,
              orientation: str = "portrait", assets_dir: Path | None = None,
              title: str = "大学物理-作业纸", notes_prefix: str = "assignment",
-             watermark: bool = True) -> list[Path]:
+             watermark: bool = True,
+             user_cfg: dict | None = None) -> list[Path]:
     """students: [{name, number, class}]；items_of_student(i) → [(content, img, tag)]。
 
     竖版：每题一页；横版：每页左右两题。返回最终 PDF 路径列表。
     """
     assets_dir = assets_dir or ASSETS_DIR
-    register_font("simsun", "simsun.ttc", "wqy-microhei.ttc")
-    register_font("simkai", "simkai.ttf", "wqy-microhei.ttc")
+    register_font("simsun", "simsun.ttc", "wqy-microhei.ttc", workspace=None, user_cfg=user_cfg)
+    register_font("simkai", "simkai.ttf", "LXGWWenKai-Regular.ttf", workspace=None, user_cfg=user_cfg)
     now = datetime.now()
     out_dir.mkdir(parents=True, exist_ok=True)
     generated: list[Path] = []
