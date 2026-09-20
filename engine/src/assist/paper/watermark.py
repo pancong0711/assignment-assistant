@@ -18,10 +18,17 @@ _LOGO_FILES = {"01": "logo.png", "university": "logo.png"}
 # logo 路径与用户覆盖简化为 assets/watermark/ 目录（旧 get_watermark_path 的覆盖链由 assets/fonts 的 fallback 思想落地）
 
 
-def _watermark_paths(assets_dir: Path) -> dict:
-    return {"university": assets_dir / "watermark" / "logo-university.png",
-            "text": assets_dir / "watermark" / "logo-text.png",
-            "boat": assets_dir / "watermark" / "logo-boat.png"}
+def _watermark_paths(assets_dir: Path, overrides: dict | None = None) -> dict:
+    """默认占位 logo；可被用户配置覆盖（迁移自 2603 config/settings.py get_watermark_path 的
+    用户覆盖链，05-D15 同思路）。settings.local.json: watermark: {university: 路径, text:..., boat:...}"""
+    d = {"university": assets_dir / "watermark" / "logo-university.png",
+         "text": assets_dir / "watermark" / "logo-text.png",
+         "boat": assets_dir / "watermark" / "logo-boat.png"}
+    for k, v in (overrides or {}).items():
+        if k in d and v:
+            p = Path(v)
+            d[k] = p if p.is_absolute() else assets_dir / str(v)  # 相对则相对 assets
+    return d
 
 
 def watermark_preset(assets_dir: Path, pagesize=A4) -> dict:
@@ -32,9 +39,9 @@ def watermark_preset(assets_dir: Path, pagesize=A4) -> dict:
 
 
 def watermark_gen(canvas_info: dict, page_info, assets_dir: Path,
-                  preset: str = "2603") -> dict:
+                  preset: str = "2603", overrides: dict | None = None) -> dict:
     """单页水印（logo + 页码文字）。迁移自 _watermarkGen()/_watermarkGen2603()。"""
-    paths = _watermark_paths(assets_dir)
+    paths = _watermark_paths(assets_dir, overrides)
     if preset == "2603":
         canvas_info = logo_draw(canvas_info, paths["university"], "rt", 0.125, 0.5)
         canvas_info = logo_draw(canvas_info, paths["text"], "lc", 0.1, 0.3)

@@ -175,12 +175,16 @@ table.grid td.cell-content input { min-width: 260px; }
   flex-direction: column;
   gap: 8px;
 }
+/* 横版：修正 earlier 版本 bug——页面保持 column（header/body/footer 纵向），
+   仅 body 内部左右两半各一题（报告 1.3：题目不应出现在标题右侧） */
 .sheet-page.landscape {
   aspect-ratio: 297 / 210;
   width: 680px;
-  flex-direction: row;
 }
 .sheet-header { border-bottom: 2px solid #333; text-align: center; font-weight: 700; font-size: 16px; padding-bottom: 6px; }
+.sheet-header .sh-title { font-size: 16px; }
+.sheet-header .sh-info { display: flex; justify-content: space-between; gap: 8px; font-weight: 400; font-size: 12px; text-align: left; margin-top: 5px; color: #222; }
+.sheet-header .sh-info .sh-assign { color: var(--c-muted); }
 .sheet-frame { flex: 1; border: 1px dashed #c3cad6; border-radius: 6px; padding: 10px; overflow: hidden; display: flex; flex-direction: column; gap: 6px; }
 .sheet-frame .q-id { font-weight: 700; color: var(--c-primary); font-size: 13px; }
 .sheet-frame .q-content { font-size: 13px; line-height: 1.8; }

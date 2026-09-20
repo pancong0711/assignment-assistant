@@ -73,6 +73,8 @@ const preItems = computed<PreItem[]>(() => {
 })
 
 const perPage = computed(() => pad.current.layout.per_page)
+const demoStudent = { name: '学生A', number: '2026xxxx01' }  // 预览用合成占位（与 engine demo 一致）
+const todayStr = new Date().toLocaleDateString('zh-CN')
 const pages = computed<PreItem[][]>(() => {
   const chunks: PreItem[][] = []
   for (let i = 0; i < preItems.value.length; i += perPage.value) {
@@ -228,7 +230,15 @@ function engineHint(): void {
             style="position:relative"
           >
             <span v-if="pad.current.watermark.enabled" class="sheet-watermark">示例水印</span>
-            <div class="sheet-header">{{ String(pad.current.layout.header.title ?? '') || '作业纸' }}</div>
+            <div class="sheet-header">
+              <div class="sh-title">{{ String(pad.current.layout.header.title ?? '') || '作业纸' }}</div>
+              <div class="sh-info">
+                <span>班级：{{ pad.current.class || 'classA' }}</span>
+                <span>学号：{{ demoStudent.number }}</span>
+                <span>姓名：{{ demoStudent.name }}</span>
+                <span class="sh-assign">作业：{{ pad.current.id }}</span>
+              </div>
+            </div>
             <div class="sheet-body">
               <div v-for="(item, fi) in pg" :key="fi" class="sheet-frame">
                 <div class="q-id">{{ item.id }}</div>
@@ -238,8 +248,9 @@ function engineHint(): void {
               </div>
             </div>
             <div class="sheet-footer">
-              <span>{{ footerText }}</span>
-              <span>{{ pi + 1 }} / {{ pages.length }}</span>
+              <span>{{ footerText }}{{ footerText ? ' · ' : '' }}第 {{ pi + 1 }} / {{ pages.length }} 页</span>
+              <span>签名：</span>
+              <span>日期：{{ todayStr }}</span>
             </div>
           </div>
         </div>

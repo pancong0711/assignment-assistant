@@ -97,12 +97,18 @@ def _make_onpage(stu: dict, title: str, notes_prefix: str, orientation: str,
                                   f"学号：{stu.get('number', '')}",
                                   f"姓名：{stu.get('name', '')}"]):
             canvas.drawString(x1 + j * col_w, info_y, text)
+        # 作业标识（任务包 id）置于信息行右上方小字
+        canvas.setFont("simsun", 9)
+        from reportlab.pdfbase.pdfmetrics import stringWidth
+        aw = stringWidth(notes_prefix, "simsun", 9)
+        canvas.drawString(x1 + width - aw, info_y + 14, f"作业：{notes_prefix}")
         canvas.line(x1, info_y - 4, x1 + width, info_y - 4)
         canvas.line(x1, foot_line_y, x1 + width, foot_line_y)
         third = width / 3
         canvas.drawString(x1, foot_text_y, f"{notes_prefix}-第{doc.page}/{n_pages}页")
         canvas.drawString(x1 + third, foot_text_y, "签名：")
-        canvas.drawString(x1 + 2 * third, foot_text_y, "日期：")
+        canvas.drawString(x1 + 2 * third, foot_text_y,
+                          f"日期：{datetime.now():%Y-%m-%d}")
         canvas.restoreState()
     return on_page
 
@@ -151,7 +157,8 @@ def make_pdf(students: list[dict], items_of_student, out_dir: Path,
                     lo = page_i * 2 + 1
                     hi = min(lo + 1, len(items))
                     info = [f"{page_i + 1:02d}", f"{lo}-{hi}/{len(items)}"]
-                watermark_gen(c_info, info, assets_dir, preset="2603")
+                watermark_gen(c_info, info, assets_dir, preset="2603",
+                              overrides=(user_cfg or {}).get("watermark"))
             fn_wm = watermark_end(str(fn), c_info)
             final = merge_watermark(str(fn), fn_wm)
             generated.append(Path(final))
