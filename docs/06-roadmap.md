@@ -14,7 +14,8 @@
 
 **范围**
 - `engine/` 包骨架：uv 管理、click 命令组 `assist`、config/settings 加载、
-  日志；`assist serve` 占位。
+  日志；`assist serve` 占位；`assist bootstrap`（D14：workspace 内
+  .runtime/venv + UV_CACHE_DIR/PLAYWRIGHT_BROWSERS_PATH 重定向）。
 - `assist kb *`：kb xlsx 读写（source of truth，列结构
   id/content/img_path/page/related/type/solution/note 兼容）、
   `export --fmt json`、写盘前 `.history/` 快照、`stats` 统计。
@@ -80,8 +81,9 @@
 - 学习通公告/通知发布（含附件）；
 - roster 迁移完善：点名册读取、成绩评分分组、分组标签 UI、
   签到分析（可选）；
-- 汇总导出、错误恢复、教师使用手册（docs/）、docs/NOTICE.md 依赖协议、
-  手机第二屏（局域网连接）与浏览器降级提示（D9/D11）。
+- 汇总导出、错误恢复、教师使用手册（docs/，含"删除 workspace 即卸载"指引）、
+  docs/NOTICE.md 依赖协议、手机第二屏（局域网连接）与浏览器降级提示（D9/D11）、
+  导出/导入白名单（.runtime 永不打包，D14）。
 
 **交付/验收**
 - 至少一位你本人之外的老师从零（便携包或脚本）完成一次完整使用；

@@ -23,7 +23,11 @@
       roster/  sheets/  grading/
     _archived/                     # 毕业的班（不再使用但可查档）
   exports/                         # zip 导出包暂存
-  settings.local.json              # 教师私有：LLM apikey、引擎地址、默认 workspace（不入库）
+  settings.local.json              # 教师私有：LLM apikey、引擎地址、默认班级（不入库）
+  .runtime/                        # 引擎环境（不入库，绝不打包）——05-D14
+    venv/                          # .venv（引擎依赖）
+    cache/                         # UV_CACHE_DIR 重定向
+    browsers/                      # PLAYWRIGHT_BROWSERS_PATH 重定向（Playwright 内核）
 ```
 
 要点：
