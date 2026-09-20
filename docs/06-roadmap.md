@@ -72,6 +72,21 @@
 - 遗留（阶段4）：download/upload、PNG 截图、per-run 日志文件、
   MD→HTML 转换按需引入 markdown 库、每题多问式细分。
 
+## 阶段 3.5 · M5 成绩管理（用户提级新增，✅ 已完成）
+
+**范围（纯本地闭环，不依赖学习通；D17/D18）**
+- ✅ engine `assist roster tag`：点名册 + 多源成绩 xlsx（"文件:列[:权重]"，
+  列可自动识别）→ 加权均值 → 分数降序按比例切分 tag
+  （默认模板 = 2603 默认比例 5/10/10/25/35/15/10）→ 带 tag 名单 xlsx/summary；
+  `special_tag_cfg` 人工覆盖（含 punish/penalty 归一 punish）；
+- ✅ app「班级与成绩」选项卡：名单导入/手动管理、成绩源列表（起名/权重/
+  手动选分数列）、比例表单（默认模板可改+合计提示）、punish 勾选列、
+  manualTag 覆盖在重算时保留、导出 roster.xlsx/JSON/任务包 zip；
+- ✅ tag 体系 9 项固定（D17）：copy/copySp/copyOnly/qa/summary/
+  distinguish/innovation/translation/punish；
+- 遗留（后续）：学号匹配回退、多 sheet 成绩源、rainclass 签到分析模块接入、
+  roster 目录句柄独立连接。
+
 ## 阶段 4 · Companion 模式：学习通自动化 + 全链路联调
 
 **范围**
