@@ -81,6 +81,29 @@ function setTag(stuIdx: number, ev: Event) {
   roster.setManualTag(roster.students[stuIdx], val)
 }
 
+const batchNames = ref('')
+const batchTag = ref('copy')
+const batchCreateIfAbsent = ref(true)
+const batchMsg = ref('')
+
+function applyBatchTag() {
+  const names = batchNames.value.split(/[，,、/；;]+/).map((s2: string) => s2.trim()).filter(Boolean)
+  if (!names.length || !batchTag.value) return
+  let hit = 0; let added = 0
+  for (const nm of names) {
+    let idx = roster.students.findIndex((s) => s.name === nm)
+    if (idx < 0 && batchCreateIfAbsent.value) {
+      roster.addStudent()
+      idx = roster.students.length - 1
+      roster.students[idx].name = nm
+      added++
+    }
+    if (idx >= 0) { roster.students[idx].tag = batchTag.value; hit++ }
+  }
+  roster.touch()
+  batchMsg.value = `已给 ${hit} 人打上 ${batchTag.value}（新增 ${added} 人）`
+}
+
 function setPunish(stuIdx: number, ev: Event) {
   const stu = roster.students[stuIdx]
   if ((ev.target as HTMLInputElement).checked) roster.setManualTag(stu, 'punish')
@@ -136,7 +159,7 @@ const fixedSourceCount = computed(() => roster.sources.filter((s) => isFixedFami
 <template>
   <section>
     <div class="card">
-      <h2>数据导入（名单 + 成绩源） <small style="font-weight:400;color:var(--c-muted)">M5 成绩管理（阶段3.5，docs/05-D18）· 纯前端闭环，不依赖学习通/引擎</small></h2>
+      <h2>数据导入（成绩源） <small style="font-weight:400;color:var(--c-muted)">M5 成绩管理（docs/05-D18）· 名单导入与手动加人在下方「特殊标签」栏</small></h2>
       <p class="hint">
         名单列自适应（姓名|name、学号|number、班级|class、tag|tag，引擎 files/roster.py 同款宽松映射）；
         成绩源支持<b>格式预设</b>（docs/05-D19）：固定四类（教务期末 / 学习通作业统计 / 学习通章节测验 /
@@ -144,10 +167,9 @@ const fixedSourceCount = computed(() => roster.sources.filter((s) => isFixedFami
         "分数来源列"+ 权重。综合得分 = 源内按最大值归一 × 权重加权；自上而下按比例切分档次打 tag。
       </p>
       <p>
-        <button class="btn primary" @click="importRoster">导入名单 xlsx…</button>
-        <button class="btn" style="margin-left:8px" @click="roster.addStudent()">＋手动添加学生</button>
         <button class="btn" style="margin-left:8px" @click="roster.clearAll()" v-if="roster.students.length">清空全部（名单+成绩源+比例复位）</button>
       </p>
+      <p class="hint">名单导入 / 手动添加 / 批量打 tag 已移至下方「特殊标签」栏。</p>
       <div class="notice" v-if="!caps.full && caps.browserHint">{{ caps.browserHint }}</div>
       <div class="notice info" v-if="caps.insecure" style="margin-top:6px">
         当前为局域网预览（http://IP，非安全上下文）：导入名单/成绩/题库均可用（文件选择方式）；
@@ -238,7 +260,24 @@ const fixedSourceCount = computed(() => roster.sources.filter((s) => isFixedFami
     </div>
 
     <div class="card" v-if="roster.students.length">
-      <h2>特殊标签（手动覆盖 special_tag_cfg，导出前可改）</h2>
+      <h2>特殊标签（手动覆盖 special_tag_cfg，批量打 tag）</h2>
+      <p>
+        <button class="btn primary" @click="importRoster">导入名单 xlsx…</button>
+        <button class="btn" style="margin-left:8px" @click="roster.addStudent()">＋手动添加学生</button>
+      </p>
+      <p>
+        <label class="field">批量打 tag：姓名（逗号/顿号分隔多个学生）
+          <input type="text" v-model="batchNames" placeholder="学生A, 学生B, 学生C" style="width:min(420px, 60%)" />
+        </label>
+        <label class="field">tag：
+          <select v-model="batchTag">
+            <option v-for="t2 in STUDENT_TAGS" :key="t2" :value="t2">{{ STUDENT_TAG_LABELS[t2] }}</option>
+          </select>
+        </label>
+        <label class="field" style="white-space:nowrap"><input type="checkbox" v-model="batchCreateIfAbsent" /> 缺失者自动新增</label>
+        <button class="btn" style="margin-left:8px" @click="applyBatchTag" :disabled="!batchNames.trim()">应用到多个学生</button>
+        <span class="hint" v-if="batchMsg"> {{ batchMsg }}</span>
+      </p>
       <table class="grid">
         <thead>
           <tr><th style="width:120px">姓名</th><th style="width:150px">学号</th><th style="width:150px">班级</th><th style="width:180px">tag</th><th style="width:60px">punish</th><th style="width:40px"></th></tr>

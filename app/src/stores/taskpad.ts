@@ -61,7 +61,7 @@ export const useTaskpadStore = defineStore('taskpad', {
           header: { ...cur.layout.header },
           footer: { ...cur.layout.footer },
         }
-        next.watermark = { ...cur.watermark }
+        next.watermark = { ...cur.watermark, items: (cur.watermark.items ?? []).map((i) => ({ ...i })) }
       }
       this.current = next
     },

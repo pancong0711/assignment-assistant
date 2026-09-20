@@ -193,6 +193,56 @@ function exportTaskpadJson() {
   status.value = `任务包已导出（schema 同 docs/04 §1）。交付引擎执行：assist sheet make --task ${pad.current.id}.taskpad.json`
 }
 
+/* ---------- 水印编辑器（阶段4a：watermark items 列表，兼容 legacy 三槽） ---------- */
+const wmPosGrid = ['lt', 'mt', 'rt', 'lm', 'mm', 'rm', 'lb', 'mb', 'rb'] as const
+import { WATERMARK_POS_LABELS, type WatermarkItem } from '../lib/taskpad'
+
+/** 本地上传图片 → dataURL 存 settings.wmAssets（仅浏览器 localStorage，不进任务包）；
+ *  任务包 items[].image 只写 file 相对路径 hint（如 assets/watermark/<文件名>），
+ *  教师把图片放进该路径后引擎即可读取。 */
+function addWatermarkImage(e: Event) {
+  const input = e.target as HTMLInputElement
+  const files = Array.from(input.files ?? [])
+  if (!files.length) return
+  for (const f of files) {
+    const reader = new FileReader()
+    reader.onload = () => {
+      const dataUrl = String(reader.result ?? '')
+      settings.persistWmAsset(f.name, dataUrl)
+      const item: WatermarkItem = {
+        image: `assets/watermark/${f.name}`, // file 相对路径 hint（engine assets/watermark/）
+        pos: 'rb',
+        ratio: 0.25,
+        alpha: 0.5,
+      }
+      pad.current.watermark.items = [...(pad.current.watermark.items ?? []), item]
+      status.value = `已添加水印图层 ${f.name}（图片已存本浏览器；任务包导出仅含文件路径 hint ${item.image}，教师需把图片放到 workspace 对应路径或 assets/watermark/）。`
+    }
+    reader.readAsDataURL(f)
+  }
+  input.value = ''
+}
+
+function wmMove(idx: number, dir: -1 | 1) {
+  const items = pad.current.watermark.items ?? []
+  const j = idx + dir
+  if (j < 0 || j >= items.length) return
+  const next = [...items]
+  ;[next[idx], next[j]] = [next[j], next[idx]]
+  pad.current.watermark.items = next
+}
+
+function wmRemove(idx: number) {
+  const items = pad.current.watermark.items ?? []
+  pad.current.watermark.items = items.filter((_, i) => i !== idx)
+}
+
+/** 页码文字水印开关（write-through 到 watermark.pageText，缺省 true）。 */
+const pageTextOn = computed({
+  get: () => pad.current.watermark.pageText !== false,
+  set: (v: boolean) => { pad.current.watermark.pageText = v },
+})
+
 const engineButtonsDisabled = settings.needsSetup
 function engineHint(): void {
   status.value = '需引擎在线：去 设置中心 → 环境体检 完成 install.sh / assist serve 配置后启用（阶段4 联调，docs/05-D13）。'
@@ -276,14 +326,49 @@ function engineHint(): void {
           <label class="field">页眉标题：<input type="text" v-model="headTitle" style="width:180px" @change="pad.current.layout.header.title = headTitle" /></label>
           <label class="field">页脚：<input type="text" v-model="footerText" style="width:150px" @change="pad.current.layout.footer.text = footerText" /></label>
         </p>
+        <h3>水印编辑器（items 列表，0..N 图层）</h3>
         <p>
-          <label class="field">水印：
-            <input type="checkbox" v-model="pad.current.watermark.enabled" /> 启用（每生唯一标识由 engine 打印时注入）
-          </label>
-          <label class="field">样式：
-            <select v-model="pad.current.watermark.style"><option value="default">default</option><option value="none">none</option></select>
+          <label class="field"><input type="checkbox" v-model="pad.current.watermark.enabled" /> 启用水印（每生唯一标识由 engine 打印时注入）</label>
+          <label class="field">样式：</label>
+          <select v-model="pad.current.watermark.style"><option value="default">default</option><option value="none">none</option></select>
+          <label class="field" title="页角大字页码（engine text_draw 第 n 页）">
+            <input type="checkbox" v-model="pageTextOn" /> 页码文字水印
           </label>
         </p>
+        <p class="hint">
+          每个图层：本地上传图片 + 九宫格摆位（3x3 点选）+ 大小/透明度滑条 +
+          上下移动/删除。dataURL 只存本浏览器；任务包导出仅含
+          <code>items[].image</code> 文件相对路径 hint（教师把图片放到 workspace/assets/watermark/），
+          并双写 legacy 三槽 university/text/boat（engine 现行 schema 兼容）。
+        </p>
+        <div v-for="(it, wi) in pad.current.watermark.items" :key="wi" class="wm-item">
+          <div class="wm-head">
+            <b>{{ wi + 1 }}.</b>
+            <img v-if="settings.wmAssets[it.image.split('/').pop() ?? '']" :src="settings.wmAssets[it.image.split('/').pop() ?? '']" style="height:26px; border:1px solid var(--c-border); border-radius:4px" alt="水印图层预览" />
+            <code style="font-size:11px">{{ it.image }}</code>
+            <span class="hint" style="margin:0">{{ WATERMARK_POS_LABELS[it.pos] }} · 比例 {{ it.ratio.toFixed(2) }} · 透明度 {{ it.alpha.toFixed(2) }}</span>
+            <span style="flex:1"></span>
+            <button class="btn small" :disabled="wi === 0" @click="wmMove(wi, -1)">↑上移</button>
+            <button class="btn small" :disabled="wi === (pad.current.watermark.items?.length ?? 0) - 1" @click="wmMove(wi, 1)">↓下移</button>
+            <button class="btn small" @click="wmRemove(wi)">删除</button>
+          </div>
+          <div style="display:flex; gap:14px; align-items:flex-start; flex-wrap:wrap; margin-top:6px">
+            <div>
+              <div class="hint" style="margin:0 0 2px">摆位（九宫格点选）：</div>
+              <div class="wm-pos-grid">
+                <button v-for="p in wmPosGrid" :key="p" type="button" class="wm-pos-cell" :class="{ on: it.pos === p }" @click="it.pos = p">{{ WATERMARK_POS_LABELS[p] }}</button>
+              </div>
+            </div>
+            <label class="field">大小比例：<input type="range" min="0.05" max="0.9" step="0.05" v-model.number="it.ratio" /> {{ it.ratio.toFixed(2) }}</label>
+            <label class="field">透明度：<input type="range" min="0" max="1" step="0.05" v-model.number="it.alpha" /> {{ it.alpha.toFixed(2) }}</label>
+          </div>
+        </div>
+        <p class="hint" v-if="!(pad.current.watermark.items ?? []).length">尚无自定义图层：启用后引擎按默认三槽（university/text/boat）绘制；或添加图层覆盖。</p>
+        <p>
+          <label class="btn small as-label" for="wm-img-file">+ 上传图片新增图层…（可多选）</label>
+          <input type="file" accept="image/*" multiple hidden id="wm-img-file" @change="addWatermarkImage" />
+        </p>
+
         <h3>任务包头（docs/04 §1）</h3>
         <p>
           <label class="field">id：<input type="text" v-model="pad.current.id" style="width:180px" /></label>
@@ -341,7 +426,14 @@ function engineHint(): void {
             :class="{ landscape: pad.current.layout.orientation === 'landscape' }"
             style="position:relative"
           >
-            <span v-if="pad.current.watermark.enabled" class="sheet-watermark">示例水印</span>
+            <template v-if="pad.current.watermark.enabled">
+              <span v-if="pageTextOn" class="sheet-watermark">第 {{ pi + 1 }} 页</span>
+              <!-- items 图层预览（按九宫格摆位，dataURL/占位） -->
+              <div v-for="(it, wi2) in pad.current.watermark.items" :key="'wm' + pi + '-' + wi2" class="wm-preview-anchor" :class="`wm-${it.pos}`">
+                <img v-if="settings.wmAssets[it.image.split('/').pop() ?? '']" class="sheet-wm-img" :src="settings.wmAssets[it.image.split('/').pop() ?? '']" :style="{ width: (it.ratio * 100) + '%', opacity: it.alpha }" alt="水印图层" />
+                <span v-else class="sheet-wm-placeholder">[水印：{{ it.image }}（{{ WATERMARK_POS_LABELS[it.pos] }}）]</span>
+              </div>
+            </template>
             <div class="sheet-header">
               <div class="sh-title">{{ String(pad.current.layout.header.title ?? '') || '作业纸' }}</div>
               <div class="sh-info">

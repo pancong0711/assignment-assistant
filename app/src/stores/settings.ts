@@ -1,8 +1,13 @@
 import { defineStore } from 'pinia'
+import {
+  DEFAULT_ENGINE_ADDR, fetchDoctor, fetchEngineStatus, normalizeEngineAddr,
+  statusClass, type DoctorCheck,
+} from '../lib/engineClient'
 
 /** 设置中心状态（docs/05-D13：设置中心 + 首次运行向导 + 条件式置灰）。
  *  这些设置只存教师本地浏览器（localStorage），不入库、不外发；
- *  真正落盘的 settings.local.json 由引擎侧管理（阶段4 assist serve）。 */
+ *  真正落盘的 settings.local.json 由引擎侧管理（阶段4 assist serve），
+ *  本页的 engine_addr 为其同名前端镜像（PWA 内可改，docs/05-D5）。 */
 
 export interface EnvCheckItem {
   key: string
@@ -18,6 +23,10 @@ export interface WizardState {
 }
 
 const LS_KEY = 'assignment-assistant.settings.v1'
+/** 首次运行向导独立存储 key：完成/跳过后重开不再弹（阶段4a）。 */
+const LS_ONBOARDING_KEY = 'assignment-assistant.onboarding.v1'
+/** 水印素材库 key（name → dataURL，阶段4a 水印编辑器）。 */
+const LS_WM_ASSETS_KEY = 'assignment-assistant.watermark.assets.v1'
 
 interface PersistedSettings {
   wizardDone: boolean
@@ -36,7 +45,9 @@ function defaultSettings(): PersistedSettings {
     preferredEngineCommand: 'sh',
     workspaceLabel: '',
     workspaceConnected: false,
-    engineUrl: 'http://127.0.0.1:8765',
+    // 引擎默认地址：与 engine bootstrap 写入 settings.local.json 的
+    // engine_addr 同名同值（http://127.0.0.1:8601，PWA 内可改）。
+    engineUrl: DEFAULT_ENGINE_ADDR,
     engineApiKey: '',
     defaultClassDir: 'classes/2026S1-大学物理-classA',
     confirmBeforeUpload: true,
@@ -47,35 +58,87 @@ function loadSettings(): PersistedSettings {
   try {
     const raw = localStorage.getItem(LS_KEY)
     if (!raw) return defaultSettings()
-    return { ...defaultSettings(), ...(JSON.parse(raw) as Partial<PersistedSettings>) }
+    const merged = { ...defaultSettings(), ...(JSON.parse(raw) as Partial<PersistedSettings>) }
+    // 一次性迁移：阶段2 默认地址 8765 → 阶段4a 契约端口 8601（仅当用户未改过）
+    if (merged.engineUrl === 'http://127.0.0.1:8765') merged.engineUrl = DEFAULT_ENGINE_ADDR
+    return merged
   } catch {
     return defaultSettings()
   }
 }
 
+/** 向导完成/跳过状态（独立 key：assignment-assistant.onboarding.v1）。
+ *  兼容阶段2 的旧值：settings.v1 里 wizardDone=true 也视为已完成。 */
+function loadOnboardingDone(): boolean {
+  try {
+    if (localStorage.getItem(LS_ONBOARDING_KEY) === 'done') return true
+    const raw = localStorage.getItem(LS_KEY)
+    if (!raw) return false
+    return Boolean((JSON.parse(raw) as Partial<PersistedSettings>).wizardDone)
+  } catch {
+    return false
+  }
+}
+
+/** 水印素材库（name → dataURL）。 */
+function loadWmAssets(): Record<string, string> {
+  try {
+    return JSON.parse(localStorage.getItem(LS_WM_ASSETS_KEY) ?? '{}') as Record<string, string>
+  } catch {
+    return {}
+  }
+}
+
 function placeholderChecks(): EnvCheckItem[] {
-  // 阶段4 接入 assist serve 后改为真实检测（逐项绿黄红，docs/05-D5/D13）
+  // 引擎未在线时的黄色占位（降级观感保留，docs/05-D13）；接入 assist serve
+  // 后由 runDoctor() 逐项替换为真实绿黄红。
   return [
-    { key: 'python', label: 'Python / uv', status: 'pending', note: '占位：阶段4 经 assist serve 检测' },
-    { key: 'deps', label: '引擎依赖（.runtime/venv）', status: 'pending', note: '占位：阶段4 接入 assist doctor' },
-    { key: 'playwright', label: 'Playwright 内核', status: 'pending', note: '占位：阶段4 接入 assist doctor' },
-    { key: 'tex', label: 'TeX（可选，样题渲染）', status: 'pending', note: '占位：缺失时引擎自动降级' },
-    { key: 'engine', label: '引擎在线（assist serve）', status: 'pending', note: '占位：阶段4 提供本地 HTTP 握手' },
+    { key: 'uv', label: 'uv', status: 'pending', note: '占位：引擎未在线，接入 assist serve 后真实检测' },
+    { key: 'deps', label: '引擎依赖（.runtime/venv）', status: 'pending', note: '占位：引擎未在线，接入 assist doctor 后真实检测' },
+    { key: 'fonts', label: '字体（开源 fallback 链，D15）', status: 'pending', note: '占位：缺失时引擎自动降级' },
+    { key: 'tex', label: 'TeX（可选，样题渲染）', status: 'pending', note: '占位：缺失时引擎自动降级（黄）' },
+    { key: 'kb', label: 'kb/ 题库存在', status: 'pending', note: '占位：引擎未在线' },
+    { key: 'settings', label: 'settings.local.json 存在', status: 'pending', note: '占位：引擎未在线' },
   ]
+}
+
+/** /doctor 检查项 name → 本地表格 key（引擎 CLI doctor 检查项的子集）。 */
+function doctorKey(c: DoctorCheck): string {
+  const n = c.name.toLowerCase()
+  if (n.includes('uv')) return 'uv'
+  if (n.includes('依赖') || n.includes('dep') || n.includes('venv')) return 'deps'
+  if (n.includes('字体') || n.includes('font')) return 'fonts'
+  if (n.includes('tex') || n.includes('latex')) return 'tex'
+  if (n.includes('kb') || n.includes('题库')) return 'kb'
+  if (n.includes('settings')) return 'settings'
+  return n.replace(/\s+/g, '-') || 'misc'
 }
 
 export const useSettingsStore = defineStore('settings', {
   state: () => ({
     ...loadSettings(),
+    // 向导完成状态以独立 key（assignment-assistant.onboarding.v1）为准，
+    // 兼容阶段2 写在 settings.v1 里的 wizardDone。
+    wizardDone: loadOnboardingDone(),
     checks: placeholderChecks() as EnvCheckItem[],
     /** 是否做过任何一次体检动作（用于横幅/向导第二步文案） */
     checkRunAt: '' as string,
     wizard: { visible: true, step: 1 as 1 | 2 | 3 } as WizardState,
+    /** 引擎在线检测 chip（/status）：online + 版本 */
+    engineOnline: false as boolean,
+    engineVersion: '' as string,
+    engineStatusError: '' as string,
+    /** 最近一次 /doctor 结果（含未在线降级信息） */
+    lastDoctorError: '' as string,
+    doctorOk: false as boolean,
+    doctorWorkspace: '' as string,
+    /** 水印素材库（name → dataURL；任务包仅引用文件路径 hint） */
+    wmAssets: loadWmAssets() as Record<string, string>,
   }),
   getters: {
     /** 向导未完成或跳过 → 引擎类按钮灰 + 黄色横幅（D13：不整体置灰） */
     needsSetup: (s) => !s.wizardDone,
-    engineLikelyOnline: (s) => s.checks.some((c) => c.key === 'engine' && c.status === 'ok'),
+    engineLikelyOnline: (s) => s.engineOnline,
     allChecks(state): EnvCheckItem[] {
       return state.checks
     },
@@ -99,26 +162,91 @@ export const useSettingsStore = defineStore('settings', {
       this.workspaceConnected = connected
       this.persist()
     },
-    /** 环境体检（占位实现）：TODO(阶段4)：改为调用 assist serve /api/health + assist doctor */
-    runHealthCheck() {
-      for (const c of this.checks) {
-        c.status = 'warn'
-        c.note = c.key === 'engine'
-          ? '占位状态：静态部署下无法检测本机引擎。阶段4 接入 assist serve 后自动握手。'
-          : '占位状态：阶段4 接入 assist doctor / assist serve 后逐项真实检测（绿=通过 黄=注意 红=缺失）。'
-      }
+    setEngineUrl(url: string) {
+      this.engineUrl = normalizeEngineAddr(url)
+      this.persist()
+      // 地址变更后立即重新握手（在线 chip 即时反馈）
+      void this.pingEngine()
+    },
+    /** /status 在线检测（在线/离线 chip + 版本显示）。引擎未在线不报错，
+     *  只更新 chip 状态（D13 降级观感）。 */
+    async pingEngine(): Promise<boolean> {
+      const r = await fetchEngineStatus(this.engineUrl)
+      this.engineOnline = r.online
+      this.engineVersion = r.status?.version ?? ''
+      this.engineStatusError = r.online ? '' : (r.error ?? 'offline')
+      return r.online
+    },
+    /** 环境体检真接入：GET {engineAddr}/doctor 逐项绿黄红。
+     *  引擎未在线 → 黄色占位 + lastDoctorError（调用方显示引导文案）。 */
+    async runDoctor(): Promise<boolean> {
       this.checkRunAt = new Date().toLocaleTimeString()
+      const r = await fetchDoctor(this.engineUrl)
+      if (!r.online) {
+        this.lastDoctorError = r.error ?? 'fetch failed'
+        this.doctorOk = false
+        for (const c of this.checks) {
+          c.status = 'warn'
+          c.note = '占位状态：引擎未在线（ assist serve 未启动或地址不对）。'
+        }
+        this.engineOnline = false
+        return false
+      }
+      this.lastDoctorError = ''
+      this.doctorOk = r.ok
+      this.doctorWorkspace = r.engine.workspace
+      this.engineOnline = true
+      this.engineVersion = r.engine.version
+      // 引擎返回的检查项（CLI assist doctor 子集：uv/依赖/字体/TeX/kb/settings）
+      const byKey = new Map<string, DoctorCheck>()
+      for (const c of r.checks) byKey.set(doctorKey(c), c)
+      this.checks.forEach((item) => {
+        const hit = byKey.get(item.key)
+        if (hit) {
+          item.status = statusClass(hit.status)
+          item.note = hit.detail || (hit.status === 'green' ? '通过' : hit.status === 'yellow' ? '注意：缺失时引擎可降级' : '缺失')
+        }
+      })
+      // 引擎多返回的项（未来扩展）追加到表格尾部
+      for (const c of r.checks) {
+        const k = doctorKey(c)
+        if (!this.checks.some((x) => x.key === k)) {
+          this.checks.push({ key: k, label: c.name, status: statusClass(c.status), note: c.detail || '' })
+        }
+      }
+      return true
+    },
+    /** 兼容旧调用名（向导第二步按钮）：体检 = ping + doctor。 */
+    async runHealthCheck(): Promise<boolean> {
+      const online = await this.pingEngine()
+      return (await this.runDoctor()) && online
+    },
+    /** 水印素材库（阶段4a 水印编辑器）：name → dataURL，仅本浏览器 localStorage；
+     *  任务包导出只写 file 相对路径 hint，不内嵌 dataURL（可携带、不含大图）。 */
+    persistWmAsset(name: string, dataUrl: string) {
+      this.wmAssets[name] = dataUrl
+      this.persistWmAssets()
+    },
+    persistWmAssets() {
+      try { localStorage.setItem(LS_WM_ASSETS_KEY, JSON.stringify(this.wmAssets)) } catch { /* 容量/隐私降级 */ }
     },
     finishWizard() {
       this.wizardDone = true
       this.wizard.visible = false
+      try { localStorage.setItem(LS_ONBOARDING_KEY, 'done') } catch { /* 隐私模式降级 */ }
       this.persist()
     },
     skipWizard() {
       // 可跳过；跳过时保持横幅提示但不置灰整体界面（D13）
       this.wizardDone = true
       this.wizard.visible = false
+      try { localStorage.setItem(LS_ONBOARDING_KEY, 'done') } catch { /* 隐私模式降级 */ }
       this.persist()
+    },
+    /** 重看向导（设置中心显式入口）。 */
+    reopenWizard() {
+      this.wizard.visible = true
+      this.wizard.step = 1
     },
   },
 })
