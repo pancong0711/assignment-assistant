@@ -58,9 +58,16 @@
   apikey 从 settings.local.json 读；
 - 产物落入 `classes/<class>/grading/<task>/` 结构（04 §1）。
 
-**交付/验收**
-- 对一组本地作业图片完成"转录→评阅→报告"全链路（无需学习通在线）；
-- 任务包 journal 记录运行历史（D8），`--rerun` 单步/整单重跑可用。
+**交付/验收（✅ 已完成，子代理迁移+本侧验证）**
+- ✅ 对一组本地作业图片完成"转录→评阅→报告"全链路（无需学习通在线）；
+  合成数据端到端测试 3 条通过（stub LLM/mock httpx；得分校验 95、journal 步骤、--rerun）；
+- ✅ 任务包 journal 记录运行历史（D8），`--rerun` 单步重跑可用；
+- ✅ 评阅 prompt 绑定任务包每题 content+solution；question_match 对不上 →
+  verdict:"suspected-substitution"（顶替嫌疑 🚨 告警）；
+- 标签差异化规则逐段迁移（copy 只查完整性等），评分公式搬运（20 分上限/
+  缺图放宽/签名书写扣分/下限 40）；
+- 遗留（阶段4）：download/upload、PNG 截图、per-run 日志文件、
+  MD→HTML 转换按需引入 markdown 库、每题多问式细分。
 
 ## 阶段 4 · Companion 模式：学习通自动化 + 全链路联调
 
