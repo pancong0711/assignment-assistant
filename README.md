@@ -1,0 +1,25 @@
+# assignment-assistant
+
+大学物理（环境/化工等通识课程）作业助理：**作业纸设计与 AI 辅助批阅的一站式工具**。
+
+- 由两个先行项目合并而来：2603paperDesign（分层个性化作业纸，试行 5-6 学期）
+  与 2601playwright（学习通 AI 批阅，试行 1 学期）。
+- 目标形态：**Python CLI 引擎 + PWA 网页前端**，数据全部保存在教师本地；
+  仓库（MIT）仅含代码与合成示例，不含题库/学生数据/任何密钥。
+- 讨论与设计文档见 `docs/01-architecture.md` 起的系列（开发尚在讨论阶段）。
+
+> 作业纸不是筛选工具，而是沟通的桥梁。分层不是给学生贴标签，
+> 而是让每个学生都能在适合自己的难度上获得练习与反馈。
+
+## 文档索引
+
+- `docs/01-architecture.md` — 宏观架构（Engine+App 双层、模块划分、monorepo 布局）
+- `docs/02-pwa-feasibility.md` — PWA 可行性结论与风险
+- `docs/03-module-migration.md` — 旧项目 → 新项目迁移映射
+- `docs/04-data-model-and-privacy.md` — 数据契约、脱敏红线、协议声明
+- `_legacy/` — 原始两项目解档（仅本地参考，已被 gitignore，永不推送）
+
+## 里程碑（草案）
+
+见 `docs/02-pwa-feasibility.md` §4：骨架 → 题库/作业纸（含横版双题）→
+批阅迁移 → Companion 本地引擎 → 导入导出与文档打磨。

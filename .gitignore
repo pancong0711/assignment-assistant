@@ -1,0 +1,48 @@
+# ===== 数据与敏感信息红线（绝不允许进入仓库）=====
+# 行内注释在 gitignore 中无效，只允许整行注释
+_legacy/
+kb/*
+!kb/examples/
+roster/
+grading/
+test/
+test_*
+tests/data/
+exports/
+damage/
+handwriting/
+submissions/
+.env
+.env.*
+!.env.example
+config.json
+config.local.json
+state.json
+*xuexitong*ids*.json
+*.token
+*apikey*
+*.key
+
+# 学生/真实内容类数据（保守双保险）
+**/作业/
+
+# 中文字体（版权限制，教师自备）
+*.ttc
+*.ttf
+*.otf
+# 开源字体如需入库在此追加白名单例外
+
+# ===== 常规 =====
+__pycache__/
+*.pyc
+.venv/
+node_modules/
+dist/
+.pytest_cache/
+.ruff_cache/
+.DS_Store
+
+# AI 辅助工具目录不入库
+.opencode/
+.pi/
+.agents/
