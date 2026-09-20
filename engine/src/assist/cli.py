@@ -281,10 +281,16 @@ def roster_tag(obj, roster_fn, score_specs, ratios, special, out, no_weight_norm
 
 
 @cli.command()
+@click.option("--workspace", "-w", default=None)
+@click.option("--host", default=None, help="绑定地址（缺省 127.0.0.1；--lan 时自动 0.0.0.0）")
+@click.option("--port", default=8601, show_default=True)
+@click.option("--lan", is_flag=True, help="开放局域网（0.0.0.0，自动生成 ?token= 防蹭网）")
+@click.option("--verbose", "-v", is_flag=True)
 @click.pass_obj
-def serve(obj):  # 阶段4 占位
-    """本地引擎 HTTP 服务（Companion 模式，阶段4 实现）。"""
-    click.echo("serve：阶段4 实现（占位）。")
+def serve(obj, workspace, host, port, lan, verbose):
+    """本地引擎 HTTP 服务（阶段4a）：/doctor 体检 + /status + 托管 app/dist-lan。"""
+    from .serve import serve as _serve
+    _serve(workspace, host=host or ("0.0.0.0" if lan else "127.0.0.1"), port=port, lan=lan)
 
 
 @cli.command()
