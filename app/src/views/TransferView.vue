@@ -8,12 +8,13 @@ import {
 } from '../lib/workspaceZip'
 import {
   detectCapabilities, pickDirectory, writeFileInDir,
-  ensurePermission, pickReadFile, downloadBlob,
+  ensurePermission, pickReadFile, downloadBlob, fsWriteHint,
 } from '../lib/fsAccess'
 
 const kb = useKbStore()
 const pad = useTaskpadStore()
 const caps = detectCapabilities()
+const writeHint = fsWriteHint()
 
 const status = ref('')
 const busy = ref(false)
@@ -110,7 +111,7 @@ async function importZip() {
       }
       status.value = `已写回 ${dir.name}/（kb/、tasks/、kb/fig/）：题库 xlsx ×${books}、任务包 ×${pads}；忽略条目 ×${skipped}。.runtime/ 永不写入。`
     } else {
-      status.value = `已恢复到浏览器内存（降级模式）：题库 ×${books}、任务包 ×${pads}；忽略条目 ×${skipped}。${caps.browserHint}`
+      status.value = `已恢复到浏览器内存（降级模式）：题库 ×${books}、任务包 ×${pads}；忽略条目 ×${skipped}。${caps.browserHint}${caps.insecure ? writeHint : ''}`
     }
   } catch (e) {
     status.value = `zip 导入失败：${(e as Error).message}`
@@ -123,7 +124,7 @@ async function connectDir() {
   const ok = await kb.connectWorkspaceDir()
   status.value = ok
     ? `已连接 ${kb.fsDirName}（导出 zip 将附 workspace 名；保存题库写 <目录>/kb/<kind>.xlsx）`
-    : caps.full ? '已取消连接。' : caps.browserHint
+    : caps.full ? '已取消连接。' : (caps.insecure ? writeHint : caps.browserHint)
 }
 </script>
 
@@ -139,9 +140,11 @@ async function connectDir() {
       <p>
         <button class="btn primary" :disabled="busy || !kb.hasData" @click="exportZip">导出 zip（下载）</button>
         <button class="btn" style="margin-left:8px" :disabled="busy" @click="importZip">导入 zip（恢复数据…）</button>
-        <button class="btn" style="margin-left:8px" :disabled="!caps.full" @click="connectDir">连接本地 workspace 目录</button>
+        <button class="btn" style="margin-left:8px" :disabled="!caps.full" @click="connectDir"
+          :title="caps.insecure ? writeHint : '需 Chrome/Edge（File System Access API），本机 localhost/https 打开'">连接本地 workspace 目录</button>
       </p>
-      <div class="notice" v-if="!caps.full">{{ caps.browserHint }} 导出为浏览器下载；导入恢复到浏览器内存。</div>
+      <div class="notice info" v-if="caps.insecure">当前为局域网预览（http://IP，非安全上下文）：导出 zip / 导入 zip（恢复到内存）均可用；连接本地目录与写回需本机 localhost / https 打开。{{ writeHint }}</div>
+      <div class="notice" v-else-if="!caps.full">{{ caps.browserHint }} 导出为浏览器下载；导入恢复到浏览器内存。</div>
       <div class="notice" v-else-if="!kb.fsDirName">尚未连接本地目录：导入 zip 时会再让您选择目标目录。</div>
       <p class="hint" v-if="status">{{ status }}</p>
     </div>

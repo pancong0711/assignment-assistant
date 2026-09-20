@@ -1,8 +1,13 @@
 /** 任务包（taskpad）模型 —— schema 与 docs/04 §1 完全一致。
  *  任务包 = CLI 完整参数 + Web 按钮的后台实体 + 可携带执行记录（docs/05-D2）。
- *  拿到任务包后：`assist sheet make --task <taskpad.json>` 即可出 PDF（D1 CLI 超集）。 */
+ *  拿到任务包后：`assist sheet make --task <taskpad.json>` 即可出 PDF（D1 CLI 超集）。
+ *  D19 反馈：per_page 可设 1–4（layout.per_page；缺省 竖1横2；竖版为上下行、
+ *  横版为左右栏）；引擎帧按 per_page 切分，多题/页时打印版式加实线分隔
+ *  （横版=栏间竖线、竖版=行间横线），app 预览同口径。 */
 
 export type Orientation = 'portrait' | 'landscape'
+
+export type PerPage = 1 | 2 | 3 | 4
 
 export interface TaskpadLayoutHeader {
   title?: string
@@ -15,8 +20,8 @@ export interface TaskpadLayoutFooter {
 
 export interface TaskpadLayout {
   orientation: Orientation
-  /** 每页题数：竖版 1 / 横版 2（横版 A4 左右两半各一题，阶段1 已在 engine 落地） */
-  per_page: 1 | 2
+  /** 每页题数 1–4（D19 反馈；缺省 竖1横2；横版 A4 左右栏、竖版上下行） */
+  per_page: PerPage
   header: TaskpadLayoutHeader
   footer: TaskpadLayoutFooter
 }
@@ -91,7 +96,15 @@ export function emptyTaskpad(): Taskpad {
   }
 }
 
-/** 从外部 JSON 解析任务包，做最小校验（容错：grade/journal 可缺省）。 */
+/** layout.per_page 规范化：1–4 之外回落到方向缺省（竖1横2），与引擎同口径。 */
+export function normalizePerPage(v: unknown, orientation: Orientation): PerPage {
+  const n = Number(v)
+  if (n === 1 || n === 2 || n === 3 || n === 4) return n
+  return orientation === 'landscape' ? 2 : 1
+}
+
+/** 从外部 JSON 解析任务包，做最小校验（容错：grade/journal 可缺省；
+ *  per_page 1–4，越界/缺失按方向缺省 竖1横2）。 */
 export function parseTaskpad(raw: unknown): Taskpad {
   if (typeof raw !== 'object' || raw == null) throw new Error('任务包 JSON 顶层应为对象')
   const o = raw as Record<string, unknown>
@@ -106,7 +119,7 @@ export function parseTaskpad(raw: unknown): Taskpad {
     term: typeof o.term === 'string' ? o.term : undefined,
     layout: {
       orientation,
-      per_page: orientation === 'landscape' ? 2 : 1,
+      per_page: normalizePerPage(layout.per_page, orientation),
       header: (layout.header ?? {}) as TaskpadLayoutHeader,
       footer: (layout.footer ?? {}) as TaskpadLayoutFooter,
     },

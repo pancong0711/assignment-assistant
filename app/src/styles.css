@@ -201,6 +201,19 @@ table.grid td.cell-content input { min-width: 260px; }
   flex-direction: row;
   gap: 12px;
 }
+/* 多题/页（per_page > 1）：题目框架之间加**实线**分隔（docs/05-D19：
+ * 与引擎打印 PDF 版式一致——横版=栏间竖线、竖版=行间横线；虚线框仅 UI 区分）。 */
+.sheet-body.divided { gap: 0; }
+.sheet-body.divided .sheet-frame { border-style: solid; border-color: #333; border-radius: 0; padding: 10px 12px; }
+/* 竖版：行间横线（上下行） */
+.sheet-body.divided .sheet-frame + .sheet-frame { border-top: 1px solid #333; }
+/* 横版：栏间竖线（左右栏） */
+.sheet-page.landscape .sheet-body.divided .sheet-frame + .sheet-frame {
+  border-top: none;
+  border-left: 1px solid #333;
+}
+/* 单题（per_page=1）保持原有虚线框观感，不加分隔 */
+.sheet-body:not(.divided) .sheet-frame + .sheet-frame { border-top: none; }
 /* 容器查询：预览区域足够宽（横屏空间）时放大页面，退化为小图时缩放 */
 @container (min-width: 760px) {
   .sheet-page.landscape { width: 740px; }

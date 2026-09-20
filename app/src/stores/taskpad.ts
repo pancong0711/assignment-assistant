@@ -4,7 +4,7 @@ import {
   type Taskpad, type TaskpadItem,
 } from '../lib/taskpad'
 
-/** 任务包 store：当前正在设计的任务包 + 已保存任务包列表（localStorage）。 */
+/** 任务包 store：当前正在设计的任务包 + 已保存任务包清单（library，localStorage）。 */
 
 const LS_KEY = 'assignment-assistant.taskpads.v1'
 
@@ -46,6 +46,32 @@ export const useTaskpadStore = defineStore('taskpad', {
     setOrientation(orientation: 'portrait' | 'landscape') {
       this.current.layout.orientation = orientation
       this.current.layout.per_page = orientation === 'landscape' ? 2 : 1
+    },
+    setPerPage(v: 1 | 2 | 3 | 4) {
+      this.current.layout.per_page = v
+    },
+    /** 新建空任务包，可选克隆当前版式/叶眉页脚/水印配置（D19 反馈第 3 项）。 */
+    newPad(cloneStyle: boolean) {
+      const cur = this.current
+      const next = emptyTaskpad()
+      if (cloneStyle) {
+        next.layout = {
+          orientation: cur.layout.orientation,
+          per_page: cur.layout.per_page,
+          header: { ...cur.layout.header },
+          footer: { ...cur.layout.footer },
+        }
+        next.watermark = { ...cur.watermark }
+      }
+      this.current = next
+    },
+    /** 导出全部已保存任务包的原始 JSON（清单导出 zip 用，保持落盘原文）。 */
+    savedJsons(): Array<{ id: string; json: string }> {
+      return this.saved.map((s) => ({ id: s.id, json: s.json }))
+    },
+    addSavedRaw(id: string, json: string) {
+      if (!this.saved.some((s) => s.id === id)) this.saved.push({ id, json })
+      localStorage.setItem(LS_KEY, JSON.stringify(this.saved))
     },
     toJson(): string {
       return serializeTaskpad(this.current)

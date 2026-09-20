@@ -1,7 +1,7 @@
 <script setup lang="ts">
 import { computed, ref } from 'vue'
 import { useSettingsStore } from '../stores/settings'
-import { pickDirectory, detectCapabilities } from '../lib/fsAccess'
+import { pickDirectory, detectCapabilities, fsWriteHint } from '../lib/fsAccess'
 
 const settings = useSettingsStore()
 const caps = detectCapabilities()
@@ -70,8 +70,9 @@ const SERVE_CMD = 'uv run assist serve      # 阶段4 提供本地 HTTP API + SS
           <input type="text" v-model="settings.workspaceLabel" style="width: 340px" placeholder="如 ~/.assignment-assistant（默认）" @change="settings.persist()" />
         </label>
         <p>
-          <button class="btn" :disabled="!caps.directoryPicker" @click="chooseWorkspace">
-            {{ caps.directoryPicker ? '选择 workspace 目录…' : '浏览器不支持目录选择（Firefox/Safari）' }}
+          <button class="btn" :disabled="!caps.directoryPicker" @click="chooseWorkspace"
+            :title="caps.insecure ? fsWriteHint() : '需 Chrome/Edge（File System Access API）'">
+            {{ caps.directoryPicker ? '选择 workspace 目录…' : (caps.insecure ? '选择 workspace 目录…（LAN 预览下不可用，需本机打开）' : '浏览器不支持目录选择（Firefox/Safari）') }}
           </button>
         </p>
         <p class="hint">当前：{{ settings.workspaceConnected ? `已选目录 ${settings.workspaceLabel}` : '未连接（可选，可跳过）' }}</p>
@@ -96,7 +97,7 @@ const SERVE_CMD = 'uv run assist serve      # 阶段4 提供本地 HTTP API + SS
             <b>{{ c.label }}</b> — {{ c.note }}
           </li>
         </ul>
-        <div class="notice" v-if="!caps.full">
+        <div class="notice" v-if="!caps.full && caps.browserHint">
           {{ caps.browserHint }}
         </div>
         <div class="notice">

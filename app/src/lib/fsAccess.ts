@@ -1,13 +1,27 @@
-/** File System Access API 能力检测与封装（docs/05-D11：Firefox/Safari 降级提示）。
- *  Chrome/Edge 可用 → 可选目录直接写回；不可用 → 导出文件/上传文件交互。 */
+/** File System Access API 能力检测与封装（docs/05-D11；D19 反馈：LAN 场景修复）。
+ *
+ * 关键点（D19 检测反馈第 1 项）：
+ * - File System Access API 仅在**安全上下文**（isSecureContext：https / localhost）
+ *   下可用。通过 http://<LAN IP>:8602/ 访问时 window.showOpenFilePicker 不存在，
+ *   这是平台限制而非浏览器不支持。
+ * - 因此能力检测必须同时看 `window.isSecureContext`；不满足时**静默降级**：
+ *   文件导入走 <input type=file>（所有浏览器/场景可用），不弹
+ *   "当前浏览器不支持" 错误横幅 —— LAN 预览下用 file input 即可完成
+ *   名单/成绩/题库 xlsx 与任务包 JSON 的导入。
+ * - "写回/另存/连接目录"等真正的写能力入口在 LAN 下不可用：界面把按钮改为
+ *   "下载文件（教师手动放回 workspace）"，并通过 fsWriteHint() 说明原因
+ *   （需本机打开：localhost 或 https）。
+ */
 
 export interface FsCapabilities {
-  /** showDirectoryPicker 存在（目录读写能力） */
+  /** showDirectoryPicker 存在（目录读写能力；安全上下文限定） */
   directoryPicker: boolean
-  /** showOpenFilePicker / showSaveFilePicker 存在 */
+  /** showOpenFilePicker / showSaveFilePicker 存在（安全上下文限定） */
   filePicker: boolean
-  /** 完整体验（题库 xlsx 原地写回、zip 导入恢复目录） */
+  /** 完整体验（题库 xlsx 原地写回、zip 导入恢复目录）= 安全上下文 + 目录/文件 picker */
   full: boolean
+  /** 是否因非安全上下文降级（http://<LAN IP> 场景；用于写能力入口的提示） */
+  insecure: boolean
   /** 是否 Firefox / Safari 系（用于精确降级提示文案） */
   browserHint: string
 }
@@ -16,24 +30,41 @@ export function detectCapabilities(): FsCapabilities {
   const ua = navigator.userAgent
   const isFirefox = /firefox/i.test(ua)
   const isSafari = /^((?!chrome|android|crios|fxios).)*safari/i.test(ua)
-  const directoryPicker = typeof window.showDirectoryPicker === 'function'
-  const filePicker =
-    typeof window.showOpenFilePicker === 'function' &&
-    typeof window.showSaveFilePicker === 'function'
+  const insecure = !window.isSecureContext
+  const directoryPicker = insecure ? false : typeof window.showDirectoryPicker === 'function'
+  const filePicker = insecure
+    ? false
+    : typeof window.showOpenFilePicker === 'function' &&
+      typeof window.showSaveFilePicker === 'function'
   const full = directoryPicker && filePicker
   const browserHint = full
     ? ''
-    : isFirefox
-      ? '当前浏览器为 Firefox：不支持 File System Access API，已启用降级模式（下载文件 / 选择文件上传）。如需原地写回题库 xlsx、导入 zip 到本地目录，请改用 Chrome / Edge。'
-      : isSafari
-        ? '当前浏览器为 Safari：不支持 File System Access API，已启用降级模式（下载文件 / 选择文件上传）。如需原地写回题库 xlsx、导入 zip 到本地目录，请改用 Chrome / Edge。'
-        : '当前浏览器不完整支持 File System Access API，已启用降级模式（下载文件 / 选择文件上传）。建议改用 Chrome / Edge 获得完整体验。'
-  return { directoryPicker, filePicker, full, browserHint }
+    : insecure
+      // LAN（http://IP）场景：不是浏览器问题，不要求换浏览器；写回能力入口单独提示。
+      ? ''
+      : isFirefox
+        ? '当前浏览器为 Firefox：不支持 File System Access API，已启用降级模式（下载文件 / 选择文件上传）。如需原地写回题库 xlsx、导入 zip 到本地目录，请改用 Chrome / Edge。'
+        : isSafari
+          ? '当前浏览器为 Safari：不支持 File System Access API，已启用降级模式（下载文件 / 选择文件上传）。如需原地写回题库 xlsx、导入 zip 到本地目录，请改用 Chrome / Edge。'
+          : '当前浏览器不完整支持 File System Access API，已启用降级模式（下载文件 / 选择文件上传）。建议改用 Chrome / Edge 获得完整体验。'
+  return { directoryPicker, filePicker, full, insecure, browserHint }
 }
 
-/** 请求一个目录句柄（readwrite）。用户拒绝/不支持时返回 null。 */
+/** 写能力（连接目录/原地写回/另存到目录）入口在当前环境是否可用。 */
+export function canWriteFs(): boolean {
+  return detectCapabilities().directoryPicker
+}
+
+/** 写能力入口的提示文案（按钮 title / 提示行用）。
+ *  LAN（http://IP）下说明原因：非安全上下文，需本机打开（localhost / https）。 */
+export function fsWriteHint(): string {
+  if (window.isSecureContext) return ''
+  return '当前通过局域网 IP（http://…）访问，浏览器在非安全上下文下不提供"直接写本地目录"能力；请在本机用 localhost（或 https）打开后使用。局域网预览下请用"下载文件"，教师手动放回 workspace 即可。'
+}
+
+/** 请求一个目录句柄（readwrite）。不支持/用户拒绝时返回 null。 */
 export async function pickDirectory(): Promise<FileSystemDirectoryHandle | null> {
-  if (!window.showDirectoryPicker) return null
+  if (!canWriteFs() || !window.showDirectoryPicker) return null
   try {
     return await window.showDirectoryPicker({ mode: 'readwrite', id: 'assignment-assistant' })
   } catch {
@@ -73,7 +104,7 @@ export async function writeFileInDir(
   await writable.close()
 }
 
-/** 兜底：浏览器下载一个文件（降级路径，所有浏览器可用）。 */
+/** 兜底：浏览器下载一个文件（降级路径，所有浏览器/场景可用，含 LAN）。 */
 export function downloadBlob(blob: Blob, filename: string): void {
   const url = URL.createObjectURL(blob)
   const a = document.createElement('a')
@@ -91,7 +122,7 @@ export function downloadData(data: BlobPart | ArrayBuffer, filename: string, mim
   downloadBlob(blob, filename)
 }
 
-/** 选择并读取一个本地文件（input 兜底，所有浏览器可用）。 */
+/** 选择并读取一个本地文件（input 兜底，所有浏览器/场景可用，含 LAN）。 */
 export function pickReadFile(accept: string): Promise<File | null> {
   return new Promise((resolve) => {
     const input = document.createElement('input')
@@ -103,10 +134,11 @@ export function pickReadFile(accept: string): Promise<File | null> {
   })
 }
 
-/** 选择并读取一个本地文件：File System Access API 优先（Chrome/Edge），
- *  不可用/用户取消 → input 兜底（同 pickReadFile），返回 null 表示未选。 */
+/** 选择并读取一个本地文件：File System Access API 优先（本机安全上下文的 Chrome/Edge），
+ *  不可用（LAN http / Firefox / Safari）/用户取消 → input 兜底（同 pickReadFile，静默降级，
+ *  不弹"浏览器不支持"提示），返回 null 表示未选。 */
 export async function pickReadFileFsa(accept: string): Promise<File | null> {
-  if (typeof window.showOpenFilePicker === 'function') {
+  if (window.isSecureContext && typeof window.showOpenFilePicker === 'function') {
     try {
       const [handle] = await window.showOpenFilePicker({
         multiple: false,

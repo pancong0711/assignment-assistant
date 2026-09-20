@@ -2,10 +2,11 @@
 import { computed, onMounted, ref } from 'vue'
 import { KB_KINDS, KB_KIND_LABELS, type KbKind } from '../lib/kb'
 import { useKbStore, getKbDirHandle } from '../stores/kb'
-import { detectCapabilities } from '../lib/fsAccess'
+import { detectCapabilities, fsWriteHint } from '../lib/fsAccess'
 
 const kb = useKbStore()
 const caps = detectCapabilities()
+const writeHint = fsWriteHint()
 
 const activeKind = ref<KbKind>('problems')
 const activeChap = ref('')
@@ -58,7 +59,7 @@ function connectWorkspace() {
       if (h) status.value = `已连接目录 ${h.name}（保存时写入 <目录>/kb/<kind>.xlsx，docs/05-D3）`
       else status.value = '连接目录成功，但句柄过期，请重试。'
     } else {
-      status.value = caps.full ? '已取消选择目录。' : caps.browserHint
+      status.value = caps.full ? '已取消选择目录。' : (caps.insecure ? writeHint : caps.browserHint)
     }
   })
 }
@@ -95,11 +96,16 @@ function addChapter() {
         <label class="btn as-label btn-file" for="kb-file">载入教师 xlsx…</label>
         <input type="file" accept=".xlsx" hidden id="kb-file" @change="selectXlsx" />
         <button class="btn" style="margin-left:8px" @click="loadDemoData">载入示例数据</button>
-        <button class="btn" style="margin-left:8px" :disabled="!caps.directoryPicker" @click="connectWorkspace">
+        <button class="btn" style="margin-left:8px" :disabled="!caps.directoryPicker" @click="connectWorkspace"
+          :title="caps.insecure ? writeHint : '需 Chrome/Edge（File System Access API），本机 localhost/https 打开'">
           {{ getKbDirHandle() ? `工作目录：${kb.fsDirName}` : '连接本地题库目录（Chrome/Edge）…' }}
         </button>
       </p>
-      <div class="notice" v-if="!caps.full">{{ caps.browserHint }}</div>
+      <div class="notice" v-if="caps.insecure" style="margin-top:6px">
+        当前为局域网预览（http://IP，非安全上下文）：载入/编辑/导出 xlsx 均可用（文件选择方式）；
+        "连接本地题库目录 / 原地写回"不可用——请用「导出」下载文件，教师手动放回 workspace 的 kb/。{{ writeHint }}
+      </div>
+      <div class="notice" v-else-if="!caps.full">{{ caps.browserHint }}</div>
       <p class="hint" v-if="status">{{ status }}</p>
     </div>
 
@@ -159,11 +165,13 @@ function addChapter() {
       </table>
       <p style="margin-top:10px" v-if="activeChap">
         <button class="btn" @click="kb.addRow(activeKind, activeChap); kb.persist()">＋新增一行（题）</button>
-        <button class="btn primary" style="margin-left:10px" @click="saveOrExport(activeKind)">
-          {{ getKbDirHandle() ? `写回 ${kb.fsDirName}/kb/${activeKind}.xlsx` : `导出 ${activeKind}.xlsx` }}
+        <button class="btn primary" style="margin-left:10px" @click="saveOrExport(activeKind)"
+          :title="getKbDirHandle() ? `原地写回 ${kb.fsDirName}/kb/${activeKind}.xlsx` : (caps.insecure ? 'LAN 预览下下载文件，教师手动放回 workspace 的 kb/；原地写回需本机 localhost/https 打开' : '导出 xlsx 文件（可用其替换本地文件）')">
+          {{ getKbDirHandle() ? `写回 ${kb.fsDirName}/kb/${activeKind}.xlsx` : (caps.insecure ? `下载 ${activeKind}.xlsx（手动放回 workspace）` : `导出 ${activeKind}.xlsx`) }}
         </button>
         <button class="btn" style="margin-left:8px" @click="kb.downloadKind(activeKind, '.copy')">导出副本（另存）</button>
       </p>
+      <p class="hint" v-if="caps.insecure">LAN 预览（非安全上下文）提示：写回按钮已改为"下载文件（教师手动放回 workspace）"；原地写回需本机用 localhost / https 打开。</p>
       <p class="hint">说明：纯浏览不需要引擎；以上操作都在浏览器内完成。</p>
     </div>
   </section>

@@ -1,22 +1,33 @@
 <script setup lang="ts">
 import { computed, onMounted, ref } from 'vue'
 import { STUDENT_TAGS, STUDENT_TAG_LABELS } from '../lib/kb'
+import {
+  SCORE_FAMILY_PRESETS, isFixedFamily, scoreFamilyDesc, scoreFamilyLabel,
+  type ScoreFamily,
+} from '../lib/roster'
 import { useRosterStore } from '../stores/roster'
 import { getKbDirHandle } from '../stores/kb'
-import { detectCapabilities, pickReadFileFsa } from '../lib/fsAccess'
+import { detectCapabilities, fsWriteHint, pickReadFileFsa } from '../lib/fsAccess'
 
 /** 班级与成绩（M5 成绩管理，docs/05-D18）：名单/成绩导入 + 综合得分 + 自动打 tag + 导出。
- *  纯前端闭环（不依赖学习通/引擎）；数据仅存本浏览器 localStorage 与本地导出文件。 */
+ *  成绩源格式预设（docs/05-D19）：固定四类（教务点名册/教务期末/学习通作业统计/
+ *  学习通章节测验/雨课堂汇总）按列名 family 语义自动定位分数列，无需用户选列；
+ *  custom 保留手动选列。纯前端闭环（不依赖学习通/引擎）。 */
 
 const roster = useRosterStore()
 const caps = detectCapabilities()
 const status = ref('')
+/** 成绩源添加时的格式预设选择（默认 custom = 旧行为） */
+const presetFamily = ref<ScoreFamily>('custom')
+const presetDesc = computed(() => scoreFamilyDesc(presetFamily.value))
+const presetIsFixed = computed(() => isFixedFamily(presetFamily.value))
 
 onMounted(() => {
   if (roster.students.length) roster.touch()
 })
 
 function pickXlsx(): Promise<File | null> {
+  // LAN（http://IP）/Firefox/Safari 下静默降级为 file input（fsAccess 内部处理）
   return pickReadFileFsa('.xlsx')
 }
 
@@ -34,9 +45,22 @@ async function addSource() {
   const file = await pickXlsx()
   if (!file) return
   try {
-    status.value = await roster.addScoreSource(file)
+    status.value = await roster.addScoreSource(file, presetFamily.value)
   } catch (e) {
     status.value = `成绩源读入失败：${(e as Error).message}`
+  }
+}
+
+/** 源内切换格式预设：需要原始 xlsx 重新解析（固定四类按 family 语义重新定位） */
+async function reparseSource(idx: number) {
+  const file = await pickXlsx()
+  if (!file) return
+  try {
+    const family = roster.sources[idx]?.family ?? 'custom'
+    await roster.rescoreWithFamily(idx, file, family)
+    status.value = `已按 ${scoreFamilyLabel(family)} 重新解析成绩源「${roster.sources[idx]?.name ?? ''}」。`
+  } catch (e) {
+    status.value = `成绩源重新解析失败：${(e as Error).message}`
   }
 }
 
@@ -80,6 +104,7 @@ async function downloadTaskPackage() {
 
 /** 与 kb 编辑器共用已连接的 workspace 目录句柄（原地写回 roster/；TODO(阶段4) 换 roster 自己的句柄） */
 const dirHandle = computed(() => getKbDirHandle())
+const writeHint = fsWriteHint()
 
 async function saveToWorkspace() {
   if (!dirHandle.value) {
@@ -104,6 +129,8 @@ const summaryText = computed(() => {
   }
   return `共 ${roster.students.length} 人。${parts.join('；')}`
 })
+
+const fixedSourceCount = computed(() => roster.sources.filter((s) => isFixedFamily(s.family)).length)
 </script>
 
 <template>
@@ -112,15 +139,21 @@ const summaryText = computed(() => {
       <h2>班级与成绩 <small style="font-weight:400;color:var(--c-muted)">M5 成绩管理（阶段3.5，docs/05-D18）· 纯前端闭环，不依赖学习通/引擎</small></h2>
       <p class="hint">
         名单列自适应（姓名|name、学号|number、班级|class、tag|tag，引擎 files/roster.py 同款宽松映射）；
-        成绩源任意 xlsx，手动指定"分数来源列"+ 权重（宽松策略：雨课堂签到次数/总次数、作业提交/完成度、
-        考试分数 常见列均可）。综合得分 = 源内按最大值归一 × 权重加权；自上而下按比例切分档次打 tag。
+        成绩源支持<b>格式预设</b>（docs/05-D19）：固定四类（教务期末 / 学习通作业统计 / 学习通章节测验 /
+        雨课堂汇总）按列名 family 语义自动定位分数列，无需手动选列；自定义（custom）手动指定
+        "分数来源列"+ 权重。综合得分 = 源内按最大值归一 × 权重加权；自上而下按比例切分档次打 tag。
       </p>
       <p>
         <button class="btn primary" @click="importRoster">导入名单 xlsx…</button>
         <button class="btn" style="margin-left:8px" @click="roster.addStudent()">＋手动添加学生</button>
         <button class="btn" style="margin-left:8px" @click="roster.clearAll()" v-if="roster.students.length">清空全部（名单+成绩源+比例复位）</button>
       </p>
-      <div class="notice" v-if="!caps.full">{{ caps.browserHint }}</div>
+      <div class="notice" v-if="!caps.full && caps.browserHint">{{ caps.browserHint }}</div>
+      <div class="notice info" v-if="caps.insecure" style="margin-top:6px">
+        当前为局域网预览（http://IP，非安全上下文）：导入名单/成绩/题库均可用（文件选择方式）；
+        "写回 workspace 目录"不可用——请用下方导出按钮下载文件，教师手动放回 workspace。
+        {{ writeHint }}
+      </div>
       <p class="hint" v-if="status">{{ status }}</p>
     </div>
 
@@ -152,29 +185,56 @@ const summaryText = computed(() => {
     </div>
 
     <div class="card">
-      <h2>成绩源（列表式添加，任意 xlsx）</h2>
+      <h2>成绩源（格式预设 + 任意 xlsx，docs/05-D19）</h2>
       <p class="hint">
-        每个成绩源：起名 + 权重（加权平均用）+ 选一位"分数来源列"（雨课堂签到次数、作业完成度、考试分数等均可）。
+        先选<b>格式预设</b>再选文件：固定四类无需选列（自动按该格式的列名语义定位）；
+        custom（自定义）需手动指定"分数来源列" + 权重（雨课堂签到次数、作业完成度、考试分数等均可）。
         列值在其源内按最大值归一到 0~100；综合得分 = weighted mean。
       </p>
-      <p><button class="btn primary" @click="addSource">＋添加成绩源（选 xlsx）</button></p>
+      <p>
+        <label class="field">格式预设：
+          <select v-model="presetFamily" style="min-width:230px">
+            <option v-for="p in SCORE_FAMILY_PRESETS" :key="p.value" :value="p.value">{{ p.label }}</option>
+          </select>
+        </label>
+        <button class="btn primary" style="margin-left:8px" @click="addSource">＋添加成绩源（选 xlsx）</button>
+      </p>
+      <p class="hint" :class="{ notice: presetIsFixed }" style="margin-top:2px">
+        <template v-if="presetIsFixed">这是固定格式（来自{{ presetFamily === 'rainclass' ? '雨课堂' : presetFamily.startsWith('xuexitong') ? '学习通' : '教务' }}导出）——无需选列，自动按列名语义解析。说明：{{ presetDesc }}</template>
+        <template v-else>{{ presetDesc }}</template>
+      </p>
       <div v-if="!roster.sources.length" class="notice">尚无成绩源：可只导名单不打 tag（tag 列留空），或添加若干成绩源后「重算并打 tag」。</div>
       <p v-for="(s, i) in roster.sources" :key="i" class="hint" style="border-bottom:1px dashed var(--c-border);padding:6px 0">
-        <label class="field">源名：<input type="text" v-model="s.name" style="width:160px" @change="roster.touch()" /></label>
-        <label class="field">分数来源列：
-          <select v-model="s.scoreColumn" @change="roster.touch()">
-            <option v-for="h in Object.keys(s.rows[0] ?? {})" :key="h" :value="h">{{ h }}</option>
+        <label class="field">源名：<input type="text" v-model="s.name" style="width:150px" @change="roster.touch()" /></label>
+        <label class="field" :title="scoreFamilyDesc(s.family)">格式预设：
+          <select :value="s.family" @change="roster.setSourceFamily(i, (($event.target as HTMLSelectElement).value) as ScoreFamily, null)" style="max-width:190px">
+            <option v-for="p in SCORE_FAMILY_PRESETS" :key="p.value" :value="p.value">{{ p.label }}</option>
           </select>
         </label>
-        <label class="field">姓名列：
-          <select v-model="s.nameColumn" @change="roster.touch()">
-            <option v-for="h in Object.keys(s.rows[0] ?? {})" :key="h" :value="h">{{ h }}</option>
-          </select>
-        </label>
-        <label class="field">权重：<input type="number" v-model.number="s.weight" min="0.1" step="0.1" style="width:70px" @change="roster.touch()" /></label>
+        <template v-if="isFixedFamily(s.family)">
+          <span class="hint" style="color:var(--c-ok)">
+            固定格式（来自{{ s.family === 'rainclass' ? '雨课堂' : s.family.startsWith('xuexitong') ? '学习通' : '教务' }}导出）·
+            {{ s.family === 'roster' ? '仅接表，不计分' : `分数列：${s.scoreColumn}` }}
+            <button class="btn small" style="margin-left:4px" title="固定四类按原始表重新按 family 语义解析" @click="reparseSource(i)">重选文件解析</button>
+          </span>
+        </template>
+        <template v-else>
+          <label class="field">分数来源列：
+            <select v-model="s.scoreColumn" @change="roster.touch()">
+              <option v-for="h in Object.keys(s.rows[0] ?? {})" :key="h" :value="h">{{ h }}</option>
+            </select>
+          </label>
+          <label class="field">姓名列：
+            <select v-model="s.nameColumn" @change="roster.touch()">
+              <option v-for="h in Object.keys(s.rows[0] ?? {})" :key="h" :value="h">{{ h }}</option>
+            </select>
+          </label>
+        </template>
+        <label class="field" v-if="s.family !== 'roster'">权重：<input type="number" v-model.number="s.weight" min="0.1" step="0.1" style="width:70px" @change="roster.touch()" /></label>
         <span class="hint">{{ s.rows.length }} 行 · {{ s.fileName }}</span>
         <button class="btn small" @click="roster.removeSource(i)">移除</button>
       </p>
+      <p class="hint" v-if="fixedSourceCount">已按固定格式解析的成绩源 ×{{ fixedSourceCount }}（score_sources[].family 将随任务包导出，与 engine CLI <code>--score family:file[:col[:weight]]</code> 同口径）。</p>
     </div>
 
     <div class="card">
@@ -200,6 +260,7 @@ const summaryText = computed(() => {
         <button class="btn primary" @click="recompute">重算综合得分并自动切分打 tag</button>
         <button class="btn" style="margin-left:8px" :disabled="exportDisabled" @click="saveToWorkspace" v-if="dirHandle">写回 workspace roster/</button>
       </p>
+      <p class="hint" v-if="dirHandle && writeHint">{{ writeHint }}</p>
       <p class="hint">{{ summaryText }}</p>
     </div>
 
@@ -207,7 +268,8 @@ const summaryText = computed(() => {
       <h2>产出（名单带 tag → 引擎可直接用）</h2>
       <p class="hint">
         roster.xlsx 列 = name/number/class/tag（恒英文值），<code>uv run assist sheet make &lt;task&gt; --roster roster.xlsx</code> 直接可用；
-        roster.json 供 CLI/AI；任务包 zip 内含 roster.xlsx + task-package.json（group_cfg + special_tag_cfg + punish）+ 附带切分规则说明 md。
+        roster.json 供 CLI/AI；任务包 zip 内含 roster.xlsx + roster.json + task-package.json
+        （group_cfg + special_tag_cfg + punish + score_sources[].family，docs/05-D19）+ 附带切分规则说明 md。
       </p>
       <p>
         <button class="btn primary" :disabled="exportDisabled" @click="downloadRosterJsonAndXlsx">导出 tag 名单（xlsx + JSON）</button>
@@ -220,6 +282,7 @@ const summaryText = computed(() => {
         </template>
         <template v-else>（未勾选）</template>
       </p>
+      <p class="hint" v-if="caps.insecure">LAN 预览提示：导出为浏览器下载，教师手动放回 workspace 的 <code>classes/&lt;班级&gt;/roster/</code> 即可（写回目录能力需本机 localhost/https 打开）。</p>
     </div>
   </section>
 </template>

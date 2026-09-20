@@ -26,20 +26,57 @@ export interface RosterStudent {
   punish: boolean
 }
 
-/** 一个成绩源文件（任意 xlsx，教师手动指定"分数来源列"与权重） */
+/** 一个成绩源文件（任意 xlsx，教师手动指定"分数来源列"与权重）。
+ *  D19：新增格式预设 family —— 固定四类（engine scores.py ADAPTERS 同名）按
+ *  列名/表结构 family 语义自动定位分数列，无需用户选列；custom = 手动选列。 */
+export type ScoreFamily = 'roster' | 'exam' | 'xuexitong_assignment' | 'xuexitong_stat' | 'rainclass' | 'custom'
+
 export interface ScoreSource {
   /** 源名称（如"雨课堂-第3章签到"），教师起名 */
   name: string
   /** 原始文件名（提示用） */
   fileName: string
-  /** 分数来源列（xlsx 原始表头名） */
+  /** 格式预设（docs/05-D19）：固定四类 + custom（默认） */
+  family: ScoreFamily
+  /** 分数来源列（xlsx 原始表头名；custom 用，固定四类为解析结果说明） */
   scoreColumn: string
-  /** 学生姓名列（xlsx 原始表头名） */
+  /** 学生姓名列（xlsx 原始表头名；custom 用，固定四类自动定位） */
   nameColumn: string
   /** 权重（任意正数，最终按权重总和归一） */
   weight: number
   /** 该源各行的数据（key: 姓名, value: { [列名]: 值 }），供切源/换列时复用 */
   rows: Array<Record<string, string>>
+  /** 每生解析出的分数（固定四类由 family 语义解析；custom 按所选列）。
+   *  key: 姓名。供 computeScores 直接取用。 */
+  scores: Record<string, number>
+}
+
+/** 格式预设元数据（界面下拉 + 说明文字；与 engine scores.py ADAPTERS 注释同口径） */
+export const SCORE_FAMILY_PRESETS: Array<{
+  value: ScoreFamily
+  label: string
+  desc: string
+  fixed: boolean
+}> = [
+  { value: 'roster', label: '教务点名册（仅接表，不计分）', desc: '固定格式（来自教务系统导出）：姓名/学号/班级列，作为名单接表用，不参与加权计分。', fixed: true },
+  { value: 'exam', label: '教务期末成绩表', desc: '固定格式（来自教务系统导出）：表头含"期末(必填)"列，直接取该列分数。', fixed: true },
+  { value: 'xuexitong_assignment', label: '学习通·作业统计', desc: '固定格式（来自学习通导出）：前 8 行内含"成绩"行，其上一行为作业标题，数据行在下方；每生取各作业均分。', fixed: true },
+  { value: 'xuexitong_stat', label: '学习通·章节测验（统计文件）', desc: '固定格式（来自学习通导出）：按 sheet 名含"章节测验"匹配，第 4 行为表头找"成绩"列，非 0 计入取均分。', fixed: true },
+  { value: 'rainclass', label: '雨课堂汇总表', desc: '固定格式（来自雨课堂导出）：无表头，第 2 行为列标题，前 3 列为学号/姓名/汇总，其后每课 2 列（方式+得分），取每课得分均值。', fixed: true },
+  { value: 'custom', label: '自定义（手动选列）', desc: '其他成绩（高考数学/大一高数等）：手动指定姓名列与分数来源列 + 权重。', fixed: false },
+]
+
+export function scoreFamilyLabel(family: ScoreFamily): string {
+  return SCORE_FAMILY_PRESETS.find((p) => p.value === family)?.label ?? family
+}
+
+export function scoreFamilyDesc(family: ScoreFamily): string {
+  return SCORE_FAMILY_PRESETS.find((p) => p.value === family)?.desc ?? ''
+}
+
+/** 固定四类 = 界面上标注"固定格式（来自教务/学习通/雨课堂导出）"，无需选列。 */
+export function isFixedFamily(family: ScoreFamily): boolean {
+  return SCORE_FAMILY_PRESETS.find((p) => p.value === family)?.fixed ?? false
 }
 
 /** 2603 默认分组比例模板（docs/05-D18；punish 不参与比例） */
@@ -59,9 +96,12 @@ export const DEFAULT_GROUP_RATIOS: GroupRatio[] = [
   { tag: 'translation', ratio: 0.10 },
 ]
 
-/** 综合得分 = Σ(源归一化分数 × 源权重 / 权重和) × 100（每个源内部按该列最大值归一到 0~1）。 */
+/** 综合得分 = Σ(源归一化分数 × 源权重 / 权重和) × 100（每个源内部按该源分数最大值归一到 0~1）。
+ *  分数来源：源.scores（由 xlsx 层按 family 语义解析好：固定四类自动按列名/表结构定位，
+ *  custom 按教师所选列）；legacy 存量源无 scores 时回退按 scoreColumn 取值。 */
 export function computeScores(students: RosterStudent[], sources: ScoreSource[]): void {
-  const valid = sources.filter((s) => s.weight > 0 && s.scoreColumn !== '' && s.rows.length > 0)
+  const valid = sources.filter((s) => s.weight > 0 && s.rows.length > 0
+    && (Object.keys(s.scores ?? {}).length > 0 || s.scoreColumn !== ''))
   const totalWeight = valid.reduce((sum, s) => sum + s.weight, 0)
   for (const stu of students) {
     if (valid.length === 0 || totalWeight <= 0) {
@@ -70,18 +110,28 @@ export function computeScores(students: RosterStudent[], sources: ScoreSource[])
     }
     let acc = 0
     for (const src of valid) {
-      const row = src.rows.find((r) => str(r[src.nameColumn]) === stu.name)
-      if (!row) continue
-      const nums = src.rows
-        .map((r) => num(r[src.scoreColumn]))
-        .filter((v) => v !== null) as number[]
-      const max = nums.length ? Math.max(...nums) : 0
-      const raw = num(row[src.scoreColumn])
+      const raw = srcScoreOf(src, stu.name)
       if (raw === null) continue
+      const nums = Object.values(srcScores(src)).filter((v) => v !== null) as number[]
+      const max = nums.length ? Math.max(...nums) : 0
       acc += (max > 0 ? raw / max : 0) * (src.weight / totalWeight)
     }
     stu.score = Math.round(acc * 1000) / 10 // 0~100，保留 1 位小数
   }
+}
+
+/** 源内某个学生的分数（scores 表优先；legacy 无 scores 时按 scoreColumn 回退）。 */
+export function srcScoreOf(src: ScoreSource, name: string): number | null {
+  if (src.scores && Object.keys(src.scores).length > 0) {
+    const v = src.scores[name]
+    return typeof v === 'number' && Number.isFinite(v) ? v : null
+  }
+  const row = src.rows.find((r) => str(r[src.nameColumn]) === name)
+  return row ? num(row[src.scoreColumn]) : null
+}
+
+function srcScores(src: ScoreSource): Record<string, number> {
+  return src.scores ?? {}
 }
 
 /** 切分打 tag（重算入口）：
@@ -158,6 +208,21 @@ function shuffle<T>(arr: T[]): T[] {
 
 export function emptyStudent(): RosterStudent {
   return { name: '', number: '', class: '', tag: '', score: null, manualTag: false, punish: false }
+}
+
+/** legacy 存量源（无 family/scores 字段）的规范化：补 family='custom' + scores={}。 */
+export function normalizeSource(s: Partial<ScoreSource>): ScoreSource {
+  const family = (SCORE_FAMILY_PRESETS.some((p) => p.value === s.family) ? s.family : 'custom') as ScoreSource['family']
+  return {
+    name: String(s.name ?? ''),
+    fileName: String(s.fileName ?? ''),
+    family,
+    scoreColumn: String(s.scoreColumn ?? ''),
+    nameColumn: String(s.nameColumn ?? ''),
+    weight: Number(s.weight ?? 1) || 1,
+    rows: Array.isArray(s.rows) ? s.rows : [],
+    scores: (s.scores && typeof s.scores === 'object' ? s.scores : {}) as Record<string, number>,
+  }
 }
 
 export function tagLabel(tag: string): string {
