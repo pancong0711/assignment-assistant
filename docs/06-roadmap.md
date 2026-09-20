@@ -25,9 +25,12 @@
   或由 PWA 预览替代）。
 
 **交付/验收**
-- `assist sheet make <task>` 产出横/竖版带水印 PDF（合成/本地数据）；
-- `assist kb stats` 可查询题库统计；
-- 全部能力不依赖前端可复现（CLI 超集初验）。
+- ✅ `assist sheet make --task <task>` 按任务包逐生生成横/竖版带水印 PDF（roster 驱动，已实跑验证）；
+- ✅ `assist kb stats/export/snapshot` 往返可用；`assist doctor` 逐项体检（uv/依赖/TeX 黄灯）；
+- ✅ `assist bootstrap`（D14：.runtime/venv + 缓存重定向）；
+- ✅ CLI 超集初验（全部功能不依赖前端可复现）；
+- ⏳ 细化项：横版版式的边距/字号按真实题图细调；`assist bootstrap` 同时指 UV_PROJECT_ENVIRONMENT（pyproject sync 模式）；
+- 开发环境注意：本机沙箱 `~/.cache/uv` 只读 → 用 `UV_CACHE_DIR` 指向 workspace（与 D14 一致）。
 
 ## 阶段 2 · App 骨架：作业纸设计上线（纯静态 PWA）
 

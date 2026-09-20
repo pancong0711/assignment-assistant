@@ -61,6 +61,11 @@ def doctor(obj, workspace, verbose):
             checks.append((label, "red"))
     uv_ok = "green" if shutil.which("uv") else "red"
     checks.append(("uv", uv_ok))
+    try:
+        from .paper.latex import check_xelatex
+        checks.append(("xelatex(可选)", "green" if check_xelatex() else "yellow"))
+    except ImportError:
+        checks.append(("xelatex(可选)", "red"))
     cfg = load_workspace_settings(ws_path)
     checks.append(("settings.local.json", "green" if (ws_path / "settings.local.json").exists() else "yellow"))
     checks.append(("kb/problems.xlsx", "green" if (ws_path / "kb" / "problems.xlsx").exists() else "yellow"))
