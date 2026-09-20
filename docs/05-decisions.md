@@ -124,3 +124,20 @@ CLI 是完整能力本体；PWA 是 CLI 的"参数化界面 + 结果展示器"�
   - 依赖引擎的功能（学习通、批阅、打印级 PDF、写回 xlsx）按钮灰 +
     页面顶部黄色横幅提示"需引擎在线 → 去体检"；
 - 体检页输出逐项绿黄红 + "复制命令"按钮（引用 install.ps1/install.sh）。
+
+## D14 · 引擎环境收纳进 workspace（修订 D13 第一条，用户拍板）
+
+**变更**：引擎 .venv 与相关缓存**收纳在 workspace 内**，不再放系统级目录。
+- 布局：`workspace/.runtime/venv`（虚拟环境）、`.runtime/cache/uv`（
+  `UV_CACHE_DIR` 重定向）、`.runtime/browsers`（Playwright 内核,
+  `PLAYWRIGHT_BROWSERS_PATH` 重定向）；
+- **卸载即删除 workspace 一个目录**（用户核心诉求）；
+- TeX 例外：体积大且系统级安装，保持可选外部依赖，卸载时单独提示清理；
+- **导出/导入白名单**（kb/tasks/classes/reports…），`.runtime/` 永不打包，
+  旧文件不入 zip，导入端 `assist doctor` 校验引擎可用性；
+- `assist bootstrap`（安装脚本第一步）负责设置上述环境变量并建 venv；
+- **跨机可执行迁移**：
+  - 主路 = uv/pyapp 便携引擎包（Releases，见 D5），拷贝即用；
+  - 备选（延后验证）：PyInstaller/Nuitka 单文件可执行，体验更"零依赖"，
+    但体积/杀软误报/调试成本高，仅作为后段可选懒人包；
+- 多 workspace 共用引擎的需求降级为可选（用户明确更看重"一处删除即卸载"）。
