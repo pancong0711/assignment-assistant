@@ -128,6 +128,8 @@ export const useSettingsStore = defineStore('settings', {
     engineOnline: false as boolean,
     engineVersion: '' as string,
     engineStatusError: '' as string,
+    /** 引擎未在线时的体检降级态标记（true=上次体检走的是占位/降级路径）。 */
+    doctorDegraded: false as boolean,
     /** 最近一次 /doctor 结果（含未在线降级信息） */
     lastDoctorError: '' as string,
     doctorOk: false as boolean,
@@ -185,6 +187,7 @@ export const useSettingsStore = defineStore('settings', {
       if (!r.online) {
         this.lastDoctorError = r.error ?? 'fetch failed'
         this.doctorOk = false
+        this.doctorDegraded = true
         for (const c of this.checks) {
           c.status = 'warn'
           c.note = '占位状态：引擎未在线（ assist serve 未启动或地址不对）。'
@@ -193,6 +196,7 @@ export const useSettingsStore = defineStore('settings', {
         return false
       }
       this.lastDoctorError = ''
+      this.doctorDegraded = false
       this.doctorOk = r.ok
       this.doctorWorkspace = r.engine.workspace
       this.engineOnline = true
