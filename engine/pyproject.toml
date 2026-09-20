@@ -26,3 +26,7 @@ packages = ["src/assist"]
 [tool.uv]
 # D14: 引擎环境收纳进 workspace —— 使用时由 assist bootstrap / 安装脚本
 # 将 UV_PROJECT_ENVIRONMENT 与 UV_CACHE_DIR 指向 workspace/.runtime/**
+
+# 阶段3 批阅链路：运行依赖沿用既有声明（httpx/pillow/openpyxl），不新增。
+[dependency-groups]
+dev = ["pytest>=8.0"]

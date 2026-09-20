@@ -8,10 +8,14 @@ fail=0
 log() { echo -e "\033[31m[脱敏失败] $*\033[0m"; fail=1; }
 
 # 1) 红名单：绝不入库的路径（与 .gitignore 互补，防误 add 例外规则）
-banned_regex='(^|/)(_legacy|roster|grading|exports|handwriting|submissions|作业)/|(^|/)kb/[^/]+\.xlsx$|\.env$'
+# grading/ 是学生数据目录红线；engine/src/assist/grading/ 是引擎源码包（代码，允许）
+banned_regex='(^|/)(_legacy|roster|exports|handwriting|submissions|作业)/|(^|/)kb/[^/]+\.xlsx$|\.env$'
 while IFS= read -r f; do
   [[ -e "$f" ]] || continue
   echo "$f" | grep -Eq "$banned_regex" && log "路径命中红线: $f"
+  if echo "$f" | grep -Eq '(^|/)grading/' && [[ "$f" != engine/src/assist/grading/* ]]; then
+    log "路径命中红线(grading 学生数据目录): $f"
+  fi
 done <<< "$files"
 
 # 2) 密钥特征扫描

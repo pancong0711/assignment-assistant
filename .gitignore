@@ -5,8 +5,12 @@ kb/*
 !kb/examples/
 roster/
 grading/
+# 引擎源码例外（代码非数据；产物 classes/*//grading 数据仍被上面拦住）
+!engine/src/assist/grading/
 test/
 test_*
+!engine/tests/
+!engine/tests/test_*.py
 tests/data/
 exports/
 damage/

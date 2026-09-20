@@ -211,10 +211,27 @@ def serve(obj):  # 阶段4 占位
 
 
 @cli.command()
+@click.option("--task", "task_path", required=True, help="任务包 JSON 路径（grade 节驱动）")
+@click.option("--images", "images_dir", default=None, help="学生作业图片目录（文件名=学生名或学号-题号）")
+@click.option("--rerun", "rerun", default=None,
+              type=click.Choice(["download", "transcribe", "evaluate", "report", "upload"]),
+              help="单步重跑（指定 step 名，只重跑该步）")
+@click.option("--workspace", "-w", default=None)
+@click.option("--verbose", "-v", is_flag=True)
 @click.pass_obj
-def grade(obj):  # 阶段3 占位
-    """AI 批阅（阶段3 实现）。"""
-    click.echo("grade：阶段3 实现（占位）。")
+def grade(obj, task_path, images_dir, rerun, workspace, verbose):
+    """AI 批阅：transcribe → evaluate → report（阶段3；download/upload 属阶段4）。
+
+    任务包 grade.steps 驱动；journal 运行记录写入
+    classes/<class>/grading/<task>/journal.jsonl（05-D8）；
+    apikey 从 workspace settings.local.json 的 llm 段读（绝不入代码/日志）。
+    """
+    from .grading.flow import run_task, run_step
+    ws = _setup(verbose or obj.get("verbose"), workspace)
+    tp = Path(task_path).expanduser().resolve()
+    kwargs = {"images_dir": images_dir} if images_dir else {}
+    rec = run_step(tp, ws, rerun, **kwargs) if rerun else run_task(tp, ws, **kwargs)
+    click.echo(f"完成 run_id={rec['run_id']} steps={rec['steps_done']}\n产物目录={rec['bucket']}")
 
 
 def main():
