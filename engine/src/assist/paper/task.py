@@ -90,6 +90,7 @@ def sheets_from_task(task_path: Path, ws: Path, out_dir: Path | None = None,
         notes_prefix=f"{task['id']}",
         watermark=not no_watermark,
         user_cfg=user_cfg,
+        per_page=lay.get("per_page"),
     )
 
 

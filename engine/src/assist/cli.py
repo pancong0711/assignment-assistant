@@ -211,10 +211,17 @@ def roster():
 
 
 def _parse_scores(specs):
-    """--score 可多份，格式 "文件[:列[:权重]]"；解析为成绩行列表。"""
-    from .roster import read_score_xlsx
+    """--score 可多份，格式 "[family:]文件[:列[:权重]]"（D19 成绩适配层）。
+
+    family ∈ exam / xuexitong_assignment / xuexitong_stat / rainclass / custom；
+    family 缺省按 custom（列自动识别/手选）。"""
+    from .roster.scores import ADAPTERS, read_source
     rows = []
     for spec in specs:
+        family = None
+        head = spec.split(":", 1)
+        if len(head) == 2 and head[0] in ADAPTERS:
+            family, spec = head[0], head[1]  # 去掉 family 前缀再解析 文件:列:权重
         parts = spec.rsplit(":", 2)
         if len(parts) == 3:
             try:
@@ -229,7 +236,13 @@ def _parse_scores(specs):
         else:
             fn, col, weight = spec, "", 1.0
         p = Path(fn).expanduser().resolve()
-        rows = rows + read_score_xlsx(p, col=col, weight=weight)
+        if family and family != "custom":
+            rows = rows + read_source({"family": family, "file": str(p),
+                                       "weight": weight,
+                                       **({"col": col} if col else {})})
+        else:
+            rows = rows + read_source({"family": "custom", "file": str(p),
+                                       "cols": col or None, "weight": weight})
     return rows
 
 
