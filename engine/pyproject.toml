@@ -1,0 +1,28 @@
+[project]
+name = "assist-engine"
+version = "0.1.0"
+description = "assignment-assistant engine: 作业纸设计 + AI 批阅 (CLI / Companion 本地引擎)"
+requires-python = ">=3.11"
+dependencies = [
+    "click>=8.1",
+    "openpyxl>=3.1",
+    "reportlab>=4.0",
+    "loguru>=0.7",
+    "pillow>=10.0",
+    "pypdf>=4.0",
+    "httpx>=0.27",
+]
+
+[project.scripts]
+assist = "assist.cli:main"
+
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[tool.hatch.build.targets.wheel]
+packages = ["src/assist"]
+
+[tool.uv]
+# D14: 引擎环境收纳进 workspace —— 使用时由 assist bootstrap / 安装脚本
+# 将 UV_PROJECT_ENVIRONMENT 与 UV_CACHE_DIR 指向 workspace/.runtime/**

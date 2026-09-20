@@ -46,3 +46,9 @@ dist/
 .opencode/
 .pi/
 .agents/
+
+# 开发/验证 scratch（本机沙箱演示用）
+.scratch/
+# 真实水印/logo 资产不入库（占位图除外，教师自行替换）
+engine/assets/watermark/
+!engine/assets/watermark/.gitkeep
