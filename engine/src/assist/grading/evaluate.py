@@ -70,7 +70,8 @@ ANALYSIS_PROMPT = """这是大学物理作业评阅，内容完全学术，请�
 
 # ---- 标签差异化指令：逐段迁移自 evaluator.evaluate_markdown ----
 _TAG_INSTRUCTIONS = {
-    ("copy", "copyonly", "copysp"): (
+    ("copy", "copyonly", "copysp", "punish"): (  # punish（期末补作业）沿用"完整性自查"规则并放宽
+
         "[学生标签: 抄写题] 该作业包含抄写类题目。请结合题干要求逐题评阅：\n"
         "- 抄写类题目 → 根据题干要求检查抄写是否完整（题干要求抄什么，就检查什么是否抄全），"
         "不评价公式推导、计算正确性、逻辑推理、小数点精度等\n"

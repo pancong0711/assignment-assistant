@@ -15,6 +15,27 @@ export const KB_KINDS = [
 
 export type KbKind = (typeof KB_KINDS)[number]
 
+/** 分层标签（tag）——与旧 2603/2601 的学生分组标签 1:1 对齐（docs/04 §1、05-D17）。
+ *  summary 没有独立 xlsx（从点名/成绩打标签）；punish 为期末补作业专用（新增强化）。 */
+export const STUDENT_TAGS = [
+  'copy', 'copySp', 'copyOnly',
+  'qa', 'summary',
+  'distinguish', 'innovation', 'translation',
+  'punish',       // 期末补作业（惩罚作业：统一题集，不按层次分层）
+] as const
+
+export const STUDENT_TAG_LABELS: Record<string, string> = {
+  copy: '抄写 copy（只查完整性）',
+  copySp: '抄写特 copySp',
+  copyOnly: '纯抄写 copyOnly',
+  qa: '问答 qa',
+  summary: '综述 summary',
+  distinguish: '辨析 distinguish',
+  innovation: '创新 innovation',
+  translation: '翻译 translation',
+  punish: '补作业 punish（期末统一补交）',
+}
+
 export const KB_KIND_LABELS: Record<KbKind, string> = {
   problems: '常规题 problems',
   copy: '抄写 copy',

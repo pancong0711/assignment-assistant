@@ -25,6 +25,12 @@ function emptyBooks(): Record<KbKind, KbBook> {
   return out
 }
 
+function demoBooksFactory(): Record<KbKind, KbBook> {
+  const out = emptyBooks()
+  for (const b of demoBooks) out[b.kind] = b
+  return out
+}
+
 function fromPersisted(raw: string): Record<KbKind, KbBook> | null {
   try {
     const obj = JSON.parse(raw) as PersistedKb
@@ -41,7 +47,8 @@ function fromPersisted(raw: string): Record<KbKind, KbBook> | null {
 
 export const useKbStore = defineStore('kb', {
   state: () => ({
-    books: emptyBooks(),
+    // 初始：无任何本地记录时自动载入合成示例（快速上手体验；载入教师数据后即被替换）
+    books: fromPersisted(localStorage.getItem(LS_KEY) ?? '') ?? demoBooksFactory(),
     /** 数据来源标记（用于界面提示） */
     origin: 'none' as 'none' | 'demo' | 'file' | 'zip' | 'fs',
     savedAt: '',

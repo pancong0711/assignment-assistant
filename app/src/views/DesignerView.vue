@@ -1,6 +1,6 @@
 <script setup lang="ts">
 import { computed, ref, watch } from 'vue'
-import { KB_KINDS, KB_KIND_LABELS, type KbKind } from '../lib/kb'
+import { KB_KINDS, KB_KIND_LABELS, STUDENT_TAGS, STUDENT_TAG_LABELS, type KbKind } from '../lib/kb'
 import { useKbStore } from '../stores/kb'
 import { useTaskpadStore } from '../stores/taskpad'
 import { useSettingsStore } from '../stores/settings'
@@ -149,7 +149,7 @@ function engineHint(): void {
         </p>
         <p>
           <label class="field">搜索：<input type="text" v-model="rowFilter" style="width:130px" /></label>
-          <label class="field">分层标签 tag：<input type="text" v-model="itemTag" placeholder="copy / distinguish / innovation…" style="width:150px" /></label>
+          <label class="field">分层标签 tag：<select v-model="itemTag" style="width:170px"><option value="">（无）</option><option v-for="tg in STUDENT_TAGS" :key="tg" :value="tg">{{ STUDENT_TAG_LABELS[tg] }}</option></select></label>
         </p>
         <div v-if="chapRows.length" style="max-height:260px; overflow:auto; border:1px solid var(--c-border); border-radius:8px; padding:6px">
           <label v-for="r in chapRows" :key="r.id" style="display:block; font-size:13px; padding:2px 0">
