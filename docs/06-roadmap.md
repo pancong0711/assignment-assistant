@@ -42,10 +42,13 @@
   任务包生成与导出（01/04 的 JSON 格式）、导入导出 zip。
 - 设置中心雏形 + 首次运行向导（D13）。
 
-**交付/验收**
-- 浏览器内：kb 编辑 → 选题 → 预览 → 导出任务包；任务包丢给引擎 CLI
-  即出 PDF（阶段1 联动）；
-- 仓库内无任何真实数据（check-secrets 通过）。
+**交付/验收（✅ 已完成，子代理构建+本侧复验 npm run build）**
+- ✅ Vue3+Vite+TS+Pinia 骨架、manifest+SW（vite base=/assignment-assistant/app/），build 通过（bundle ~644kB，code-split 待优化）；
+- ✅ 题库编辑器（SheetJS 读写 kind xlsx，列结构兼容 05-D3；Chrome 原地写回/降级导出）；
+- ✅ 作业纸设计器（横竖 A4 预览、横版左右两半各一题、任务包 JSON schema 同 docs/04 §1，可导入续编）；
+- ✅ zip 导入导出（JSZip；过滤 .runtime//.history/ 与路径穿越，D14）；
+- ✅ 设置中心 + 三步首次运行向导 + D13 条件式置灰（引擎依赖按钮灰 + 黄横幅）；
+- 遗留（阶段4+）：体检页真实接入 assist serve/doctor；fig 题图上传 UI；SheetJS 写样式局限待引擎 openpyxl 补；bundle 拆分；grade 表单（模型配置）。
 
 ## 阶段 3 · 批阅引擎迁移（CLI）+ 批阅工作台（静态态）
 
