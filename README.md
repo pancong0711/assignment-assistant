@@ -17,10 +17,12 @@
 - `docs/02-pwa-feasibility.md` — PWA 可行性结论与风险
 - `docs/03-module-migration.md` — 旧项目 → 新项目迁移映射
 - `docs/04-data-model-and-privacy.md` — 数据契约、脱敏红线、协议声明
-- `docs/05-decisions.md` — 决策记录（D1–D8：CLI 超集铁律、栈选型、安装向导、xlsx 为主等）
+- `docs/05-decisions.md` — 决策记录（D1–D13；与其他文档冲突时以 05 为准）
+- `docs/06-roadmap.md` — 六阶段路线图（0–5，含验收标准）
+- `docs/07-incremental-vs-rewrite.md` — 增量迁移 vs 重写的开发思路判定
 - `_legacy/` — 原始两项目解档（仅本地参考，已被 gitignore，永不推送）
 
-## 里程碑（草案）
+## 里程碑
 
-见 `docs/02-pwa-feasibility.md` §4：骨架 → 题库/作业纸（含横版双题）→
-批阅迁移 → Companion 本地引擎 → 导入导出与文档打磨。
+见 `docs/06-roadmap.md`（六阶段）；阶段 0 讨论奠基已完成，
+下一步进入阶段 1（engine 内核：kb 读写 + 竖/横版版式）。
