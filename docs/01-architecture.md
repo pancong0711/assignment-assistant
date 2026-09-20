@@ -55,10 +55,11 @@
   提交给 Engine（或教师手动复制命令）。
 
 ### M2 作业纸设计（核心，App 为主）
-- 题库管理：xlsx ↔ JSON 双轨（Engine `files` 模块互转；App 内 JSON 增删改查，
-  含图片附件存 OPFS），兼容现有列结构
-  `id/content/img_path/page/related/type/solution/note`，但内部以 JSON 为源，
-  xlsx 为导入/导出格式（向量：**JSON 为 source of truth**）；
+- 题库管理：**xlsx 为 source of truth（教师编辑习惯优先，见 05-D3）**，JSON 为
+  导出/交换/AI 阅读副本，由引擎一键同步；
+  兼容现有列结构 `id/content/img_path/page/related/type/solution/note`，
+  多 sheet=多章；网页端读 xlsx→内存编辑→写回（companion 模式可委托引擎），
+  写盘前自动快照到 `kb/.history/`；
 - 作业纸构建：选章、选题、分层标签（copy/distinguish/innovation/qa/summary/
   copySp/copyOnly/translation…）、页眉页脚（课程名/班级/学期/姓名学号栏/水印）；
 - 版式：竖版 A4（现状）；**新增横版 A4 左右两半各一题**（reportlab
@@ -104,14 +105,9 @@ assignment-assistant/
 `assist xuexitong ...`、`assist paper ...`、`assist grade ...`、
 `assist files ...`。
 
-## 5. 待定的开放问题（请老师拍板）
+## 5. 决策状态
 
-1. 前端技术栈是否接受 Vite(+React/Vue)；无框架纯原生也可，但状态管理会累。
-2. Companion 模式引擎通信协议：本地 HTTP（推荐，沿用 webui.py 经验）还是
-   仅"前端导出任务包 → CLI 执行 → 前端导入结果包"的离线握手？
-   （可两者都支持：HTTP 优先，导出/导入包为降级路径。）
-3. 题库唯一真相源定为 JSON 是否可接受？xlsx 保留为导入导出格式。
-4. 多教师/多班级的数据隔离粒度：单目录单学期，还是单目录多学期？
-5. 学习通"上传批阅"是否保留自动打分（旧版可打分+传图），还是先只传评语？
-6. MIT 协议 + 第三方库（reportlab、Playwright、pydantic/pyyaml…）以
-   NOTICE/依赖清单方式声明，是否还需在 README 单列？
+原开放问题已基本收敛，结论移入 `docs/05-decisions.md`（D1–D8）：
+CLI 超集铁律、在线握手+任务包双形态、xlsx 为主、Vue 3 + Vite + TS + Pinia、
+环境体检向导、workspace = 学期×课×班级、保留自动打分、学习通安全边界。
+后续新决策一律记入 05 文档，旧文档与 05 冲突时以 05 为准。

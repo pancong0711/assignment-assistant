@@ -53,9 +53,9 @@ Pyodide/WASM 可以让纯计算 Python 在浏览器跑（pandas 有些 wheel 可
 |---|---|
 | 0 | 仓库骨架、MIT、脱敏 gitignore、CI（脱敏检查） |
 | 1 | Engine：包结构 + `files`（kb JSON↔xlsx）+ `paper` 竖版迁移 + **横版双题版式** |
-| 2 | App：PWA 骨架（manifest/SW/OPFS），题库编辑 + 作业纸设计 + 预览/导出 |
+| 2 | App：PWA 骨架（manifest/SW/OPFS），题库编辑（xlsx 读写为主，见 05-D3）+ 作业纸设计 + 预览/导出 |
 | 3 | Engine：`grade` 迁移（转录→评阅→报告），App 批阅工作台静态部分 |
-| 4 | Companion：`assist serve` + 前端在线检测 + 学习通辅助/上传/公告 |
+| 4 | Companion：`assist serve` + 前端在线检测 + 学习通辅助/上传/公告；PWA「环境体检/安装向导」页（05-D5） |
 | 5 | 打磨：导入导出 zip 包、错误恢复、教师文档 |
 
 ## 5. 风险清单

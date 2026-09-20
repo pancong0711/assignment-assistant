@@ -17,6 +17,7 @@
 - `docs/02-pwa-feasibility.md` — PWA 可行性结论与风险
 - `docs/03-module-migration.md` — 旧项目 → 新项目迁移映射
 - `docs/04-data-model-and-privacy.md` — 数据契约、脱敏红线、协议声明
+- `docs/05-decisions.md` — 决策记录（D1–D8：CLI 超集铁律、栈选型、安装向导、xlsx 为主等）
 - `_legacy/` — 原始两项目解档（仅本地参考，已被 gitignore，永不推送）
 
 ## 里程碑（草案）

@@ -4,12 +4,13 @@
 
 ```
 <workspace>/
-  kb/                 # 题库（JSON 为 source of truth）
-    problems.json     # {"chapters": {"chap01": [{"id","content","img",
-                      # "page","related","type","solution","note"}]}}
-    copy.json  qa.json  distinguish.json  innovation.json
-    translation.json
-    fig/              # 题图（与 xd 相对路径引用）
+  kb/                 # 题库（xlsx 为 source of truth，见 05-D3）
+    problems.xlsx  copy.xlsx  qa.xlsx  distinguish.xlsx
+    innovation.xlsx  translation.xlsx
+    .history/         # 写盘前自动快照（版本备份）
+    fig/              # 题图（xlsx 中 img_path 为相对路径引用）
+    export/           # 引擎导出的 JSON 副本（交换/AI 阅读/diff 基准）
+    examples*/        # 合成示例（唯一允许入库的部分）
   roster/             # 点名册/成绩/分组（xlsx 或 json）
   sheets/             # 作业纸任务配置与产物
     2026S1-chap10-1.json
