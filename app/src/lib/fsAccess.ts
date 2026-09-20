@@ -102,3 +102,20 @@ export function pickReadFile(accept: string): Promise<File | null> {
     input.click()
   })
 }
+
+/** 选择并读取一个本地文件：File System Access API 优先（Chrome/Edge），
+ *  不可用/用户取消 → input 兜底（同 pickReadFile），返回 null 表示未选。 */
+export async function pickReadFileFsa(accept: string): Promise<File | null> {
+  if (typeof window.showOpenFilePicker === 'function') {
+    try {
+      const [handle] = await window.showOpenFilePicker({
+        multiple: false,
+        types: [{ description: accept, accept: { 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet': ['.xlsx'] } }],
+      })
+      return await handle.getFile()
+    } catch {
+      return null // 用户取消
+    }
+  }
+  return pickReadFile(accept)
+}

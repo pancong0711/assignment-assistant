@@ -4,6 +4,7 @@ import { useSettingsStore } from './stores/settings'
 import SettingsView from './views/SettingsView.vue'
 import KbEditorView from './views/KbEditorView.vue'
 import DesignerView from './views/DesignerView.vue'
+import RosterView from './views/RosterView.vue'
 import TransferView from './views/TransferView.vue'
 
 const settings = useSettingsStore()
@@ -12,6 +13,7 @@ const TABS = [
   { key: 'settings', label: '设置中心', component: SettingsView },
   { key: 'kb', label: '题库编辑器', component: KbEditorView },
   { key: 'designer', label: '作业纸设计', component: DesignerView },
+  { key: 'roster', label: '班级与成绩', component: RosterView },
   { key: 'transfer', label: '导入导出', component: TransferView },
 ] as const
 
