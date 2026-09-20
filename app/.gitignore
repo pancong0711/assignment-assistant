@@ -1,0 +1,2 @@
+# 本地开发产物不入库（根 .gitignore 已覆盖 node_modules/dist，此处补 app 特有）
+.npm-cache/
