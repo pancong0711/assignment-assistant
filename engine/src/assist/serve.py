@@ -43,6 +43,25 @@ def _doctor_checks(ws: Path) -> tuple:
         checks.append({"name": "xelatex(可选)", "status": "green" if check_xelatex() else "yellow"})
     except ImportError:
         checks.append({"name": "xelatex(可选)", "status": "red"})
+    # 字体 fallback 链（fonts.json：开源替代 wqy/LXGW；教师自备 simsun/simkai；系统 wqy 也算）
+    import shutil as _sh
+    assets_fonts = Path(__file__).resolve().parents[2] / "assets" / "fonts"
+    font_items = [
+        ("simsun.ttc", "wqy-microhei.ttc"),
+        ("simkai.ttf", "LXGWWenKai-Regular.ttf"),
+    ]
+    def _font_hit(prim: str, fb: str) -> bool:
+        found = (ws / prim).exists() or (assets_fonts / fb).exists()
+        if not found:
+            # 系统字体兜底（Linux 常见 wqy/noto 目录）
+            for sys_path in (Path("/usr/share/fonts/truetype/wqy/wqy-microhei.ttc"),
+                             _sh.which("fc-list")):
+                if sys_path and Path(sys_path).exists():
+                    found = True
+                    break
+        return bool(found)
+    checks.append({"name": "fonts(开源替代)", "status": "green" if all(_font_hit(p, f) for p, f in font_items) else "yellow",
+                   "detail": "simsun/simkai(自备)→wqy/LXGW(开源)→系统字体"})
     ok_settings = (ws / "settings.local.json").exists()
     checks.append({"name": "settings.local.json", "status": "green" if ok_settings else "yellow"})
     ok_kb = (ws / "kb" / "problems.xlsx").exists()

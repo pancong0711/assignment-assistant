@@ -19,6 +19,7 @@ _LOGO_FILES = {"01": "logo.png", "university": "logo.png"}
 
 
 def _ovarg(overrides, name, pos, ratio, alpha):
+    """overrides[name] 支持 {pos?,ratio?,alpha?}（PWA 双写字段；仅 pos/ratio/alpha 是画布参数）。"""
     o = (overrides or {}).get(name)
     if isinstance(o, dict):
         return o.get("pos", pos), float(o.get("ratio", ratio)), float(o.get("alpha", alpha))
@@ -27,14 +28,22 @@ def _ovarg(overrides, name, pos, ratio, alpha):
 
 def _watermark_paths(assets_dir: Path, overrides: dict | None = None) -> dict:
     """默认占位 logo；可被用户配置覆盖（迁移自 2603 config/settings.py get_watermark_path 的
-    用户覆盖链，05-D15 同思路）。settings.local.json: watermark: {university: 路径, text:..., boat:...}"""
+    用户覆盖链，05-D15/D20 同思路）。
+
+    overrides 两形态（D19 水印编辑器导出双写一致）：
+    - "university": "路径" / {"path": 路径, ...}
+    - items 列表由 layout 层直接消费（image 字段），此处只负责三槽兼容形态。
+    """
     d = {"university": assets_dir / "watermark" / "logo-university.png",
          "text": assets_dir / "watermark" / "logo-text.png",
          "boat": assets_dir / "watermark" / "logo-boat.png"}
     for k, v in (overrides or {}).items():
         if k in d and v:
-            p = Path(v)
-            d[k] = p if p.is_absolute() else assets_dir / str(v)  # 相对则相对 assets
+            if isinstance(v, dict):
+                v = v.get("path") or v.get("image")
+            if isinstance(v, str):
+                p = Path(v)
+                d[k] = p if p.is_absolute() else assets_dir / str(p)
     return d
 
 
@@ -55,7 +64,22 @@ def watermark_gen(canvas_info: dict, page_info, assets_dir: Path,
     """
     paths = _watermark_paths(assets_dir, overrides)
     ov = overrides or {}
-    if preset == "2603":
+    items = ov.get("items") if isinstance(ov.get("items"), list) else None
+    if items:  # D20 多水印列表（PWA 水印编辑器新 schema）
+        for it in items:
+            img = it.get("image")
+            if not img:
+                continue
+            p = Path(img)
+            if not p.is_absolute():
+                p = assets_dir / str(p)
+            if not p.exists():
+                logger.warning(f"水印图不存在，跳过: {p}")
+                continue
+            canvas_info = logo_draw(canvas_info, p, it.get("pos", "c"),
+                                    float(it.get("ratio", 0.15)),
+                                    float(it.get("alpha", 0.3)))
+    elif preset == "2603":
         u = _ovarg(ov, "university", "rt", 0.125, 0.5)
         tl = _ovarg(ov, "text", "lc", 0.1, 0.3)
         bb = _ovarg(ov, "boat", "lb", 0.3, 0.5)
