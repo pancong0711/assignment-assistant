@@ -158,3 +158,23 @@ CLI 是完整能力本体；PWA 是 CLI 的"参数化界面 + 结果展示器"�
 - 边距、字号、头部/页脚带区比例横竖统一（实现：landscape_frames 与
   _make_onpage 全部沿用 portrait 常量；标题字号横竖均 18pt）；
 - 生成真实文档后统一验收时再按效果细调（先一致、后调优）。
+
+## D17 · 分层标签体系 9 个固定保留（2026-09-20，用户强调）
+
+`copy / copySp / copyOnly / qa / summary / distinguish / innovation /
+translation / punish`（punish 为新固定项：期末补作业，统一题集不按层）。
+- 三个"非题库文件"的标签再次确认：summary 与 punish 不依赖题库 kind——
+  summary 由点名/成绩打标签得到；punish 期末补交统一题集（学生 A 也可用）；
+- app：设计器 tag 下拉 + `STUDENT_TAGS` 常量；引擎：evaluator 标签规则映射
+  表含 punish（沿用"完整性自查"差异规则并放宽）。
+
+## D18 · 成绩管理独立成模块 M5（用户提出，2026-09-20）
+
+将"点名册导入、学习通成绩、雨课堂成绩、期末成绩导入 → 学生打分层标签
+→ 分组比例 → 按比例生成作业变体切片"从"作业纸设计"里独立为 **M5 成绩管理**
+（目标用户/数据形态与 ①学习通辅助 ②作业纸设计 ③大模型批阅 ④本地文件
+管理 不同：它管理"关于学生的数据资产"）。落位：
+- engine：`assist roster *`（迁 student.py/exceltools/rainclass 分析）
+- app：新选项卡「班级与成绩」（点名册导入/成绩导入/标签产出/分组比例）
+- 阶段：**3.5**（排在阶段4 学习通之前，纯本地即可闭环，不依赖学习通）
+- 分组比例 UI 放此选项卡；2603 的 default_group_cfg 数值作为默认模板。

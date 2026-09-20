@@ -18,6 +18,13 @@ _LOGO_FILES = {"01": "logo.png", "university": "logo.png"}
 # logo 路径与用户覆盖简化为 assets/watermark/ 目录（旧 get_watermark_path 的覆盖链由 assets/fonts 的 fallback 思想落地）
 
 
+def _ovarg(overrides, name, pos, ratio, alpha):
+    o = (overrides or {}).get(name)
+    if isinstance(o, dict):
+        return o.get("pos", pos), float(o.get("ratio", ratio)), float(o.get("alpha", alpha))
+    return pos, ratio, alpha
+
+
 def _watermark_paths(assets_dir: Path, overrides: dict | None = None) -> dict:
     """默认占位 logo；可被用户配置覆盖（迁移自 2603 config/settings.py get_watermark_path 的
     用户覆盖链，05-D15 同思路）。settings.local.json: watermark: {university: 路径, text:..., boat:...}"""
@@ -40,12 +47,21 @@ def watermark_preset(assets_dir: Path, pagesize=A4) -> dict:
 
 def watermark_gen(canvas_info: dict, page_info, assets_dir: Path,
                   preset: str = "2603", overrides: dict | None = None) -> dict:
-    """单页水印（logo + 页码文字）。迁移自 _watermarkGen()/_watermarkGen2603()。"""
+    """单页水印（logo + 页码文字）。迁移自 _watermarkGen()/_watermarkGen2603()。
+
+    overrides: {logo名: True|路径|{path?, pos?, ratio?, alpha?}} —— 支持
+    用户自定义图片路径与摆位(pos)/大小(ratio)/透明度(alpha)（为 PWA
+    水印设计器铺位）。preset "2603" 为现行版式，"2512" 为旧版回退。
+    """
     paths = _watermark_paths(assets_dir, overrides)
+    ov = overrides or {}
     if preset == "2603":
-        canvas_info = logo_draw(canvas_info, paths["university"], "rt", 0.125, 0.5)
-        canvas_info = logo_draw(canvas_info, paths["text"], "lc", 0.1, 0.3)
-        canvas_info = logo_draw(canvas_info, paths["boat"], "lb", 0.3, 0.5)
+        u = _ovarg(ov, "university", "rt", 0.125, 0.5)
+        tl = _ovarg(ov, "text", "lc", 0.1, 0.3)
+        bb = _ovarg(ov, "boat", "lb", 0.3, 0.5)
+        canvas_info = logo_draw(canvas_info, paths["university"], *u)
+        canvas_info = logo_draw(canvas_info, paths["text"], *tl)
+        canvas_info = logo_draw(canvas_info, paths["boat"], *bb)
         text_draw_enhanced(canvas_info, page_info if isinstance(page_info, list) else [page_info],
                            "rc", fontsize=60, transparency=0.4, direction="horizontal")
     else:  # legacy "2512"
