@@ -293,6 +293,40 @@ def serve(obj, workspace, host, port, lan, verbose):
     _serve(workspace, host=host or ("0.0.0.0" if lan else "127.0.0.1"), port=port, lan=lan)
 
 
+@sheet.command("batch")
+@click.option("--roster", "roster_fn", required=True, help='带 tag 名单 xlsx（assist roster tag 产出）')
+@click.option("--pads", "task_files", multiple=True, required=True, help="任务包 JSON（一个 tag 一份；可多份）")
+@click.option("--map", "map_specs", multiple=True, help="显式映射 tag:任务包文件（兼任派），可选")
+@click.option("--default", "default_pad", default=None, help="未知 tag 的兜底任务包 id")
+@click.option("--class-dir", default=None, help="班级子目录（缺省 classes/，产物落在其 sheets/batch/<tag>/）")
+@click.option("--out", "-o", default=None, help="直接指定输出根目录")
+@click.option("--workspace", "-w", default=None)
+@click.option("--verbose", "-v", is_flag=True)
+@click.pass_obj
+def sheet_batch(obj, roster_fn, task_files, map_specs, default_pad, class_dir, out, workspace, verbose):
+    """D23 变体编排：整班按 tag 自动选任务包生成作业纸（每生一份，tag 分组分目录）。
+
+    任务包绑定 tag 规则：`target_tag` 字段优先，否则 items 中唯一 tag 即视为归属
+    （混合 tag 的包用 --map "tag:文件名" 显式映射）。"""
+    from .paper.batch import batch_sheets
+    ws_path = _setup(verbose or obj.get("verbose"), workspace)
+    mapping = {}
+    import json as _j
+    for m in map_specs:
+        if m in _j.loads(m or "{}"):
+            raise click.ClickException("--map 格式应为 tag:文件名（可多次）")
+        for k, v in _j.loads(m).items():
+            mapping[k] = v
+    files = batch_sheets(
+        Path(roster_fn).expanduser().resolve(),
+        [Path(f).expanduser().resolve() for f in task_files],
+        ws_path, class_dir=class_dir,
+        out_root=Path(out).expanduser().resolve() if out else None,
+        mapping=mapping, default_pad=default_pad)
+    for f in files:
+        click.echo(str(f))
+
+
 @cli.command()
 @click.option("--task", "task_path", required=True, help="任务包 JSON 路径（grade 节驱动）")
 @click.option("--images", "images_dir", default=None, help="学生作业图片目录（文件名=学生名或学号-题号）")
