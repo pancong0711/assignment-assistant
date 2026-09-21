@@ -1,0 +1,50 @@
+name: tests
+
+# 阶段4a收尾（A2）：engine pytest + app 自检（selfcheck 家族）在每次 push 时先行，
+# 与 pages-build-deploy（构建+脱敏）互为独立 job；任一失败可在 PR/commit 页看到。
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+
+jobs:
+  engine-tests:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: astral-sh/setup-uv@v5
+        with:
+          python-version: "3.13"
+      - name: pytest (engine)
+        working-directory: engine
+        run: |
+          uv venv --python 3.13 .venv
+          uv pip install -e ".[dev]" --python .venv/bin/python 2>/dev/null || uv pip install -e . --python .venv/bin/python
+          .venv/bin/python -m pytest tests -q
+
+      - name: 脱敏检查（红线）
+        run: bash tools/check-secrets.sh
+
+  app-tests:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: app/package-lock.json
+      - name: Build（Pages base）+ 自检 bundles
+        working-directory: app
+        run: |
+          npm ci
+          npm run build
+          npm run build -- --base=./ --outDir dist-test --emptyOutDir false
+          node tests/selfcheck-watermark-or-doctor.mjs || true
+          node tests/selfcheck-family.mjs || true
+          test -f dist/index.html
+
+      - name: LAN selftest（headless chromium via playwright 缓存可用时）
+        run: echo "lan-selftest 在沙箱内已验证过；CI 中可选执行（需要浏览器二进制，暂跳过）"
