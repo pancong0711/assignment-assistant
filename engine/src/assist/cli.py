@@ -327,6 +327,25 @@ def sheet_batch(obj, roster_fn, task_files, map_specs, default_pad, class_dir, o
         click.echo(str(f))
 
 
+@roster.command("rain")
+@click.option("--files", "files", multiple=True, required=True, help="雨课堂汇总表 xlsx（可多份，多表聚合）")
+@click.option("--out", "-o", required=True, help="输出 xlsx 路径")
+@click.option("--workspace", "-w", default=None)
+@click.option("--verbose", "-v", is_flag=True)
+@click.pass_obj
+def roster_rain(obj, files, out, workspace, verbose):
+    """雨课堂签到明细汇总（固定格式 family=rainclass，文档 docs/05-D19/B1）。"""
+    import json as _j
+    from .roster.rain import parse_rainclass, summarize, to_xlsx
+    _setup(verbose or obj.get("verbose"), workspace)
+    per = []
+    for f in files:
+        per += parse_rainclass(Path(f).expanduser().resolve())
+    summary = summarize(per)
+    click.echo(str(to_xlsx(Path(out).expanduser().resolve(), summary)))
+    click.echo(_j.dumps(summary.get("rows", [])[:5], ensure_ascii=False, indent=1))
+
+
 @cli.command()
 @click.option("--task", "task_path", required=True, help="任务包 JSON 路径（grade 节驱动）")
 @click.option("--images", "images_dir", default=None, help="学生作业图片目录（文件名=学生名或学号-题号）")
