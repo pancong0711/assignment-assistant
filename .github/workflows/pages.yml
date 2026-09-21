@@ -1,0 +1,50 @@
+name: pages-build-deploy
+
+# 阶段4b：push main → 构建 PWA（app/dist, base=/assignment-assistant/）→ 部署 GitHub Pages。
+# 仓库 Settings→Pages→Source 选 "GitHub Actions" 后即自动生效（docs/11-deployment.md）。
+
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  pages: write
+  id-token: write
+
+concurrency:
+  group: pages
+  cancel-in-progress: true
+
+jobs:
+  build-deploy:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: 脱敏检查（docs/04 §2 红线）
+        run: bash tools/check-secrets.sh
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: app/package-lock.json
+
+      - name: Build PWA (app/dist)
+        working-directory: app
+        run: |
+          npm ci
+          npm run build
+          test -f dist/index.html
+          test -f dist/sw.js
+
+      - name: Upload artifact
+        uses: actions/upload-pages-artifact@v3
+        with:
+          path: app/dist
+
+      - name: Deploy to GitHub Pages
+        id: deployment
+        uses: actions/deploy-pages@v4

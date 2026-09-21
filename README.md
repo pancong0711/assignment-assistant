@@ -11,6 +11,13 @@
 > 作业纸不是筛选工具，而是沟通的桥梁。分层不是给学生贴标签，
 > 而是让每个学生都能在适合自己的难度上获得练习与反馈。
 
+## 在线使用（PWA 直达）
+
+- 线上入口：<https://pancong0711.github.io/assignment-assistant/>（GitHub Pages，HTTPS，
+  可安装到主屏/离线打开；数据全在教师本地）
+- 引擎联动（体检真项/批阅/学习通）：教师本机运行 `assist serve`（默认 http://127.0.0.1:8601）
+  → 设置中心填该地址即可跨域联调。部署说明见 `docs/11-deployment.md`。
+
 ## 文档索引
 
 - `docs/01-architecture.md` — 宏观架构（Engine+App 双层、模块划分、monorepo 布局）
@@ -20,6 +27,7 @@
 - `docs/05-decisions.md` — 决策记录（D1–D13；与其他文档冲突时以 05 为准）
 - `docs/06-roadmap.md` — 六阶段路线图（0–5，含验收标准）
 - `docs/07-incremental-vs-rewrite.md` — 增量迁移 vs 重写的开发思路判定
+- `docs/11-deployment.md` — GitHub Pages 部署（阶段4b）
 - `_legacy/` — 原始两项目解档（仅本地参考，已被 gitignore，永不推送）
 
 ## 里程碑
