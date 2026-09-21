@@ -5,7 +5,7 @@
 
 ## A · 阶段 4a 收尾（小、纯缝合）
 
-- A1 LAN `--lan --token` 模式下 PWA 体检/在线 chip 带 token（engineClient 补 query）；
+- ✅ A1 引擎 token 贯通（设置中心 token 输入 + engineClient /status /doctor 传参；commit fd85107）；
 - A2 selfcheck 入 CI：app/tests（watermark-doctor/family/lan-selftest）在 GitHub
   Actions 跑（现在 pages.yml 只 build+deploy）；顺带加 engine pytest；
 - A3 /doctor 检查项 name 定版（PWA 端按 name 归并，改名自动追加——避免歧义）；
@@ -14,8 +14,8 @@
 
 ## B · 阶段 5（M5 补强 + 作业纸多类型个性化 + 后勤）
 
-- ✅ B3.5 变体编排前端（commit 7c2f43f：target_tag 标注/绑定面板/一键 batch zip + selfcheck-variants）；引擎 batch 已就绪（e3b63aa）。
-- B1 rainclass 签到明细分析迁 engine（`assist roster rain`）；多 sheet 成绩源；
+- ✅ B3.5 变体编排前后端闭环（target_tag 标注/绑定面板/一键 batch zip/docs/04 字段；引擎 `assist sheet batch` 已实测 2 tag×多生；额外 TODO：`--batch batch.json` 元数据直读、--default tag 别名）。
+- ✅ B1 rainclass 签到明细分析迁 engine（commit dc7fa3a：roster rain 解析/聚合/xlsx 导出；**多 sheet 成绩源仍待**）；
 - B2 名单↔成绩学号匹配回退（现按姓名）；
 - B3 fig 题图上传 UI + 引擎写回（OPFS→workspace），题库编辑器配图闭环；
 - B4 SheetJS 写回 xlsx 样式丢失 → 引擎 openpyxl 补样式；
