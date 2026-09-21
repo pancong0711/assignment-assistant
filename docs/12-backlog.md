@@ -14,7 +14,7 @@
 
 ## B · 阶段 5（M5 补强 + 作业纸多类型个性化 + 后勤）
 
-- **B3.5 变体编排前端（先做）**：多任务包→tag 映射 UI + 一键 batch zip（引擎 batch 已就绪，e3b63aa）；
+- ✅ B3.5 变体编排前端（commit 7c2f43f：target_tag 标注/绑定面板/一键 batch zip + selfcheck-variants）；引擎 batch 已就绪（e3b63aa）。
 - B1 rainclass 签到明细分析迁 engine（`assist roster rain`）；多 sheet 成绩源；
 - B2 名单↔成绩学号匹配回退（现按姓名）；
 - B3 fig 题图上传 UI + 引擎写回（OPFS→workspace），题库编辑器配图闭环；

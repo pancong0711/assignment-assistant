@@ -46,6 +46,9 @@
 ```jsonc
 {
   "id": "2026S1-classA-chap10-1",
+  "target_tag": "distinguish",            // 可选：D23 变体编排——绑定该作业包服务的分层
+                                          // （缺省由 items 唯一 tag 推断；混合 tag 包必须显式绑定）
+
   "class_dir": "classes/2026S1-大学物理-classA",
   "course": "大学物理C1", "class": "classA", "term": "2026S1",
   "layout": { "orientation": "portrait" | "landscape", "per_page": 1|2,
