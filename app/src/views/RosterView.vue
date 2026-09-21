@@ -7,7 +7,10 @@ import {
 } from '../lib/roster'
 import { useRosterStore } from '../stores/roster'
 import { getKbDirHandle } from '../stores/kb'
-import { detectCapabilities, fsWriteHint, pickReadFileFsa } from '../lib/fsAccess'
+import { useTaskpadStore } from '../stores/taskpad'
+import { detectCapabilities, fsWriteHint, downloadBlob, pickReadFileFsa } from '../lib/fsAccess'
+import { parseTaskpad, missingBoundTags, padInferredTag, resolveBindTag, type PadBinding } from '../lib/taskpad'
+import { batchCommand, batchPaths, buildVariantBatchZip } from '../lib/variantBatch'
 
 /** 班级与成绩（M5 成绩管理，docs/05-D18）：名单/成绩导入 + 综合得分 + 自动打 tag + 导出。
  *  成绩源格式预设（docs/05-D19）：固定四类（教务点名册/教务期末/学习通作业统计/
@@ -154,6 +157,81 @@ const summaryText = computed(() => {
 })
 
 const fixedSourceCount = computed(() => roster.sources.filter((s) => isFixedFamily(s.family)).length)
+
+/* ---------- D23 变体编排（docs/05-D23 / 12-B3.5）：tag→任务包绑定 + 一键 batch zip ---------- */
+const pads = useTaskpadStore()
+
+/** 绑定下拉选项：STUDENT_TAGS + 名单里出现但不在表内的 tag（容错） */
+const tagOptions = computed<string[]>(() => {
+  const set = new Set<string>(STUDENT_TAGS)
+  for (const t of Object.keys(roster.tagCounts)) set.add(t)
+  return [...set]
+})
+
+/** 各已保存任务包的绑定明细（target_tag + 有效性推断） */
+const padRows = computed(() => pads.saved.flatMap((s) => {
+  try {
+    const p = parseTaskpad(JSON.parse(s.json))
+    return [{
+      id: s.id,
+      title: String(p.layout.header.title ?? '') || '—',
+      targetTag: p.target_tag ?? '',
+      tagItems: p.items,
+      items: p.items.length,
+      questions: p.items.reduce((n, i) => n + i.ids.length, 0),
+      layout: `${p.layout.orientation === 'landscape' ? '横版' : '竖版'}·${p.layout.per_page}题页`,
+      inferred: padInferredTag(p.items, p.target_tag),
+    }]
+  } catch {
+    return []
+  }
+}))
+const bindings = computed<PadBinding[]>(() =>
+  padRows.value.map((r) => ({ id: r.id, binding: r.targetTag, items: r.tagItems })))
+
+/** 名单里有 tag 但没有绑定包 → 黄色提示（可加 --default 兜底 / 回设计器补变体） */
+const missingTags = computed(() => missingBoundTags(roster.tagCounts, bindings.value))
+/** 多个包推向同一 tag 的冲突（引擎会拒绝后进映射） */
+const dupTags = computed(() => {
+  const seen = new Map<string, number>()
+  for (const b of bindings.value) {
+    const t = resolveBindTag(b)
+    if (t) seen.set(t, (seen.get(t) ?? 0) + 1)
+  }
+  return [...seen.entries()].filter(([, n]) => n > 1).map(([t]) => t)
+})
+
+const classDirName = computed(() => roster.students[0]?.class || 'classA')
+const bp = computed(() => batchPaths(classDirName.value))
+const batchCmdPreview = computed(() =>
+  batchCommand(bp.value.roster, padRows.value.map((r) => bp.value.task(r.id)), bp.value.classDir, missingTags.value))
+
+function setBinding(id: string, ev: Event) {
+  const ok = pads.setSavedTargetTag(id, (ev.target as HTMLSelectElement).value)
+  status.value = ok ? `已把任务包 ${id} 绑定到目标 tag（target_tag 同步进任务包 JSON）。` : `任务包 ${id} 绑定失败（JSON 损坏）。`
+}
+
+const exportingBatch = ref(false)
+async function downloadBatchZip() {
+  if (!roster.students.length) {
+    status.value = '名单为空：先导入/生成带 tag 名单，再一键生成 batch 包。'
+    return
+  }
+  if (!padRows.value.length) {
+    status.value = '任务包清单为空：先到「作业纸设计」保存/导出若干任务包（每份可绑 target_tag）。'
+    return
+  }
+  exportingBatch.value = true
+  try {
+    const { blob, cd, padCount } = await buildVariantBatchZip(roster.students, pads.savedJsons())
+    downloadBlob(blob, `batch-package-${new Date().toISOString().slice(0, 10)}.zip`)
+    status.value = `已生成整班 batch 交付包（班级 ${cd}）：${padCount} 份任务包 + roster.xlsx + batch.json + README。解压到引擎 workspace 根目录后按 README 执行 assist sheet batch 即可。`
+  } catch (e) {
+    status.value = `batch 包生成失败：${(e as Error).message}`
+  } finally {
+    exportingBatch.value = false
+  }
+}
 </script>
 
 <template>
@@ -314,6 +392,56 @@ const fixedSourceCount = computed(() => roster.sources.filter((s) => isFixedFami
         <template v-else>（未勾选）</template>
       </p>
       <p class="hint" v-if="caps.insecure">LAN 预览提示：导出为浏览器下载，教师手动放回 workspace 的 <code>classes/&lt;班级&gt;/roster/</code> 即可（写回目录能力需本机 localhost/https 打开）。</p>
+    </div>
+
+    <div class="card">
+      <h2>变体编排（D23 · 整班分层作业纸，docs/05-D23 / 12-B3.5）</h2>
+      <p class="hint">
+        每个学生按其 tag 领到<b>不同的任务包</b>变体（同 tag 内题目顺序引擎可轮换防抄袭）。
+        下方清单来自「作业纸设计」已保存的任务包；"绑定到 tag" 与包的
+        <code>target_tag</code> 双向同步（引擎 <code>assist sheet batch</code> 按 tag 自动选用对应包）。
+      </p>
+      <p class="hint" v-if="Object.keys(roster.tagCounts).length">
+        名单 tag 分布（roster.tagCounts）：<template v-for="(c, t, i) in roster.tagCounts" :key="t"><code>{{ STUDENT_TAG_LABELS[t] ?? t }}</code>×{{ c }}<template v-if="i < Object.keys(roster.tagCounts).length - 1">；</template></template>
+      </p>
+      <div class="notice" v-if="missingTags.length" style="border-color:#c9a227;color:#7a5c00">
+        ⚠ 缺包 tag：<code>{{ missingTags.join('、') }}</code> —— 名单里这些 tag 有学生，但没有任何任务包绑定到它，
+        引擎 <code>sheet batch</code> 会跳过这部分人。
+        处理：回「作业纸设计」为这些 tag 补建变体任务包，或临时用 CLI <code>--default &lt;兜底任务包&gt;</code> 为未覆盖学生兜底。
+      </div>
+      <p class="hint" v-if="dupTags.length">⚠ 同一 tag 被多个任务包绑定（{{ dupTags.join('、') }}）：引擎仅认先到的一份，请去重。</p>
+      <table class="grid" v-if="padRows.length" style="font-size:12px">
+        <thead>
+          <tr><th>id</th><th>标题</th><th>题组/题数</th><th>版式</th><th>目标 tag 推断</th><th style="width:190px">绑定到 tag（target_tag）</th></tr>
+        </thead>
+        <tbody>
+          <tr v-for="r in padRows" :key="r.id">
+            <td style="max-width:150px; word-break:break-all">{{ r.id }}</td>
+            <td>{{ r.title }}</td>
+            <td style="text-align:center">{{ r.items }} 组 / {{ r.questions }} 题</td>
+            <td style="white-space:nowrap">{{ r.layout }}</td>
+            <td style="white-space:nowrap">
+              {{ r.inferred ? (STUDENT_TAG_LABELS[r.inferred] ?? r.inferred) + (r.targetTag ? '（显式）' : '（自动）') : '⚠ 混合 tag，需显式绑定' }}
+            </td>
+            <td>
+              <select :value="r.targetTag" @change="setBinding(r.id, $event)" style="max-width:160px">
+                <option value="">（未绑定：按 items 推断）</option>
+                <option v-for="t in tagOptions" :key="t" :value="t">{{ STUDENT_TAG_LABELS[t] ?? t }}</option>
+              </select>
+            </td>
+          </tr>
+        </tbody>
+      </table>
+      <p class="hint" v-else>任务包清单为空与暂不可用：去「作业纸设计」保存任务包后回到这里绑定。</p>
+      <p>
+        <button class="btn primary" :disabled="exportingBatch || exportDisabled || !padRows.length" @click="downloadBatchZip">📦 一键生成整班 batch 交付包（zip：roster.xlsx + tasks/*.taskpad.json + batch.json + README）</button>
+      </p>
+      <p class="hint">README 内含整条命令示例（教师本机执行即出整班分层作业纸）：</p>
+      <pre class="hint" style="white-space:pre-wrap; font-size:11px; background:var(--c-bg,#f7f7f9); padding:8px; border-radius:6px"><code>{{ batchCmdPreview }}</code></pre>
+      <p class="hint">
+        zip 目录结构对齐 docs/04 §1（<code>classes/&lt;班级&gt;/roster/roster.xlsx</code>、<code>tasks/&lt;id&gt;.taskpad.json</code>、
+        <code>batch.json</code> 仅元数据）。不依赖引擎在线/LLM/学习通；FSA 降级照 D11（浏览器下载，教师手动解压）。
+      </p>
     </div>
   </section>
 </template>
