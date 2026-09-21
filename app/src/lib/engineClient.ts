@@ -77,11 +77,21 @@ async function getJson(url: string, timeoutMs = 4000): Promise<unknown> {
   }
 }
 
-/** GET /status —— 在线检测（在线/离线 chip + 版本显示）。 */
-export async function fetchEngineStatus(engineAddr: string): Promise<StatusResult> {
+/** 追加引擎访问令牌（`assist serve --lan` 防蹭网 token，策略见 docs/05-D21/D5）。 */
+export function engineUrlWithToken(engineAddr: string, path: string, token?: string): string {
   const base = normalizeEngineAddr(engineAddr)
+  const u = new URL(path, base + '/')
+  const t = (token || '').trim()
+  if (t) u.searchParams.set('token', t)
+  return u.toString()
+}
+
+/** GET /status —— 在线检测（在线/离线 chip + 版本显示）。 */
+export async function fetchEngineStatus(engineAddr: string, token?: string): Promise<StatusResult> {
+  const base = normalizeEngineAddr(engineAddr)
+  const url = engineUrlWithToken(base, '/status', token)
   try {
-    const raw = await getJson(`${base}/status`)
+    const raw = await getJson(url)
     const o = raw as Record<string, unknown>
     return {
       online: o.name === 'assist-engine',
@@ -107,10 +117,10 @@ export function emptyDoctor(): DoctorCallResult {
   return { ok: false, engine: { version: '', workspace: '' }, checks: [], online: false }
 }
 
-export async function fetchDoctor(engineAddr: string): Promise<DoctorCallResult> {
+export async function fetchDoctor(engineAddr: string, token?: string): Promise<DoctorCallResult> {
   const base = normalizeEngineAddr(engineAddr)
   try {
-    const raw = (await getJson(`${base}/doctor`)) as Record<string, unknown>
+    const raw = (await getJson(engineUrlWithToken(base, '/doctor', token))) as Record<string, unknown>
     const checks = Array.isArray(raw.checks) ? raw.checks : []
     const engine = (raw.engine ?? {}) as Record<string, unknown>
     return {

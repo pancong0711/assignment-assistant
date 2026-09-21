@@ -231,6 +231,9 @@ onMounted(() => {
         <dd>
           <label class="field">
             <input type="text" v-model="settings.engineUrl" style="width:260px" @change="settings.setEngineUrl(settings.engineUrl)" />
+            <label class="field" style="margin-left:10px">引擎令牌 token（--lan 模式）：
+              <input type="text" v-model="settings.engineToken" @change="settings.engineToken = settings.engineToken.trim()" style="width:160px" placeholder="仅 --lan 部署需填" />
+            </label>
           </label>
           <button class="btn small" @click="void settings.pingEngine()">检测在线（/status）</button>
         </dd>

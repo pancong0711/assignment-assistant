@@ -34,6 +34,7 @@ interface PersistedSettings {
   workspaceLabel: string
   workspaceConnected: boolean
   engineUrl: string
+  engineToken: string
   engineApiKey: string
   defaultClassDir: string
   confirmBeforeUpload: boolean
@@ -48,6 +49,7 @@ function defaultSettings(): PersistedSettings {
     // 引擎默认地址：与 engine bootstrap 写入 settings.local.json 的
     // engine_addr 同名同值（http://127.0.0.1:8601，PWA 内可改）。
     engineUrl: DEFAULT_ENGINE_ADDR,
+    engineToken: '',
     engineApiKey: '',
     defaultClassDir: 'classes/2026S1-大学物理-classA',
     confirmBeforeUpload: true,
@@ -153,6 +155,7 @@ export const useSettingsStore = defineStore('settings', {
         workspaceLabel: this.workspaceLabel,
         workspaceConnected: this.workspaceConnected,
         engineUrl: this.engineUrl,
+        engineToken: this.engineToken,
         engineApiKey: this.engineApiKey,
         defaultClassDir: this.defaultClassDir,
         confirmBeforeUpload: this.confirmBeforeUpload,
@@ -173,7 +176,7 @@ export const useSettingsStore = defineStore('settings', {
     /** /status 在线检测（在线/离线 chip + 版本显示）。引擎未在线不报错，
      *  只更新 chip 状态（D13 降级观感）。 */
     async pingEngine(): Promise<boolean> {
-      const r = await fetchEngineStatus(this.engineUrl)
+      const r = await fetchEngineStatus(this.engineUrl, this.engineToken)
       this.engineOnline = r.online
       this.engineVersion = r.status?.version ?? ''
       this.engineStatusError = r.online ? '' : (r.error ?? 'offline')
@@ -183,7 +186,7 @@ export const useSettingsStore = defineStore('settings', {
      *  引擎未在线 → 黄色占位 + lastDoctorError（调用方显示引导文案）。 */
     async runDoctor(): Promise<boolean> {
       this.checkRunAt = new Date().toLocaleTimeString()
-      const r = await fetchDoctor(this.engineUrl)
+      const r = await fetchDoctor(this.engineUrl, this.engineToken)
       if (!r.online) {
         this.lastDoctorError = r.error ?? 'fetch failed'
         this.doctorOk = false
