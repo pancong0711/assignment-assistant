@@ -21,7 +21,8 @@ jobs:
         working-directory: engine
         run: |
           uv venv --python 3.13 .venv
-          uv pip install -e ".[dev]" --python .venv/bin/python 2>/dev/null || uv pip install -e . --python .venv/bin/python
+          uv pip install -e . --python .venv/bin/python
+          uv pip install pytest --python .venv/bin/python
           .venv/bin/python -m pytest tests -q
 
       - name: 脱敏检查（红线）

@@ -107,6 +107,10 @@ export interface Taskpad {
   course?: string
   class?: string
   term?: string
+  /** D23 变体编排：任务包绑定的学生分组 tag（engine batch pad_tag 首选字段）。
+   *  为空 = 由 items 的唯一 tag 推断；混合 tag 包须显式标注（否则引擎报
+   *  "未与唯一 tag 绑定"）。仅显式指定时写入 JSON（空值不写字段，兼容引擎）。 */
+  target_tag?: string
   layout: TaskpadLayout
   items: TaskpadItem[]
   watermark: TaskpadWatermark
@@ -224,6 +228,7 @@ export function parseTaskpad(raw: unknown): Taskpad {
     course: typeof o.course === 'string' ? o.course : undefined,
     class: typeof o.class === 'string' ? o.class : undefined,
     term: typeof o.term === 'string' ? o.term : undefined,
+    target_tag: typeof o.target_tag === 'string' && o.target_tag ? o.target_tag : undefined,
     layout: {
       orientation,
       per_page: normalizePerPage(layout.per_page, orientation),
@@ -284,6 +289,45 @@ export function serializeTaskpad(pad: Taskpad): string {
     watermark: watermarkForExport(pad.watermark),
     grade: pad.grade,
   }
+  // D23：为空不写 target_tag 字段，保持与缺字段的任务包（engine 兼容）完全一致
+  if (pad.target_tag) payload.target_tag = pad.target_tag
   if (pad.journal?.length) payload.journal = pad.journal
   return JSON.stringify(payload, null, 2)
+}
+
+/* ---------- D23 变体编排纯逻辑（与 engine paper/batch.py 同口径） ---------- */
+
+/** 任务包归属 tag 推断，镜像 engine `pad_tag`：target_tag 优先；items 唯一
+ *  tag 次之；无任何 tag → 'default'；混合 tag → null（需显式绑定/映射）。 */
+export function padInferredTag(items: TaskpadItem[], targetTag?: string): string | null {
+  if (targetTag) return targetTag
+  const tags = [...new Set(items.map((i) => String(i.tag ?? '')).filter(Boolean))].sort()
+  if (tags.length === 1) return tags[0]
+  if (tags.length === 0) return 'default'
+  return null
+}
+
+/** 绑定记录（变体编排视图行）：tag 为空 = 未绑定（回退到 items 推断）。 */
+export interface PadBinding {
+  id: string
+  /** 下拉绑定（target_tag 绑定值；'' = 未显式绑定） */
+  binding: string
+  items: TaskpadItem[]
+}
+
+/** 解析实际生效 tag：binding 优先，否则 items 推断（可缺 = 未绑定）。 */
+export function resolveBindTag(b: PadBinding): string | null {
+  if (b.binding) return b.binding
+  return padInferredTag(b.items)
+}
+
+/** 名单 tag 分布中缺包的 tag：名单里有该 tag 的学生、但没有任何任务包
+ *  实际绑定/可推断到它（engine 会 log warning 跳过这些人；前端给出
+ *  "可加 --default 兜底"或补绑定的黄色提示）。 */
+export function missingBoundTags(
+  tagCounts: Record<string, number>,
+  bindings: PadBinding[],
+): string[] {
+  const bound = new Set(bindings.map((b) => resolveBindTag(b)).filter((t): t is string => Boolean(t)))
+  return Object.keys(tagCounts).filter((t) => t && !bound.has(t))
 }

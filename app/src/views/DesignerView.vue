@@ -5,7 +5,7 @@ import { useKbStore } from '../stores/kb'
 import { useTaskpadStore } from '../stores/taskpad'
 import { useSettingsStore } from '../stores/settings'
 import { downloadData, downloadBlob, pickReadFile } from '../lib/fsAccess'
-import { serializeTaskpad, parseTaskpad, type PerPage } from '../lib/taskpad'
+import { serializeTaskpad, parseTaskpad, padInferredTag, type PerPage } from '../lib/taskpad'
 import JSZip from 'jszip'
 
 const kb = useKbStore()
@@ -120,8 +120,17 @@ function setPerPage(v: PerPage) {
   pad.setPerPage(v)
 }
 
+/* ---------- 任务包头（docs/04 §1） ---------- */
+/* D23 变体编排：任务包显式绑定目标 tag（target_tag；空 = 引擎回退 items 唯一 tag 推断） */
+const targetTagOn = computed({
+  get: () => pad.current.target_tag ?? '',
+  set: (v: string) => { pad.current.target_tag = v || undefined },
+})
+/** 当前包 inference 结果展示（与 engine batch.py pad_tag 同口径：混合 tag = null） */
+const curInferredTag = computed(() => padInferredTag(pad.current.items, pad.current.target_tag))
+
 /* ---------- 任务包清单（多份作业纸管理，D19 反馈第 3 项） ---------- */
-interface PadMeta { id: string; term: string; cls: string; items: number; questions: number; orientation: string; perPage: number; json: string }
+interface PadMeta { id: string; term: string; cls: string; items: number; questions: number; orientation: string; perPage: number; targetTag: string; inferredTag: string | null; json: string }
 const library = computed<PadMeta[]>(() =>
   pad.saved.map((s) => {
     try {
@@ -134,10 +143,12 @@ const library = computed<PadMeta[]>(() =>
         questions: p.items.reduce((n, i) => n + i.ids.length, 0),
         orientation: p.layout.orientation === 'landscape' ? '横版' : '竖版',
         perPage: p.layout.per_page,
+        targetTag: p.target_tag ?? '',
+        inferredTag: padInferredTag(p.items, p.target_tag),
         json: s.json,
       }
     } catch {
-      return { id: s.id, term: '?', cls: '?', items: 0, questions: 0, orientation: '?', perPage: 0, json: s.json }
+      return { id: s.id, term: '?', cls: '?', items: 0, questions: 0, orientation: '?', perPage: 0, targetTag: '', inferredTag: null, json: s.json }
     }
   }))
 
@@ -404,8 +415,19 @@ function engineHint(): void {
           <label class="field">class：<input type="text" v-model="pad.current.class" style="width:110px" placeholder="classA" /></label>
           <label class="field">term：<input type="text" v-model="pad.current.term" style="width:110px" placeholder="2026S1" /></label>
           <label class="field">class_dir：<input type="text" v-model="pad.current.class_dir" :placeholder="settings.defaultClassDir" style="width:230px" /></label>
+          <label class="field" title="D23 变体编排：该任务包面向的学生分层 tag；留空则引擎按 items 的唯一 tag 自动绑定（mixed-tag 包需显式指定）。">
+            目标 tag (target_tag)：
+            <select v-model="targetTagOn" style="max-width:190px">
+              <option value="">（自动：由 items 唯一 tag 推断）</option>
+              <option v-for="t in STUDENT_TAGS" :key="t" :value="t">{{ STUDENT_TAG_LABELS[t] }}</option>
+            </select>
+          </label>
           <button class="btn small" @click="pad.renewId(); status = '已生成新任务包 id'">换新 id</button>
         </p>
+        <p class="hint" v-if="curInferredTag">
+          引擎 batch 绑定口径（pad_tag）：本包将面向 tag=<code>{{ curInferredTag }}</code>{{ pad.current.target_tag ? '（target_tag 显式绑定）' : '（items 唯一 tag 自动推断）' }}。
+        </p>
+        <p class="hint" v-else-if="pad.current.items.length">⚠ 本包 items 混合多个 tag 且未显式绑定 target_tag：引擎 <code>sheet batch</code> 将拒收（需下方绑定目标 tag，或 CLI --map）。</p>
         <h3>grade（可留空 = 仅出作业纸）</h3>
         <p class="hint">本页仅出作业纸即可用；批阅配置（转录/评阅模型、学生范围）留空交给引擎默认值或阶段3 再细化。</p>
         <p>
@@ -419,13 +441,16 @@ function engineHint(): void {
         </p>
         <table class="grid" v-if="library.length" style="font-size:12px">
           <thead>
-            <tr><th>id</th><th>学期</th><th>班级</th><th>选题</th><th>题数</th><th>版式</th><th style="width:110px">操作</th></tr>
+            <tr><th>id</th><th>学期</th><th>班级</th><th>目标 tag</th><th>选题</th><th>题数</th><th>版式</th><th style="width:110px">操作</th></tr>
           </thead>
           <tbody>
             <tr v-for="m in library" :key="m.id">
               <td style="max-width:120px; word-break:break-all">{{ m.id }}</td>
               <td>{{ m.term }}</td>
               <td>{{ m.cls }}</td>
+              <td style="white-space:nowrap">
+                {{ m.targetTag ? (STUDENT_TAG_LABELS[m.targetTag] ?? m.targetTag) : (m.inferredTag ? `自动推断：${m.inferredTag}` : '⚠ 混合 tag 未绑定') }}
+              </td>
               <td style="text-align:center">{{ m.items }}</td>
               <td style="text-align:center">{{ m.questions }}</td>
               <td style="white-space:nowrap">{{ m.orientation }} / {{ m.perPage }}题页</td>

@@ -94,6 +94,22 @@ export const useTaskpadStore = defineStore('taskpad', {
       this.current = parseTaskpad(JSON.parse(found.json))
       return true
     },
+    /** D23 变体编排：改写已保存任务包的 target_tag 绑定（'' = 清空，不写字段）。
+     *  直接反序列化原文 → 覆盖 target_tag → 重序列化（保持其余 JSON 原样）。 */
+    setSavedTargetTag(id: string, tag: string): boolean {
+      const entry = this.saved.find((s) => s.id === id)
+      if (!entry) return false
+      try {
+        const pad = parseTaskpad(JSON.parse(entry.json))
+        pad.target_tag = tag || undefined
+        entry.json = serializeTaskpad(pad)
+      } catch {
+        return false
+      }
+      if (this.current.id === id) this.current.target_tag = tag || undefined
+      localStorage.setItem(LS_KEY, JSON.stringify(this.saved))
+      return true
+    },
     importJson(text: string): Taskpad {
       const pad = parseTaskpad(JSON.parse(text))
       this.current = pad
