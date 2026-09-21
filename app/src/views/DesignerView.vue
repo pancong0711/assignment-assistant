@@ -487,7 +487,7 @@ function engineHint(): void {
             </div>
           </div>
         </div>
-        <p class="hint">说明：预览为 HTML/CSS 近似；打印级排版（reportlab 版式、真实题图、每生水印）由 engine 按同一任务包生成。多题/页时预览画出实线分隔（横版=栏间竖线、竖版=行间横线），与引擎 PDF 版式一致（D19）。</p>
+        <p class="hint">说明：预览为 HTML/CSS 近似；打印级排版（reportlab 版式、真实题图、每生水印）由 engine 按同一任务包生成。多题/页时预览与打印版统一为**中间虚线**分隔（4题=十字 2×2；横版=栏间竖虚线、竖版=行间横虚线，且不穿页眉页脚；docs/05-D21）。</p>
       </div>
     </div>
   </section>

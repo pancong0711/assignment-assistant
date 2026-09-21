@@ -32,9 +32,14 @@ self.addEventListener('fetch', (event) => {
   const url = new URL(req.url)
   // 仅缓存同源资源；引擎/LLM 等跨域请求直接放行
   if (url.origin !== self.location.origin) return
+  // 导航请求（含 index.html）一律 network-first（D21 修订）：保证部署更新
+  // 到 App 后能在下次启动拿到新版本，不会长期停留在旧缓存 UI。
+  const isNav = req.mode === 'navigate' ||
+                url.pathname.endsWith('/index.html') ||
+                url.pathname === new URL('./', BASE).pathname
   event.respondWith(
     caches.match(req).then((hit) => {
-      if (hit) return hit
+      if (hit && !isNav) return hit
       return fetch(req)
         .then((res) => {
           if (res.ok && url.href.startsWith(BASE.href)) {
