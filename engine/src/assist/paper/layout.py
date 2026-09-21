@@ -41,36 +41,69 @@ def _fitted_image(img_path: str, max_w: float, max_h: float) -> Image:
 
 # ---------------- 内容 frame ----------------
 
+def grid_frames(orientation: str, per_page: int = 1):
+    """内容 frame 网格（D21 统一语义，用户反馈 2026-09-21）：
+
+    portrait:  1=单格；2/3=上下行；4=十字(2x2)
+    landscape: 1=单格；2/3=左右栏；4=十字(2x2)
+    返回 (frames, 网格描述 rows x cols)；flow 顺序 = frames 顺序（阅读顺序）。
+    """
+    pw, ph = (A4_W, A4_H) if orientation == "portrait" else landscape(A4)
+    x1 = 0.04 * pw
+    width = 0.92 * pw
+    top = 0.885 * ph
+    bottom = 0.055 * ph
+    gap = 0.02 * pw
+
+    if per_page == 4:
+        rows, cols = 2, 2            # 十字交叉
+    elif orientation == "portrait":
+        rows, cols = per_page, 1     # 上下行
+    else:
+        rows, cols = 1, per_page     # 左右栏
+
+    cell_w = (width - gap * (cols - 1)) / cols
+    cell_h = (top - bottom - gap * (rows - 1)) / rows
+    frames = []
+    for k in range(per_page):
+        r, c = divmod(k, cols)      # 行优先阅读顺序
+        xx = x1 + c * (cell_w + gap)
+        yy = top - (r + 1) * cell_h - r * gap
+        frames.append(Frame(x1=xx, y1=yy, width=cell_w, height=cell_h,
+                            topPadding=0, id=f"content_g{k}_id",
+                            showBoundary=False))
+    return frames
+
+
+def grid_lines(orientation: str, per_page: int):
+    """虚线分隔线坐标（页面内容区内，不穿页眉页脚）：[(x1,y1,x2,y2), ...]。"""
+    pw, ph = (A4_W, A4_H) if orientation == "portrait" else landscape(A4)
+    x1 = 0.04 * pw
+    width = 0.92 * pw
+    top = 0.885 * ph
+    bottom = 0.055 * ph
+    cx, cy = x1 + width / 2, (top + bottom) / 2
+    if per_page == 2:
+        return ([(cx, bottom, cx, top)] if orientation == "landscape"
+                else [(x1, cy, x1 + width, cy)])
+    if per_page == 3:
+        third_w = width / 3; third_h = (top - bottom) / 3
+        if orientation == "portrait":
+            return [(x1, bottom + third_h, x1 + width, bottom + third_h),
+                    (x1, bottom + 2 * third_h, x1 + width, bottom + 2 * third_h)]
+        return [(x1 + third_w, bottom, x1 + third_w, top),
+                (x1 + 2 * third_w, bottom, x1 + 2 * third_w, top)]
+    if per_page == 4:  # 十字
+        return [(cx, bottom, cx, top), (x1, cy, x1 + width, cy)]
+    return []
+
+# 兼容旧名（landscape_frames/portrait_frames 供旧调用）
 def portrait_frames(per_page: int = 1):
-    """竖版：per_page 个上下堆叠的内容 frame（头部/页脚由 onPage 画）。"""
-    x1 = 0.04 * A4_W
-    width = 0.92 * A4_W
-    top = 0.885 * A4_H
-    bottom = 0.055 * A4_H
-    h = (top - bottom) / per_page
-    return [Frame(x1=x1, y1=bottom + i * h, width=width, height=h,
-                  topPadding=0, id=f"content_p{i}_id", showBoundary=False)
-            for i in range(per_page)]
+    return grid_frames("portrait", per_page)
 
 
 def landscape_frames(per_page: int = 2):
-    """横版：中部 per_page 个纵向栏（默认 2，左右各一题）。
-
-    边距/字号与竖版保持一致（用户决定，2026-09-20：先一致，实生成后统一细调）；
-    per_page>1 时栏间画竖分隔线（见 _layout_dividers/_make_onpage）。"""
-    pw, ph = landscape(A4)
-    x1 = 0.04 * pw
-    width = 0.92 * pw
-    gap = 0.02 * pw
-    cell = (width - gap * (per_page - 1)) / per_page
-    top = 0.885 * ph
-    bottom = 0.055 * ph
-    frames = []
-    for i in range(per_page):
-        xx = x1 + i * (cell + gap)
-        frames.append(Frame(x1=xx, y1=bottom, width=cell, height=top - bottom,
-                            topPadding=0, id=f"content_c{i}_id", showBoundary=False))
-    return frames
+    return grid_frames("landscape", per_page)
 
 
 # ---------------- onPage（页眉页脚，迁移自 _tmpPageFilling 的信息行/页脚表） ----------------
@@ -111,18 +144,14 @@ def _make_onpage(stu: dict, title: str, notes_prefix: str, orientation: str,
         canvas.line(x1, info_y - 4, x1 + width, info_y - 4)
         canvas.line(x1, foot_line_y, x1 + width, foot_line_y)
         # 多题/页 分隔线（预览虚线框仅为 UI 区分；打印版用实线分隔，见反馈 1.3/1）
-        if dividers_ok and per_page > 1:
+        if dividers_ok and per_page > 1:  # 虚线（不实框、不经页眉页脚）
             if orientation == "landscape":
                 gap = 0.02 * pw
                 cell = (width - gap * (per_page - 1)) / per_page
-                for i in range(1, per_page):  # 栏间竖线
-                    xx = x1 + i * (cell + gap) - gap / 2
-                    canvas.line(xx, content_bottom, xx, content_top)
-            if orientation == "portrait":  # 行间横线
-                span = (content_top - content_bottom) / per_page
-                for i in range(1, per_page):
-                    yy = content_bottom + i * span
-                    canvas.line(x1, yy, x1 + width, yy)
+                canvas.setDash(4, 3)  # 虚线（用户反馈：中间画虚线，不穿页眉页脚）
+                for (a, b, c, d) in grid_lines(orientation, per_page):
+                    canvas.line(c, d, c, d) if False else canvas.line(a, b, c, d)
+                canvas.setDash()
         third = width / 3
         canvas.drawString(x1, foot_text_y, f"{notes_prefix}-第{doc.page}/{n_pages}页")
         canvas.drawString(x1 + third, foot_text_y, "签名：")
@@ -157,8 +186,13 @@ def make_pdf(students: list[dict], items_of_student, out_dir: Path,
         items = items_of_student(idx)
         if per_page is None:
             per_page = 1 if orientation == "portrait" else 2
-        frames = (portrait_frames(per_page) if orientation == "portrait"
-                  else landscape_frames(per_page))
+        # 两组 flow 分别按阅读顺序逐格填充（FrameBreak），线条由 onPage 统一画。
+        if orientation == "portrait":
+            flow_fn = _flow_by_order
+        else:
+            flow_fn = _flow_by_order
+        frames = grid_frames(orientation, per_page)
+        flow_fn = _flow_by_order
         n_pages = max(1, (len(items) + per_page - 1) // per_page)
         fn = out_dir / (f"assignment-{str(now.year)[2:]}{now.month:02d}{now.day:02d}"
                         f"-sheet{idx + 1:02d}-{orientation}.pdf")
@@ -167,8 +201,7 @@ def make_pdf(students: list[dict], items_of_student, out_dir: Path,
             id="sheet", frames=frames,
             onPage=_make_onpage(stu, title, notes_prefix, orientation, n_pages,
                                 per_page=per_page, dividers_ok=per_page > 1))])
-        flow = (_portrait_flow(items, frames) if orientation == "portrait"
-                else _landscape_flow(items, frames))
+        flow = _flow_by_order(items, frames)
         doc.build(flow)
 
         if watermark:
@@ -194,25 +227,24 @@ def make_pdf(students: list[dict], items_of_student, out_dir: Path,
 
 # ---------------- flow ----------------
 
-def _landscape_flow(items, frames):
-    """横版 flow：per_page 栏各一题，FrameBreak 分隔（横版多题版式核心）。"""
+def _flow_by_order(items, frames):
+    """统一 flow：阅读顺序逐格填充（D21 grid）；格间 FrameBreak，页间 PageBreak。"""
     per_page = len(frames)
     flow = []
     n_pages = max(1, (len(items) + per_page - 1) // per_page)
     for page_i in range(n_pages):
-        pair = items[page_i * per_page:(page_i + 1) * per_page]
-        for k, (content, img_path, _tag) in enumerate(pair):
+        cell = items[page_i * per_page:(page_i + 1) * per_page]
+        for k, (content, img_path, _tag) in enumerate(cell):
             f = frames[k]
             if img_path and Path(img_path).exists():
                 flow.append(_fitted_image(img_path, f.width, f.height))
             else:
                 flow.append(Paragraph(content, _contents_style()))
-            if k < len(pair) - 1:
-                flow.append(FrameBreak())  # 逐栏切换
+            if k < len(cell) - 1:
+                flow.append(FrameBreak())  # 逐格切换
         if page_i < n_pages - 1:
             flow.append(PageBreak())
     return flow
-
 
 def _portrait_flow(items, frames):
     """竖版 flow：per_page 行各一题（缺省 1 行=每题一页，基线沿用）。"""

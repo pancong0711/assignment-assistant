@@ -158,27 +158,17 @@ const fixedSourceCount = computed(() => roster.sources.filter((s) => isFixedFami
 
 <template>
   <section>
-    <div class="card">
-      <h2>数据导入（成绩源） <small style="font-weight:400;color:var(--c-muted)">M5 成绩管理（docs/05-D18）· 名单导入与手动加人在下方「特殊标签」栏</small></h2>
-      <p class="hint">
-        名单列自适应（姓名|name、学号|number、班级|class、tag|tag，引擎 files/roster.py 同款宽松映射）；
-        成绩源支持<b>格式预设</b>（docs/05-D19）：固定四类（教务期末 / 学习通作业统计 / 学习通章节测验 /
-        雨课堂汇总）按列名 family 语义自动定位分数列，无需手动选列；自定义（custom）手动指定
-        "分数来源列"+ 权重。综合得分 = 源内按最大值归一 × 权重加权；自上而下按比例切分档次打 tag。
-      </p>
-      <p>
-        <button class="btn" style="margin-left:8px" @click="roster.clearAll()" v-if="roster.students.length">清空全部（名单+成绩源+比例复位）</button>
-      </p>
-      <p class="hint">名单导入 / 手动添加 / 批量打 tag 已移至下方「特殊标签」栏。</p>
-      <div class="notice" v-if="!caps.full && caps.browserHint">{{ caps.browserHint }}</div>
-      <div class="notice info" v-if="caps.insecure" style="margin-top:6px">
-        当前为局域网预览（http://IP，非安全上下文）：导入名单/成绩/题库均可用（文件选择方式）；
-        "写回 workspace 目录"不可用——请用下方导出按钮下载文件，教师手动放回 workspace。
-        {{ writeHint }}
-      </div>
-      <p class="hint" v-if="status">{{ status }}</p>
+    <p class="hint" style="margin-top:0">
+      名单列自适应（姓名|name、学号|number、班级|class、tag|tag）；成绩源支持<b>格式预设</b>
+      （docs/05-D19：固定四类教务/学习通/雨课堂 + custom）；综合得分 = 多源加权归一均值；
+      分组比例自动切分 tag；「特殊标签」栏随时人工覆盖（special_tag_cfg）。
+    </p>
+    <div class="notice" v-if="!caps.full && caps.browserHint">{{ caps.browserHint }}</div>
+    <div class="notice info" v-if="caps.insecure" style="margin-top:6px">
+      当前为局域网预览（http://IP，非安全上下文）：导入名单/成绩/题库均可用（文件选择方式）；
+      "写回 workspace 目录"不可用——请用下方导出按钮下载文件，教师手动放回 workspace。
+      {{ writeHint }}
     </div>
-
     <div class="card">
       <h2>成绩源（格式预设 + 任意 xlsx，docs/05-D19）</h2>
       <p class="hint">
@@ -259,12 +249,14 @@ const fixedSourceCount = computed(() => roster.sources.filter((s) => isFixedFami
       <p class="hint">{{ summaryText }}</p>
     </div>
 
-    <div class="card" v-if="roster.students.length">
+    <div class="card">
       <h2>特殊标签（手动覆盖 special_tag_cfg，批量打 tag）</h2>
       <p>
         <button class="btn primary" @click="importRoster">导入名单 xlsx…</button>
         <button class="btn" style="margin-left:8px" @click="roster.addStudent()">＋手动添加学生</button>
+        <button class="btn" style="margin-left:8px" @click="roster.clearAll()" v-if="roster.students.length">清空全部</button>
       </p>
+      <p class="hint" v-if="!roster.students.length">尚无学生：先"导入名单 xlsx"（教务导出固定格式，列自动识别）或手动添加，再配分组比例/成绩源即可自动分层；也可直接手动点选本表的 tag（=special_tag_cfg 覆盖）。</p>
       <p>
         <label class="field">批量打 tag：姓名（逗号/顿号分隔多个学生）
           <input type="text" v-model="batchNames" placeholder="学生A, 学生B, 学生C" style="width:min(420px, 60%)" />

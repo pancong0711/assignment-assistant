@@ -74,6 +74,34 @@ const preItems = computed<PreItem[]>(() => {
 })
 
 const perPage = computed(() => pad.current.layout.per_page)
+const orientation = computed(() => pad.current.layout.orientation)
+const gridClass = computed(() => {
+  const o = orientation.value, n = perPage.value
+  if (n === 4) return 'cross'
+  if (n === 3) return o === 'portrait' ? 'rows3' : 'cols3'
+  return o === 'portrait' ? 'rows2' : 'cols2'
+})
+/** 预览水印项：items 优先；空则 legacy 默认三槽占位（engine 的同样缺省）。 */
+const wmPreviewItems = computed<any[]>(() => {
+  const items = pad.current.watermark.items
+  if (items && items.length) return items
+  return [
+    { name: 'university', image: '', pos: 'rt', ratio: 0.125, alpha: 0.5 },
+    { name: 'text', image: '', pos: 'lc', ratio: 0.1, alpha: 0.3 },
+    { name: 'boat', image: '', pos: 'lb', ratio: 0.3, alpha: 0.5 },
+  ]
+})
+function wmPageTextFor(pi: number) {
+  const s = `第 ${pi + 1} 页`
+  return s
+}
+const gridLines = computed<string[]>(() => {
+  const n = perPage.value
+  if (n === 4) return ['v', 'h']            // 十字
+  if (n === 3) return (orientation.value === 'portrait') ? ['h31', 'h32'] : ['v31', 'v32']
+  if (n === 2) return (orientation.value === 'portrait') ? ['h'] : ['v']
+  return []
+})
 const demoStudent = { name: '学生A', number: '2026xxxx01' }  // 预览用合成占位（与 engine demo 一致）
 const todayStr = new Date().toLocaleDateString('zh-CN')
 const pages = computed<PreItem[][]>(() => {
@@ -427,11 +455,11 @@ function engineHint(): void {
             style="position:relative"
           >
             <template v-if="pad.current.watermark.enabled">
-              <span v-if="pageTextOn" class="sheet-watermark">第 {{ pi + 1 }} 页</span>
-              <!-- items 图层预览（按九宫格摆位，dataURL/占位） -->
-              <div v-for="(it, wi2) in pad.current.watermark.items" :key="'wm' + pi + '-' + wi2" class="wm-preview-anchor" :class="`wm-${it.pos}`">
-                <img v-if="settings.wmAssets[it.image.split('/').pop() ?? '']" class="sheet-wm-img" :src="settings.wmAssets[it.image.split('/').pop() ?? '']" :style="{ width: (it.ratio * 100) + '%', opacity: it.alpha }" alt="水印图层" />
-                <span v-else class="sheet-wm-placeholder">[水印：{{ it.image }}（{{ WATERMARK_POS_LABELS[it.pos] }}）]</span>
+              <span v-if="pageTextOn" class="sheet-watermark">{{ wmPageTextFor(pi) }}</span>
+              <!-- 预览图层：items 为空时按 legacy 默认三槽占位（rt/lc/lb），与引擎一致 -->
+              <div v-for="(it, wi2) in wmPreviewItems" :key="'wm' + pi + '-' + wi2" class="wm-preview-anchor" :class="`wm-${it.pos}`">
+                <img v-if="settings.wmAssets[(it.image || '').split('/').pop() ?? '']" class="sheet-wm-img" :src="settings.wmAssets[(it.image || '').split('/').pop() ?? '']" :style="{ width: (it.ratio * 100) + '%', opacity: it.alpha }" alt="水印图层" />
+                <span v-else class="sheet-wm-placeholder">[水印：{{ it.image || it.name }}（{{ (WATERMARK_POS_LABELS as any)[it.pos] ?? it.pos }}）]</span>
               </div>
             </template>
             <div class="sheet-header">
@@ -443,7 +471,8 @@ function engineHint(): void {
                 <span class="sh-assign">作业：{{ pad.current.id }}</span>
               </div>
             </div>
-            <div class="sheet-body" :class="{ divided: pg.length > 1 }">
+            <div class="sheet-body" :class="{ divided: pg.length > 1 }" :data-grid="gridClass">
+              <div v-if="pg.length > 1" class="sf-line" v-for="(line, li) in gridLines" :key="'dl'+pi+'-'+li" :class="line" />
               <div v-for="(item, fi) in pg" :key="fi" class="sheet-frame">
                 <div class="q-id">{{ item.id }}</div>
                 <div class="q-content">{{ item.content }}</div>
