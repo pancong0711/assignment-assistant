@@ -14,6 +14,7 @@
 
 ## B · 阶段 5（M5 补强 + 作业纸多类型个性化 + 后勤）
 
+- **B3.5 变体编排前端（先做）**：多任务包→tag 映射 UI + 一键 batch zip（引擎 batch 已就绪，e3b63aa）；
 - B1 rainclass 签到明细分析迁 engine（`assist roster rain`）；多 sheet 成绩源；
 - B2 名单↔成绩学号匹配回退（现按姓名）；
 - B3 fig 题图上传 UI + 引擎写回（OPFS→workspace），题库编辑器配图闭环；
@@ -43,7 +44,7 @@ C1 登录/课程/作业浏览/下载（迁 2601 xuexitong 模块）；C2 上传=
 - D3 bundle 拆分（SheetJS/JSZip 异步 chunk）；
 - D4 Windows 实批（测试同学）。
 
-## 推进顺序（方向）
+## 推进顺序（方向 · 2026-09-21 修订：LLM/学习通等实时交互后置，先做完作业纸线）
 
 1. **A 全清**（半天：A1/A2/A3 引擎+CI 缝合；A5 复测等你的反馈）；
 2. **B1+B2+B3**（M5 精化：rainclass、学号回退、题图 UI）；
