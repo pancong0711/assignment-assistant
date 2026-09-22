@@ -17,7 +17,11 @@ echo =============================== >> "$LOG"
 echo "[1/6] workspace = $WS"
 echo "[2/6] install uv if missing"
 command -v uv >/dev/null 2>&1 || {
-  curl -LsSf https://astral.sh/uv/install.sh | sh
+  if [ "${CN_OFFICIAL:-}" = "official" ]; then
+    curl -LsSf https://astral.sh/uv/install.sh | sh
+  else
+    curl -LsSf https://ghfast.top/https://astral.sh/uv/install.sh | sh || curl -LsSf https://astral.sh/uv/install.sh | sh
+  fi
   export PATH="$HOME/.local/bin:$PATH"
   command -v uv >/dev/null 2>&1 || { echo "[FAIL] uv not available - retry"; exit 1; }
 }

@@ -194,6 +194,8 @@ class Handler(BaseHTTPRequestHandler):
                     "UV_CACHE_DIR": str(_ws() / ".runtime" / "cache" / "uv"),
                     "UV_PROJECT_ENVIRONMENT": str(_ws() / ".runtime" / "venv"),
                     "PLAYWRIGHT_BROWSERS_PATH": str(_ws() / ".runtime" / "browsers"),
+                    "UV_DEFAULT_INDEX": os.environ.get(
+                        "UV_DEFAULT_INDEX", "https://pypi.tuna.tsinghua.edu.cn/simple"),
                 }
                 cp = subprocess.run(cmd, capture_output=True, text=True, timeout=1200,
                                     cwd=str(_ENGINE_ROOT.parent), env=env)
