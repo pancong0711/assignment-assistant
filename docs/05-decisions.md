@@ -217,3 +217,14 @@ translation / punish`（punish 为新固定项：期末补作业，统一题集�
   变体出 PDF；同 tag 内题目顺序轮换防抄袭；
 - 交互：设计器"变体组"多选 + 班级与成绩页"tag→任务包"分配面板；
 - 引擎 `assist sheet batch --roster tagged.xlsx`（按 tag 自动选用对应包）。
+
+
+## D24 · translation 标签语义（用户确认与 legacy 校准，2026-09-21）
+
+`translation` **不参与比例切分**，也不占"比例合计"：
+- legacy `_tag()` 语义：非 translation 比例组顺序切分（合计可 <100%，余数补末档 copyOnly）；
+  然后按 `int(人数×translation比例) 名学生随机替换为 translation。
+- 引擎 engine/roster/grouping.py：顺序切分跳过 translation/punish，translation 用可复现等距
+  选点替换 k 个位置（可复现版 np.random）；引擎比例校验以非 translation 合计 >1 报错。
+- PWA：比例表 UI 单独抽出 translation 为"独立随机拨给"；比例合计不含 translation
+  （stores/roster.ts ratioSum 已过滤）；">100%" 与 "<100%" 告警口径同步。
