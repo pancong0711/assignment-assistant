@@ -61,8 +61,13 @@ export const useRosterStore = defineStore('roster', {
       }
       return out
     },
+    /** 比例合计**不含 translation**（D24：translation 为独立"随机拨给"，不占 100%） */
     ratioSum(state): number {
-      return state.ratios.reduce((sum, r) => sum + (Number(r.ratio) || 0), 0)
+      return state.ratios.filter((r) => r.tag !== 'translation')
+        .reduce((sum, r) => sum + (Number(r.ratio) || 0), 0)
+    },
+    translationRatio(state): number {
+      return state.ratios.find((r) => r.tag === 'translation')?.ratio ?? 0
     },
   },
   actions: {

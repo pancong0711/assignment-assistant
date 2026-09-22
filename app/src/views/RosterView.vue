@@ -157,6 +157,8 @@ const summaryText = computed(() => {
 })
 
 const fixedSourceCount = computed(() => roster.sources.filter((s) => isFixedFamily(s.family)).length)
+/** 比例合计不含 translation（D24：translation 是独立"随机拨给"，不占 100%）。 */
+const nonTranslationRatios = computed(() => roster.ratios.filter((g) => g.tag !== 'translation'))
 
 /* ---------- D23 变体编排（docs/05-D23 / 12-B3.5）：tag→任务包绑定 + 一键 batch zip ---------- */
 const pads = useTaskpadStore()
@@ -304,18 +306,18 @@ async function downloadBatchZip() {
       <h2>分组比例 + 自动切分打 tag</h2>
       <p class="hint">
         2603 默认比例模板可改（punish 不参与比例，仅手动勾选覆盖；docs/05-D17/D18）。
-        切分：按综合得分降序 → 自上而下逐比例切档次（int(人数×比例)，余数补到最后一个非 translation 项）；
+        切分：不含 translation 的比例合计 ≤100% 之间依次切档（_translation 不参与_，等价 _legacy）；
         translation 沿用 _legacy 的"随机散布"语义。已手动覆盖的学生不参与切分且不被覆盖。
       </p>
       <p>
-        <label class="field" v-for="g in roster.ratios" :key="g.tag">
+        <label class="field" v-for="g in nonTranslationRatios" :key="g.tag">
           {{ STUDENT_TAG_LABELS[g.tag] ?? g.tag }}
           <input type="number" :value="Math.round(g.ratio * 100)" min="0" max="100" step="1" style="width:60px"
             @change="(e) => { g.ratio = Number((e.target as HTMLInputElement).value) / 100 || 0; roster.touch(); }" />%
         </label>
         <span class="hint" :class="{ notice: warnRatio }">
-          合计 {{ (roster.ratioSum * 100).toFixed(1) }}%
-          <template v-if="warnRatio">（&gt;100%：余数为负时按名单实际人数封顶切分）</template>
+          合计（不含 translation）{{ (roster.ratioSum * 100).toFixed(1) }}%
+          <template v-if="warnRatio">（&gt;100%：余数为负，按名单实际人数封顶切分）</template>
           <template v-else-if="warnRatioOff">（&lt;100%：剩余学生补到最后一个非 translation 档）</template>
         </span>
       </p>
