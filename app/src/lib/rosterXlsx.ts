@@ -279,7 +279,7 @@ export function buildTaskPackage(
 export function taskPackageReadme(): string {
   return `# 分组比例 + special_tag 任务包（M5 成绩管理 · 附带说明）
 
-本包由 app「班级与成绩」选项卡导出（纯前端计算，docs/05-D18/D19），供
+本包由 app「班级与标签」选项卡导出（纯前端计算，docs/05-D18/D19），供
 engine \`assist sheet make --roster\` / CLI / AI 阅读。全部示例均为占位
 （学生A / classA），不含真实数据。
 

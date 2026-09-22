@@ -90,7 +90,7 @@ export async function buildVariantBatchZip(
   const readme = [
     '# 变体编排 batch 交付包（D23 · 一键生成整班分层作业纸）',
     '',
-    '> 本包由 PWA「班级与成绩 → 变体编排」面板导出，全部为合成/本地数据；',
+    '> 本包由 PWA「作业纸内容 → 变体编排」面板导出，全部为合成/本地数据；',
     '> 不含任何引擎在线调用：教师把 zip 解压到引擎 workspace 根目录（保持包内目录结构），',
     '> 在本机 terminal 执行下述命令即可出整班分层作业纸 PDF。',
     '',
