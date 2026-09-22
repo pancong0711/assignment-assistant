@@ -265,10 +265,7 @@ onMounted(() => {
         <a class="btn" style="margin-left:8px" href="start.sh" download>⬇ macOS / Linux 一键启动 start.sh</a>
       </p>
       <p class="hint">
-        **workspace = start 脚本所在的目录**（2026-09-22 约定）：把下载的 start.bat 移到你常用的资料目录（或你习惯放班级资料的路径），双击它 = 该目录就是整个 workspace，安装的 uv/Python/venv/缓存/日志全部收纳在其中的 `.runtime/`（删除目录=整体卸载）。<br />
-        Windows 双击 `start.bat`；macOS/Linux：`bash start.sh`。<br />
-        网页（http://127.0.0.1:8601）随脚本顺次打开，体检/修复按钮/批阅/学习通占位全可用。<br />
-        **如报错闪退**：出错窗口会写 `workspace/start.log`（bat 与它所在目录并列），可发我尾部内容。<br />
+        **workspace = start 脚本所在目录**（docs/05-D28）：把下载的 start.bat 移到你常用的资料目录，双击它 = 该目录就是整个 workspace，uv/Python/venv/缓存/日志/一切产物全部收纳在其中的 `.runtime/`（删除目录=整体卸载）；<br/>Windows 双击 `start.bat`：<b>窗口全英文提示是设计取舍——cmd 解析器对 UTF-8 中文注释存在解析歧义</b>（v3/v4 闪退根因，docs/05-D25/D27）；macOS/Linux：`bash start.sh`。<br/>网页（http://127.0.0.1:8601）随脚本顺次打开，体检/【🔧修复】按钮/批阅/学习通占位全可用。<br/>如报错：窗口会停住显示英文提示行；`workspace/start.log`（bat 旁边）有全程记录——把尾部几行发我即可。**：出错窗口会写 `workspace/start.log`（bat 与它所在目录并列），可发我尾部内容。<br />
         模式：本机打开 <code>http://127.0.0.1:8601/</code>（引擎与 PWA 同源，环境体检/修复按钮/批阅均可用）。
       </p>
 
