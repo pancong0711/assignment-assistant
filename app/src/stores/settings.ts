@@ -1,6 +1,7 @@
 import { defineStore } from 'pinia'
 import {
   DEFAULT_ENGINE_ADDR, fetchDoctor, fetchEngineStatus, normalizeEngineAddr,
+  startInstall, streamInstall,
   statusClass, type DoctorCheck,
 } from '../lib/engineClient'
 
@@ -122,7 +123,9 @@ export const useSettingsStore = defineStore('settings', {
     // 向导完成状态以独立 key（assignment-assistant.onboarding.v1）为准，
     // 兼容阶段2 写在 settings.v1 里的 wizardDone。
     wizardDone: loadOnboardingDone(),
-    checks: placeholderChecks() as EnvCheckItem[],
+    installing: '' as string,
+    installLog: '',
+    checks:placeholderChecks() as EnvCheckItem[],
     /** 是否做过任何一次体检动作（用于横幅/向导第二步文案） */
     checkRunAt: '' as string,
     wizard: { visible: true, step: 1 as 1 | 2 | 3 } as WizardState,
@@ -204,25 +207,49 @@ export const useSettingsStore = defineStore('settings', {
       this.doctorWorkspace = r.engine.workspace
       this.engineOnline = true
       this.engineVersion = r.engine.version
-      // 引擎返回的检查项（CLI assist doctor 子集：uv/依赖/字体/TeX/kb/settings）
+      // 引擎返回的检查项：**优先用稳定 id（A3/D25）**，兼容旧 name 启发式
       const byKey = new Map<string, DoctorCheck>()
-      for (const c of r.checks) byKey.set(doctorKey(c), c)
+      for (const c of r.checks) byKey.set((c as any).id || doctorKey(c), c)
       this.checks.forEach((item) => {
         const hit = byKey.get(item.key)
         if (hit) {
           item.status = statusClass(hit.status)
           item.note = hit.detail || (hit.status === 'green' ? '通过' : hit.status === 'yellow' ? '注意：缺失时引擎可降级' : '缺失')
+          ;(item as any).fix = (hit as any).fix ?? {}
         }
       })
       // 引擎多返回的项（未来扩展）追加到表格尾部
       for (const c of r.checks) {
-        const k = doctorKey(c)
+        const k = (c as any).id || doctorKey(c)
         if (!this.checks.some((x) => x.key === k)) {
-          this.checks.push({ key: k, label: c.name, status: statusClass(c.status), note: c.detail || '' })
+          this.checks.push({ key: k, label: c.name, status: statusClass(c.status), note: c.detail || '',
+            fix: (c as any).fix ?? {} } as any)
         }
       }
       return true
     },
+    /** R1.4 修复按钮：POST /install/<item> + SSE 进度；完成后自动重跑体检。 */
+    async runInstall(itemId: string): Promise<boolean> {
+      if (!this.engineOnline) return false
+      this.installLog = ''
+      this.installing = itemId
+      try {
+        const jobId = await startInstall(this.engineUrl, itemId, this.engineToken)
+        await new Promise<number>((resolve) => {
+          streamInstall(this.engineUrl, jobId, this.engineToken,
+            (line) => { this.installLog = (this.installLog + '\n' + line).slice(-4000) },
+            (rc) => resolve(rc))
+        })
+        await this.runDoctor()
+        return this.doctorOk
+      } catch (e) {
+        this.installLog = String((e as Error).message)
+        return false
+      } finally {
+        this.installing = ''
+      }
+    },
+
     /** 兼容旧调用名（向导第二步按钮）：体检 = ping + doctor。 */
     async runHealthCheck(): Promise<boolean> {
       const online = await this.pingEngine()

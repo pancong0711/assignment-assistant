@@ -18,9 +18,35 @@ export const DEFAULT_ENGINE_ADDR = 'http://127.0.0.1:8601'
 export type DoctorStatus = 'green' | 'yellow' | 'red'
 
 export interface DoctorCheck {
+  id?: string
   name: string
   status: DoctorStatus
   detail?: string
+  fix?: { type?: string; install?: string }
+}
+
+/** R1.3：POST /install/<item> 发起安装任务（返回 job_id），SSE/轮询 /jobs/<id>。 */
+export async function startInstall(engineAddr: string, item: string,
+                                   token?: string): Promise<string> {
+  const base = normalizeEngineAddr(engineAddr)
+  const res = await fetch(engineUrlWithToken(base, `/install/${item}`, token),
+                          { method: 'POST' })
+  if (!res.ok) throw new Error(`HTTP ${res.status}`)
+  const o = (await res.json()) as { job_id: string }
+  return o.job_id
+}
+
+/** 订阅安装进度（SSE），返回最后状态 rc（0=成功；负/非0=失败）。onLine 每次 stdout 行回调。 */
+export function streamInstall(engineAddr: string, jobId: string, token: string | undefined,
+                              onLine: (line: string) => void, onDone: (rc: number) => void): () => void {
+  const es = new EventSource(engineUrlWithToken(engineAddr, `/jobs/${jobId}/stream`, token))
+  es.addEventListener('message', (ev) => onLine((ev as MessageEvent).data))
+  es.addEventListener('done', (ev) => {
+    const rc = Number(String((ev as MessageEvent).data).replace(/[^0-9-]/g, '') || '0')
+    onDone(rc); es.close()
+  })
+  es.onerror = () => { es.close() }
+  return () => es.close()
 }
 
 export interface DoctorResult {

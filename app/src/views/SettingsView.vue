@@ -265,8 +265,15 @@ onMounted(() => {
         <li v-for="c in settings.checks" :key="c.key" :class="`status-${c.status}`">
           <span class="status-dot"></span>
           <b>{{ statusGlyph(c.status) }} {{ c.label }}</b> — {{ c.note }}
+          <button v-if="c.status !== 'ok' && (c as any).fix?.type === 'install'" class="btn small" style="margin-left:8px"
+            :disabled="settings.installing !== ''" @click="settings.runInstall((c as any).fix.install)">
+            {{ settings.installing === (c as any).fix.install ? '安装中…' : '🔧 修复' }}
+          </button>
         </li>
       </ul>
+      <p v-if="settings.installLog" class="hint"><code>安装输出</code>
+        <pre style="max-height:160px; overflow:auto; white-space:pre-wrap">{{ settings.installLog }}</pre>
+      </p>
       <div class="notice" v-if="!settings.engineOnline">
         引擎未在线——在本机运行 <code>assist serve</code> 后重试。
         <button class="btn small clip-btn" @click="copyText(SERVE_CMD, 'assist serve 命令')">复制命令</button>
