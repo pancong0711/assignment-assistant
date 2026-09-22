@@ -265,7 +265,9 @@ onMounted(() => {
         <a class="btn" style="margin-left:8px" href="start.sh" download>⬇ macOS / Linux 一键启动 start.sh</a>
       </p>
       <p class="hint">
-        使用步骤：⬇ 下载脚本 → **向下放置到任意目录**（Windows 双击 js run.bat）→ 自动打开浏览器<br />
+        全程零依赖起步（uv/Python 装进 workspace/.runtime，缓存也收纳），从零安装完成。<br />
+        Windows 双击 `start.bat`；macOS/Linux：`bash start.sh`。<br />
+        **如报错闪退**：启动窗口会写 `workspace/start.log`；v2 起报错时窗口不再自动关闭（pause），可在日志里定位。<br />
         模式：本机打开 <code>http://127.0.0.1:8601/</code>（引擎与 PWA 同源，环境体检/修复按钮/批阅均可用）。
       </p>
 
