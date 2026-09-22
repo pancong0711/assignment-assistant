@@ -25,6 +25,9 @@ jobs:
           uv pip install pytest --python .venv/bin/python
           .venv/bin/python -m pytest tests -q
 
+      - name: start 脚本 lint（cmd 解析坑防御，docs/13 M-D）
+        run: python3 tools/lint_bat.py
+
       - name: 脱敏检查（红线）
         run: bash tools/check-secrets.sh
 
