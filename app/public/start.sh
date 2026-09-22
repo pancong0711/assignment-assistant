@@ -2,11 +2,12 @@
 # 一键启动（R1.2 v2）：零依赖起步。uv 与 Python 全装进 workspace/.runtime。
 # 用法：bash tools/start.sh [workspace]
 set -euo pipefail
-WS="${1:-${ASSIST_WORKSPACE:-$HOME/assignment-assistant-workspace}}"
+SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
+WS="${1:-${ASSIST_WORKSPACE:-$SCRIPT_DIR}}"
 mkdir -p "$WS"
 LOG="$WS/start.log"; echo "=== START $(date) ===" >> "$LOG"
 export PATH="$WS/.runtime/uv:$HOME/.local/bin:$PATH"
-export UV_TOOL_BIN_DIR="$WS/.runtime/uv"
+export UV_INSTALL_DIR="$WS/.runtime/uv"
 export UV_PYTHON_INSTALL_DIR="$WS/.runtime/python"
 export UV_CACHE_DIR="$WS/.runtime/cache/uv"
 export UV_PROJECT_ENVIRONMENT="$WS/.runtime/venv"

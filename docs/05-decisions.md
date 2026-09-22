@@ -253,3 +253,12 @@ translation / punish`（punish 为新固定项：期末补作业，统一题集�
 - **整班分层生成**入口放"班级与标签"页（打完 tag 之后一步到位），走 `assist sheet batch`；
 - 预览≠打印是已知局限（HTML/CSS vs reportlab+LaTeX）：新增**高保真预览**通道——引擎把任务包渲染成 PDF 后用 pdftoppm 转 PNG，PWA 翻页浏览（上一页/下一页/页码输入框）；无引擎时回退 CSS 近似预览并标注"近似预览"；
 - LaTeX 公式在 CSS 预览中只显示源码 → 引入 KaTeX 前端渲染（数学公式近似显示），与高保真预览互补。
+
+
+## D28 · workspace 约定 = start 脚本所在目录（2026-09-22 用户拍板）
+
+- start.bat / start.sh **由双击处定位 workspace**：教师把脚本放在自己惯用资料目录
+  （例如 `D:\我的资料\班级\`），双击该脚本 == 该目录即是 workspace（kb、
+  classes/、.runtime 全在其中）。网页设置中心已注明；
+- PWA 设置页"一键启动/安装卡"文案同步："下载 start.bat → 移动到你常用的
+  资料目录 → 双击即用"；前端 FSA 所选目录与 bat 侧工作区通过**同一路径**统一。

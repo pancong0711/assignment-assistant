@@ -7,9 +7,9 @@ REM        本次顺序改为：建目录 → 之后才挂日志。
 REM ============================================================
 setlocal enableextensions
 chcp 65001 >nul
-set "WORKSPACE=%~1"
-IF "%WORKSPACE%"=="" IF "%ASSIST_WORKSPACE%"=="" set WORKSPACE=%USERPROFILE%\assignment-assistant-workspace
-IF "%WORKSPACE%"=="" set WORKSPACE=%USERPROFILE%\assignment-assistant-workspace
+set "WORKSPACE=%~dp0"
+
+IF "%WORKSPACE%"=="" set "WORKSPACE=%~dp0"
 IF NOT EXIST "%WORKSPACE%" mkdir "%WORKSPACE%"
 set "ROOT=%~dp0.."
 set "LOG=%WORKSPACE%\start.log"
