@@ -35,7 +35,7 @@ IF ERRORLEVEL 1 (
     echo uv 下载安装失败，请检查网络或查看日志 %LOG%
     pause & exit /b 1
   )
-  :: 刷新 PATH 使 uv 可见
+  REM 刷新 PATH 使 uv 可见
   set "PATH=%PATH%;%LOCALAPPDATA%\Programs\uv"
 )
 where uv >nul 2>nul || (echo uv 仍不可用，环境变量 PATH 更新可能延迟
