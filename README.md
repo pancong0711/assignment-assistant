@@ -28,6 +28,7 @@
 - `docs/06-roadmap.md` — 六阶段路线图（0–5，含验收标准）
 - `docs/07-incremental-vs-rewrite.md` — 增量迁移 vs 重写的开发思路判定
 - `docs/11-deployment.md` — GitHub Pages 部署（阶段4b）
+- `docs/13-taskboard.md` — **任务需求单**（R1–R4，D25–D27 反馈批次化实施）
 - `_legacy/` — 原始两项目解档（仅本地参考，已被 gitignore，永不推送）
 
 ## 里程碑
