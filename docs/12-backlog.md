@@ -5,6 +5,8 @@
 
 ## A · 阶段 4a 收尾（小、纯缝合）
 
+- ✅ **A3 /doctor 检查项 id 定版**（d3136aa：检查项含 id + fix 指引；CHECK_IDS 固化）；
+
 - ✅ A1 引擎 token 贯通（设置中心 token 输入 + engineClient /status /doctor 传参；commit fd85107）；
 - A2 selfcheck 入 CI：app/tests（watermark-doctor/family/lan-selftest）在 GitHub
   Actions 跑（现在 pages.yml 只 build+deploy）；顺带加 engine pytest；
@@ -21,6 +23,7 @@
 - B4 SheetJS 写回 xlsx 样式丢失 → 引擎 openpyxl 补样式；
 - B5 便携引擎包（Releases：engine-portable-<platform>.zip，D5/D14）；
 - B6 教师使用手册 + Pages 用户教程 + 卸载指引；手机第二屏细化（D9）；
+- ✅（M-D 前移）R1.2 start 脚本 + R1.3 /install jobs+SSE + R1.4 修复按钮（docs/13 M-D；commit d3136aa）——剩余仅：Windows start.bat 实测、静态清单卡微调；
 - **B7（今日新增，重点）多类型/多层作业纸的"变体编排"**：
   目标 = 旧 2603 build_cfg_list 的网页化——按 tag 生成多份变体任务包、
   自动绑定 roster 分组（tag→任务包 映射表），一键发"每组不同的作业纸"。
