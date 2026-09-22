@@ -1,67 +1,70 @@
 @echo off
-REM ============================================================
-REM  一键启动（R1.2 v4（workspace=bat 所在目录））：零依赖裸机起步 —— uv/Python/缓存/venv 全部装入 workspace
-REM  修复：此前由于 mkdir 之前先挂日志重定向，目录缺失时所有后续命令
-REM        的输出重定向也失败 → 'The system cannot find the path specified'。
-REM        本次顺序改为：建目录 → 之后才挂日志。
-REM ============================================================
+REM [R1.2 v5] start.bat -- zero-dependency bootstrap for assignment-assistant.
+REM Distinguished convention (D28): the folder THIS .bat file lives in IS the workspace.
+REM Everything (uv / python / venv / caches / logs) is installed under <that dir>\.runtime\.
+REM Delete that dir = full uninstall. PWA settings page explains the same in Chinese.
 setlocal enableextensions
-chcp 65001 >nul
+echo [R1.2 v5] assignment-assistant launcher
 set "WORKSPACE=%~dp0"
-
-IF "%WORKSPACE%"=="" set "WORKSPACE=%~dp0"
-IF NOT EXIST "%WORKSPACE%" mkdir "%WORKSPACE%"
-set "ROOT=%~dp0.."
 set "LOG=%WORKSPACE%\start.log"
-echo === START %DATE% %TIME% === >> "%LOG%"
+set "ROOT=%~dp0.."
+IF NOT EXIST "%WORKSPACE%" mkdir "%WORKSPACE%" 2>nul
+IF NOT EXIST "%WORKSPACE%\.runtime" mkdir "%WORKSPACE%\.runtime" 2>nul
+IF NOT EXIST "%WORKSPACE%\.runtime\cache\uv" mkdir "%WORKSPACE%\.runtime\cache\uv" 2>nul
+IF NOT EXIST "%WORKSPACE%\.runtime\browsers" mkdir "%WORKSPACE%\.runtime\browsers" 2>nul
+echo =============================== >> "%LOG%"
 set PATH=%WORKSPACE%\.runtime\uv;%WORKSPACE%\.runtime\uv\bin;%WORKSPACE%\.runtime\python;%USERPROFILE%\.local\bin;%LOCALAPPDATA%\Programs\uv;%PATH%
 set "UV_INSTALL_DIR=%WORKSPACE%\.runtime\uv"
 set "UV_PYTHON_INSTALL_DIR=%WORKSPACE%\.runtime\python"
 set "UV_CACHE_DIR=%WORKSPACE%\.runtime\cache\uv"
 set "UV_PROJECT_ENVIRONMENT=%WORKSPACE%\.runtime\venv"
 set "ASSIST_WORKSPACE=%WORKSPACE%"
-echo [1/5] 确保工作区子目录
-IF NOT EXIST "%WORKSPACE%\.runtime" mkdir "%WORKSPACE%\.runtime"
-IF NOT EXIST "%WORKSPACE%\.runtime\cache\uv" mkdir "%WORKSPACE%\.runtime\cache\uv"
-IF NOT EXIST "%WORKSPACE%\.runtime\browsers" mkdir "%WORKSPACE%\.runtime\browsers"
-IF EXIST "%LOG%" DEL "%LOG%" >nul 2>nul
-echo =============================== >> "%LOG%"
-echo [2/5] 安装 uv（用户级，二进制放 workspace）
+echo [1/6] workspace = %WORKSPACE%
+echo [2/6] install uv if missing (user-level, into workspace)
 where uv >nul 2>nul
 IF ERRORLEVEL 1 (
   powershell -NoProfile -ExecutionPolicy Bypass -Command "irm https://astral.sh/uv/install.ps1 | iex"
   IF ERRORLEVEL 1 (
-    echo uv 下载安装失败，请检查网络
+    echo [FAIL] uv download failed - check network
     echo [uv install FAIL] >> "%LOG%"
     pause
     exit /b 1
   )
-  REM 刷新 PATH（本会话可见）
+  REM refresh PATH for this session
   set PATH=%PATH%
 )
 where uv >nul 2>nul
-IF ERRORLEVEL 1 ( echo uv 仍不可用（重启终端再试或看日志） >> "%LOG%" & echo uv 不可用 & pause & exit /b 1 )
-echo [3/5] 为 workspace 准备 Python（uv 托管 Python 3.13）
+IF ERRORLEVEL 1 (
+  echo [FAIL] uv still not available - restart terminal and retry
+  echo [uv not on PATH] >> "%LOG%"
+  pause
+  exit /b 1
+)
+echo [3/6] install managed python 3.13 (into workspace)
 uv python install 3.13 >> "%LOG%" 2>&1
-IF ERRORLEVEL 1 echo [WARN] uv python install 失败（可能已有系统的 3.13）>> "%LOG%"
-echo [4/5] 创建 venv（workspace/.runtime/venv，D14）
+IF ERRORLEVEL 1 echo [WARN] uv python install failed; system python may exist >> "%LOG%"
+echo [4/6] create venv (workspace/.runtime/venv, D14)
 IF NOT EXIST "%WORKSPACE%\.runtime\venv\Scripts\python.exe" (
   uv venv --python 3.13 "%WORKSPACE%\.runtime\venv" >> "%LOG%" 2>&1
 )
-if not exist "%WORKSPACE%\.runtime\venv\Scripts\python.exe" (
-  echo venv 创建失败，见日志 & notepad "%LOG%" & pause & exit /b 1
+IF NOT EXIST "%WORKSPACE%\.runtime\venv\Scripts\python.exe" (
+  echo [FAIL] venv creation failed - see start.log
+  notepad "%LOG%"
+  pause
+  exit /b 1
 )
-echo [5/5] 安装引擎依赖并启动
+echo [5/6] install engine dependencies
 uv pip install -e "%ROOT%\engine" --python "%WORKSPACE%\.runtime\venv\Scripts\python.exe" >> "%LOG%" 2>&1
 IF ERRORLEVEL 1 (
   echo.
-  echo 依赖安装失败，详见日志（%LOG%）并按需返回上一步。
+  echo [FAIL] dependency install failed - see start.log
   notepad "%LOG%"
-  pause & exit /b 1
+  pause
+  exit /b 1
 )
-echo [6/6] 启动引擎 http://127.0.0.1:8601/
+echo [6/6] start engine http://127.0.0.1:8601/
 start "" http://127.0.0.1:8601/
 "%WORKSPACE%\.runtime\venv\Scripts\assist.exe" serve --port 8601 >> "%LOG%" 2>&1
-echo 引擎已退出。日志： %LOG%
+echo engine exited. log: %LOG%
 pause
 endlocal
