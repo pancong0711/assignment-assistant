@@ -1,6 +1,6 @@
 @echo off
 REM ============================================================
-REM  一键启动（R1.2 v3）：零依赖裸机起步 —— uv/Python/缓存/venv 全部装入 workspace
+REM  一键启动（R1.2 v4（workspace=bat 所在目录））：零依赖裸机起步 —— uv/Python/缓存/venv 全部装入 workspace
 REM  修复：此前由于 mkdir 之前先挂日志重定向，目录缺失时所有后续命令
 REM        的输出重定向也失败 → 'The system cannot find the path specified'。
 REM        本次顺序改为：建目录 → 之后才挂日志。
