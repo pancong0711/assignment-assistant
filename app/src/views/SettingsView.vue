@@ -256,6 +256,19 @@ onMounted(() => {
         </dd>
       </div>
 
+      <h3>一键启动 / 安装（R1.2：教师双击脚本即得 Companion 模式）</h3>
+      <p class="hint">
+        已是<b>两种路径</b>：① 教师 **下载一键脚本、双击运行**（自动装 uv→建 workspace/.runtime venv→装依赖→起引擎→自动开浏览器，D14 收纳）；② 已装引擎的机器上用下方体检页——红/黄项旁点 🔧修复（走 /install）。
+      </p>
+      <p>
+        <a class="btn primary" href="start.bat" download>⬇ Windows 一键启动 start.bat</a>
+        <a class="btn" style="margin-left:8px" href="start.sh" download>⬇ macOS / Linux 一键启动 start.sh</a>
+      </p>
+      <p class="hint">
+        使用步骤：⬇ 下载脚本 → **向下放置到任意目录**（Windows 双击 js run.bat）→ 自动打开浏览器<br />
+        模式：本机打开 <code>http://127.0.0.1:8601/</code>（引擎与 PWA 同源，环境体检/修复按钮/批阅均可用）。
+      </p>
+
       <h3>环境体检（assist serve /doctor）</h3>
       <p>
         <button class="btn primary" :disabled="checking" @click="runDoctorNow">{{ checking ? '体检中…' : '体检' }}</button>
