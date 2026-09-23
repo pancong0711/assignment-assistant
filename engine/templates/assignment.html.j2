@@ -1,0 +1,174 @@
+{#- engine/templates/assignment.html.j2 — VB-1 单一事实源（docs/14 §VB-1/2 / 05-D30）。
+
+  作业纸 HTML 打印主通道模板。双实现共用本结构与 <style>（D1 超集铁律）：
+  - engine CLI：`assist sheet html --task <taskpad.json> [--roster xlsx]`
+    （渲染器 engine/src/assist/paper/htmlfile.py）；
+  - PWA：app/src/lib/sheetHtml.ts（stringifySheetHtml，纯前端同构输出）。
+  修改本模板的结构或 <style> 块时，必须同步 sheetHtml.ts 的 PRINT_CSS/结构
+  （两处同改；engine/tests/test_sheet_html.py 有轻量 parity 哨兵）。
+
+  上下文（由 htmlfile.py / sheetHtml.ts 预构造，模板不做业务逻辑）：
+    doc: { id, title, course, class_name, date, orientation, per_page, grid,
+           footer_text, katex_version }
+    watermark: { enabled, page_text, items: [{ pos, ratio, alpha, width_mm,
+                 b64, mime, label }] }
+    students: [ { name, number, class_display, tag,
+                  pages: [ { n, total, last, grid_lines: [...], frames: [
+                             { id, tag, content, solution, img_b64, img_mime,
+                               img_label } ] } ] } ]
+
+  离线打印说明（VB-2）：KaTeX 走 CDN；无网时公式保持 $..$ 源码显示（降级
+  不报错），分页/水印/版式不受影响；需精确公式时联网打开或改用引擎 PDF 通道。
+-#}
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>{{ doc.title }} · {{ doc.id }}</title>
+<!-- KaTeX {{ doc.katex_version }}（CDN）：题干/答案中 $..$、$$..$$ 自动渲染。
+     离线场景：CDN 不可达时 renderMathInElement 不存在，公式按 $..$ 源码降级显示。 -->
+<link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/katex@{{ doc.katex_version }}/dist/katex.min.css">
+<script defer src="https://cdn.jsdelivr.net/npm/katex@{{ doc.katex_version }}/dist/katex.min.js"></script>
+<script defer src="https://cdn.jsdelivr.net/npm/katex@{{ doc.katex_version }}/dist/contrib/auto-render.min.js"></script>
+<style>
+/* ===== assignment.html.j2 打印主通道样式（与 app/src/lib/sheetHtml.ts PRINT_CSS 逐字同步） ===== */
+:root { --ink:#1f2937; --line:#333; --muted:#6b7280; --accent:#2456c4; --hairline:#c3cad6; }
+* { box-sizing: border-box; }
+html, body { margin: 0; padding: 0; }
+body {
+  background: #e8ecf3; color: var(--ink);
+  font-family: "Noto Sans SC", "Microsoft YaHei", "PingFang SC", "Source Han Sans SC", sans-serif;
+  -webkit-print-color-adjust: exact; print-color-adjust: exact;
+}
+.doc-hint { max-width: 210mm; margin: 8mm auto 2mm; font-size: 11px; color: #475569;
+  background: #fff; border: 1px dashed var(--hairline); border-radius: 8px; padding: 6px 10px; }
+.sheet-page {
+  position: relative; background: #fff; overflow: hidden;
+  width: 210mm; height: 296mm; margin: 10mm auto; padding: 12mm 14mm;
+  display: flex; flex-direction: column; gap: 2mm;
+  box-shadow: 0 2px 10px rgba(31, 41, 55, 0.18);
+  -webkit-print-color-adjust: exact; print-color-adjust: exact;
+}
+.sheet-page.landscape { width: 297mm; height: 209mm; }
+.sheet-header { border-bottom: 2px solid var(--line); text-align: center; font-weight: 700; padding-bottom: 2mm; }
+.sh-title { font-size: 16pt; }
+.sh-info { display: flex; justify-content: space-between; gap: 3mm; flex-wrap: wrap;
+  font-weight: 400; font-size: 10.5pt; text-align: left; margin-top: 1.6mm; color: #222; }
+.sh-assign { color: var(--muted); }
+.sheet-body { flex: 1; display: flex; flex-direction: column; gap: 3mm; min-height: 0; }
+.sheet-page.landscape .sheet-body { flex-direction: row; }
+.sheet-body[data-grid="cols2"], .sheet-body[data-grid="cols3"] { flex-direction: row; }
+.sheet-body[data-grid="rows2"], .sheet-body[data-grid="rows3"] { flex-direction: column; }
+.sheet-body[data-grid="cross"] { flex-wrap: wrap; }
+.sheet-body.divided { gap: 0; position: relative; }
+.sheet-frame { flex: 1 1 0; min-width: 0; min-height: 0; border: 1px dashed var(--hairline);
+  border-radius: 2mm; padding: 3mm; overflow: hidden; display: flex; flex-direction: column; gap: 2mm; }
+.sheet-body.divided .sheet-frame { border: none; border-radius: 0; padding: 3mm 4mm; }
+.sheet-body[data-grid="cross"] .sheet-frame { flex: 0 0 50%; height: 50%; }
+.q-id { font-weight: 700; color: var(--accent); font-size: 11pt; }
+.q-tag { font-weight: 400; color: var(--muted); font-size: 9pt; }
+.q-content { font-size: 11.5pt; line-height: 1.8; white-space: pre-wrap; }
+.q-img { max-width: 100%; max-height: 52mm; object-fit: contain; align-self: center; }
+.q-img-ph { color: var(--muted); font-size: 10pt; font-style: italic; border: 1px dashed var(--hairline);
+  border-radius: 2mm; padding: 4mm; text-align: center; }
+.q-solution { color: var(--muted); font-size: 10pt; border-top: 1px dashed #dfe3ea;
+  padding-top: 1.5mm; margin-top: auto; }
+.sheet-footer { border-top: 1px solid var(--line); padding-top: 1.5mm; font-size: 10pt;
+  color: var(--muted); display: flex; justify-content: space-between; gap: 3mm; }
+/* 多题/页分隔线（虚线，止于内容区，不穿页眉页脚；与 CSS 预览/引擎 PDF 同口径） */
+.sf-line { position: absolute; pointer-events: none; z-index: 2; }
+.sf-line.v { left: 50%; top: 0; width: 1px; height: 100%; }
+.sf-line.h { left: 0; top: 50%; width: 100%; height: 1px; }
+.sf-line.v31 { left: 33.3%; top: 0; width: 1px; height: 100%; }
+.sf-line.v32 { left: 66.6%; top: 0; width: 1px; height: 100%; }
+.sf-line.h31 { left: 0; top: 33.3%; width: 100%; height: 1px; }
+.sf-line.h32 { left: 0; top: 66.6%; width: 100%; height: 1px; }
+.sf-line.v, .sf-line.v31, .sf-line.v32 { background-image: repeating-linear-gradient(to bottom, #777 0 5px, transparent 5px 10px); }
+.sf-line.h, .sf-line.h31, .sf-line.h32 { background-image: repeating-linear-gradient(to right, #777 0 5px, transparent 5px 10px); }
+/* 水印层（每页重建；items 逐层 + 页码大字） */
+.wm-layer { position: absolute; inset: 0; pointer-events: none; z-index: 5; }
+.wm-page-text { position: absolute; left: 16%; top: 38%; font-size: 46pt; color: #333;
+  opacity: 0.08; transform: rotate(-24deg); white-space: nowrap; }
+.wm-anchor { position: absolute; pointer-events: none; line-height: 0; }
+.wm-lt { left: 4%; top: 4%; } .wm-mt { left: 50%; top: 4%; transform: translateX(-50%); } .wm-rt { right: 4%; top: 4%; }
+.wm-lm { left: 4%; top: 45%; } .wm-mm { left: 50%; top: 45%; transform: translate(-50%, -50%); } .wm-rm { right: 4%; top: 45%; }
+.wm-lb { left: 4%; bottom: 4%; } .wm-mb { left: 50%; bottom: 4%; transform: translateX(-50%); } .wm-rb { right: 4%; bottom: 4%; }
+.wm-img { height: auto; }
+.wm-placeholder { line-height: normal; font-size: 9pt; color: #9aa3b2; background: rgba(255,255,255,0.72);
+  border: 1px dashed var(--hairline); border-radius: 4px; padding: 1px 4px; white-space: nowrap; }
+@page { size: A4 {{ doc.orientation }}; margin: 0; }
+@media print {
+  body { background: #fff; }
+  .doc-hint { display: none !important; }
+  .sheet-page { margin: 0; box-shadow: none; page-break-after: always; break-after: page; }
+  .sheet-page.last { page-break-after: auto; break-after: auto; }
+}
+</style>
+</head>
+<body>
+<div class="doc-hint">
+  打印（Ctrl/Cmd+P）：纸张=A4 · 边距=无 · 页眉页脚=关 · 背景图形=开（水印层依赖背景图形，docs/14 §VB-6）。
+  目标选「另存为 PDF」可保存整班 PDF。公式由 KaTeX CDN 渲染：离线时按 $..$ 源码降级显示。
+</div>
+{% for stu in students %}
+{% for pg in stu.pages %}
+<section class="sheet-page{% if doc.orientation == 'landscape' %} landscape{% endif %}{% if pg.last %} last{% endif %}" data-student="{{ stu.name }}" data-page="{{ pg.n }}">
+  {% if watermark.enabled %}
+  <div class="wm-layer" aria-hidden="true">
+    {% if watermark.page_text %}<span class="wm-page-text">第 {{ pg.n }} 页</span>{% endif %}
+    {% for it in watermark['items'] %}
+    <div class="wm-anchor wm-{{ it.pos }}" data-wm-item="{{ loop.index }}" data-wm-pos="{{ it.pos }}" style="opacity: {{ it.alpha }};">
+      {% if it.b64 %}<img class="wm-img" src="data:{{ it.mime }};base64,{{ it.b64 }}" style="width: {{ it.width_mm }}mm;" alt="">{% else %}<span class="wm-placeholder">[水印：{{ it.label }}（{{ it.pos }}）]</span>{% endif %}
+    </div>
+    {% endfor %}
+  </div>
+  {% endif %}
+  <div class="sheet-header">
+    <div class="sh-title">{{ doc.title }}</div>
+    <div class="sh-info">
+      {% if doc.course %}<span>课程：{{ doc.course }}</span>{% endif %}
+      <span>班级：{{ stu.class_display }}</span>
+      <span>学号：{{ stu.number }}</span>
+      <span>姓名：{{ stu.name }}</span>
+      <span class="sh-assign">作业：{{ doc.id }}</span>
+      <span class="sh-assign">日期：{{ doc.date }}</span>
+    </div>
+  </div>
+  <div class="sheet-body{% if pg.grid_lines %} divided{% endif %}" data-grid="{{ doc.grid }}">
+    {% for ln in pg.grid_lines %}<div class="sf-line {{ ln }}"></div>
+    {% endfor %}{% for fr in pg.frames %}
+    <div class="sheet-frame">
+      <div class="q-id">{{ fr.id }}{% if fr.tag %} <span class="q-tag">【{{ fr.tag }}】</span>{% endif %}</div>
+      <div class="q-content">{{ fr.content }}</div>
+      {% if fr.img_b64 %}<img class="q-img" src="data:{{ fr.img_mime }};base64,{{ fr.img_b64 }}" alt="题图">{% elif fr.img_label %}<div class="q-img-ph">[题图：{{ fr.img_label }}]</div>{% endif %}
+      {% if fr.solution %}<div class="q-solution">参考答案：{{ fr.solution }}</div>{% endif %}
+    </div>
+    {% endfor %}
+  </div>
+  <div class="sheet-footer">
+    <span>{% if doc.footer_text %}{{ doc.footer_text }} · {% endif %}{{ doc.id }}-第 {{ pg.n }}/{{ pg.total }}页</span>
+    <span>签名：</span>
+    <span>日期：{{ doc.date }}</span>
+  </div>
+</section>
+{% endfor %}
+{% endfor %}
+<script>
+/* KaTeX 自动渲染（仅题干/答案；CDN 不可达时跳过=源码降级，不报错） */
+document.addEventListener('DOMContentLoaded', function () {
+  if (typeof window.renderMathInElement !== 'function') return;
+  var opts = {
+    delimiters: [
+      { left: '$$', right: '$$', display: true },
+      { left: '$', right: '$', display: false }
+    ],
+    throwOnError: false
+  };
+  document.querySelectorAll('.q-content, .q-solution').forEach(function (el) {
+    try { window.renderMathInElement(el, opts); } catch (e) { /* 降级：保留源码 */ }
+  });
+});
+</script>
+</body>
+</html>

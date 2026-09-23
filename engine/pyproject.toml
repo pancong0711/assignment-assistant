@@ -11,7 +11,13 @@ dependencies = [
     "pillow>=10.0",
     "pypdf>=4.0",
     "httpx>=0.27",
+    "jinja2>=3.0",
 ]
+
+# VB-1 HTML 主通道模板（engine/templates/assignment.html.j2）随 wheel 打包：
+# 仓库形态从 engine/templates 读，安装形态落到包内 assist/templates。
+[tool.hatch.build.targets.wheel.force-include]
+"templates" = "assist/templates"
 
 [project.scripts]
 assist = "assist.cli:main"

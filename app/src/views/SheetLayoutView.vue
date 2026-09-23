@@ -3,25 +3,35 @@ import { computed, ref, watch } from 'vue'
 import { STUDENT_TAG_LABELS, type KbKind } from '../lib/kb'
 import { useKbStore } from '../stores/kb'
 import { useTaskpadStore } from '../stores/taskpad'
+import { useRosterStore } from '../stores/roster'
 import { useSettingsStore } from '../stores/settings'
 import { downloadData, downloadBlob, pickReadFile } from '../lib/fsAccess'
 import { serializeTaskpad, parseTaskpad, padInferredTag, WATERMARK_POS_LABELS, type PerPage } from '../lib/taskpad'
+import {
+  stringifySheetHtml, downloadSheetHtml, printSheetHtml, SYNTHETIC_STUDENTS,
+  type SheetHtmlItem, type SheetHtmlStudent,
+} from '../lib/sheetHtml'
+import SheetHtmlPreviewModal from '../components/SheetHtmlPreviewModal.vue'
 import JSZip from 'jszip'
 
 /** 作业纸版式（M-A S1 拆分，docs/05-D25/D27）：一份模板的"长相"。
  *  orientation / per_page / 页眉页脚 / 水印编辑器 / 模板预览（CSS 近似）/
  *  任务包导出与清单；"打印级 PDF（模板）"语义 = 模板级（当前任务包 × 合成学生
  *  A/B 样例，单类型全班统一场景；docs/05-D27）。整班分层生成入口在「班级与标签」。
- *  题目构成（kind×章选题 / items / target_tag 绑定）在「作业纸内容」页（SheetContentView）。 */
+ *  题目构成（kind×章选题 / items / target_tag 绑定）在「作业纸内容」页（SheetContentView）。
+ *  S2a（docs/14 §VB-4/§VC-1）：+「打印浏览器版」按钮（下载 HTML / window.print，
+ *  与 CLI `assist sheet html` 同一模板的 TS 同构实现）+「显示为浏览器打印版」
+ *  HTML overlay 预览切换（CSS 预览保留，不依赖引擎）。 */
 
 const kb = useKbStore()
 const pad = useTaskpadStore()
+const roster = useRosterStore()
 const settings = useSettingsStore()
 
 const status = ref('')
 
 /* ---------- 预览数据（items 只读：题目构成在「作业纸内容」页编辑） ---------- */
-interface PreItem { kind: KbKind; chap: string; id: string; content: string; solution: string; imgPath: string }
+interface PreItem { kind: KbKind; chap: string; id: string; content: string; solution: string; imgPath: string; tag: string }
 const preItems = computed<PreItem[]>(() => {
   const out: PreItem[] = []
   for (const item of pad.current.items) {
@@ -29,11 +39,57 @@ const preItems = computed<PreItem[]>(() => {
     if (!chap) continue
     for (const id of item.ids) {
       const r = chap.rows.find((x) => x.id === id)
-      if (r) out.push({ kind: item.kb as KbKind, chap: item.chap, id, content: r.content, solution: r.solution, imgPath: r.img_path })
+      if (r) out.push({ kind: item.kb as KbKind, chap: item.chap, id, content: r.content, solution: r.solution, imgPath: r.img_path, tag: item.tag })
     }
   }
   return out
 })
+
+/* ---------- 浏览器打印主通道（VB-4：任务包 → 同一模板 HTML；无需引擎） ---------- */
+const sheetHtmlItems = computed<SheetHtmlItem[]>(() =>
+  preItems.value.map((p) => ({ id: p.id, content: p.content, solution: p.solution, imgPath: p.imgPath, tag: p.tag })))
+
+/** 名单：有名单用名单；否则合成 学生A/B（informational，与引擎 demo 同风格） */
+function sheetStudents(): SheetHtmlStudent[] {
+  return roster.students.length
+    ? roster.students.map((s) => ({ name: s.name, number: s.number, class: s.class, tag: s.tag }))
+    : SYNTHETIC_STUDENTS
+}
+
+function buildCurrentPadHtml(): string {
+  return stringifySheetHtml(
+    { pad: pad.current, items: sheetHtmlItems.value },
+    { students: sheetStudents(), wmAssets: settings.wmAssets },
+  )
+}
+
+function printBrowserVersion() {
+  try {
+    printSheetHtml(buildCurrentPadHtml())
+    status.value = `已打开浏览器打印对话框（隐藏 iframe 内打印作业纸文档本身）。名单来源：${roster.students.length ? `本地名单 ${roster.students.length} 人` : '合成 学生A/B（未导入名单）'}；整班 HTML 下载请用旁边按钮。`
+  } catch (e) {
+    status.value = `打印浏览器版失败：${(e as Error).message}`
+  }
+}
+
+function downloadBrowserVersion() {
+  try {
+    const html = buildCurrentPadHtml()
+    downloadSheetHtml(html, `${pad.current.id}.html`)
+    status.value = `已下载 ${pad.current.id}.html（自包含整班 HTML，与 CLI assist sheet html 同一模板）：浏览器打开 → Ctrl/Cmd+P → 目标「另存为 PDF」。名单：${roster.students.length ? `${roster.students.length} 人` : '合成 学生A/B'}。`
+  } catch (e) {
+    status.value = `下载 HTML 失败：${(e as Error).message}`
+  }
+}
+
+/* ---------- VC-1：模板预览切换（CSS 预览保留 + HTML overlay） ---------- */
+const showHtmlOverlay = ref(false)
+const overlayHtml = ref('')
+function openHtmlOverlay() {
+  overlayHtml.value = buildCurrentPadHtml()
+  showHtmlOverlay.value = true
+  status.value = '已在弹窗打开「浏览器打印版」预览（同一 HTML 模板；打印/下载按钮在弹层内）。'
+}
 
 const perPage = computed(() => pad.current.layout.per_page)
 const orientation = computed(() => pad.current.layout.orientation)
@@ -312,6 +368,17 @@ function engineHint(): void {
           <button class="btn primary" @click="exportTaskpadJson">导出任务包 JSON（下载 + 存入本页清单）</button>
           <button class="btn" style="margin-left:8px" @click="pad.saveToLibrary(); status = '已保存到任务包清单'">仅保存</button>
         </p>
+        <h3>浏览器打印主通道（无需引擎 · docs/14 §VB-4 / 05-D30）</h3>
+        <p>
+          <button class="btn" title="隐藏 iframe 打印作业纸 HTML 本身（非本页界面）；打印对话框按教程设置" @click="printBrowserVersion">🖨 打印浏览器版（window.print）</button>
+          <button class="btn" style="margin-left:8px" title="下载自包含整班 HTML：浏览器打开 → Ctrl/Cmd+P → 另存为 PDF" @click="downloadBrowserVersion">⬇ 下载整班 HTML（另存 PDF 用）</button>
+        </p>
+        <p class="hint">
+          任务包 → 与 CLI <code>assist sheet html</code> <b>同一模板</b>的 HTML（每生分页块 · @page A4 横/竖 ·
+          per_page 网格 · 水印层 · KaTeX 渲染 $..$ 公式，docs/05-D30 主通道）。纯前端不依赖引擎/未登录可用；
+          打印对话框请按「打印教程」设置（A4 / 边距=无 / 页眉页脚=关 / 背景图形=开）。
+          名单：{{ roster.students.length ? `本浏览器名单 ${roster.students.length} 人` : '未导入名单 → 合成 学生A/B（informational）' }}。
+        </p>
         <h3>引擎依赖按钮（D13 条件式置灰）</h3>
         <p>
           <button class="btn" :disabled="engineButtonsDisabled" title="需引擎在线（assist serve）后启用" @click="engineHint()">🖨 打印级 PDF（模板，需引擎）</button>
@@ -371,6 +438,10 @@ function engineHint(): void {
 
       <div class="card" style="flex:1 1 500px; min-width:420px">
         <h2>③ 模板预览（A4 比例 · CSS 容器查询横竖感知）</h2>
+        <p>
+          <button class="btn" title="用同一 HTML 模板在弹窗 iframe 里预览（VC-1；打印/下载按钮在弹层内，不依赖引擎）" @click="openHtmlOverlay">🔍 显示为浏览器打印版（HTML overlay）</button>
+          <span class="hint" style="margin-left:6px">CSS 预览（下方）与打印版预览切换 —— 双视图共用同一任务包与水印配置（docs/14 §VC-1）。</span>
+        </p>
         <p class="hint" v-if="!preItems.length">题目构成（items）为空 —— 预览暂无题目框；去「作业纸内容」页选题后回到这里看版式效果。版式/水印/页眉页脚的改动实时生效。</p>
         <div class="viewer">
           <div
@@ -448,5 +519,12 @@ function engineHint(): void {
         </p>
       </div>
     </div>
+
+    <SheetHtmlPreviewModal
+      v-if="showHtmlOverlay"
+      :html="overlayHtml"
+      :title="`浏览器打印版 · ${pad.current.id}`"
+      @close="showHtmlOverlay = false"
+    />
   </section>
 </template>

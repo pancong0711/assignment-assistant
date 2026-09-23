@@ -4,10 +4,16 @@ import { KB_KINDS, KB_KIND_LABELS, STUDENT_TAGS, STUDENT_TAG_LABELS, type KbKind
 import { useKbStore } from '../stores/kb'
 import { useTaskpadStore } from '../stores/taskpad'
 import { useRosterStore } from '../stores/roster'
-import { parseTaskpad, missingBoundTags, padInferredTag, resolveBindTag, type PadBinding } from '../lib/taskpad'
+import { parseTaskpad, missingBoundTags, padInferredTag, resolveBindTag, type PadBinding, type Taskpad } from '../lib/taskpad'
 import { batchCommand, batchPaths, buildVariantBatchZip } from '../lib/variantBatch'
 import { buildClassOverlayHtml } from '../lib/classOverlay'
 import { downloadBlob, downloadData } from '../lib/fsAccess'
+import { useSettingsStore } from '../stores/settings'
+import {
+  stringifySheetHtml, expandPadItems, SYNTHETIC_STUDENTS,
+  type SheetHtmlItem, type SheetHtmlStudent, type SheetHtmlPadInput,
+} from '../lib/sheetHtml'
+import SheetHtmlPreviewModal from '../components/SheetHtmlPreviewModal.vue'
 
 /* ========== S2b 并行备注（VC-3，docs/14 §VC-3；仅新增内容，未改既有逻辑） ==========
  * 本块为「预览整班」overlay 入口（班级与标签页 RosterView 亦有同款卡；这里放
@@ -67,6 +73,67 @@ function downloadClassOverlay() {
   }
 }
 /* ================== /S2b VC-3 整班预览（新增块结束） ================== */
+
+/* ========== S2a 并行备注（VC-2，docs/14 §VC-2；仅新增内容，未改既有逻辑） ==========
+ * 清单里任一任务包「预览」→ 同一 HTML 模板（engine/templates/assignment.html.j2 的
+ * TS 同构 = lib/sheetHtml.ts stringifySheetHtml）在弹窗 iframe overlay 预览
+ * （版式/水印/内容全量，不依赖引擎）；「预览全部」把清单所有任务包连排在同一
+ * HTML（多包不分页）。与上方 S2b 整班预览（VC-3，classOverlay fallback 层）
+ * 互不占用命名/状态；名单缺省合成 学生A/B（informational）。 */
+const settings = useSettingsStore()
+const showHtmlOverlay = ref(false)
+const overlayHtml = ref('')
+const overlayTitle = ref('')
+
+function sheetStudents(): SheetHtmlStudent[] {
+  return roster.students.length
+    ? roster.students.map((s) => ({ name: s.name, number: s.number, class: s.class, tag: s.tag }))
+    : SYNTHETIC_STUDENTS
+}
+
+/** 任务包 → 题帧（kb store 取 content/solution/img_path；未命中的题跳过） */
+function padItemsOf(p: Taskpad): SheetHtmlItem[] {
+  return expandPadItems(p, (kind) => kb.book(kind))
+}
+
+function openPreview(pads: SheetHtmlPadInput[], title: string) {
+  if (!pads.length) return
+  overlayHtml.value = stringifySheetHtml(pads, {
+    students: sheetStudents(),
+    wmAssets: settings.wmAssets,
+  })
+  overlayTitle.value = title
+  showHtmlOverlay.value = true
+}
+
+/** 清单里单个任务包的预览（版式/水印/内容全量；docs/14 §VC-2） */
+function previewPad(id: string) {
+  const entry = pad.saved.find((s) => s.id === id)
+  if (!entry) { status.value = `清单中未找到 ${id}。`; return }
+  try {
+    const p = parseTaskpad(JSON.parse(entry.json))
+    openPreview([{ pad: p, items: padItemsOf(p) }], `任务包预览 · ${id}`)
+    status.value = `已打开 ${id} 的浏览器打印版预览（同一 HTML 模板；名单：${roster.students.length ? `${roster.students.length} 人` : '合成 学生A/B'}）。`
+  } catch (e) {
+    status.value = `任务包 ${id} 预览失败（JSON 损坏）：${(e as Error).message}`
+  }
+}
+
+/** 全部清单任务包连排预览（多包不分页：不加封面/额外分页，页块仍每生分页） */
+function previewAllPads() {
+  const sources: SheetHtmlPadInput[] = []
+  let bad = 0
+  for (const s of pad.saved) {
+    try {
+      const p = parseTaskpad(JSON.parse(s.json))
+      sources.push({ pad: p, items: padItemsOf(p) })
+    } catch { bad++ }
+  }
+  if (!sources.length) { status.value = '清单为空或全部 JSON 损坏：无可预览任务包。'; return }
+  openPreview(sources, `全部任务包连排预览 · ${sources.length} 份`)
+  status.value = `已连排预览 ${sources.length} 份任务包（多包不分页；@page 方向取第一份${bad ? `；${bad} 份 JSON 损坏已跳过` : ''}）。`
+}
+/* ================== /S2a VC-2 任务包预览（新增块结束） ================== */
 
 /** 作业纸内容（M-A S1 拆分，docs/05-D25）：一份模板的"题目构成"。
  *  kind×章题选篮（含跨 kind/tag 提示文）→ items 列表编辑 → target_tag 标注；
@@ -322,9 +389,12 @@ async function downloadBatchZip() {
           已保存 {{ library.length }} 份。导出/新建在「作业纸版式」页；本页负责题目构成与
           <b>变体编排绑定</b>（每份包绑定一个目标 tag，整班分层生成时引擎按学生 tag 选用对应包）。
         </p>
+        <p v-if="library.length">
+          <button class="btn" title="VC-2：清单所有任务包连排在同一 HTML overlay（多包不分页；同一模板，不依赖引擎）" @click="previewAllPads">👁 预览全部任务包（连排，同一 HTML 模板）</button>
+        </p>
         <table class="grid" v-if="library.length" style="font-size:12px">
           <thead>
-            <tr><th>id</th><th>学期</th><th>班级</th><th>目标 tag</th><th>选题</th><th>题数</th><th>版式</th><th style="width:110px">操作</th></tr>
+            <tr><th>id</th><th>学期</th><th>班级</th><th>目标 tag</th><th>选题</th><th>题数</th><th>版式</th><th style="width:170px">操作</th></tr>
           </thead>
           <tbody>
             <tr v-for="m in library" :key="m.id">
@@ -339,6 +409,7 @@ async function downloadBatchZip() {
               <td style="white-space:nowrap">{{ m.orientation }} / {{ m.perPage }}题页</td>
               <td style="white-space:nowrap">
                 <button class="btn small" @click="loadFromLibrary(m.id)">载入编辑</button>
+                <button class="btn small" style="margin-left:4px" @click="previewPad(m.id)" title="VC-2：该任务包的浏览器打印版预览（同一 HTML 模板 overlay）">预览</button>
                 <button class="btn small" style="margin-left:4px" @click="removeFromLibrary(m.id)">删除</button>
               </td>
             </tr>
@@ -412,5 +483,12 @@ async function downloadBatchZip() {
         </p>
       </div>
     </div>
+
+    <SheetHtmlPreviewModal
+      v-if="showHtmlOverlay && overlayHtml"
+      :html="overlayHtml"
+      :title="overlayTitle"
+      @close="showHtmlOverlay = false"
+    />
   </section>
 </template>

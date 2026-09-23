@@ -179,6 +179,36 @@ def sheet_demo(obj, out, orientation, no_watermark, workspace, verbose):
         click.echo(str(f))
 
 
+@sheet.command("html")
+@click.option("--task", "task_path", required=True, help="任务包 JSON 路径")
+@click.option("--roster", "roster_path", default=None,
+              help="点名册 xlsx（姓名/学号/班级/tag 列；缺省=合成 学生A/B 演示名单）")
+@click.option("--out", "-o", default=None,
+              help="输出 html 路径（缺省 classes/<class>/sheets/html/<任务包id>.html）")
+@click.option("--no-watermark", is_flag=True)
+@click.option("--workspace", "-w", default=None)
+@click.option("--verbose", "-v", is_flag=True)
+@click.pass_obj
+def sheet_html(obj, task_path, roster_path, out, no_watermark, workspace, verbose):
+    """按任务包生成整班自包含 HTML（浏览器打印主通道，docs/14 §VB-1/2/3 / 05-D30）。
+
+    单文件承载整班多页：每生分页块（page-break-after）、@page A4 横/竖版、
+    per_page 2/3/4 网格、题图与水印 base64 内嵌、KaTeX CDN 渲染 $..$ 公式。
+    浏览器打开 → Ctrl/Cmd+P（A4/边距=无/页眉页脚=关/背景图形=开）→ 打印或存 PDF。
+    与 PWA「打印浏览器版」共用同一模板（D1 超集铁律，docs/14 §VB 验收 4）。
+    """
+    from .paper.htmlfile import sheet_html_from_task
+    # _setup 的显式 workspace 需为 Path（字符串会在 runtime_env 的 ws / ".runtime" 处炸）
+    ws = _setup(verbose or obj.get("verbose"), Path(workspace) if workspace else None)
+    fn, n_stu, n_pages = sheet_html_from_task(
+        Path(task_path).expanduser().resolve(), ws,
+        out_path=Path(out).expanduser().resolve() if out else None,
+        roster_path=roster_path, no_watermark=no_watermark)
+    click.echo(str(fn))
+    click.echo(f"学生 {n_stu} 人 · 页块 {n_pages} 个（浏览器打开后 Ctrl/Cmd+P 打印；"
+               "KaTeX 走 CDN，离线时公式按源码降级显示）")
+
+
 @sheet.command("make")
 @click.option("--task", "task_path", required=True, help="任务包 JSON 路径")
 @click.option("--roster", "roster_path", default=None, help="点名册 xlsx（缺省找 classes/<class>/roster/）")
