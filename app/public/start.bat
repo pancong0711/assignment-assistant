@@ -25,7 +25,16 @@ echo [1/6] workspace = %WORKSPACE%
 :TRY_UV
 where uv >nul 2>nul
 IF NOT ERRORLEVEL 1 goto HAVE_UV
-echo [2/6] installing uv (user level, into workspace)
+echo [2/6] install uv: direct single-file uv.exe into workspace (no system residue)
+powershell -NoProfile -ExecutionPolicy Bypass -Command "try { Invoke-WebRequest -Uri https://ghfast.top/https://github.com/astral-sh/uv/releases/latest/download/uv-x86_64-pc-windows-msvc.zip -OutFile $env:ASSIST_WORKSPACE\.runtime\uv.zip -UseBasicParsing } catch { Invoke-WebRequest -Uri https://github.com/astral-sh/uv/releases/latest/download/uv-x86_64-pc-windows-msvc.zip -OutFile $env:ASSIST_WORKSPACE\.runtime\uv.zip -UseBasicParsing }"
+IF ERRORLEVEL 1 GOTO UV_VIA_INSTALLER
+IF NOT EXIST "%WORKSPACE%\.runtime\uv.zip" GOTO UV_VIA_INSTALLER
+powershell -NoProfile -ExecutionPolicy Bypass -Command "Expand-Archive -Force $env:ASSIST_WORKSPACE\.runtime\uv.zip $env:ASSIST_WORKSPACE\.runtime\uv"
+IF ERRORLEVEL 1 GOTO UV_VIA_INSTALLER
+echo [INFO] direct uv.exe OK (workspace-only, no system residue)
+GOTO UV_AFTER
+:UV_VIA_INSTALLER
+echo [INFO] fallback to official installer
 powershell -NoProfile -ExecutionPolicy Bypass -Command "irm https://astral.sh/uv/install.ps1 | iex"
 IF ERRORLEVEL 1 (
   echo [FAIL] uv download failed - check network
@@ -33,6 +42,7 @@ IF ERRORLEVEL 1 (
   pause
   exit /b 1
 )
+:UV_AFTER
 REM NOTE: no 'set PATH=%^PATH%' inside paren blocks - see docs/13 M-D (D28/R1.2)
 where uv >nul 2>nul
 IF ERRORLEVEL 1 (
