@@ -7,7 +7,7 @@ REM <this bat dir>\.runtime\ ; uninstall = delete that dir.
 setlocal enableextensions
 echo [R1.2 v9] assignment-assistant launcher (python-first, TUNA mirrors by default)
 set "WORKSPACE=%~dp0"
-IF "%WORKSPACE:~-1%"=="" set "WORKSPACE=%WORKSPACE:~0,-1%"
+IF "%WORKSPACE:~-1%"=="\" set "WORKSPACE=%WORKSPACE:~0,-1%"
 set "LOG=%WORKSPACE%\start.log"
 set "ROOT=%~dp0.."
 IF NOT EXIST "%WORKSPACE%" mkdir "%WORKSPACE%" 2>nul
@@ -24,10 +24,10 @@ echo [1/6] workspace = %WORKSPACE%
 echo [2/6] detect python (system first; miniconda fallback from TUNA)
 set PY=
 py -3 --version >nul 2>nul
-IF NOT ERRORLEVEL 1 (set "PY=py -3" & goto FOUND_PY)
+IF NOT ERRORLEVEL 1 set "PY=py -3" & goto FOUND_PY
 python --version >nul 2>nul
-IF NOT ERRORLEVEL 1 (set "PY=python" & goto FOUND_PY)
-IF EXIST "%WORKSPACE%\.runtime\miniconda\python.exe" (set "PY=%WORKSPACE%\.runtime\miniconda\python.exe" & goto FOUND_PY)
+IF NOT ERRORLEVEL 1 set "PY=python" & goto FOUND_PY
+IF EXIST "%WORKSPACE%\.runtime\miniconda\python.exe" set "PY=%WORKSPACE%\.runtime\miniconda\python.exe" & goto FOUND_PY
 echo [2/6] no system python - downloading Miniconda3-latest from TUNA (silent, into workspace)
 curl -fL --retry 2 --connect-timeout 20 -o "%WORKSPACE%\.runtime\Miniconda3.exe" "https://mirrors.tuna.tsinghua.edu.cn/anaconda/miniconda/Miniconda3-latest-Windows-x86_64.exe"
 IF ERRORLEVEL 1 (
@@ -42,7 +42,7 @@ set "PY=%WORKSPACE%\.runtime\miniconda\python.exe"
 echo using python: %PY%
 echo [3/6] create venv (workspace/.runtime/venv, D14)
 IF EXIST "%WORKSPACE%\.runtime\venv\Scripts\python.exe" goto HAVE_VENV
-%PY% -m venv "%WORKSPACE%\.runtime\venv" >> "%LOG%" 2>&1
+call %PY% -m venv "%WORKSPACE%\.runtime\venv" >> "%LOG%" 2>&1
 IF ERRORLEVEL 1 (
   echo [FAIL] venv creation failed - see start.log
   notepad "%LOG%"
@@ -52,6 +52,7 @@ IF ERRORLEVEL 1 (
 :HAVE_VENV
 set "VPIP=%WORKSPACE%\.runtime\venv\Scripts\pip.exe"
 echo [5/6] install engine dependencies (TUNA pip index)
+IF EXIST "%WORKSPACE%\engine\pyproject.toml" goto ENGINE_LOCAL
 IF EXIST "%ROOT%\engine\pyproject.toml" goto ENGINE_LOCAL
 IF EXIST "%WORKSPACE%\_engine\engine\pyproject.toml" (set "ENGINE_DIR=%WORKSPACE%\_engine\engine" & goto ENGINE_LOCAL)
 
