@@ -90,3 +90,33 @@ C1 登录/课程/作业浏览/下载（迁 2601 xuexitong 模块）；C2 上传=
 - 验证：engine pytest 4/4（含 sheet-html 双版式/parity 哨兵）、app build+l dist-lan 0 错、lint-bat/secrets 全绿；
 - 复测入口（**手机/浏览器均可，无引擎）**：`作业纸版式`→「🖨 打印浏览器版」按钮（当前任务包→浏览器打印/PDF）、「⬇下载整班HTML」；`作业纸内容`→清单行「预览」/copy「预览全部任务包」（多包连排）；`班级与标签`→名单/成绩预览卡（表头+前3行）、「按勾选源重算/按此列切分」、整班预览（"预览整班"卡在 SheetContent 变体编排区）；
 - 后续（S1.2 下一批）：VA-1 引擎 zip 下载 fallback（start.bat 实施到脚本内）、`include_in_aggregation` 引擎侧自动省略、KaTeX 离线打包、VB-7 pull ref、`_setup(--workspace)` 全局归一后的其他命令（batch/make）等（docs/13 §S2a/S2b/S2c 遗留，均不阻塞验收）。
+
+
+
+
+---
+
+# 2026-09-23 · Windows 现场验收记录（第 4 轮）＋ 剩余工作汇总
+
+## 现场（教师机 D 盘 workspace，v6→v10.2 共 4 轮实测）
+✅ **Python-first 全链路通过**（v9 重写后）：py -3 检测 → venv → TUNA 依赖
+（assist-engine 0.1.0 + 24 wheels）；
+✅ Pages 主源 engine-main.zip **81KB 秒级下载**（v10.1 链）；
+❌ **仅剩 [6/6]**："all ports busy"（D35：findstr /R 空格分词 OR 坑——
+   用户 netstat 验证：机器上 8601+ 无真实监听；扫描误判）→ **v10.3 待修（唯一禁手）**；
+- 里程碑：**第一台教师机完整环境就绪**（依赖已进 workspace/.runtime/venv，
+  "删区=卸载"语义闭环）。
+
+## 下一轮（v10.3 即开工）
+1. **v10.3 lombok**：bat 端口扫描两段 findstr（/C: 字面量 + 二级 LISTENING 过滤）
+   + lint 规则第 9 条（findstr /R 空格分词禁令）+ 残留引擎自动 kill 分支：
+2. **S3 批次收尾**：TinyTeX 可选按钮（体检页）、R1.1 清单卡微调；
+3. **KaTeX 离线打包**（CDN 目前可用，可选）；
+4. **D32/D36 reportlab+HTML 双引擎长期规划**（功能等价，渐进对齐）；
+5. **docs/11 部署页**补"教师机 Windows 一键部署"教程（3 步图文）；
+6. （待用户窗口）PyPI 发版流程恢复后执行，pypi.org outage 记录。
+
+## 教师手册要点（docs/14 补条）
+- [Windows 双击 start.bat] → 自动浏览器 → 体检变绿 → 使用端点；
+- 日志（workspace/start.log）与 "start_log 只有一行" 的排障案例；
+- 双击模型：**工作区=start.bat 所在目录**（docs/05-D28 的网页引导同步）。
