@@ -144,3 +144,38 @@ D 组卫生（demo 输出目录归位 classes、bundle code-split）。
 > 交错原则：M-A 先立骨架（文件切分后/deprecat hash 兼容），M-C/M-B 都要往
 > 新页签里填内容，故必须晚于 M-A。M-D 依赖 serve（已具备），何时做均可；
 > 若你 Windows 侧等便携包，M-D 可提到 S2。
+
+
+---
+
+# 2026-09-22 · 方向修订（用户拍板）：HTML 主通道 + TeX 双可选（docs/05-D30）
+
+**决策**：作业纸/整班输出的**主通道 = HTML + 浏览器打印**（零安装路线）；TinyTeX 与完整 TeX Live 均为可选增强；`reportlab → PDF` 引擎线保留（逐生 PDF/精修水印/批阅报告用）。
+
+## M-H · HTML 打印主通道（替换原 R4 主线）
+| 子项 | 内容 |
+|---|---|
+| H1 | 引擎 `assist sheet html --task <json> [--roster xlsx] [--variant]`：单个自包含 HTML（每生分页块 + page-break；题图 base64 内嵌；页眉页脚/水印 CSS `@page`；CLI 超集先行） |
+| H2 | PWA "打印浏览器版"按钮：任务包→HTML（与 H1 同模板，双实现：TS 与 Jinja2 同源）→ `window.print()` |
+| H3 | 整班级大 HTML 支持（分块渲染/题图 lazy） |
+| H4 | 批阅 HTML 报告复用同模板 |
+| H5 | 打印教程（A4/边距关/页眉页脚关闭），浏览器差异说明 |
+
+## M-B2 · TeX 可选双轨
+| 子项 | 内容 |
+|---|---|
+| K1 | 体检页【安装 TinyTeX（~200MB，入 workspace/.runtime/tex，清华 tlmgr 镜像）】可选修复按钮（S3） |
+| K2 | 完整 TeX 系统级：检测到则用，无则降级；不自动装 |
+| K3 | latex.py 三档探测：workspace TinyTeX → 系统 xelatex → 样题不渲染（降级为纯文本/截图，现状） |
+
+## 执行顺序修订
+| 会话 | 内容 |
+|---|---|
+| S1.6（下次开工即做） | **H1/H2/H4** 三件（CLI 超集先行 + PWA 打印按钮 + KaTeX），TinyTeX 不阻塞主线 |
+| S2 | M-C 成绩宽表 + 勾列打 tag + 生成全班主按钮 |
+| S3 | M-D 尾巴（体检修复按钮语义与 R1.1 清单卡微调；K1 TinyTeX 修复按钮） |
+| S4 | M-B 剩余保真（引擎 render PNG/逐生 PDF、题图写回） |
+| S5 | M-E 杂项 + B5 PyPI 发版 + 教师手册 |
+| S4' 之前 | 学习通（C 组）依旧最后 |
+
+（旧 M-B 中的 LaTeX 剩余项由 HTML 主通道分担；引擎端继续承担逐生独立 PDF。）
