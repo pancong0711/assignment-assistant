@@ -43,6 +43,12 @@ jobs:
           test -f dist/index.html
           test -f dist/sw.js
 
+      - name: Pack engine-main.zip (与仓库快照同步 · D30)
+        run: |
+          git archive --format=zip --output=app/dist/dl/engine-main.zip \
+            main engine/ tools/start.bat tools/start.sh README.md LICENSE
+          test -s app/dist/dl/engine-main.zip
+
       - name: Upload artifact
         uses: actions/upload-pages-artifact@v3
         with:

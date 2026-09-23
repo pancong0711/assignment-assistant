@@ -34,11 +34,11 @@ echo "[5/6] install engine dependencies (TUNA index)"
 if [ -f "$ROOT/engine/pyproject.toml" ]; then
   ENGINE_DIR="$ROOT/engine"
 else
-  echo "[INFO] engine source missing - downloading repo zip (ghfast mirror first)"
+  echo "[INFO] engine source missing - download engine-main.zip (primary: our Pages mirror)"
   curl -fL --retry 2 --connect-timeout 20 -o "$WS/_repo.zip" \
+    "https://pancong0711.github.io/assignment-assistant/dl/engine-main.zip" \
+    || curl -fL --retry 2 --connect-timeout 20 -o "$WS/_repo.zip" \
     "https://ghfast.top/https://github.com/pancong0711/assignment-assistant/archive/refs/heads/main.zip"
-  [ -f "$WS/_repo.zip" ] || curl -fL --retry 1 -o "$WS/_repo.zip" \
-    "https://github.com/pancong0711/assignment-assistant/archive/refs/heads/main.zip"
   mkdir -p "$WS/_repo"
   unzip -q -o "$WS/_repo.zip" -d "$WS/_repo" >> "$LOG" 2>&1
   ENGINE_DIR="$WS/_repo/assignment-assistant/engine"
