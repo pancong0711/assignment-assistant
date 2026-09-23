@@ -273,3 +273,21 @@ translation / punish`（punish 为新固定项：期末补作业，统一题集�
   `workspace/.runtime/tex`（体检页可点修复按钮安装，tlmgr 清华镜像）；
   完整 TeX Live/MiKTeX 不自动装（检测到则可用）；
 - **reportlab→PDF 引擎线保留**：逐生独立 PDF、水印精修、批阅报告 PNG 场景（阶段6内挂学习通上传）。
+
+---
+
+## D32 · 启动脚本顺序反转 + 安装完全入 workspace（2026-09-22/23 用户拍板）
+
+- **v9 同型：** start.bat / start.sh **Python 优先**：
+  1. 系统有 `py/python` → 用其直接 `python -m venv workspace\\.runtime\\venv`（不动用户环境）；
+  2. 无 Python → **Miniconda3-latest 从 TUNA 静默装入 `workspace/.runtime/miniconda`**（脚本 curl
+     拉 TUNA 镜像为 fallback 首选源——非 ghfast/github）；
+- **依赖安装全走 TUNA index**（`UV_DEFAULT_INDEX` 或 start.bat/setx 中默认），失败时提示 last-resort
+  `assist-engine` 从 PyPI（TUNA）安装——避免教师 download GitHub zip 失败后走 PyPI 的
+  “assist-engine not found in the package registry” 报错；
+- **隔离设计（D14 强化）**： uv（如果用户需要）/Python/venv/缓存/浏览器内核/日志全在
+  workspace/.runtime 内；工程师 unset `,localappdata\Programs\uv` 中的内容不往教师系统注册
+- **长期目标**：报告/作业纸输出 documents 双通道：
+  - **引擎通道（reportlab + latex/tinytex optional）**：水印精修、逐生 PDF、版户控制；
+  - **HTML 通道（PWA 打印浏览器版）**：零安装（D30）
+  两通道持久化（同一任务包，输出两条路），功能等价。
