@@ -55,7 +55,7 @@ echo [5/6] install engine dependencies (TUNA pip index)
 IF EXIST "%ROOT%\engine\pyproject.toml" goto ENGINE_LOCAL
 IF EXIST "%WORKSPACE%\_repo\assignment-assistant\engine\pyproject.toml" (set "ENGINE_DIR=%WORKSPACE%\_repo\assignment-assistant\engine" & goto ENGINE_LOCAL)
 echo [INFO] engine source missing - downloading repo zip (ghfast mirror first)
-curl -fL --retry 2 --connect-timeout 20 -o "%WORKSPACE%\_repo.zip" "https://ghfast.top/https://github.com/pancong0711/assignment-assistant/archive/refs/heads/main.zip"
+echo [INFO] engine zip source: Pages first, ghfast second, github last (D31)\ncurl -fL --retry 2 --connect-timeout 20 -o "%WORKSPACE%\_repo.zip" "https://pancong0711.github.io/assignment-assistant/dl/engine-main.zip"\nIF ERRORLEVEL 1 curl -fL --retry 2 --connect-timeout 20 -o "%WORKSPACE%\_repo.zip" "https://ghfast.top/https://github.com/pancong0711/assignment-assistant/archive/refs/heads/main.zip"\nIF ERRORLEVEL 1 curl -fL --retry 1 -o "%WORKSPACE%\_repo.zip" "https://github.com/pancong0711/assignment-assistant/archive/refs/heads/main.zip"
 if not exist "%WORKSPACE%\_repo.zip" curl -fL --retry 1 -o "%WORKSPACE%\_repo.zip" "https://github.com/pancong0711/assignment-assistant/archive/refs/heads/main.zip"
 powershell -NoProfile -ExecutionPolicy Bypass -Command "Expand-Archive -Force %WORKSPACE%\_repo.zip %WORKSPACE%\_repo" >> "%LOG%" 2>&1
 set "ENGINE_DIR=%WORKSPACE%\_repo\assignment-assistant\engine"
