@@ -262,3 +262,14 @@ translation / punish`（punish 为新固定项：期末补作业，统一题集�
   classes/、.runtime 全在其中）。网页设置中心已注明；
 - PWA 设置页"一键启动/安装卡"文案同步："下载 start.bat → 移动到你常用的
   资料目录 → 双击即用"；前端 FSA 所选目录与 bat 侧工作区通过**同一路径**统一。
+
+## D30 · 输出主通道 = HTML + 浏览器打印（2026-09-22 用户拍板）
+
+- **作业纸/整班/批阅报告输出主通道 = HTML + 浏览器打印**（零安装）：
+  - 每生分页块 + `@page A4`；KaTeX 端上渲染数学公式；题图 base64 内嵌；
+  - PWA 在线即时 `window.print()`；CLI `assist sheet html` 同模板双实现（超集铁律 D1）；
+  - 整班大 HTML 一个文件承载（几十/上百页 OK），打印对话框=保存为 PDF；
+- **TinyTeX 与完整 TeX 均为可选增强**（不再主依赖）：TinyTeX 装进
+  `workspace/.runtime/tex`（体检页可点修复按钮安装，tlmgr 清华镜像）；
+  完整 TeX Live/MiKTeX 不自动装（检测到则可用）；
+- **reportlab→PDF 引擎线保留**：逐生独立 PDF、水印精修、批阅报告 PNG 场景（阶段6内挂学习通上传）。
