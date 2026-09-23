@@ -318,3 +318,32 @@ translation / punish`（punish 为新固定项：期末补作业，统一题集�
   更友好（实际报错案例：v6/v7 中 20s 就切链， 导致整仓 41MB 下载与解压 mismatch）：
 - **解压兼容**：Windows 自带的 Expand-Archive；匹配 `engine/pyproject.toml` 时以
   `find`/`IF EXIST` 双层定位（兼容 `assignment-assistant-main/` 与 `engine/` 两种内层）。
+
+
+---
+
+## D35 · cmd/findstr 端口扫描坑 + Python-first 路线最终落位（2026-09-23，Windows 现场验证 4 轮）
+
+**v9/v10 系列 Windows 实测第一次全链路通过（除最后一行 findstr 扫描）**：
+- `py -3` 检测 → venv → TUNA pip 引擎依赖（assist-engine-0.1.0 + 全 wheel）装进
+  workspace/.runtime/venv —— **教师机第一台完整环境✅**（用户现场日志）；
+- 卡在 [6/6] "all ports busy"——根因= **cmd `findstr /R` 空格分词 OR 语义**：
+  `":8601 .*LISTENING"` 被解析为 `":8601"` 和 `".*LISTENING"` 两个模式（OR），后者匹配
+  netstat 任何 LISTENING 行 → 所有端口"看起来都忙"（用户 netstat 现场验证：8601+ 实际无监听）；
+- **v10.3 修复（已登记未实施）**：端口扫描改两段匹配
+  `netstat -an | findstr /C:":8601 " | findstr /I LISTENING`（/C 精确字面量 + 二级过滤）；
+  同时 `tools/lint_bat.py` 增加 cmd 冷知识规则第 9 条：`findstr /R "... 空格 ..."` 模式禁止。
+
+**历史坑总账（v3→v10.3 全部收录 lint）**：①UTF-8 注释解析乱码 → 全 ASCII；② 块内 :: 注释；
+③ 括号块内 %PATH% 展开（含 `(x86)` 撕裂）；④ `\\" 转义引号；⑤ 悬空 GOTO；⑥ findstr /R 空格分词；
+⑦ 尾反斜杠比较 ==""/`\`；⑧ IF..&goto 深度绑定（改 IF(...)）；⑨ 行内 echo 含未配对括号。
+
+## D33 修订：不把 uv/Python tar 进仓库（D31 撤销）；engine-main.zip 主源=Pages；
+## PyPI 发版搁置（pypi.org outage，恢复后走 Trusted Publisher 流程，B5）
+---
+
+## D36 · 输出双引擎长期规划（D33 补录，用户拍板"两套方法等价"）
+
+- **引擎通道（reportlab + LaTeX/TinyTeX 可选）**：逐生独立 PDF、水印精修、批阅报告 PNG（阶段6 上传学习通）；
+- **HTML 通道（PWA/CLI 同模板）**：零安装、整班一文件、浏览器打印 PDF（D30）；
+- 两通道**功能等价**（同一任务包 → 同一版式语义），渐进对齐；模板差异 only.
