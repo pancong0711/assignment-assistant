@@ -1,4 +1,5 @@
 <script setup lang="ts">
+import PrintGuideModal from '../components/PrintGuideModal.vue'
 import { computed, ref, watch } from 'vue'
 import { STUDENT_TAG_LABELS, type KbKind } from '../lib/kb'
 import { useKbStore } from '../stores/kb'
@@ -29,6 +30,7 @@ const roster = useRosterStore()
 const settings = useSettingsStore()
 
 const status = ref('')
+const showGuide = ref(false)
 
 /* ---------- 预览数据（items 只读：题目构成在「作业纸内容」页编辑） ---------- */
 interface PreItem { kind: KbKind; chap: string; id: string; content: string; solution: string; imgPath: string; tag: string }
@@ -372,7 +374,9 @@ function engineHint(): void {
         <p>
           <button class="btn" title="隐藏 iframe 打印作业纸 HTML 本身（非本页界面）；打印对话框按教程设置" @click="printBrowserVersion">🖨 打印浏览器版（window.print）</button>
           <button class="btn" style="margin-left:8px" title="下载自包含整班 HTML：浏览器打开 → Ctrl/Cmd+P → 另存为 PDF" @click="downloadBrowserVersion">⬇ 下载整班 HTML（另存 PDF 用）</button>
-        </p>
+        
+        <button class="btn" @click="showGuide = true">📖 打印教程</button>
+        <PrintGuideModal v-if="showGuide" @close="showGuide = false" /></p>
         <p class="hint">
           任务包 → 与 CLI <code>assist sheet html</code> <b>同一模板</b>的 HTML（每生分页块 · @page A4 横/竖 ·
           per_page 网格 · 水印层 · KaTeX 渲染 $..$ 公式，docs/05-D30 主通道）。纯前端不依赖引擎/未登录可用；

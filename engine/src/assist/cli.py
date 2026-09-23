@@ -13,11 +13,12 @@ import click
 from loguru import logger
 
 
-def _setup(verbose: bool, ws: Path | None = None):
+def _setup(verbose: bool, ws: "Path | str | None" = None):
+    """workspace 归一（兼容 Path/str —— S2a 联调发现的预存在 str bug）。"""
     from .log import setup_logging
     from .workspace import apply_runtime_env, find_workspace
     setup_logging(verbose)
-    ws_path = find_workspace() if ws is None else ws
+    ws_path = find_workspace(ws) if ws is not None else find_workspace()
     apply_runtime_env(ws_path)
     return ws_path
 
