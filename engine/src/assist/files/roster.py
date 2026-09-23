@@ -6,7 +6,9 @@ from pathlib import Path
 from loguru import logger
 from openpyxl import load_workbook
 
-_HEADER_MAP = {"姓名": "name", "学号": "number", "班级": "class", "tag": "tag"}
+_HEADER_MAP = {"姓名": "name", "学号": "number", "班级": "class", "tag": "tag",
+               # PWA rosterXlsx.writeRosterXlsx 恒写英文表头（rosterXlsx.ts ROSTER_COLUMNS）
+               "name": "name", "number": "number", "class": "class"}
 _HEADERS = ("name", "number", "class", "tag")
 
 
