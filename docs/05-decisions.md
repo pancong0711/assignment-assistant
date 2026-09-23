@@ -291,3 +291,16 @@ translation / punish`（punish 为新固定项：期末补作业，统一题集�
   - **引擎通道（reportlab + latex/tinytex optional）**：水印精修、逐生 PDF、版户控制；
   - **HTML 通道（PWA 打印浏览器版）**：零安装（D30）
   两通道持久化（同一任务包，输出两条路），功能等价。
+
+
+## D33 · engine 获取通道 = Pages 托管 `engine-main.zip`（与仓库快照同步，2026-09-23 用户拍板）
+
+- **CI（pages.yml）新增一步**：`git archive main engine/ tools/start.bat tools/start.sh README.md LICENSE`
+  → `app/dist/dl/engine-main.zip`（≈80KB）——与仓库代码**每次 push 同步**（教师一定拿到最新 engine 源码）；
+- **engine 获取链（bat/sh）**：主源=**我们自己的 Pages**(`dl/engine-main.zip`)；备 1=ghfast 代理；
+  备 2=github 直连；PyPI `assist-engine` 作为 last resort（B5 提级设定——未发版前为降级路径）；
+- **zip 内容仅 engine 源码 + 启动脚本 + README/LICENSE**（~80KB）：不含 PWA（线上 Pages 自带）、
+  不含 uv/Python 二进制（见 D32：Python 优先、PyPI/TUNA 提供）。
+- **教师路径（零依赖完整版）**：下载 start.bat → 放到 workspace 资料目录 → 双击：
+  bat 检查 `engine/pyproject.toml`（旁有/`_repo/assignment-assistant` 内有）→
+  engine zip 下载与解压 → venv pip TUNA 安装 → assist serve 起来。
