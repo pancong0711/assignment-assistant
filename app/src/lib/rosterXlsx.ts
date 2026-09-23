@@ -8,7 +8,7 @@
 
 import * as XLSX from 'xlsx'
 import type { RosterStudent, ScoreFamily, ScoreSource } from './roster'
-import { normalizeSource } from './roster'
+import { isIncluded, normalizeSource } from './roster'
 
 /** roster 导出列（与 engine `_HEADERS` 一致，顺序=engine 读取顺序） */
 export const ROSTER_COLUMNS = ['name', 'number', 'class', 'tag'] as const
@@ -230,6 +230,83 @@ export async function readScoreSourceXlsx(
   return normalizeSource({ ...base, scoreColumn: guessScore, nameColumn: guessName, scores })
 }
 
+/* ---------- VC-4 / VC-6 导入预览（docs/14 §VC-4/6：表头 + 前 3 行 + 列映射说明） ---------- */
+
+/** 导入预览模型：与引擎同款宽松列名 rule 的"所见即所读"快照。
+ *  表头 = 原始 xlsx 第一行；rows = 前 3 个非空数据行；cols = 引擎映射说明。 */
+export interface PreviewTable {
+  headers: string[]
+  rows: string[][]
+  /** 列映射说明（VC-4 名单：姓名=name/学号=number…；VC-6 成绩源：分数列/姓名列定位） */
+  notes: string[]
+  /** 实际解析出的行数（全部数据行，非仅预览前 3 行） */
+  rowCount: number
+}
+
+const PREVIEW_ROW_LIMIT = 3
+
+function previewFromMatrix(headers: string[], dataRows: string[][], notes: string[]): PreviewTable {
+  const rows = dataRows
+    .filter((r) => r.some((c) => c.trim() !== ''))
+    .slice(0, PREVIEW_ROW_LIMIT)
+    .map((r) => headers.map((_, j) => r[j] ?? ''))
+  return { headers, rows, notes, rowCount: dataRows.filter((r) => r.some((c) => c.trim() !== '')).length }
+}
+
+/** 名单 xlsx 预览（VC-4）：宽松表头自适应 rule 与 readRosterXlsx 完全同款
+ *  （HEADER_MAP + trim + 小写回退），教师可在导入前即时核对列映射。 */
+export async function buildRosterPreview(source: Blob | ArrayBuffer): Promise<PreviewTable> {
+  const buf = source instanceof Blob ? await source.arrayBuffer() : source
+  const wb = XLSX.read(buf, { type: 'array' })
+  const sheet = wb.Sheets[wb.SheetNames[0]]
+  if (!sheet) return { headers: [], rows: [], notes: ['（文件内无 sheet）'], rowCount: 0 }
+  const matrix = XLSX.utils.sheet_to_json<unknown[]>(sheet, { header: 1, defval: '' }) as unknown[]
+  const headers = ((matrix[0] as unknown[]) ?? []).map((c) => str(c))
+  const rows = matrix.slice(1).map((r) => ((r as unknown[]) ?? []).map((c) => str(c)))
+  const notes = headers
+    .filter((h) => HEADER_MAP[h] || HEADER_MAP[h.trim().toLowerCase()])
+    .map((h) => {
+      const key = HEADER_MAP[h] ?? HEADER_MAP[h.trim().toLowerCase()]
+      return `${h} → ${key}${key === 'tag' ? '（原样带入，可后续覆盖）' : ''}`
+    })
+  if (!notes.length) notes.push('（未识别出 姓名/name 等标准列——仍会按宽松映射逐列尝试；若无姓名列将读入 0 人）')
+  return previewFromMatrix(headers, rows, notes)
+}
+
+/** 成绩源 xlsx 预览（VC-6）：表头 + 前 3 行 + 按所选 family 的解析定位说明。
+ *  固定四类说明分数列语义（与 readScoreSourceXlsx 的解析器同口径）；
+ *  custom 说明宽松猜列策略。 */
+export async function buildScoreSourcePreview(
+  source: Blob | ArrayBuffer, family: ScoreFamily = 'custom',
+): Promise<PreviewTable> {
+  const buf = source instanceof Blob ? await source.arrayBuffer() : source
+  const wb = XLSX.read(buf, { type: 'array' })
+  const sheetName = wb.SheetNames[0] ?? ''
+  const sheet = wb.Sheets[sheetName]
+  if (!sheet) return { headers: [], rows: [], notes: ['（文件内无 sheet）'], rowCount: 0 }
+  const matrix = XLSX.utils.sheet_to_json<unknown[]>(sheet, { header: 1, defval: '' }) as unknown[]
+  const headers = ((matrix[0] as unknown[]) ?? []).map((c) => str(c))
+  const rows = matrix.slice(1).map((r) => ((r as unknown[]) ?? []).map((c) => str(c)))
+  const notes: string[] = [`sheet：${sheetName || '（无名）'} · 格式预设：${family}`]
+  if (family === 'roster') {
+    notes.push('教务点名册：仅接表不计分，按 姓名/name 列识别。')
+  } else if (family === 'exam') {
+    const hit = headers.find((h) => h.includes('期末'))
+    notes.push(hit ? `教务期末：分数列定位 = 含"期末"的列「${hit}」。` : '教务期末：表头未见含"期末"的列，将回退取最后一列。')
+  } else if (family === 'xuexitong_assignment') {
+    notes.push('学习通·作业统计：前 8 行内找"成绩"行，其上一行为作业标题，每生取各"成绩"列均分。')
+  } else if (family === 'xuexitong_stat') {
+    notes.push('学习通·章节测验：按 sheet 名含"章节测验"匹配（当前第 1 个 sheet），第 4 行为表头找"成绩"列，非 0 计入取均分。')
+  } else if (family === 'rainclass') {
+    notes.push('雨课堂汇总：无表头（第 1 行按数据行跳过），第 2 行为列标题，前 3 列 = 学号/姓名/汇总，其后每课 2 列取均值。')
+  } else {
+    const nameHit = headers.find((h) => HEADER_MAP[h] === 'name') ?? headers[0] ?? ''
+    const scoreHit = headers.find((h, j) => j !== headers.indexOf(nameHit) && /分数|成绩|得分|score/i.test(h))
+    notes.push(`custom 宽松猜列：姓名列 ≈「${nameHit || '第 1 列'}」` + (scoreHit ? `，分数列 ≈「${scoreHit}」（也可导入后在源行手动换列）。` : '，分数列 ≈ 数值最多的列（可导入后手动换列）。'))
+  }
+  return previewFromMatrix(headers, rows, notes)
+}
+
 /** 名单（含 tag）→ xlsx 二进制：列名用 name/number/class/tag（engine 直读）。 */
 export function writeRosterXlsx(students: RosterStudent[]): ArrayBuffer {
   const aoa: (string | number)[][] = [[...ROSTER_COLUMNS]]
@@ -264,11 +341,16 @@ export function buildTaskPackage(
     special_tag_cfg: specialTag,
     punish: punishList,
     // score_sources[].family 与 engine `--score family:file[:col[:weight]]` 对齐（family 可省=custom）
+    // VC-5：include_in_aggregation=false = 教师取消勾选（score excluding），
+    // 教师综合得分为 PWA 端按勾选集合计算；引擎 CLI 侧需手动省略对应 --score
+    // （任务包 JSON 的该标记为核对提示）。
     score_sources: sources.map((s) => ({
       family: s.family,
       name: s.name, file: s.fileName,
       score_column: s.scoreColumn, name_column: s.nameColumn,
       weight: s.weight,
+      include_in_aggregation: isIncluded(s),
+      excluded: !isIncluded(s) || undefined,
     })),
     generated_at: new Date().toISOString(),
   }
@@ -304,7 +386,10 @@ engine \`assist sheet make --roster\` / CLI / AI 阅读。全部示例均为占�
 2. 自上而下逐比例切分档次：int(人数×比例)，余数补到最后一个非 translation 项；
 3. translation 特殊：按比例随机散布到全名单（legacy 同款"随机挑选"语义）；
 4. special_tag_cfg / punish：手动指定学生 tag 覆盖，不被自动切分冲掉；
-5. punish 不参与比例，仅手动勾选覆盖（期末补交统一题集，docs/05-D17）。
+5. punish 不参与比例，仅手动勾选覆盖（期末补交统一题集，docs/05-D17）；
+6. score_sources[].include_in_aggregation：false = 该源被教师取消勾选
+   （score excluding，docs/14 §VC-5），PWA 端综合得分不含该源；
+   引擎 CLI 执行时请对应省略该源的 --score 参数（本标记为人工核对提示）。
 
 ## group_cfg 结构
 \`group_cfg: [{ group_name, group_ratio }]\`（比例之和 ≤ 1）。

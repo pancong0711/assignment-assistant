@@ -6,7 +6,67 @@ import { useTaskpadStore } from '../stores/taskpad'
 import { useRosterStore } from '../stores/roster'
 import { parseTaskpad, missingBoundTags, padInferredTag, resolveBindTag, type PadBinding } from '../lib/taskpad'
 import { batchCommand, batchPaths, buildVariantBatchZip } from '../lib/variantBatch'
-import { downloadBlob } from '../lib/fsAccess'
+import { buildClassOverlayHtml } from '../lib/classOverlay'
+import { downloadBlob, downloadData } from '../lib/fsAccess'
+
+/* ========== S2b 并行备注（VC-3，docs/14 §VC-3；仅新增内容，未改既有逻辑） ==========
+ * 本块为「预览整班」overlay 入口（班级与标签页 RosterView 亦有同款卡；这里放
+ * 变体编排卡内的入口按钮，因为 tag→任务包绑定状态在本页维护，所见即所选）。
+ * 依赖 lib/classOverlay.buildClassOverlayHtml（fallback 静态生成层，纯前端、不依赖引擎）；
+ * 父代理 S2a 的 stringifySheetHtml 模板就位后仅需替换该 lib 内部实现（集成点：与并行 S2a 的 sheetHtml.ts（stringifySheetHtml，模板 assignment.html.j2 同构）互不重名——本模块为 VC-3 整班预览 fallback 静态层，不承载 per-pad stringify）。
+ * ========================================================================== */
+const classPreviewHtml = ref('')
+const classPreviewShow = ref(false)
+const classPreviewMsg = ref('')
+/** 兜底包（--default 语义）：为"名单里有 tag 但无包绑定"的学生指定兼任变体 */
+const classPreviewFallbackId = ref('')
+
+/** tag→包映射（与 batch.json mapping 同口径：显式 target_tag / items 唯一 tag） */
+const mappingTag = computed(() => {
+  const m: Record<string, string> = {}
+  for (const r of padRows.value) {
+    const t = resolveBindTag({ id: r.id, binding: r.targetTag, items: r.tagItems })
+    if (t) m[t] = r.id
+  }
+  return m
+})
+
+const classTextSource = {
+  text(kind: string, chap: string, id: string): string {
+    return kb.rowText(kind as never, chap, id)
+  },
+}
+
+function previewWholeClass() {
+  if (!roster.students.length) {
+    classPreviewMsg.value = '名单为空：先到「班级与标签」导入/生成带 tag 名单。'
+    classPreviewShow.value = false
+    return
+  }
+  if (!padRows.value.length) {
+    classPreviewMsg.value = '任务包清单为空：先保存任务包（上方清单）再预览。'
+    classPreviewShow.value = false
+    return
+  }
+  try {
+    classPreviewHtml.value = buildClassOverlayHtml(roster.students, pad.savedJsons(), classTextSource, {
+      title: '整班作业纸预览（VC-3）',
+      classDir: classDirName.value,
+      fallbackPadId: classPreviewFallbackId.value,
+    })
+    classPreviewMsg.value = `已按当前 tag→包绑定生成整班预览（${roster.students.length} 名学生）：iframe 内滚动查看 / 「下载 HTML」后浏览器打开 → Ctrl/Cmd+P 打印（每生一页、自动分页；空间不足时该页自动断页）。`
+    classPreviewShow.value = true
+  } catch (e) {
+    classPreviewMsg.value = `整班预览生成失败：${(e as Error).message}`
+  }
+}
+
+function downloadClassOverlay() {
+  if (classPreviewHtml.value) {
+    downloadData(classPreviewHtml.value, `class-sheet-preview-${new Date().toISOString().slice(0, 10)}.html`, 'text/html')
+  }
+}
+/* ================== /S2b VC-3 整班预览（新增块结束） ================== */
 
 /** 作业纸内容（M-A S1 拆分，docs/05-D25）：一份模板的"题目构成"。
  *  kind×章题选篮（含跨 kind/tag 提示文）→ items 列表编辑 → target_tag 标注；
@@ -327,7 +387,23 @@ async function downloadBatchZip() {
         <p class="hint" v-else>任务包清单为空：先在本页保存任务包后回到这里绑定。</p>
         <p>
           <button class="btn primary" :disabled="exportingBatch || !roster.students.length || !padRows.length" @click="downloadBatchZip">📦 一键生成整班 batch 交付包（zip：roster.xlsx + tasks/*.taskpad.json + batch.json + README）</button>
+          <button class="btn" style="margin-left:8px" :disabled="!roster.students.length || !padRows.length" @click="previewWholeClass" title="VC-3：按当前 tag→包映射生成整班多页 HTML overlay（纯前端，不依赖引擎；与「班级与标签」页的「预览整班」同款）">👁 预览整班（HTML overlay，不依赖引擎）</button>
         </p>
+        <p class="hint" v-if="classPreviewMsg">{{ classPreviewMsg }}</p>
+        <p class="hint" v-if="Object.keys(mappingTag).length && roster.students.length">
+          兜底变体（--default 语义，预览用）：
+          <select v-model="classPreviewFallbackId" style="max-width:220px">
+            <option value="">（不兜底：未覆盖 tag 的学生页显示占位说明）</option>
+            <option v-for="r in padRows" :key="r.id" :value="r.id">{{ r.id }}（{{ mappingTag[r.id] ?? '未绑定' }}）</option>
+          </select>
+        </p>
+        <p v-if="classPreviewShow && classPreviewHtml">
+          <button class="btn small" @click="downloadClassOverlay">⬇ 下载整班预览 HTML（浏览器打开→Ctrl/Cmd+P 打印）</button>
+        </p>
+        <iframe v-if="classPreviewShow && classPreviewHtml"
+          :srcdoc="classPreviewHtml" title="整班作业纸预览（VC-3）"
+          sandbox="allow-same-origin"
+          style="width:100%; height:560px; border:1px solid var(--c-border); border-radius:8px; background:#fff"></iframe>
         <p class="hint">README 内含整条命令示例（教师本机执行即出整班分层作业纸）：</p>
         <pre class="hint" style="white-space:pre-wrap; font-size:11px; background:var(--c-bg,#f7f7f9); padding:8px; border-radius:6px"><code>{{ batchCmdPreview }}</code></pre>
         <p class="hint">

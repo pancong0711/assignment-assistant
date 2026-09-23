@@ -49,6 +49,10 @@ export interface ScoreSource {
   /** 每生解析出的分数（固定四类由 family 语义解析；custom 按所选列）。
    *  key: 姓名。供 computeScores 直接取用。 */
   scores: Record<string, number>
+  /** VC-5 勾选（docs/14 §VC-5）：该源是否参与综合得分（默认 true；
+   *  教师取消勾选 = score excluding，该源被排除出加权聚合）。
+   *  不写进任务包 JSON 的权重口径（导出时仅提示"已排除"，见 buildTaskPackage）。 */
+  includeInAggregation?: boolean
 }
 
 /** 格式预设元数据（界面下拉 + 说明文字；与 engine scores.py ADAPTERS 注释同口径） */
@@ -96,10 +100,27 @@ export const DEFAULT_GROUP_RATIOS: GroupRatio[] = [
   { tag: 'translation', ratio: 0.10 },
 ]
 
+/** VC-5 勾选语义（docs/14 §VC-5）：undefined 视为勾选（legacy 存量源默认参与聚合）。 */
+export function isIncluded(src: ScoreSource): boolean {
+  return src.includeInAggregation !== false
+}
+
 /** 综合得分 = Σ(源归一化分数 × 源权重 / 权重和) × 100（每个源内部按该源分数最大值归一到 0~1）。
  *  分数来源：源.scores（由 xlsx 层按 family 语义解析好：固定四类自动按列名/表结构定位，
- *  custom 按教师所选列）；legacy 存量源无 scores 时回退按 scoreColumn 取值。 */
+ *  custom 按教师所选列）；legacy 存量源无 scores 时回退按 scoreColumn 取值。
+ *  VC-5：默认只聚合"勾选中"的源（includeInAggregation !== false）；
+ *  sources 参数为可见集合，调用方可传过滤后的子集（所见即所选）。 */
 export function computeScores(students: RosterStudent[], sources: ScoreSource[]): void {
+  computeScoresFiltered(students, sources.filter(isIncluded))
+}
+
+/** 按显式源集合计算综合得分（VC-5"按勾选源重算"与"单一列切分"共用入口：
+ *  多列 = 加权均值（同 computeScores 权重归一口径）；单列 = 该源一列即排，
+ *  等价于"该源权重 100%"。）
+ *  返回实际参与聚合的源（weight>0 且有分数），供界面提示"N 列参与加权"。 */
+export function computeScoresFiltered(
+  students: RosterStudent[], sources: ScoreSource[],
+): ScoreSource[] {
   const valid = sources.filter((s) => s.weight > 0 && s.rows.length > 0
     && (Object.keys(s.scores ?? {}).length > 0 || s.scoreColumn !== ''))
   const totalWeight = valid.reduce((sum, s) => sum + s.weight, 0)
@@ -118,6 +139,20 @@ export function computeScores(students: RosterStudent[], sources: ScoreSource[])
     }
     stu.score = Math.round(acc * 1000) / 10 // 0~100，保留 1 位小数
   }
+  return valid
+}
+
+/** 某成绩源内部分数列（scores 表优先；legacy 无 scores 时按 scoreColumn 回退）。
+ *  VC-5 宽表列值渲染 + "按某一列切分"都从这里取数。 */
+export function sourceScoreMatrix(src: ScoreSource): Record<string, number> {
+  if (src.scores && Object.keys(src.scores).length > 0) return src.scores
+  const out: Record<string, number> = {}
+  for (const row of src.rows) {
+    const nm = str(row[src.nameColumn])
+    const v = num(row[src.scoreColumn])
+    if (nm && v !== null) out[nm] = v
+  }
+  return out
 }
 
 /** 源内某个学生的分数（scores 表优先；legacy 无 scores 时按 scoreColumn 回退）。 */
@@ -222,6 +257,7 @@ export function normalizeSource(s: Partial<ScoreSource>): ScoreSource {
     weight: Number(s.weight ?? 1) || 1,
     rows: Array.isArray(s.rows) ? s.rows : [],
     scores: (s.scores && typeof s.scores === 'object' ? s.scores : {}) as Record<string, number>,
+    includeInAggregation: s.includeInAggregation === undefined ? true : Boolean(s.includeInAggregation),
   }
 }
 
