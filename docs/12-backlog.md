@@ -80,3 +80,13 @@ C1 登录/课程/作业浏览/下载（迁 2601 xuexitong 模块）；C2 上传=
 | 2 预览/印刷版式 | 网格语义定版：4=十字 2×2；横版 2/3=左右栏；竖版 2/3=上下行；**所有分隔线改虚线**（引擎 onPage setDash(4,3)，预览覆盖层 repeating-linear-gradient），不穿页眉页脚；预览不再画题目外框 |
 | 3 多类型/变体 | 见"变体方案"（跨 kind/tag 任务包构建现可用；变体编排待实施） |
 | 4 名单页排版 | 头部说明卡移除，特殊标签栏常显；导入/手动/批量/清空全部集中于此，位于产出栏之前 |
+
+
+## 2026-09-23 · S2 系列收割（三批并行合流后）
+
+- ✅ **S2a HTML 主通道**（2fcaf51+ec4da98）：`assist sheet html`（CLI/Jinja2+KaTeX+水印 items/dataURL 题图),PWA同构 print/preview overlay（SheetLayout/Content 视图内两处），4 tests；egration fix：roster 英文表头同名映射；
+- ✅ **S2b 成绩宽表+勾选列、整班 overlay**（c4dca40）：VC-3/4/5/6 + M-C R3.2/3.3 数据流 *"所见即所选"*；
+- ✅ **S2c batch zip/print guide/TEMPLATE_HINT**（f686045）；**S2 合流 wiring**（8cab206）：PrintGuideModal 接版式页 / setSheetHtmlProvider 接线（默认 sheetHtml 模块惰性注入）/ `assist sheet html` CLI 超集定版（D30 主通道）+ CLI `_setup` str/Path 归一；
+- 验证：engine pytest 4/4（含 sheet-html 双版式/parity 哨兵）、app build+l dist-lan 0 错、lint-bat/secrets 全绿；
+- 复测入口（**手机/浏览器均可，无引擎）**：`作业纸版式`→「🖨 打印浏览器版」按钮（当前任务包→浏览器打印/PDF）、「⬇下载整班HTML」；`作业纸内容`→清单行「预览」/copy「预览全部任务包」（多包连排）；`班级与标签`→名单/成绩预览卡（表头+前3行）、「按勾选源重算/按此列切分」、整班预览（"预览整班"卡在 SheetContent 变体编排区）；
+- 后续（S1.2 下一批）：VA-1 引擎 zip 下载 fallback（start.bat 实施到脚本内）、`include_in_aggregation` 引擎侧自动省略、KaTeX 离线打包、VB-7 pull ref、`_setup(--workspace)` 全局归一后的其他命令（batch/make）等（docs/13 §S2a/S2b/S2c 遗留，均不阻塞验收）。
