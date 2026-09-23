@@ -19,7 +19,18 @@ from pathlib import Path
 from loguru import logger
 from openpyxl import Workbook
 
+# VB-7（docs/14）：与 templates/assignment.html.j2（HTML 打印主通道单一事实源）
+# 的同源提示。现阶段批阅报告 md_to_html 逻辑不动；H4 会话统一切换晚于此占位。
+TEMPLATE_HINT = (
+    "同源说明见上方 TODO 块。")
+
+
 # ---- 迁移自 report_generator.A4_CSS ----
+# TODO(VB-7, docs/14)：批阅报告页/页脚/水印风格将与 templates/assignment.html.j2
+#  （docs/14 §VB-1 单一事实源，HTML 打印主通道模板）统一——本 CSS/A4 结构与
+#  该模板共享"每生分页块 + @page A4"语义，现阶段逻辑不动，仅作同源占位：
+#  待 S2a/H4 会话把 md_to_html 输出切到 j2 渲染时复用同一模板对象（05-D1 超集）。
+#  相关 pull 引用（校测/PR 后补充）：docs/14 §VB-7、docs/13 §M-H/H4。
 A4_CSS = """
 @page { size: A4; margin: 2cm; }
 body {

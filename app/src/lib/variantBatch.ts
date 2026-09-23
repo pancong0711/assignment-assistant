@@ -17,8 +17,49 @@ import { writeRosterXlsx } from './rosterXlsx'
 import type { RosterStudent } from './roster'
 import { parseTaskpad } from './taskpad'
 import { STUDENT_TAG_LABELS } from './kb'
+import { PRINT_GUIDE_SUMMARY } from './printGuide'
 
 export interface BatchZipPad { id: string; json: string }
+
+/** VB-5：可注入的 HTML 生成器（12-H1/14-§VB-5）。
+ *
+ *  父代理的 `stringifySheetHtml`（H2 同模板 TS 实现）就绪后，由调用方在
+ *  export 前注册：`setSheetHtmlProvider((id, json, students) => Promise<string>)`；
+ *  未注册/生成失败时降级——只写 `tasks/<id>.html-preview.txt` 说明 +
+ *  README 提示教师先用引擎 `assist sheet html`（docs/14 §VB-3）补 HTML。
+ */
+export type SheetHtmlProvider = (id: string, json: string, students: RosterStudent[]) => Promise<string> | string
+let sheetHtmlProvider: SheetHtmlProvider | null = null
+export function setSheetHtmlProvider(fn: SheetHtmlProvider | null) { sheetHtmlProvider = fn }
+async function trySheetHtml(id: string, json: string, students: RosterStudent[]): Promise<string | null> {
+  if (!sheetHtmlProvider) return null
+  try { return await sheetHtmlProvider(id, json, students) } catch { return null }
+}
+
+/** 单包 HTML 预览说明文件内容（VB-5：`tasks/<id>.html-preview.txt`）。 */
+function htmlPreviewText(id: string, tag: string, hasHtml: boolean, padPath: string): string {
+  return [
+    `${id}.html — 变体编排 batch：浏览器打印版（HTML 主通道）预览说明`,
+    '',
+    `任务包：${padPath}`,
+    `绑定 tag：${tag || '（无显式绑定，待 --map / target_tag）'}`,
+    '',
+    hasHtml
+      ? '本包预览：sheets/' + id + '.html（batch 内已内嵌，双击本地打开 → Ctrl+P）'
+      : '本包预览：本 batch 未内嵌 HTML（引擎或前端未启用生成）。',
+    '',
+    '流程（docs/14 §VB-5 / 05-D30）：',
+    '1. 解压 batch zip 到引擎 workspace 根目录；',
+    hasHtml
+      ? '2. 直接用浏览器打开 sheets/' + id + '.html，按打印教程（A4/边距=无/页眉页脚=关/背景图形=开）打印整班 HTML；'
+      : '2. 若引擎/前端已具备 sheet html 能力，用下面 CLI 生成自包含整班 HTML 后浏览器打印；',
+    '3. CLI 通道：assist sheet html --task ' + padPath + ' [--roster ' + 'classes/<班级>/roster/roster.xlsx]',
+    '   （该命令为 docs/14 §VB-3 双实现之一；与 PWA「打印浏览器版」共用同模板，D1 超集铁律。）',
+    '4. 需要每生独立 PDF（信纸/精修水印）时：README 中的 `assist sheet batch` 命令。',
+    '',
+    '打印对话框设置与浏览器差异（Chrome 首选 / Edge / Firefox / Safari）：见「作业纸版式」页教程弹层或 docs/14 §VB-6。',
+  ].join('\n')
+}
 
 /** engine batch 命令示例（整条、可直接粘贴教师本机 terminal）。 */
 export function batchCommand(row: string, padFiles: string[], classDir: string, missing?: string[]): string {
@@ -49,9 +90,6 @@ export async function buildVariantBatchZip(
   const zip = new JSZip()
   zip.file(p.roster, writeRosterXlsx(students))
 
-  const padFiles = pads.map((pd) => ({ id: pd.id, path: p.task(pd.id) }))
-  for (const { id, json } of pads) zip.file(`tasks/${id}.taskpad.json`, json)
-
   // mapping：显式 target_tag / items 唯一 tag → 任务包路径（与 engine --map 同口径）
   const mapping: Record<string, string> = {}
   const mixed: string[] = []
@@ -65,6 +103,31 @@ export async function buildVariantBatchZip(
     } catch {
       mixed.push(id)
     }
+  }
+
+  // VB-5：每个已绑定 tag 的任务包 → tasks/<id>.html-preview.txt（预览地址与流程），
+  // 且若 sheetHtmlProvider 可用（父代理 stringifySheetHtml），再落 sheets/<id>.html。
+  const padFiles = pads.map((pd) => ({ id: pd.id, path: p.task(pd.id) }))
+  const htmlOf: Record<string, string | null> = {}
+  for (const { id, json } of pads) {
+    zip.file(`tasks/${id}.taskpad.json`, json)
+    const tag = Object.entries(mapping).find(([, v]) => v === `${id}.taskpad.json`)?.[0] ?? ''
+    htmlOf[id] = tag ? await trySheetHtml(id, json, students) : null
+    zip.file(`tasks/${id}.html-preview.txt`,
+      htmlPreviewText(id, tag, Boolean(htmlOf[id]), `tasks/${id}.taskpad.json`))
+    if (htmlOf[id]) zip.file(`sheets/${id}.html`, htmlOf[id] as string)
+  }
+
+  if (!sheetHtmlProvider) {
+    zip.file('sheets/README-html.txt', [
+      'sheets/ — VB-5 HTML 主通道产物位（docs/14 §VB-5 / 05-D30）。', '',
+      '本包导出时前端暂未启用「浏览器打印版」生成（H2 stringifySheetHtml 未就绪或未注册）。', '',
+      '教师可先走引擎 CLI 通道（VB-3 双实现，同模板语义）：',
+      ...pads.map(({ id }) => `  assist sheet html --task tasks/${id}.taskpad.json [--roster ${p.roster}]`),
+      '',
+      '若当前引擎尚未实现 `assist sheet html`（docs/14 §VB-3 属后续会话），可先用',
+      'README 的 `assist sheet batch`（reportlab PDF 线，每生独立 PDF）出整班作业纸。',
+    ].join('\n'))
   }
 
   zip.file('batch.json', JSON.stringify({
@@ -101,6 +164,15 @@ export async function buildVariantBatchZip(
     '```',
     '',
     '- 产出：`' + `${p.classDir}/sheets/batch/<tag>/*.pdf` + '`（每生一份，按 roster 的 tag 自动选变体）。',
+    '',
+    '## HTML 浏览器打印通道（VB-5 · docs/14）',
+    '',
+    sheetHtmlProvider
+      ? '本包已内嵌浏览器打印版 HTML：' + pads.filter((x) => htmlOf[x.id]).map((x) => `sheets/${x.id}.html`).join('、')
+      : '本包未内嵌 HTML（前端生成器未启用）——教师可先用引擎 `assist sheet html --task <任务包> [--roster 名单.xlsx]`' + '\n  自行生成（见 sheets/README-html.txt 与各 tasks/<id>.html-preview.txt）；它尚未上线时，上面 batch PDF 命令为主通道。',
+    '',
+    `打印教程一句话：${PRINT_GUIDE_SUMMARY}`,
+    '',
     missingNote(Object.keys(mapping)),
     '',
     '## 包内容',
@@ -108,6 +180,8 @@ export async function buildVariantBatchZip(
     `- \`${p.roster}\` —— 带 tag 名单（名单页「导出 tag 名单」同款口径）。`,
     ...padLines.map((l) => `- ${l}`),
     `- \`batch.json\` —— roster/pads/mapping 元数据（引擎 batch 校对用，非必读）。`,
+    `- \`tasks/<id>.html-preview.txt\` —— 每个已绑定 tag 包的 HTML 打印版说明（VB-5）。`,
+    sheetHtmlProvider ? '- `sheets/<id>.html` —— 浏览器打印版作业纸（全部已内嵌）。' : '- `sheets/README-html.txt` —— HTML 主通道与 CLI 生成指引（前端生成器未启用时的占位注记）。',
     '',
     '## tag → 任务包 绑定',
     '',

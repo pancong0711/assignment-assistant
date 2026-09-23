@@ -179,3 +179,39 @@ D 组卫生（demo 输出目录归位 classes、bundle code-split）。
 | S4' 之前 | 学习通（C 组）依旧最后 |
 
 （旧 M-B 中的 LaTeX 剩余项由 HTML 主通道分担；引擎端继续承担逐生独立 PDF。）
+
+---
+
+# 2026-09-22 · S2c 实施记录（VB-5/6/7 · 子代理会话）
+
+## 落地清单
+- **VB-5**（`app/src/lib/variantBatch.ts`）：batch zip 每个任务包新增
+  `tasks/<id>.html-preview.txt`（预览地址 + HTML 打印流程 + CLI 命令说明）；
+  前端 HTML 生成器走**可注入 provider**：`setSheetHtmlProvider(fn)`——
+  父代理 `stringifySheetHtml` 就绪后注册一行即可（注册后 batch 自动附带
+  `sheets/<id>.html`）；未注册时仍生成 `sheets/README-html.txt`（教教师先用
+  引擎 `assist sheet html --task tasks/<id>.taskpad.json [--roster ...]` 通道）。
+  README 新增「HTML 浏览器打印通道」段（含 §VB-6 打印教程一句话）与包内容更新。
+- **VB-6**：新增 `app/src/lib/printGuide.ts`（教程数据：A4 / 边距=无 /
+  页眉页脚=关 / 背景图形=开 + Chrome 首选/Edge/Firefox/Safari 差异 + docs/14
+  VC/VB/HVB 指向）与自包含组件 `app/src/components/PrintGuideModal.vue`
+  （复用全局 .backdrop/.modal 样式）。**版式页 wiring 未做**（该视图由并行
+  代理持有），版式页打印卡/帮助卡只需三行：
+  `import PrintGuideModal from '../components/PrintGuideModal.vue'` +
+  `const showGuide = ref(false)` + `<button class="btn" @click="showGuide=true">📖 打印教程</button>`
+  `<PrintGuideModal v-if="showGuide" @close="showGuide=false" />`。
+- **VB-7**（`engine/src/assist/grading/report.py`）：A4_CSS 上方加
+  `TEMPLATE_HINT` 常量 + TODO 注释块（与 `templates/assignment.html.j2`
+  单一事实源同源、H4 会话统一切换时复用； pull 引用校测后再贴）。逻辑零改动。
+- **引擎小增**（`engine/src/assist/cli.py`）：`sheet batch --map` help/docstring/
+  报错文案与实现语义（JSON 字典）对齐；功能未动。`assist sheet html` 尚未由任何
+  代理实现（grep 无）——故未在 batch 加 `--pair tag=pads` 通道提示，README 落
+  的是 §VB-3 文档口径 `--task ... [--roster ...]`；待该命令上线后在
+  `html-preview.txt` / README 补一行即可。
+
+## 遗留 TODO
+1. 版式页接入 PrintGuideModal（三行 wiring，见上）——并行代理合并后收口。
+2. `setSheetHtmlProvider` 接 `stringifySheetHtml`（H2 就绪后传 `(id, json, students)`）。
+3. `assist sheet html` 实现后：html-preview.txt 第 3 步命令换成实际 CLI 口径
+   （如 `--pair tag=pads`），并移除 sheets/README-html.txt 占位说明。
+4. VB-7 的 pull 引用待校测/PR 后补进 TODO 块。

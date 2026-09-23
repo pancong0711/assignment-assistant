@@ -296,7 +296,8 @@ def serve(obj, workspace, host, port, lan, verbose):
 @sheet.command("batch")
 @click.option("--roster", "roster_fn", required=True, help='带 tag 名单 xlsx（assist roster tag 产出）')
 @click.option("--pads", "task_files", multiple=True, required=True, help="任务包 JSON（一个 tag 一份；可多份）")
-@click.option("--map", "map_specs", multiple=True, help="显式映射 tag:任务包文件（兼任派），可选")
+@click.option("--map", "map_specs", multiple=True,
+              help='显式映射 JSON：--map \'{"tag": "任务包文件名"}\'（可多次，key=tag value=文件名）')
 @click.option("--default", "default_pad", default=None, help="未知 tag 的兜底任务包 id")
 @click.option("--class-dir", default=None, help="班级子目录（缺省 classes/，产物落在其 sheets/batch/<tag>/）")
 @click.option("--out", "-o", default=None, help="直接指定输出根目录")
@@ -307,14 +308,16 @@ def sheet_batch(obj, roster_fn, task_files, map_specs, default_pad, class_dir, o
     """D23 变体编排：整班按 tag 自动选任务包生成作业纸（每生一份，tag 分组分目录）。
 
     任务包绑定 tag 规则：`target_tag` 字段优先，否则 items 中唯一 tag 即视为归属
-    （混合 tag 的包用 --map "tag:文件名" 显式映射）。"""
+    （混合 tag 的包用 --map 显式映射；PWA batch zip 内 batch.json 的 mapping 与
+    其同口径）。注意 --map 语义 = JSON 字典（与实现一致；帮助文案与参数对齐校
+    准见 docs/13 §S2c）。"""
     from .paper.batch import batch_sheets
     ws_path = _setup(verbose or obj.get("verbose"), workspace)
     mapping = {}
     import json as _j
     for m in map_specs:
         if m in _j.loads(m or "{}"):
-            raise click.ClickException("--map 格式应为 tag:文件名（可多次）")
+            raise click.ClickException('--map 格式应为 JSON 字典，如 --map \'{"qa": "2026xxxx.taskpad.json"}\'')
         for k, v in _j.loads(m).items():
             mapping[k] = v
     files = batch_sheets(
