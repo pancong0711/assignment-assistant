@@ -304,3 +304,17 @@ translation / punish`（punish 为新固定项：期末补作业，统一题集�
 - **教师路径（零依赖完整版）**：下载 start.bat → 放到 workspace 资料目录 → 双击：
   bat 检查 `engine/pyproject.toml`（旁有/`_repo/assignment-assistant` 内有）→
   engine zip 下载与解压 → venv pip TUNA 安装 → assist serve 起来。
+
+
+## D34 · engine 下载链定型（2026-09-23 用户拍板）
+
+- **主链：github.io（Pages）`dl/engine-main.zip`**（5 次尝试 × sleep10 重试窗；长连接窗
+  `--connect-timeout 60 --max-time 180`）；
+- **次链：github Release 附件**（github.com 域，你机已实测 41MB 可达）——CI `dl` tag
+  固定 Release；`engine-main.zip` 由 CI push 时同步产出；
+- **兜底：ghfast → 整仓 main.zip**（最后手段：兼容任何内层目录名——`find -maxdepth 3 -name engine -type d`）；
+- **PyPI 兜底段删除**（先舍弃；恢复条件：pypi.org 状态稳定 + `assist-engine` 发版流程完备）；
+- 下载逻辑从「20 秒失败立刻切下一链」升级为「主源长窗重试」——对教师网络波动
+  更友好（实际报错案例：v6/v7 中 20s 就切链， 导致整仓 41MB 下载与解压 mismatch）：
+- **解压兼容**：Windows 自带的 Expand-Archive；匹配 `engine/pyproject.toml` 时以
+  `find`/`IF EXIST` 双层定位（兼容 `assignment-assistant-main/` 与 `engine/` 两种内层）。
