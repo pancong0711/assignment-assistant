@@ -241,7 +241,10 @@ class Handler(BaseHTTPRequestHandler):
             checks = _doctor_checks(Path(self.ws).resolve())
             bad = [c["id"] for c in checks if c["status"] == "red"]
             self._json({"ok": True, "engine": {"version": __version__, "workspace": str(self.ws)},
-                        "checks": checks, "missing_ids": bad})
+                        "checks": checks, "missing_ids": bad,
+                        "sources_used": {"pip_index": os.environ.get('UV_DEFAULT_INDEX') or 'tuna',
+                                          "python_dl": os.environ.get('UV_PYTHON_INSTALL_MIRROR') or 'official',
+                                          "official": os.environ.get('CN_OFFICIAL') == 'official'}})
         elif u.path == "/status":
             self._json({"name": "assist-engine", "version": __version__,
                         "workspace": True, "ws": str(self.ws)})
