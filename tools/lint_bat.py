@@ -27,6 +27,14 @@ def main() -> int:
             if data.count(b"\n") != data.count(b"\r\n"):
                 fails.append(f"{t}: 行尾必须为 CRLF")
             text = data.decode("utf-8", errors="replace")
+            # D-v10.1 用例：GOTO 目标标签必须存在（children 用户现场 'UNPACK' 闪退根因）
+            labels = set(re.findall(r'^:(\w+)', text, re.M))
+            gotos = set(re.findall(r'\bGOTO\s+:(\w+)', text, re.I))
+            # ";" 视为小写
+            gotos |= set(re.findall(r'\bgoto\s+:(\w+)', text, re.I))
+            dangling_lbl = [g for g in gotos if g not in labels]
+            for g in dangling_lbl:
+                fails.append(f"{t}:{i}: GOTO 目标不存在: :{g}（'系统找不到指定的批处理标签'案例）")
             depth = 0
             for i, line in enumerate(text.splitlines(), 1):
                 before = line.count("(") - line.count(")")

@@ -62,12 +62,13 @@ set "ATTEMPT=0"
 IF %ATTEMPT% GEQ 5 GOTO TRY_STD
 echo [attempt %ATTEMPT%] downloading engine-main.zip from Pages (5 retry chain)
 curl -fL --connect-timeout 60 --max-time 180 --retry 3 --retry-delay 10 -o "%WORKSPACE%\engine-main.zip" "%DELURL%"
-IF EXIST "%WORKSPACE%\engine-main.zip" goto UNPACK
+IF EXIST "%WORKSPACE%\engine-main.zip" goto EXTRACT_ENGINE
 IF ERRORLEVEL 1 GOTO SKIP_ATTEMPT
 :SKIP_ATTEMPT
 set /a ATTEMPT=%ATTEMPT%+1
 IF %ATTEMPT% LSS 5 GOTO P_RETRY
 
+:TRY_STD
 echo [5/6b] engine source: github release dl (github.com - proven reachable)
 curl -fL --retry 3 --connect-timeout 60 --retry-delay 10 -o "%WORKSPACE%\engine-main.zip" "https://github.com/pancong0711/assignment-assistant/releases/download/dl/engine-main.zip"
 IF EXIST "%WORKSPACE%\engine-main.zip" goto EXTRACT_ENGINE
