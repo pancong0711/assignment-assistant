@@ -20,6 +20,13 @@ set "UV_INSTALL_DIR=%WORKSPACE%\.runtime\uv"
 set "UV_PYTHON_INSTALL_DIR=%WORKSPACE%\.runtime\python"
 set "UV_CACHE_DIR=%WORKSPACE%\.runtime\cache\uv"
 set "UV_PROJECT_ENVIRONMENT=%WORKSPACE%\.runtime\venv"
+[D29-cn] China mirror trio: pypi tuna + python-build-standalone ghfast + playwright npmmirror
+
+IF NOT DEFINED UV_DEFAULT_INDEX set "UV_DEFAULT_INDEX=https://pypi.tuna.tsinghua.edu.cn/simple"
+
+IF NOT DEFINED UV_PYTHON_INSTALL_MIRROR set "UV_PYTHON_INSTALL_MIRROR=https://ghfast.top/https://github.com/astral-sh/python-build-standalone/releases/download"
+
+IF NOT DEFINED PLAYWRIGHT_DOWNLOAD_HOST set "PLAYWRIGHT_DOWNLOAD_HOST=https://npmmirror.com/mirrors/playwright/"
 set "ASSIST_WORKSPACE=%WORKSPACE%"
 echo [1/6] workspace = %WORKSPACE%
 :TRY_UV
@@ -67,9 +74,18 @@ IF ERRORLEVEL 1 (
 :HAVE_VENV
 echo [5/6] install engine dependencies
 IF EXIST "%ROOT%\engine\pyproject.toml" goto ENGINE_LOCAL
-echo [INFO] engine source not found next to bat - installing assist-engine from PyPI
+if exist "%WORKSPACE%\_repo\assignment-assistant\engine\pyproject.toml" (
+  set "ENGINE_DIR=%WORKSPACE%\_repo\assignment-assistant\engine"
+  goto ENGINE_LOCAL
+)
+echo [INFO] engine source missing - downloading repo zip via ghfast mirror
+powershell -NoProfile -ExecutionPolicy Bypass -Command "try { Invoke-WebRequest -Uri https://ghfast.top/https://github.com/pancong0711/assignment-assistant/archive/refs/heads/main.zip -OutFile $env:ASSIST_WORKSPACE\_repo.zip -UseBasicParsing } catch { Invoke-WebRequest -Uri https://github.com/pancong0711/assignment-assistant/archive/refs/heads/main.zip -OutFile $env:ASSIST_WORKSPACE\_repo.zip -UseBasicParsing }"
+powershell -NoProfile -ExecutionPolicy Bypass -Command "Expand-Archive -Force $env:ASSIST_WORKSPACE\_repo.zip $env:ASSIST_WORKSPACE\_repo"
+set "ENGINE_DIR=%WORKSPACE%\_repo\assignment-assistant\engine"
+echo [INFO] installing assist-engine from PyPI as last resort
 uv pip install assist-engine --python "%WORKSPACE%\.runtime\venv\Scripts\python.exe" >> "%LOG%" 2>&1
 GOTO AFTER_DEPS
+:ENGINE_LOCAL
 :ENGINE_LOCAL
 uv pip install -e "%ROOT%\engine" --python "%WORKSPACE%\.runtime\venv\Scripts\python.exe" >> "%LOG%" 2>&1
 :AFTER_DEPS
