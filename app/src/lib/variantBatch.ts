@@ -16,6 +16,7 @@ import JSZip from 'jszip'
 import { writeRosterXlsx } from './rosterXlsx'
 import type { RosterStudent } from './roster'
 import { parseTaskpad } from './taskpad'
+import { stringifySheetHtml, expandPadItems } from './sheetHtml'
 import { STUDENT_TAG_LABELS } from './kb'
 import { PRINT_GUIDE_SUMMARY } from './printGuide'
 
@@ -31,6 +32,18 @@ export interface BatchZipPad { id: string; json: string }
 export type SheetHtmlProvider = (id: string, json: string, students: RosterStudent[]) => Promise<string> | string
 let sheetHtmlProvider: SheetHtmlProvider | null = null
 export function setSheetHtmlProvider(fn: SheetHtmlProvider | null) { sheetHtmlProvider = fn }
+
+/** [D33 接线] KO use the stringifySheetHtml path (sheetHtml.ts) as provider — engine zip batch 将内嵌 html */
+export async function ensureDefaultSheetHtmlProvider(kbBookOf: (kind: string) => never) {
+  if (sheetHtmlProvider) return
+  setSheetHtmlProvider((_id: string, json: string, students) => {
+    const pad = parseTaskpad(JSON.parse(json))
+    return stringifySheetHtml(
+      [{ pad, items: expandPadItems(pad, kbBookOf as never) }],
+      { students: students as never }
+    )
+  })
+}
 async function trySheetHtml(id: string, json: string, students: RosterStudent[]): Promise<string | null> {
   if (!sheetHtmlProvider) return null
   try { return await sheetHtmlProvider(id, json, students) } catch { return null }
