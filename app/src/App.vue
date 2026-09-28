@@ -3,8 +3,7 @@ import { computed, onMounted, onUnmounted, ref } from 'vue'
 import { useSettingsStore } from './stores/settings'
 import SettingsView from './views/SettingsView.vue'
 import KbEditorView from './views/KbEditorView.vue'
-import SheetLayoutView from './views/SheetLayoutView.vue'
-import SheetContentView from './views/SheetContentView.vue'
+import SheetDesignView from './views/SheetDesignView.vue'
 import RosterView from './views/RosterView.vue'
 import XxetongView from './views/XxetongView.vue'
 import TransferView from './views/TransferView.vue'
@@ -16,8 +15,7 @@ const settings = useSettingsStore()
 const TABS = [
   { key: 'settings', label: '设置中心', component: SettingsView },
   { key: 'kb', label: '题库编辑器', component: KbEditorView },
-  { key: 'layout', label: '作业纸版式', component: SheetLayoutView },
-  { key: 'content', label: '作业纸内容', component: SheetContentView },
+  { key: 'design', label: '作业纸设计', component: SheetDesignView },
   { key: 'roster', label: '班级与标签', component: RosterView },
   { key: 'xxetong', label: '学习通', component: XxetongView },
   { key: 'transfer', label: '导入导出', component: TransferView },
@@ -27,9 +25,11 @@ const TABS = [
 /** 旧 hash 兼容（R2.4）：#/designer → #/layout（版式页）；#/grading → #/xxetong
  *  （批阅工作台并入学习通）；#/sheet → #/content；#/roster 保持不变。 */
 const HASH_ALIASES: Record<string, string> = {
-  designer: 'layout',
+  designer: 'design',
+  layout: 'design',
+  content: 'design',
   grading: 'xxetong',
-  sheet: 'content',
+  sheet: 'design',
 }
 
 const activeKey = ref<string>('settings')
