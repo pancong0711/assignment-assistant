@@ -102,3 +102,39 @@
 | 之后 | 学习通 C 组（放最后） |
 
 （以下均为 VC 实现约束：**在线检测**/`fix` 哨兵只在需要引擎的按钮前显示；**不依赖引擎**的预览（VC-1~6）**始终可用**（含手机/未装引擎的 PWA）——为 VC-5 里"导入 csv 解析预览"等零依赖教师体验服务。）
+
+
+---
+
+# 2026-09-23 · 预览体系补强（VC-C 组加固项）＋ 项目进度审核
+
+## VC-C · 预览强化（S3 级，写为"新需求单"）
+
+- **PC1 预览下载 CSV**:PreviewTableCard 增加"下载预览 CSV"按钮（名单/各 family 成绩源解析结构 + 前 N 行）。
+- **VC-C.2 数据异常检测**:预览卡增加提示——同名冲突 / 学号重复 / 空行/乱码（family/exam 引擎规则对齐）。
+- **VC-C.3 rainclass 明细**：汇总表粒度日/次出勤明细（辅助第 K 洽 family=rainclass 接口；不阻塞）。
+- **VC-C.4 xlsx family 回退**：学习通"章节测验"sheet 名不可识别时，**fallbackSheetName 建议节点**（教师可自行选择 sheet 名）——可修复 family 找不到 sheet 的孤儿场景。
+
+## 项目进度总览（2026-09-23 · 当时快照）
+
+| 主题 | 状态 |
+|---|---|
+| **PWA 全功能在线**（HTML 主通道打印/三类预览/班级宽表勾选/变体编排/学习通占位/导入导出/一键 batch zip） | ✅ |
+| **Engine CLI**（sheet make/html/batch、roster tag/rain、grade、serve、doctor、install） | ✅（CLI 超集覆盖）|
+| **Windows start.bat v10.3** | ✅（工程链路 hexflight）——等待用户 Windows 端对 v10（第 5 轮）复测的全部通过反馈 |
+| **TinyTeX 可选安装按钮**（体检页 + render 三档探测） | ⏳（S3 一格；非阻塞） |
+| `include_in_aggregation` 引擎侧 batch 自动省略 | 审计结论：非 gap（CLI 端 `--score` 显式列名已承重；batch.json 不需消费该字段——D37/D37.b） |
+| **KaTeX 离线打包** | ⏳（可选，目前 CDN）|
+| **report.py TEMPLATE_HINT → j2 模板引用接管**（VB-7） | ⏳（S3 完成时其一收口） |
+| **PyPI `assist-engine` 发版** | ⏳（PyPI outage 后，恢复可走 Trusted Publisher 流程；不阻塞主线） |
+| **学习通 C 组** | ⏳（最终目标，与账号窗口联调） |
+
+## 预览能力总速览（三类，文档 docs/14 §VC 全整合）
+- **作业纸模板**（SheetLayoutView 的 windowsprint 版式预览/CSS 预览）；
+- **不同类型作业纸**（SheetContent 清单行预览/连排预览全部任务包）；
+- **整班作业纸**（SheetContent/roster 类sheets 预览整班 HTML overlay，不依赖引擎）；
+- **导入预览**（点名册/各 family 成绩源——各 f) projectfile 同构 PreviewTableCard 解析类别）。
+
+## 双引擎（D36/D33）"统一模板"专项（VB-7 收口计划）
+
+**合并的重大意义**：report.py 与 assignment.html.j2 的**A4_CSS统一**，是"印刷 PDF + HTML 打印"两通道实现**样式对齐**的关键一步（一次写、两渲染）。OPPO；优先级排序后与 TinyTeX 修复按钮同家安排（S3 或 S4 都行）。
