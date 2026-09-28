@@ -215,3 +215,17 @@ D 组卫生（demo 输出目录归位 classes、bundle code-split）。
 3. `assist sheet html` 实现后：html-preview.txt 第 3 步命令换成实际 CLI 口径
    （如 `--pair tag=pads`），并移除 sheets/README-html.txt 占位说明。
 4. VB-7 的 pull 引用待校测/PR 后补进 TODO 块。
+
+
+---
+
+# S 系列完成度审计（2026-09-28）
+
+| 代号 | 内容 | 状态 |
+|---|---|---|
+| S2a | HTML 主通道 (CLI sheet html + PWA 打印/预览 overlay/KaTeX) | ✅ |
+| S2b | 班级与标签页能力整合（成绩宽表+勾选/名单/成绩/整班预览） | ✅ |
+| S2c | batch zip 增补 + 打印教程 + TEMPLATE_HINT | ✅ |
+| **S3 合流** | variantBatch provider（stringifySheetHtml）接线 + 类型/构建/预览重现审核 | ✅（2026-09-28） |
+| **S3 引擎侧审计** | include_in_aggregation 引擎自动省略（证实非必须——CLI `--score` 手动指定已覆盖该层） | ✅（no-gap） |
+| 后续 | TinyTeX 可选修复按钮（体检页，S3）；KaTeX 离线打包（可选）；CLP 双引擎 report.py TEMPLATE_HINT → j2同模板 pull ref；学习通（C 组） | 排队 |
