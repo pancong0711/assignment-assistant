@@ -165,3 +165,13 @@ C1 登录/课程/作业浏览/下载（迁 2601 xuexitong 模块）；C2 上传=
 - translation 分发面板/宽表/打印相关 string 检查均通过（live bundle content = 想要的 UI）；
 - D41-B/D41-C/D41-D 仍待实施（预览虚线 overflow fix，code-split，binary removal），已在 docs/13 D41 列为下轮 roll；
 - 页面：essay 4 轮lined已final（贴你的 start.log 反馈即可）
+
+
+---
+# 2026-09-28 · D41 全系列实施完成（数据流/预览 CSS/UI重排/Playwright/binary cleanup）
+
+- ✅ **sourcePreview cleanup**：per-source overwrites resolved to "latest" 模式，build 0 err
+- ✅ **CSS overflow**：deck-view divided .sheet-frame content max-width + word-break → 不跨虚线
+- ✅ **UI renames**（任务包→作业纸 etc 弃语版 manifest pull across views/lib）
+- ✅ **Playwright semantic**（status "yellow" 可跳过 note，green = 已装）
+- ✅ **binaries removed from repo** (~40 MB git tree clean → future engine-main.zip 80KB 不再 hit)
