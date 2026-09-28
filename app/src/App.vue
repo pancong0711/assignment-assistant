@@ -8,6 +8,7 @@ import SheetContentView from './views/SheetContentView.vue'
 import RosterView from './views/RosterView.vue'
 import XxetongView from './views/XxetongView.vue'
 import TransferView from './views/TransferView.vue'
+import HelpView from './views/HelpView.vue'
 
 const settings = useSettingsStore()
 
@@ -20,6 +21,7 @@ const TABS = [
   { key: 'roster', label: '班级与标签', component: RosterView },
   { key: 'xxetong', label: '学习通', component: XxetongView },
   { key: 'transfer', label: '导入导出', component: TransferView },
+  { key: 'help', label: '使用说明', component: HelpView },
 ] as const
 
 /** 旧 hash 兼容（R2.4）：#/designer → #/layout（版式页）；#/grading → #/xxetong
