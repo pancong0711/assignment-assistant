@@ -133,3 +133,14 @@ C1 登录/课程/作业浏览/下载（迁 2601 xuexitong 模块）；C2 上传=
   全部就绪后，到 **[6/6] start engine** 这一步——现在应该能正常启动 engine serve 在
   8601..8649 的空档端口上。start.log 会留下最后一行 "engine http://127.0.0.1:XXXX"；
 - 设计仍然不变（ck：docs/12 priority）。
+
+
+---
+
+# 2026-09-28 · S11 作业纸设计合并视图 部署（D39 记录 + VC-C/D40 等待项）
+- ✅ **SheetDesignView**（wrapper 合并视图）：SheetLayoutView + SheetContentView 同 pinia store 同屏渲染；
+  hash /#/layout /#/content /#/designer /#/sheet 全部重定向 #/design；
+  页内锚点锚座（"①版式 / ②内容 / ③预览导出"——快速跳转 / sticky 顶部导航）；
+- 其他选项卡（题库/班级与标签/学习通/导入导出）不合并——保持独立（D39 用户拍板）；
+- kox canti 后续： **VC-C.5 translation**（kbXlsx 中文表头 + 特殊标签栏/独立面板）——独立 session 收口；
+- Windows v10.3 → S11 合并视图复测（你手机或电脑鉴试的"LIVE 页面流程"）—— 等两端反馈后一起更新 docs/12 (第 6 轮课本记录)。
