@@ -138,7 +138,15 @@
 ## 双引擎（D36/D33）"统一模板"专项（VB-7 收口计划）
 
 **合并的重大意义**：report.py 与 assignment.html.j2 的**A4_CSS统一**，是"印刷 PDF + HTML 打印"两通道实现**样式对齐**的关键一步（一次写、两渲染）。OPPO；优先级排序后与 TinyTeX 修复按钮同家安排（S3 或 S4 都行）。
-## VC-C.5 · translation 分发能力（docs/05-D40 方案 C）
+## VC-C.5 · translation 分发能力（docs/05-D40 方案 C 实装完成 2026-09-28）
+
+- ✅ PWA kbXlsx 支持 translation.xlsx 中文例外表头解析（parseTranslationAoA/isTranslationXlsx + readKbXlsx translation 分支）
+- ✅ 题库编辑器 kind=translation 读入从此可用（generic reader 分支 + 中文表头 → KbRow 拼接 content）
+- 特殊标签（translation 专属）独立面板：比例输入框 + 手动名单 textarea + 分布统计；manual > 随机（覆盖优先）——**待实施 UI 阶段**；
+- 引擎 batch：target_tag=translation 零改动（tag→任务包绑定已通）。
+
+原文档：
+能力（docs/05-D40 方案 C）
 
 - PWA kbXlsx 支持 translation.xlsx 中文例外表头解析（名言/作者/出处/年份 → 拼接题目）；
   kbEditor 支持 kind=translation 编辑/新增；
