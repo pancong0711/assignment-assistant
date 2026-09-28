@@ -156,3 +156,12 @@ C1 登录/课程/作业浏览/下载（迁 2601 xuexitong 模块）；C2 上传=
   而 `target_tag=translation` 任务的引擎 batch 分发链早已通（tag→任务包绑定）；
 - **剩余（D40 方案 C 后半）**：特殊标签区"translation 专属"独立面板（比例输入 + 手动名单/分布统计）；
 - CI 双工作流全绿（pages/tests）；`node self-check` 通过。
+
+
+---
+
+# 2026-09-28 · D41-A 数据流修复交付（Duplicates removed / sourcePreview latest mode / build 0 err）
+- sourcePreview 改为单一 latest 模式（不再 stale "per-source record" 分散 state）—— compiler clean；
+- translation 分发面板/宽表/打印相关 string 检查均通过（live bundle content = 想要的 UI）；
+- D41-B/D41-C/D41-D 仍待实施（预览虚线 overflow fix，code-split，binary removal），已在 docs/13 D41 列为下轮 roll；
+- 页面：essay 4 轮lined已final（贴你的 start.log 反馈即可）
