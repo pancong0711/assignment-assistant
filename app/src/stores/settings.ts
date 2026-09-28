@@ -64,6 +64,7 @@ function loadSettings(): PersistedSettings {
     const merged = { ...defaultSettings(), ...(JSON.parse(raw) as Partial<PersistedSettings>) }
     // 一次性迁移：阶段2 默认地址 8765 → 阶段4a 契约端口 8601（仅当用户未改过）
     if (merged.engineUrl === 'http://127.0.0.1:8765') merged.engineUrl = DEFAULT_ENGINE_ADDR
+merged.engineToken = merged.engineToken ?? ''
     return merged
   } catch {
     return defaultSettings()
