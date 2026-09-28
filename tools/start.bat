@@ -103,12 +103,13 @@ IF ERRORLEVEL 1 (
 )
 :AFTER_DEPS
 echo [6/6] start engine (auto port scan 8601..8649)
-set "PORT=none"
+set "PORT="
 FOR /L %%p IN (8601,1,8649) DO (
   IF NOT DEFINED PORT (
-  netstat -an | findstr /R ":%%p .*LISTENING" >nul 2>nul || set "PORT=%%p"
+    netstat -an | findstr /C:":%%p " | findstr /I LISTENING >nul 2>nul || set "PORT=%%p"
+  )
 )
-IF "%PORT%"=="none" (
+IF NOT DEFINED PORT (
   echo [FAIL] all ports 8601-8649 busy - close stale engine and retry
   pause
   exit /b 1
