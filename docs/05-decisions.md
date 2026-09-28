@@ -407,3 +407,19 @@ orientation/per_page/水印/页眉页脚），教师操作路径被拆散、体�
 3. 合并动机：教师做一份作业纸的流程是"版式 + 题目"融合的；分页隔离后总在跳页。合并后一份作业纸一个页面，与 S2a 以来"整班/条状"逻辑一致；其他选项卡（题库/班级标签/学习通/导入导出）逻辑独立、无跨选项卡跳动的需求，不合并；
 4. 文档同步：docs/05-D25/D27 的 M-A S1 决策由"拆分"改判"合并"；docs/12/13/14 的路由 hash 表、选项卡数量列表同步修订；
 5. 实施规模：SheetLayoutView（534行）与 SheetContentView（496行）合并为 SheetDesignView（预计 850–900 行）+ App.vue hash route 同步；预计半天；build/lint 0 err 即收口。
+
+
+## D40 · translation 分发能力（用户拍板方案 C，讨论后待实施）
+
+**背景**（用户反馈）：translation 作业纸无法分发——根源三层：
+1. PWA 题库编辑器不支持 translation.xlsx（中文例外表头：名言/作者/出处/年份）——题库内容不能被读取（PWA 端 0 处 translation 解析代码）；
+2. 分组比例区 translation 独立随机拨给的比例数值输入框已有（D24），但"translation 学生名单的手动/批量输入"未与比例字段同处一卡；
+3. 引擎 batch 链 tag=translation 已工作（target_tag=translation 自动绑定；引擎 read_translation 兜底读完中文表头）。
+
+**方案 C（推荐，用户拍板）——三补丁并行**：
+1. kb 类型扩充：PWA kbXlsx.ts 支持 translation.xlsx 中文表头解析（名言/作者/出处/年份 4 列组合成"请翻译以下内容…"同一模板），与引擎 read_translation 同语义；题库编辑器支持 translation kind 的编辑/新增（编辑卡）；
+2. translation 独立控制面板（分组比例卡或特殊标签区）：比例输入值（0-100 随机拨给，不占比例合计，D24 语义不变）+ 手动名单（教师点名哪些学生做 translation）——两种语义并存：manual 编辑的名单覆盖自动随机；比例调整参数保留；
+3. 引擎 batch：target_tag=translation 无需修改即自动分发（已通）。
+
+工程量：中等（kbEditor 解析 + roster 分组比例独立块 + 手动名单面板 + 说明卡）——半天。
+同步项：docs/14 VC-C.5（translation 分发能力）已登记；PWA translation 表结构统一到 docs/05-D17 tag 体系。
