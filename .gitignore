@@ -60,3 +60,5 @@ engine/assets/watermark/
 # dist 构建产物一律不入库（阶段4b：Pages 由 CI 构建部署；dist-lan 仅供本机演示）
 app/dist/
 app/dist-lan/
+dl/
+app/public/dl/

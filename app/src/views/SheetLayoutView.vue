@@ -157,7 +157,7 @@ watch(() => pad.current.id, () => syncFromPad())
 
 /* ---------- 任务包头（docs/04 §1；target_tag 绑定在「作业纸内容」页，D23/D25） ---------- */
 
-/* ---------- 任务包清单（多份作业纸管理，D19 反馈第 3 项） ---------- */
+/* ---------- 作业纸清单（多份作业纸管理，D19 反馈第 3 项） ---------- */
 interface PadMeta { id: string; term: string; cls: string; items: number; questions: number; orientation: string; perPage: number; targetTag: string; inferredTag: string | null; json: string }
 const library = computed<PadMeta[]>(() =>
   pad.saved.map((s) => {
@@ -198,7 +198,7 @@ function removeFromLibrary(id: string) {
 const exportingAll = ref(false)
 async function exportAllZip() {
   if (!pad.saved.length) {
-    status.value = '任务包清单为空：先「仅保存」或「导出任务包 JSON」至少一份。'
+    status.value = '作业纸清单为空：先「仅保存」或「导出任务包 JSON」至少一份。'
     return
   }
   exportingAll.value = true
@@ -209,7 +209,7 @@ async function exportAllZip() {
       if (bin) zip.file(`kb/${kind}.xlsx`, bin)
     }
     const readme = [
-      '# 任务包清单导出（assignment-assistant · 作业纸）',
+      '# 作业纸清单导出（assignment-assistant · 作业纸）',
       '',
       '- tasks/<id>.taskpad.json — 已保存的任务包（schema 同 docs/04 §1）。',
       '  交付引擎执行：assist sheet make --task tasks/<id>.taskpad.json',
@@ -222,7 +222,7 @@ async function exportAllZip() {
       `导出时间：${new Date().toISOString()}`,
       `任务包数量：${pad.saved.length}`,
     ].join('\n')
-    zip.file('README-任务包清单.md', readme)
+    zip.file('README-作业纸清单.md', readme)
     const blob = await zip.generateAsync({ type: 'blob' })
     downloadBlob(blob, `taskpads-${new Date().toISOString().slice(0, 10)}.zip`)
     status.value = `已导出 ${pad.saved.length} 份任务包 + 题库 xlsx（zip）。LAN 预览下请手动放回 workspace 的 tasks/ 与 kb/。`
@@ -247,7 +247,7 @@ async function importTaskpadFile() {
   try {
     const p = pad.importJson(await f.text())
     syncFromPad()
-    status.value = `已导入任务包 ${p.id}（${p.items.length} 组选题），可继续编辑。`
+    status.value = `已导入作业纸 ${p.id}（${p.items.length} 组选题），可继续编辑。`
   } catch (e) {
     status.value = `任务包导入失败：${(e as Error).message}`
   }
@@ -324,9 +324,9 @@ function engineHint(): void {
       </p>
       <div class="notice" v-if="!kb.hasData">题库为空：请先到「题库编辑器」载入 xlsx 或示例数据，再到「作业纸内容」页选题。</div>
       <p>
-        <button class="btn" @click="newTaskpadClone(false)">新建任务包</button>
+        <button class="btn" @click="newTaskpadClone(false)">新建作业纸</button>
         <button class="btn" style="margin-left:8px" @click="newTaskpadClone(true)" title="新建空任务包，克隆当前版式/页眉页脚/水印配置">新建（克隆当前版式）</button>
-        <label class="btn as-label btn-file" style="margin-left:8px" for="pad-file">导入任务包 JSON…</label>
+        <label class="btn as-label btn-file" style="margin-left:8px" for="pad-file">导入作业纸 JSON…</label>
         <input type="file" accept=".json,application/json" hidden id="pad-file" @change="importTaskpadFile" />
       </p>
       <p class="hint" v-if="status">{{ status }}</p>
@@ -368,7 +368,7 @@ function engineHint(): void {
         <p class="hint">本页仅出作业纸即可用；批阅配置（转录/评阅模型、学生范围）留空交给引擎默认值或阶段3 再细化。</p>
         <p>
           <button class="btn primary" @click="exportTaskpadJson">导出任务包 JSON（下载 + 存入本页清单）</button>
-          <button class="btn" style="margin-left:8px" @click="pad.saveToLibrary(); status = '已保存到任务包清单'">仅保存</button>
+          <button class="btn" style="margin-left:8px" @click="pad.saveToLibrary(); status = '已保存到作业纸清单'">仅保存</button>
         </p>
         <h3>浏览器打印主通道（无需引擎 · docs/14 §VB-4 / 05-D30）</h3>
         <p>
@@ -490,7 +490,7 @@ function engineHint(): void {
         </div>
         <p class="hint">说明：预览为 HTML/CSS 近似；打印级排版（reportlab 版式、真实题图、每生水印）由 engine 按同一任务包生成。多题/页时预览与打印版统一为**中间虚线**分隔（4题=十字 2×2；横版=栏间竖虚线、竖版=行间横虚线，且不穿页眉页脚；docs/05-D21）。</p>
 
-        <h3>任务包清单（多份作业纸管理）</h3>
+        <h3>作业纸清单（多份作业纸管理）</h3>
         <p class="hint">已保存 {{ library.length }} 份。导出全部 = 多份任务包 JSON + 当前题库 xlsx 打包 zip（LAN 预览下请解压后手动放回 workspace 的 tasks/ 与 kb/）。</p>
         <p>
           <button class="btn" :disabled="!library.length || exportingAll" @click="exportAllZip">导出全部（zip：任务包 JSON + 题库 xlsx）</button>
