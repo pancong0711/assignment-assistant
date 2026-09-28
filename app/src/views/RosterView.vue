@@ -227,6 +227,42 @@ const batchTag = ref('copy')
 const batchCreateIfAbsent = ref(true)
 const batchMsg = ref('')
 
+// D40 (方案 C)：translation 专属面板（随机拨给比例输入 + 手动名单点名）
+const translationRatioPct = computed(() =>
+  Math.round((roster.ratios.find((r) => r.tag === 'translation')?.ratio ?? 0) * 100)
+)
+const manualTranslationNames = ref('')
+const manualTranslationMsg = ref('')
+const manualCreateIfAbsent = ref(true)
+
+function setTranslationRatio(v: string) {
+  const g = roster.ratios.find((r) => r.tag === 'translation')
+  if (g) g.ratio = Number(v) / 100 || 0
+  roster.touch()
+}
+
+function applyManualTranslation() {
+  const names = manualTranslationNames.value.split(/[，,、；;]+/).map((s: string) => s.trim()).filter(Boolean)
+  if (!names.length) return
+  let hit = 0
+  let added = 0
+  for (const nm of names) {
+    let idx = roster.students.findIndex((s) => s.name === nm)
+    if (idx < 0 && manualCreateIfAbsent.value) {
+      roster.addStudent()
+      idx = roster.students.length - 1
+      roster.students[idx].name = nm
+      added++
+    }
+    if (idx >= 0) {
+      roster.students[idx].tag = 'translation'
+      hit++
+    }
+  }
+  roster.touch()
+  manualTranslationMsg.value = `已给 ${hit} 人打上 translation（新增 ${added} 人）`
+}
+
 function applyBatchTag() {
   const names = batchNames.value.split(/[，,、/；;]+/).map((s2: string) => s2.trim()).filter(Boolean)
   if (!names.length || !batchTag.value) return
@@ -511,6 +547,28 @@ const nonTranslationRatios = computed(() => roster.ratios.filter((g) => g.tag !=
     </div>
 
     <div class="card">
+    <div class="card">
+      <h2>translation 分发面板（D40 方案 C）</h2>
+      <p class="hint">translation 为<b>独立随机拨给</b>（不占比例合计，docs/05-D24）：按比例随机点名打 translation tag（可调）；下方手动名单点名 manual 覆盖。</p>
+      <p>
+        <label class="field">随机拨给比例：
+          <input type="number" :value="Math.round(translationRatioPct)" min="0" max="100" step="1" style="width:60px"
+            @change="setTranslationRatio(($event.target as HTMLInputElement).value)" />%
+        </label>
+        <button class="btn primary" style="margin-left:8px" @click="recompute()">重算综合得分与 translation 拨给</button>
+      </p>
+      <p>
+        <label class="field">手动点名（逗号/顿号分隔多个学生）：
+          <input type="text" v-model="manualTranslationNames" placeholder="学生A, 学生B, 学生C" style="width:min(420px, 60%)" />
+        </label>
+        <label class="field" style="white-space:nowrap">
+          <input type="checkbox" v-model="manualCreateIfAbsent" /> 缺失者自动新增
+        </label>
+        <button class="btn" style="margin-left:8px" @click="applyManualTranslation" :disabled="!manualTranslationNames.trim()">打 translation tag</button>
+        <span class="hint" v-if="manualTranslationMsg"> {{ manualTranslationMsg }}</span>
+      </p>
+    </div>
+
       <h2>产出（名单带 tag → 引擎可直接用）</h2>
       <p class="hint">
         roster.xlsx 列 = name/number/class/tag（恒英文值），<code>uv run assist sheet make &lt;task&gt; --roster roster.xlsx</code> 直接可用；
