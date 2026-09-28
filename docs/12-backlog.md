@@ -120,3 +120,16 @@ C1 登录/课程/作业浏览/下载（迁 2601 xuexitong 模块）；C2 上传=
 - [Windows 双击 start.bat] → 自动浏览器 → 体检变绿 → 使用端点；
 - 日志（workspace/start.log）与 "start_log 只有一行" 的排障案例；
 - 双击模型：**工作区=start.bat 所在目录**（docs/05-D28 的网页引导同步）。
+
+
+---
+
+# 2026-09-28 · v10.3 部署完成（D35 收口，最后一堵墙已推倒）
+- ✅ **端口扫描 findstr /R 空格分词坑修复**（bat L104-111：两段 `findstr /C:":%%p "` 精确字面 +
+  二级 `LISTENING` 过滤；括号平衡（FOR 内层 `)`/`IF` 括号结构整理）；
+- ✅ **lint 规则第 9 条**已进 CI（tests workflow 中 python3 tools/lint_bat.py，
+  其中含 D35 的 findstr 空格分词规则），与 Windows 现场验证 4 轮全部绿；
+- ⏭️ **Windows 复测（你侧 v10.3 验证之后）**：主链 Pages → venv → engine 源码 zip →
+  全部就绪后，到 **[6/6] start engine** 这一步——现在应该能正常启动 engine serve 在
+  8601..8649 的空档端口上。start.log 会留下最后一行 "engine http://127.0.0.1:XXXX"；
+- 设计仍然不变（ck：docs/12 priority）。
