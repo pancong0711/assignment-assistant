@@ -358,3 +358,10 @@ translation / punish`（punish 为新固定项：期末补作业，统一题集�
   \  run  `assist-engine` PyPI 暂弃（pypi.org outage 后台）；
 - `include_in_aggregation` 引擎自动省略（batch/make CLI 读取）——S2b 建立，标注为 render-level 待补；
 - 补丁已应用（97行 + KB bookOf 参数），build 0 错、secrets 全绿。
+
+
+### D37 附加审计结论（2026-09-28，引擎侧 include_in_aggregation）
+**结论**：引擎无需自动读取 `include_in_aggregation`——roster tag 已经承担该层的"教师勾选决定"
+（live in PWA）; CLI 侧 `--score` 显式指列，哪个源被排除也由"不提供 --score"实现。因此
+flash 卡里"S2b 引擎跟踪排除 rank"并不缺失；batch.json 的 score_sources 字段作为**教师
+复核提示**保留（README 说明），不作为引擎消费入口。
