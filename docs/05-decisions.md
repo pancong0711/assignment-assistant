@@ -365,3 +365,45 @@ translation / punish`（punish 为新固定项：期末补作业，统一题集�
 （live in PWA）; CLI 侧 `--score` 显式指列，哪个源被排除也由"不提供 --score"实现。因此
 flash 卡里"S2b 引擎跟踪排除 rank"并不缺失；batch.json 的 score_sources 字段作为**教师
 复核提示**保留（README 说明），不作为引擎消费入口。
+
+
+## D39 · "作业纸设计"合并（版式 + 内容 两视图合一），其他选项卡不合并（2026-09-22/23 用户拍板）
+
+**背景**（用户反馈）：v10.3 之后 PWA 的"作业纸版式"/"作业纸内容"两个选项卡
+在**同一次编辑会话里需要来回切跳**（一边选择/勾选所需题型之后又要切换去调节
+orientation/per_page/水印/页眉页脚），教师操作路径被拆散、体验混乱。
+
+**合并方案（S11 实施计划）**：
+1. **合并为单一 `SheetDesignView.vue`**（一份作业纸一个视图）：
+   - 三个"区块"（锚点）：① 版式（ordination/per_page/页眉页脚/水印 items）
+     ② 内容（kind×章×题选题篮 / items 编辑 / target_tag 标注）
+     ③ 任务包（导出 JSON / 清单 / 变体绑定 / batch zip / 打印浏览器版 + HTML 预览）
+   - 锚点导航（页内目录）：单页面内跳转，不当涉选项卡；预览与表单同屏（左表单右预览）；
+   - **同一 store 数据源**（pad.current + pad.savedJsons + roster.students）——两页
+     原本就指向同一 taskpad store；合并后删除视图级的重复状态/模板代码；
+   - 两侧 LESS/JS 拼接处（如 previewSheetHtml/ensureDefaultSheetHtmlProvider）
+     集中在 SheetDesignView.vue 内部；
+2. **兼容路由**：#/layout、#/content → #/design（hash 重定向 table 增加 entry）；
+3. **合并动机**（用户同一段话）：教师做一份作业纸的流程是"版式 + 题目"融合的；
+   现在分页隔离后总在跳页。合并后**一份作业纸一个页面** solves the scatter 问题，
+   与 S2a 以来"整班/条状"逻辑一致；其他选项卡（题库/班级标签/学习通/导入导出）
+   逻辑独立、无跨选项卡跳动的需求，**不合并**。
+4. **相关文档同步**：docs/05-D25/D27 的 M-A S1 决策由"拆分"改判"合并"；docs/12/13/14
+   路由 hash 表、选项卡数量列表等同步修订（7 项→7 项（从纯"版式"和"内容"合并））。
+5. **实施规模估算**：SheetLayoutView/SheetContentView 合并到 SheetDesignView
+   （500＋500 行，生成 850~900 行）+ hash route/A.vue 同步；预计**半天**；Build/lint 0 err 即收口。
+
+
+## D39 · 作业纸设计合并（版式 + 内容 视图合一），其他选项卡不合并（2026-09-23 用户拍板）
+
+**背景**（用户反馈）：v10.3 之后 PWA 的"作业纸版式"/"作业纸内容"两个选项卡在同一次编辑会话里需要来回切跳（一边选题后又要切去调 orientation/per_page/水印/页眉页脚），教师操作路径被拆散。
+
+**合并方案（S11 实施计划）**：
+1. 合并为单一 SheetDesignView.vue（一份作业纸一个视图）：
+   三个"区块"（锚点）：① 版式（orientation/per_page/页眉页脚/水印 items）② 内容（kind×章×题选题篮 / items 编辑 / target_tag）③ 任务包（导出 JSON / 清单 / 变体绑定 / batch zip / 打印浏览器版 + HTML 预览）
+   锚点导航（页内目录/tab 内跳转）；预览与表单同屏（左表单右预览）；
+   同一 store 数据源（pad.current + pad.savedJsons + roster.students）——两页本就指向同一 taskpad store；合并后删除视图级重复状态/模板代码；
+2. 兼容路由：#/layout、#/content → #/design（hash 重定向新增一条）；
+3. 合并动机：教师做一份作业纸的流程是"版式 + 题目"融合的；分页隔离后总在跳页。合并后一份作业纸一个页面，与 S2a 以来"整班/条状"逻辑一致；其他选项卡（题库/班级标签/学习通/导入导出）逻辑独立、无跨选项卡跳动的需求，不合并；
+4. 文档同步：docs/05-D25/D27 的 M-A S1 决策由"拆分"改判"合并"；docs/12/13/14 的路由 hash 表、选项卡数量列表同步修订；
+5. 实施规模：SheetLayoutView（534行）与 SheetContentView（496行）合并为 SheetDesignView（预计 850–900 行）+ App.vue hash route 同步；预计半天；build/lint 0 err 即收口。
