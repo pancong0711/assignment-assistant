@@ -204,6 +204,8 @@ table.grid td.cell-content input { min-width: 260px; }
 /* 多题/页（per_page > 1，D21）：**仅画中间虚线**（题目格不再有边框/实线框），
    虚线止于内容区边缘（不穿页眉/页脚），与 engine PDF 版式一致。 */
 .sheet-body.divided { gap: 0; position: relative; }
+.sheet-body.divided .sheet-frame { overflow: hidden; word-break: break-word; max-width: 100%; }
+.sheet-body.divided .q-content, .sheet-body.divided .q_solution { max-width: 100%; overflow-wrap: break-word; }
 .sheet-body.divided .sheet-frame { border: none; border-radius: 0; padding: 10px 14px; }
 /* 单题（per_page=1）保持原有虚线框观感；同时 .divided 下画格间虚线 */
 .sheet-body:not(.divided) .sheet-frame + .sheet-frame { border-top: none; }
@@ -299,3 +301,4 @@ button.wizard-step-pill.as-btn:disabled { opacity: 0.5; cursor: not-allowed; }
   box-shadow: 0 20px 60px rgba(0,0,0,0.25);
 }
 .modal h2 { margin-top: 0; }
+

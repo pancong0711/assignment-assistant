@@ -51,7 +51,7 @@ function previewWholeClass() {
     return
   }
   if (!padRows.value.length) {
-    classPreviewMsg.value = '任务包清单为空：先保存任务包（上方清单）再预览。'
+    classPreviewMsg.value = '作业纸清单为空：先保存任务包（上方清单）再预览。'
     classPreviewShow.value = false
     return
   }
@@ -138,7 +138,7 @@ function previewAllPads() {
 
 /** 作业纸内容（M-A S1 拆分，docs/05-D25）：一份模板的"题目构成"。
  *  kind×章题选篮（含跨 kind/tag 提示文）→ items 列表编辑 → target_tag 标注；
- *  任务包清单列表与 D23 变体编排绑定面板（原 RosterView「变体编排」卡整体迁入，
+ *  作业纸清单列表与 D23 变体编排绑定面板（原 RosterView「变体编排」卡整体迁入，
  *  绑定 store（taskpad.setSavedTargetTag）不动；RosterView 仅留指向本页的提示链接，
  *  避免同一功能双入口）。整班 batch zip 生成也随编排面板迁到本页（打完 tag 后一步到位）。 */
 
@@ -198,7 +198,7 @@ const targetTagOn = computed({
   set: (v: string) => { pad.current.target_tag = v || undefined },
 })
 
-/* ---------- 任务包清单（多份作业纸管理，D19 反馈第 3 项） ---------- */
+/* ---------- 作业纸清单（多份作业纸管理，D19 反馈第 3 项） ---------- */
 interface PadMeta { id: string; term: string; cls: string; items: number; questions: number; orientation: string; perPage: number; targetTag: string; inferredTag: string | null; json: string }
 const library = computed<PadMeta[]>(() =>
   pad.saved.map((s) => {
@@ -295,7 +295,7 @@ async function downloadBatchZip() {
     return
   }
   if (!padRows.value.length) {
-    status.value = '任务包清单为空：先在本页保存任务包（每份可绑 target_tag）。'
+    status.value = '作业纸清单为空：先在本页保存任务包（每份可绑 target_tag）。'
     return
   }
   exportingBatch.value = true
@@ -386,7 +386,7 @@ async function downloadBatchZip() {
       </div>
 
       <div class="card" style="flex:1 1 500px; min-width:420px">
-        <h2>④ 任务包清单（多份作业纸管理）</h2>
+        <h2>④ 作业纸清单（多份作业纸管理）</h2>
         <p class="hint">
           已保存 {{ library.length }} 份。导出/新建在「作业纸版式」页；本页负责题目构成与
           <b>变体编排绑定</b>（每份包绑定一个目标 tag，整班分层生成时引擎按学生 tag 选用对应包）。
@@ -422,7 +422,7 @@ async function downloadBatchZip() {
         <h3>变体编排（D23 · 整班分层作业纸，docs/05-D23 / 12-B3.5）</h3>
         <p class="hint">
           每个学生按其 tag 领到<b>不同的任务包</b>变体（同 tag 内题目顺序引擎可轮换防抄袭）。
-          下方清单即上方任务包清单；"绑定到 tag" 与包的 <code>target_tag</code> 双向同步
+          下方清单即上方作业纸清单；"绑定到 tag" 与包的 <code>target_tag</code> 双向同步
           （引擎 <code>assist sheet batch</code> 按 tag 自动选用对应包）。
           名单/tag 切分在「班级与标签」页完成。
         </p>
@@ -457,7 +457,7 @@ async function downloadBatchZip() {
             </tr>
           </tbody>
         </table>
-        <p class="hint" v-else>任务包清单为空：先在本页保存任务包后回到这里绑定。</p>
+        <p class="hint" v-else>作业纸清单为空：先在本页保存任务包后回到这里绑定。</p>
         <p>
           <button class="btn primary" :disabled="exportingBatch || !roster.students.length || !padRows.length" @click="downloadBatchZip">📦 一键生成整班 batch 交付包（zip：roster.xlsx + tasks/*.taskpad.json + batch.json + README）</button>
           <button class="btn" style="margin-left:8px" :disabled="!roster.students.length || !padRows.length" @click="previewWholeClass" title="VC-3：按当前 tag→包映射生成整班多页 HTML overlay（纯前端，不依赖引擎；与「班级与标签」页的「预览整班」同款）">👁 预览整班（HTML overlay，不依赖引擎）</button>
