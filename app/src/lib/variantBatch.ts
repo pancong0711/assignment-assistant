@@ -34,7 +34,7 @@ let sheetHtmlProvider: SheetHtmlProvider | null = null
 export function setSheetHtmlProvider(fn: SheetHtmlProvider | null) { sheetHtmlProvider = fn }
 
 /** [D33 接线] KO use the stringifySheetHtml path (sheetHtml.ts) as provider — engine zip batch 将内嵌 html */
-export async function ensureDefaultSheetHtmlProvider(kbBookOf: (kind: string) => never) {
+export async function ensureDefaultSheetHtmlProvider(kbBookOf: (kind: string) => unknown) {
   if (sheetHtmlProvider) return
   setSheetHtmlProvider((_id: string, json: string, students) => {
     const pad = parseTaskpad(JSON.parse(json))
