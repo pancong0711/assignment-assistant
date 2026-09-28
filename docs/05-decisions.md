@@ -347,3 +347,14 @@ translation / punish`（punish 为新固定项：期末补作业，统一题集�
 - **引擎通道（reportlab + LaTeX/TinyTeX 可选）**：逐生独立 PDF、水印精修、批阅报告 PNG（阶段6 上传学习通）；
 - **HTML 通道（PWA/CLI 同模板）**：零安装、整班一文件、浏览器打印 PDF（D30）；
 - 两通道**功能等价**（同一任务包 → 同一版式语义），渐进对齐；模板差异 only.
+
+
+## D37 · 一键安装完善收口（2026-09-28 审核后定版）
+
+- **variantBatch provider 已接通**（stringifySheetHtml + kbBookOf + roster.students）——
+  batch zip 现在自带 sheets/<id>.html（双保险：教师手动/README 均提示 CLI `assist sheet html`
+  同源）；variant batch zip "整班 HTML 打印预览"为零门槛；
+- 撤销项记录：KaTeX 离线打包 走 CDN（`kab tmg记者 fine`）+ 已记记录：Engine install
+  \  run  `assist-engine` PyPI 暂弃（pypi.org outage 后台）；
+- `include_in_aggregation` 引擎自动省略（batch/make CLI 读取）——S2b 建立，标注为 render-level 待补；
+- 补丁已应用（97行 + KB bookOf 参数），build 0 错、secrets 全绿。
