@@ -6,6 +6,7 @@ import { useTaskpadStore } from '../stores/taskpad'
 import { useRosterStore } from '../stores/roster'
 import { parseTaskpad, missingBoundTags, padInferredTag, resolveBindTag, type PadBinding, type Taskpad } from '../lib/taskpad'
 import { batchCommand, batchPaths, buildVariantBatchZip } from '../lib/variantBatch'
+import { ensureDefaultSheetHtmlProvider } from '../lib/variantBatch'
 import { buildClassOverlayHtml } from '../lib/classOverlay'
 import { downloadBlob, downloadData } from '../lib/fsAccess'
 import { useSettingsStore } from '../stores/settings'
@@ -299,6 +300,7 @@ async function downloadBatchZip() {
   }
   exportingBatch.value = true
   try {
+    await ensureDefaultSheetHtmlProvider((kind) => kb.book(kind as never))
     const { blob, cd, padCount } = await buildVariantBatchZip(roster.students, pad.savedJsons())
     downloadBlob(blob, `batch-package-${new Date().toISOString().slice(0, 10)}.zip`)
     status.value = `已生成整班 batch 交付包（班级 ${cd}）：${padCount} 份任务包 + roster.xlsx + batch.json + README。解压到引擎 workspace 根目录后按 README 执行 assist sheet batch 即可。`
