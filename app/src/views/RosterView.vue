@@ -51,8 +51,8 @@ function pickXlsx(): Promise<File | null> {
 /* ---------- VC-4/VC-6 导入预览（表头+前 3 行+列映射说明） ---------- */
 const rosterPreview = ref<PreviewTable | null>(null)
 const rosterPreviewFile = ref('')
-const sourcePreview = ref<PreviewTable | null>(null)
-const sourcePreviewFile = ref('')
+const sourcePreviewLatest = ref<PreviewTable | null>(null)
+const sourcePreviewLatestFile = ref('')
 
 async function importRoster() {
   const file = await pickXlsx()
@@ -74,11 +74,11 @@ async function addSource() {
   try {
     const { message, preview } = await roster.addScoreSource(file, presetFamily.value)
     status.value = message
-    sourcePreview.value = preview
-    sourcePreviewFile.value = file.name
+    sourcePreviewLatest.value = preview
+    sourcePreviewLatestFile.value = file.name
   } catch (e) {
     status.value = `成绩源读入失败：${(e as Error).message}`
-    sourcePreview.value = null
+    
   }
 }
 
@@ -356,8 +356,8 @@ const nonTranslationRatios = computed(() => roster.ratios.filter((g) => g.tag !=
     </div>
     <PreviewTableCard
       title="成绩源解析状态预览（表头 + 前 3 行，VC-6）"
-      :preview="sourcePreview"
-      :file-name="sourcePreviewFile"
+      :preview="sourcePreviewLatest"
+      :file-name="sourcePreviewLatestFile"
       tone="ok"
     />
 
