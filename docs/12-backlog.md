@@ -144,3 +144,15 @@ C1 登录/课程/作业浏览/下载（迁 2601 xuexitong 模块）；C2 上传=
 - 其他选项卡（题库/班级与标签/学习通/导入导出）不合并——保持独立（D39 用户拍板）；
 - kox canti 后续： **VC-C.5 translation**（kbXlsx 中文表头 + 特殊标签栏/独立面板）——独立 session 收口；
 - Windows v10.3 → S11 合并视图复测（你手机或电脑鉴试的"LIVE 页面流程"）—— 等两端反馈后一起更新 docs/12 (第 6 轮课本记录)。
+
+
+---
+
+# 2026-09-28晚 · D40 translation（方案 C）实装第 1/3 部分 —— PWA/kbXlsx 中文表头
+- ✅ **PWA `kbXlsx.ts` 支持 `translation.xlsx` 中文例外表头解析**：
+  `parseTranslationAoA/isTranslationXlsx`（名言/作者/出处/年份 → 拼接"请翻译以下内容…"，与引擎
+  `read_translation` 同语义）；`readKbXlsx` kind='translation' 时走专用解析分支；
+- **这一补丁使 translation 题目从“无法读取 xlsx”变为“可读/可编/可进任务包”**——
+  而 `target_tag=translation` 任务的引擎 batch 分发链早已通（tag→任务包绑定）；
+- **剩余（D40 方案 C 后半）**：特殊标签区"translation 专属"独立面板（比例输入 + 手动名单/分布统计）；
+- CI 双工作流全绿（pages/tests）；`node self-check` 通过。
