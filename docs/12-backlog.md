@@ -298,3 +298,17 @@ C1 登录/课程/作业浏览/下载（迁 2601 xuexitong 模块）；C2 上传=
 - ✅ app/tests/selfcheck-roster-fig.mjs 11 断言 ALL PASS（多sheet/点名册回退/题图三族），CI tests.yml 硬门禁挂载；
 - build 0 err；localStorage 超限静默降级=回占位框（后续可迁 IndexedDB，idbRaw 现成）。
 - 至此第 9/10 轮反馈全部清账：D46-1~4 + D43-7 + B1 + B3(前端半) 全部上线。
+
+---
+
+# 2026-09-29 · 第 11 轮：真实文件核测揭穿 4 个解析缺陷（D47 登记·仅讨论未动代码）
+
+- 用教师 legacy 真文件（namelists/xxt/custom/rainclass）node 直跑核测：
+  ① **.xls 学号被改写**（12 位号错位/XLS 精度）→ roster 名单学号列内容错；
+  ② **exam 前两行标题表头** → "期末"列定位失败 scores=0；
+  ③④ **学习通 assignment/stat crostab 两行表头列错位** → scores=0（PWA+engine 同病）；
+  ⑤ rainclass pickBestSheet 误选课堂子表（应锁"汇总"表）；
+- 教师体感："导入点名册名单没更新+总览 姓名/学号 两列空白+成绩列勾选死硬编码" —— 与以上根因吻合；
+- **D47 设计**：三段式表头定位器 / 学习通 crostab 解析重写 / .xls 数字列字符串化 / rainclass 汇总锁定 /
+  **perColumn 成绩列多选勾选**（扩展 includeInAggregation）/ 全文件完整预览（预览卡升级）×
+  整班模式；细则与待教师提供的样例请求见 docs/13 D47。**批次：E5（先 1-4 骨架 → 5 勾选 → 6 预览）。**
