@@ -132,6 +132,11 @@ async function reparseSource(idx: number) {
   }
 }
 
+/** D47-5：列勾选（store toggle + 即时状态回显） */
+async function colToggleMsg(idx: number, name: string) {
+  status.value = roster.toggleSourceColumn(idx, name)
+}
+
 /* ---------- D46-3：成绩源行内👁预览（IndexedDB raw 即时重建 PreviewTable） ---------- */
 const sourceRowPreview = ref<PreviewTable | null>(null)
 const sourceRowPreviewFile = ref('')
@@ -178,6 +183,17 @@ function recompute() {
     return
   }
   status.value = roster.recomputeFromChecked()
+}
+
+/* ---------- D47-6 整班预览（wideRows → PreviewTable 走 PreviewTableCard 展示） ---------- */
+const classPreview = ref<PreviewTable | null>(null)
+function classOverviewPreview() {
+  const headers = ['姓名', '学号', '班级', ...wideHeaders.value.map((h) => `${h.label}${h.included ? '' : '[未参与]'}`), '综合得分', 'tag', 'punish']
+  const rows = wideRows.value.map((r) => {
+    const stu = roster.students.find((x) => x.name === r.name && x.number === r.number)
+    return [r.name, r.number, stu?.class ?? '', ...r.cells, r.composite, stu?.tag ?? '', stu?.punish ? '是' : '']
+  })
+  classPreview.value = { headers, rows, notes: ['整班模式（docs/13 D47-6）：每生一行，含各源分数/综合/tag/punish；列勾选影响"[未参与]"标注与综合。'], rowCount: rows.length }
 }
 
 /* ---------- D46-4 总览导出 xlsx（SheetJS aoa；未勾选源列保留、表头加"[未参与]"标注） ---------- */
@@ -542,6 +558,13 @@ const nonTranslationRatios = computed(() => roster.ratios.filter((g) => g.tag !=
         </template>
         <label class="field" v-if="s.family !== 'roster'">权重：<input type="number" v-model.number="s.weight" min="0.1" step="0.1" style="width:70px" @change="roster.touch()" /></label>
         <span class="hint">{{ s.rows.length }} 行 · {{ s.fileName }}<template v-if="s.sheetName"> · sheet={{ s.sheetName }}</template></span>
+        <label v-for="c in (s.allNumericColumns ?? [])" :key="c.name" class="field" style="margin-right:4px"
+          :title="`D47-5 perColumn：${(s.includedColumns ?? []).some((ic) => ic.name === c.name) ? '已勾选参与总览/加权' : '未勾选（此列不出现在总览）'}`">
+          <input type="checkbox"
+            :checked="(s.includedColumns ?? []).some((ic) => ic.name === c.name)"
+            @change="colToggleMsg(i, c.name)" />
+          {{ c.name }}
+        </label>
         <button class="btn small" style="margin-left:4px" title="D46-3：用留存原始文件即时重建解析预览（表头+前3行+定位说明）" @click="previewSourceRow(i)">👁 预览</button>
         <select v-if="sheetChoices[i]" style="margin-left:4px" :value="s.sheetName" @change="switchSourceSheet(i, $event)"
           title="B1：该源原始文件含多张 sheet——切换后按当前格式预设重新解析">
@@ -552,7 +575,7 @@ const nonTranslationRatios = computed(() => roster.ratios.filter((g) => g.tag !=
       </p>
       <PreviewTableCard
         v-if="sourceRowPreview"
-        title="成绩源解析预览（D46-3 行内回看）"
+        title="成绩源解析预览（D47 全文件模式：可滚动到最大 500 行；sheet 切换见 ⇄）"
         :preview="sourceRowPreview"
         :file-name="sourceRowPreviewFile"
         tone="ok"
@@ -607,8 +630,18 @@ const nonTranslationRatios = computed(() => roster.ratios.filter((g) => g.tag !=
         </table>
       </div>
       <p class="hint" :class="{ notice: checkedSummary.includes('已排除') }" style="margin-top:6px">{{ checkedSummary }}</p>
+      <PreviewTableCard
+        v-if="classPreview"
+        title="整班成绩预览（D47-6 全班模式）"
+        :preview="classPreview"
+        tone="ok"
+      />
       <p class="hint">
         * 综合得分列为<b>预览口径</b>（随勾选即时重算，不写库；点「重算并打 tag」正式生效）。
+        <button class="btn small" style="margin-left:6px" :disabled="!roster.students.length"
+          title="D47-6：把全部成绩总览转成整班预览卡（每个学生一行，含各源分数/综合/tag/punish）"
+          @click="classOverviewPreview">👁 预览整个班</button>
+        <span class="hint" v-if="classPreview" style="margin-left:6px">整班 {{ roster.students.length }} 人（滚动查看）。</span>
         <button class="btn small" style="margin-left:6px" :disabled="!roster.students.length"
           title="D46-4：全部成绩总览导出 xlsx（名单+各源分数列[未勾选列保留并标注]+tag/punish/综合分）"
           @click="exportOverviewXlsx">⬇ 导出总览 xlsx</button>

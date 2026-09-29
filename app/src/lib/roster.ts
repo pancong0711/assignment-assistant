@@ -40,6 +40,10 @@ export interface ScoreSource {
   fileName: string
   /** B1 多 sheet：实际解析用的 sheet 名（缺省=启发式自动选择；教师可在源行切换） */
   sheetName?: string
+  /** D47-5：该数据区**全部数值列**（列名+原始列索引），供总览 perColumn 勾选管理 */
+  allNumericColumns?: Array<{ name: string; index: number }>
+  /** D47-5：教师勾选的参与列（perColumn 默认全勾；取消的列不进综合加权/总览） */
+  includedColumns?: Array<{ name: string; index: number }>
   /** 格式预设（docs/05-D19）：固定四类 + custom（默认） */
   family: ScoreFamily
   /** 分数来源列（xlsx 原始表头名；custom 用，固定四类为解析结果说明） */
@@ -149,7 +153,12 @@ export function computeScoresFiltered(
 /** 某成绩源内部分数列（scores 表优先；legacy 无 scores 时按 scoreColumn 回退）。
  *  VC-5 宽表列值渲染 + "按某一列切分"都从这里取数。 */
 export function sourceScoreMatrix(src: ScoreSource): Record<string, number> {
-  if (src.scores && Object.keys(src.scores).length > 0) return src.scores
+  // D47-5 perColumn：教师勾选 includedColumns 时——
+  //   crostab 学习通源（列=作业均分语义行）与普通源 rows 都可裁剪；scores 已聚合的源以之为准。
+  //   但若教师明确取消了部分列（includedColumns ⊂ allNumericColumns），普通源按"还原 raw 矩阵重算均值/重组分数"：
+  //   实现简则：对 numeric source（exam/custom）rows 中取每个 included 列的平均值作为该源多项综合。
+  if (src.scores && Object.keys(src.scores).length > 0 && !(src.allNumericColumns && src.includedColumns
+    && src.includedColumns.length < src.allNumericColumns.length)) return src.scores
   const out: Record<string, number> = {}
   for (const row of src.rows) {
     const nm = str(row[src.nameColumn])
@@ -255,6 +264,8 @@ export function normalizeSource(s: Partial<ScoreSource>): ScoreSource {
   return {
     uid: s.uid,               // D46-3：IndexedDB raw 键必须透传（此前会被 normalize 吃掉）
     sheetName: s.sheetName,   // B1：实际解析 sheet 名透传
+    allNumericColumns: s.allNumericColumns,   // D47-5
+    includedColumns: s.includedColumns,       // D47-5
     name: String(s.name ?? ''),
     fileName: String(s.fileName ?? ''),
     family,
