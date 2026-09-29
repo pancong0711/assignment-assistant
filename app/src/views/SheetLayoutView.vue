@@ -364,12 +364,13 @@ function engineHint(): void {
           <label class="field">class_dir：<input type="text" v-model="pad.current.class_dir" :placeholder="settings.defaultClassDir" style="width:230px" /></label>
           <button class="btn small" @click="pad.renewId(); status = '已生成新作业纸 id'">换新 id</button>
         </p>
-        <h3>grade（可留空 = 仅出作业纸）</h3>
+        <details open style="margin-bottom:12px"><summary><b>grade 配置（通常留空 = 仅出作业纸）</b></summary>
+
         <p class="hint">本页仅出作业纸即可用；批阅配置（转录/评阅模型、学生范围）留空交给引擎默认值或阶段3 再细化。</p>
         <p>
           <button class="btn primary" @click="exportTaskpadJson">导出作业纸 JSON（下载 + 存入本页清单）</button>
           <button class="btn" style="margin-left:8px" @click="pad.saveToLibrary(); status = '已保存到作业纸清单'">仅保存</button>
-        </p>
+        </p></details>
         <h3>浏览器打印主通道（无需引擎 · docs/14 §VB-4 / 05-D30）</h3>
         <p>
           <button class="btn" title="隐藏 iframe 打印作业纸 HTML 本身（非本页界面）；打印对话框按教程设置" @click="printBrowserVersion">🖨 打印浏览器版（window.print）</button>
