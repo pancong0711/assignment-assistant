@@ -136,6 +136,28 @@ async function reparseSource(idx: number) {
 const sourceRowPreview = ref<PreviewTable | null>(null)
 const sourceRowPreviewFile = ref('')
 
+/* ---------- B1：多 sheet 源的行内 sheet 切换（raw 留存时列出全部 sheet） ---------- */
+const sheetChoices = ref<Record<number, string[]>>({})
+
+async function toggleSheetPicker(idx: number) {
+  if (sheetChoices.value[idx]) { delete sheetChoices.value[idx]; return }
+  const names = await roster.listSourceSheets(idx)
+  if (names.length <= 1) {
+    status.value = names.length === 1 ? '该文件只有 1 张 sheet，无需切换。' : '无留存原始文件：「重解析」重新选文件后可用。'
+    return
+  }
+  sheetChoices.value = { ...sheetChoices.value, [idx]: names }
+}
+
+async function switchSourceSheet(idx: number, ev: Event) {
+  const name = (ev.target as HTMLSelectElement).value
+  const msg = await roster.setSourceSheet(idx, name)
+  status.value = msg
+  const next = { ...sheetChoices.value }
+  delete next[idx]
+  sheetChoices.value = next
+}
+
 async function previewSourceRow(idx: number) {
   try {
     const pv = await roster.previewSource(idx)
@@ -517,8 +539,13 @@ const nonTranslationRatios = computed(() => roster.ratios.filter((g) => g.tag !=
           </label>
         </template>
         <label class="field" v-if="s.family !== 'roster'">权重：<input type="number" v-model.number="s.weight" min="0.1" step="0.1" style="width:70px" @change="roster.touch()" /></label>
-        <span class="hint">{{ s.rows.length }} 行 · {{ s.fileName }}</span>
+        <span class="hint">{{ s.rows.length }} 行 · {{ s.fileName }}<template v-if="s.sheetName"> · sheet={{ s.sheetName }}</template></span>
         <button class="btn small" style="margin-left:4px" title="D46-3：用留存原始文件即时重建解析预览（表头+前3行+定位说明）" @click="previewSourceRow(i)">👁 预览</button>
+        <select v-if="sheetChoices[i]" style="margin-left:4px" :value="s.sheetName" @change="switchSourceSheet(i, $event)"
+          title="B1：该源原始文件含多张 sheet——切换后按当前格式预设重新解析">
+          <option v-for="n in sheetChoices[i]" :key="n" :value="n">{{ n }}</option>
+        </select>
+        <button v-else class="btn small" style="margin-left:4px" title="B1：多 sheet 文件切换数据表（需原始文件留存；单 sheet/无留存时给出提示）" @click="toggleSheetPicker(i)">⇄ sheet</button>
         <button class="btn small" style="margin-left:4px" @click="roster.removeSource(i)">移除</button>
       </p>
       <PreviewTableCard

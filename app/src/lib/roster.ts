@@ -38,6 +38,8 @@ export interface ScoreSource {
   name: string
   /** 原始文件名（提示用） */
   fileName: string
+  /** B1 多 sheet：实际解析用的 sheet 名（缺省=启发式自动选择；教师可在源行切换） */
+  sheetName?: string
   /** 格式预设（docs/05-D19）：固定四类 + custom（默认） */
   family: ScoreFamily
   /** 分数来源列（xlsx 原始表头名；custom 用，固定四类为解析结果说明） */
@@ -251,6 +253,8 @@ export function emptyStudent(): RosterStudent {
 export function normalizeSource(s: Partial<ScoreSource>): ScoreSource {
   const family = (SCORE_FAMILY_PRESETS.some((p) => p.value === s.family) ? s.family : 'custom') as ScoreSource['family']
   return {
+    uid: s.uid,               // D46-3：IndexedDB raw 键必须透传（此前会被 normalize 吃掉）
+    sheetName: s.sheetName,   // B1：实际解析 sheet 名透传
     name: String(s.name ?? ''),
     fileName: String(s.fileName ?? ''),
     family,
