@@ -289,7 +289,10 @@ class Handler(BaseHTTPRequestHandler):
         root = _static_root()
         cand = (root / rel).resolve() if root else None
         if not root or not cand.exists() or not str(cand).startswith(str(root)):
-            self._json({"ok": False, "hint": "app 构建产物缺失（cd app && npm run build）"}, 404)
+            # D41-B: redirect to Pages when no local PWA is present
+            self.send_response(302)
+            self.send_header("Location", PAGES_URL)
+            self.end_headers()
             return
         ctype = {"html": "text/html; charset=utf-8", "js": "text/javascript",
                  "css": "text/css", "json": "application/json", "png": "image/png",
@@ -306,6 +309,8 @@ class Handler(BaseHTTPRequestHandler):
     def log_message(self, fmt, *args):
         logger.debug(f"{self.address_string()} {fmt % args}")
 
+
+PAGES_URL = "https://pancong0711.github.io/assignment-assistant/"
 
 def serve(workspace: str | None, host: str = "127.0.0.1", port: int = 8601,
           lan: bool = False) -> int:
