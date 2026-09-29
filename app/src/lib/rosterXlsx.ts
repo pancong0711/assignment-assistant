@@ -106,18 +106,46 @@ export async function readRosterXlsx(source: Blob | ArrayBuffer): Promise<Roster
 interface RawSheet {
   fileName: string
   sheetNames: string[]
-  /** 第一个 sheet 的整表矩阵（含表头行；单元格已转字符串，空为 ''） */
+  /** 选中 sheet 的整表矩阵（B1：默认启发式选 sheet，可指定 sheetName） */
   matrix: string[][]
+  /** 实际选中的 sheet 名（notes/预览显示用） */
+  sheetName?: string
 }
 
-function readRawSheet(buf0: ArrayBuffer, fileName: string): RawSheet {
+/** B1 多 sheet：读全部 sheet 矩阵；matrix = **数据行最多的非空 sheet**（默认启发式），
+ *  教师可在 UI 切换 sheetName 重解析（rescoreWithFamily 传 sheet 参数）。 */
+interface SheetMatrix { name: string; matrix: string[][] }
+
+function allSheetMatrices(wb: XLSX.WorkBook): SheetMatrix[] {
+  return wb.SheetNames.map((name) => ({
+    name,
+    matrix: (XLSX.utils.sheet_to_json<unknown[]>(wb.Sheets[name], { header: 1, defval: '' }) as unknown[])
+      .map((r) => (Array.isArray(r) ? r.map((c) => str(c)) : [])),
+  }))
+}
+
+/** 启发式选 sheet：① 有可映射表头（HEADER_MAP 命中姓名列，含前 15 行关键词回退）优先；
+ *  ② 其次非空数据行数最多者。与 engine scores.py `next(s for s in sheetnames if ...)` 的
+ *  名称匹配相比更通用；engine 侧按名过滤仍兼容（CLI --sheet 语义不变）。 */
+export function pickBestSheet(ms: SheetMatrix[]): SheetMatrix | null {
+  if (!ms.length) return null
+  const nonEmpty = ms.filter((m) => m.matrix.some((r) => r.some((c) => c !== '')))
+  if (!nonEmpty.length) return ms[0]
+  const NAME_TOKENS = ['姓名', '名字', 'name', '学生', 'student']
+  const hasNameHeader = (m: SheetMatrix) =>
+    m.matrix.slice(0, 15).some((row) => (row ?? []).some((c) => NAME_TOKENS.includes(String(c).trim().toLowerCase())))
+  const withHeader = nonEmpty.filter(hasNameHeader)
+  const pool = withHeader.length ? withHeader : nonEmpty
+  const dataRows = (m: SheetMatrix) => m.matrix.filter((r) => r.some((c) => c !== '')).length
+  return pool.reduce((best, cur) => (dataRows(cur) > dataRows(best) ? cur : best))
+}
+
+function readRawSheet(buf0: ArrayBuffer, fileName: string, sheetName?: string): RawSheet {
   const wb = XLSX.read(buf0, { type: 'array' })
-  const sheetNames = wb.SheetNames
-  const matrix: string[][] = sheetNames.length
-    ? (XLSX.utils.sheet_to_json<unknown[]>(wb.Sheets[sheetNames[0]], { header: 1, defval: '' }) as unknown[])
-        .map((r) => (Array.isArray(r) ? r.map((c) => str(c)) : []))
-    : []
-  return { fileName, sheetNames, matrix }
+  const names = wb.SheetNames
+  const ms = allSheetMatrices(wb)
+  const chosen = (sheetName ? ms.find((m) => m.name === sheetName) : undefined) ?? pickBestSheet(ms)
+  return { fileName, sheetNames: names, matrix: chosen?.matrix ?? [], sheetName: chosen?.name ?? '' }
 }
 
 /* ---------- 固定四类 family 语义解析（对齐 engine scores.py ADAPTERS） ---------- */
@@ -223,14 +251,16 @@ function parseRainclass(m: RawSheet): { scores: Record<string, number>; nameColu
  *  roster（教务点名册）仅接表：不计分（scores 留空）。 */
 export async function readScoreSourceXlsx(
   source: Blob | ArrayBuffer, fileName: string, family: ScoreFamily = 'custom',
+  sheetName?: string,
 ): Promise<ScoreSource> {
   const buf = source instanceof Blob ? await source.arrayBuffer() : source
-  const m = readRawSheet(buf, fileName)
+  const m = readRawSheet(buf, fileName, sheetName)
   if (!m.matrix.length || m.matrix.every((r) => r.every((c) => c === ''))) {
     throw new Error(`文件无数据：${fileName}`)
   }
   const base = {
     uid: newUid(),
+    sheetName: m.sheetName ?? '',   // B1：记录实际解析的 sheet（normalizeSource 透传）
     name: fileName.replace(/\.xlsx$/i, ''),
     fileName,
     family,
@@ -339,17 +369,19 @@ export async function buildRosterPreview(source: Blob | ArrayBuffer): Promise<Pr
  *  固定四类说明分数列语义（与 readScoreSourceXlsx 的解析器同口径）；
  *  custom 说明宽松猜列策略。 */
 export async function buildScoreSourcePreview(
-  source: Blob | ArrayBuffer, family: ScoreFamily = 'custom',
+  source: Blob | ArrayBuffer, family: ScoreFamily = 'custom', sheetName?: string,
 ): Promise<PreviewTable> {
   const buf = source instanceof Blob ? await source.arrayBuffer() : source
   const wb = XLSX.read(buf, { type: 'array' })
-  const sheetName = wb.SheetNames[0] ?? ''
-  const sheet = wb.Sheets[sheetName]
-  if (!sheet) return { headers: [], rows: [], notes: ['（文件内无 sheet）'], rowCount: 0 }
-  const matrix = XLSX.utils.sheet_to_json<unknown[]>(sheet, { header: 1, defval: '' }) as unknown[]
-  const headers = ((matrix[0] as unknown[]) ?? []).map((c) => str(c))
-  const rows = matrix.slice(1).map((r) => ((r as unknown[]) ?? []).map((c) => str(c)))
-  const notes: string[] = [`sheet：${sheetName || '（无名）'} · 格式预设：${family}`]
+  const ms = allSheetMatrices(wb)
+  const chosen = (sheetName ? ms.find((x) => x.name === sheetName) : undefined) ?? pickBestSheet(ms)
+  if (!chosen) return { headers: [], rows: [], notes: ['（文件内无 sheet）'], rowCount: 0 }
+  const matrix = chosen.matrix
+  const headers = (matrix[0] ?? []).map((c) => str(c))
+  const rows = matrix.slice(1).map((r) => (r ?? []).map((c) => str(c)))
+  const notes: string[] = [
+    `sheet：${chosen.name || '（无名）'}${wb.SheetNames.length > 1 ? `（B1 自动选择，共 ${wb.SheetNames.length} 张：${wb.SheetNames.join(' / ')}；可在源行切换）` : ''} · 格式预设：${family}`,
+  ]
   if (family === 'roster') {
     notes.push('教务点名册：仅接表不计分，按 姓名/name 列识别。')
   } else if (family === 'exam') {

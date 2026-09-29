@@ -145,9 +145,9 @@ export const useRosterStore = defineStore('roster', {
       void this.rescoreWithFamily(idx, file, family)
       return ''
     },
-    async rescoreWithFamily(idx: number, file: File, family: ScoreFamily): Promise<void> {
+    async rescoreWithFamily(idx: number, file: File, family: ScoreFamily, sheetName?: string): Promise<void> {
       const oldUid = this.sources[idx]?.uid
-      const src = await readScoreSourceXlsx(file, file.name, family)
+      const src = await readScoreSourceXlsx(file, file.name, family, sheetName)
       if (oldUid) src.uid = oldUid   // 沿用原 uid（raw 覆盖写，不产生孤儿键）
       void idbPut(src.uid ?? '', await file.arrayBuffer())
       this.sources.splice(idx, 1, src)
@@ -160,7 +160,7 @@ export const useRosterStore = defineStore('roster', {
       if (!src?.uid) return '该源无留存原始文件（旧数据）：请「重选文件解析」。'
       const buf = await idbGet(src.uid)
       if (!buf) return 'IndexedDB 中原始文件缺失：请「重选文件解析」重建留存。'
-      const fresh = await readScoreSourceXlsx(new File([buf], src.fileName), src.fileName, src.family)
+      const fresh = await readScoreSourceXlsx(new File([buf], src.fileName), src.fileName, src.family, src.sheetName)
       fresh.uid = src.uid
       fresh.name = src.name          // 教师改过的源名保留
       this.sources.splice(idx, 1, fresh)
@@ -174,7 +174,32 @@ export const useRosterStore = defineStore('roster', {
       if (!src?.uid) return null
       const buf = await idbGet(src.uid)
       if (!buf) return null
-      return buildScoreSourcePreview(buf, src.family)
+      return buildScoreSourcePreview(buf, src.family, src.sheetName)
+    },
+    /** B1：列出该源原始文件全部 sheet（UI 切换用；无 raw 返回空数组）。 */
+    async listSourceSheets(idx: number): Promise<string[]> {
+      const src = this.sources[idx]
+      if (!src?.uid) return []
+      const buf = await idbGet(src.uid)
+      if (!buf) return []
+      try {
+        const XLSX = await import('xlsx')
+        return XLSX.read(buf, { type: 'array' }).SheetNames
+      } catch { return [] }
+    },
+    /** B1：切换该源使用的 sheet 并按当前 family 重解析（raw 留存时免选文件）。 */
+    async setSourceSheet(idx: number, sheetName: string): Promise<string> {
+      const src = this.sources[idx]
+      if (!src?.uid) return '该源无留存原始文件，无法切换 sheet：请「重解析」重新选文件。'
+      const buf = await idbGet(src.uid)
+      if (!buf) return 'IndexedDB 原始文件缺失：请「重解析」重新选文件。'
+      const fresh = await readScoreSourceXlsx(new File([buf], src.fileName), src.fileName, src.family, sheetName)
+      fresh.uid = src.uid
+      fresh.name = src.name
+      this.sources.splice(idx, 1, fresh)
+      this.dirty = true
+      this.persist()
+      return `已把「${src.name}」切到 sheet「${sheetName}」重新解析（${fresh.rows.length} 行）。`
     },
     removeSource(idx: number) {
       const uid = this.sources[idx]?.uid

@@ -278,3 +278,12 @@ C1 登录/课程/作业浏览/下载（迁 2601 xuexitong 模块）；C2 上传=
 - ✅ **E3 D46-3**：idbRaw.ts IndexedDB 留存原始 ArrayBuffer（uid 键，降级 no-op）；行尾👁回看 + reparseFromRaw 免二次选文件；
 - ✅ **E4 D46-4**：宽表升级「全部成绩总览」：综合分列（shadow 干跑不污染 store，随勾选即时重算）+ 导出 xlsx（未勾选列标[未参与]）；
 - 构建 0 err；细则见 docs/13「E1–E4 实施记录」。遗留：无 uid 旧源首次👁引导重选文件；B1 多 sheet；D46-5/B3 题图真图。
+
+---
+
+# 2026-09-29 · B1 多 sheet 成绩源完成（+E3 关键修复：uid/sheetName 被 normalizeSource 吞）
+
+- ✅ pickBestSheet 启发式（表头候选优先→数据行数最多）；read/preview 全链可选 sheetName；
+- ✅ ScoreSource.sheetName + normalizeSource 透传修复（**E3 隐患**：uid 之前被 normalize 吃掉 → IDB raw 键没落盘，本轮修复并冒烟复验 uid 存活）；
+- ✅ store listSourceSheets/setSourceSheet；RosterView 行尾 ⇄ sheet 切换按钮 + sheet= 显示；
+- ✅ 引擎 scores.py 本按名匹配 sheet，CLI 不动；冒烟 4/4 PASS；build 0 err。

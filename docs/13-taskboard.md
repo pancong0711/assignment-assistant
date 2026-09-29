@@ -194,8 +194,17 @@ c) 开关状态是否跨会话持久化（建议：不持久化，页内即用�
 | E3 | D46-3 源行内👁预览 | ✅ | 新 `lib/idbRaw.ts`（IndexedDB 轻量封装，不可用静默降级）；ScoreSource.uid + addScoreSource/rescoreWithFamily 存 raw（uid 复用防孤儿键）、removeSource 删 raw；store `previewSource`（raw→PreviewTable 即时重建）+ `reparseFromRaw`（免二次选文件，无留存回退选文件）；RosterView 行尾 👁 按钮 + PreviewTableCard 展示 + 「重解析」替代「重选文件解析」文案 |
 | E4 | D46-4 全部成绩总览 | ✅ | 宽表卡更名「全部成绩总览」；综合得分列（浅拷贝 shadow 干跑 computeScoresFiltered，**不污染 store**，随勾选即时重算，正式写入仍走「重算并打 tag」）黄底高亮 + * 号注记；⬇ 导出总览 xlsx（姓名/学号/班级/各源列[未勾选标"[未参与]"]/综合/tag/punish，D46-4③按拍板含灰显列） |
 
-**构建**：vue-tsc+vite 0 err（index-QhHLCMlp.js 269KB）。**红线**：schema 不动；引擎 j2/CLI 除 roster.py 回退外未动（--no-watermark 既有故 D43-7 零新增）。
-**遗留**：旧数据源（无 uid）首次👁提示"重选文件一次即可启用回看"（预期行为）；多 sheet 成绩源（B1）仍未做；D46-5/B3 题图真图预览挂后续。
+**构建**：vue-tsc+vite 0 err。**红线**：schema 不动；引擎 j2/CLI 除 roster.py 回退外未动（--no-watermark 既有故 D43-7 零新增）。
+
+### B1 · 多 sheet 成绩源支持（E1–E4 同会话追加完成）
+- `rosterXlsx.ts`：`readRawSheet` 读全部 sheet → **pickBestSheet 启发式**（①前15行含姓名类表头的候选优先，②非空数据行数最多者）；`readScoreSourceXlsx/buildScoreSourcePreview` 增可选 `sheetName` 显式指定；notes 显示"共 N 张：…可在源行切换"；
+- `roster.ts ScoreSource.sheetName` + **normalizeSource 透传修复**（连带发现并修复 E3 的同类隐患：**uid 此前会被 normalizeSource 吃掉**——IndexedDB raw 键实际从未落到最终对象；本轮补透传+冒烟复验，属 E3 关键修复）；
+- store：`listSourceSheets(idx)`（raw→SheetNames）+ `setSourceSheet(idx, name)`（切 sheet 按当前 family 重解析，raw 免选文件）；rescoreWithFamily/reparseFromRaw/previewSource 全链带 sheetName；
+- RosterView：源行尾 **⇄ sheet** 按钮 → 行内下拉即时切换（单 sheet/无留存给提示）；行信息加 `sheet=` 显示；
+- 冒烟：exam/custom 自动选到数据 sheet PASS、三 sheet 干扰项 PASS、显式切换 PASS、uid 存活 PASS；build 0 err。
+- 引擎侧说明：`scores.py` 本就按名匹配 sheet（`next(s for s in wb.sheetnames if sheet in s)`），CLI --sheet 语义不变，无需改。
+
+**遗留**：旧数据源（无 uid）首次👁/⇄提示"重选文件一次即可启用"（预期降级）；D46-5/B3 题图真图预览挂后续。
 
 ---
 
