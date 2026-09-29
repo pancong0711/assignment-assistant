@@ -473,8 +473,8 @@ function engineHint(): void {
                 <span class="sh-assign">作业：{{ pad.current.id }}</span>
               </div>
             </div>
-            <div class="sheet-body" :class="{ divided: pg.length > 1 }" :data-grid="gridClass">
-              <div v-if="pg.length > 1" class="sf-line" v-for="(line, li) in gridLines" :key="'dl'+pi+'-'+li" :class="line" />
+            <div class="sheet-body" :class="{ divided: perPage > 1 }" :data-grid="gridClass">
+              <div v-if="perPage > 1" class="sf-line" v-for="(line, li) in gridLines" :key="'dl'+pi+'-'+li" :class="line" />
               <div v-for="(item, fi) in pg" :key="fi" class="sheet-frame">
                 <div class="q-id">{{ item.id }}</div>
                 <div class="q-content">{{ item.content }}</div>
