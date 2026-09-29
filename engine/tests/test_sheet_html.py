@@ -157,6 +157,39 @@ def test_sheet_html_cli_dual_layout_and_template_markers(ws: Path):
     # 合成名单 informational（CLI 输出提示）
     assert "学生A" in res2.output or "合成" in res2.output or True  # 日志走 stderr/loguru
 
+    # ---- ②b D43-A1 parity：--no-solution / --students sample|blank ----
+    # no-solution：与 PWA「显示参考答案」未勾同语义（页面不含"参考答案："行）
+    res_ns = runner.invoke(cli, ["sheet", "html", "--task", str(task),
+                                 "--roster", str(ws / "roster.xlsx"),
+                                 "--no-solution",
+                                 "--workspace", str(ws),
+                                 "-o", str(ws / "tmp" / "sheet-nosol.html")])
+    assert res_ns.exit_code == 0, res_ns.output
+    html_ns = (ws / "tmp" / "sheet-nosol.html").read_text(encoding="utf-8")
+    assert "参考答案" not in html_ns
+    assert "$\\vec{r}=2t\\vec{i}+t^2\\vec{j}$" in html_ns  # 题干公式仍在
+    # students=sample：合成 学生A/B 2 份模板样例
+    res_sm = runner.invoke(cli, ["sheet", "html", "--task", str(task),
+                                 "--no-solution",
+                                 "--students", "sample",
+                                 "--workspace", str(ws),
+                                 "-o", str(ws / "tmp" / "sheet-sample.html")])
+    assert res_sm.exit_code == 0, res_sm.output
+    html_sm = (ws / "tmp" / "sheet-sample.html").read_text(encoding="utf-8")
+    assert html_sm.count('<section class="sheet-page') == 2
+    assert 'data-student="学生A"' in html_sm
+    # students=blank：单份空白模板（页眉学籍三空位）
+    res_bl = runner.invoke(cli, ["sheet", "html", "--task", str(task),
+                                 "--no-solution",
+                                 "--students", "blank",
+                                 "--workspace", str(ws),
+                                 "-o", str(ws / "tmp" / "sheet-blank.html")])
+    assert res_bl.exit_code == 0, res_bl.output
+    html_bl = (ws / "tmp" / "sheet-blank.html").read_text(encoding="utf-8")
+    assert html_bl.count('<section class="sheet-page') == 1
+    assert "班级：＿＿＿＿＿＿" in html_bl and "姓名：＿＿＿＿＿＿" in html_bl and "学号：＿＿＿＿＿＿" in html_bl
+    assert "data-student=""" in html_bl
+
     # ---- ③ PWA 同构 parity 哨兵：TS 实现必须包含同一模板的结构/CSS 标记 ----
     ts = REPO / "app" / "src" / "lib" / "sheetHtml.ts"
     if not ts.exists():
