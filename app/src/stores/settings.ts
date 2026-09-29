@@ -28,6 +28,12 @@ const LS_KEY = 'assignment-assistant.settings.v1'
 const LS_ONBOARDING_KEY = 'assignment-assistant.onboarding.v1'
 /** 水印素材库 key（name → dataURL，阶段4a 水印编辑器）。 */
 const LS_WM_ASSETS_KEY = 'assignment-assistant.watermark.assets.v1'
+/** B3/D46-5：题图素材库（kb/fig 相对路径 → dataURL），与水印素材同模式独立键 */
+const LS_FIG_ASSETS_KEY = 'assignment-assistant.fig.assets.v1'
+
+function loadFigAssets(): Record<string, string> {
+  try { return JSON.parse(localStorage.getItem(LS_FIG_ASSETS_KEY) ?? '{}') as Record<string, string> } catch { return {} }
+}
 
 interface PersistedSettings {
   wizardDone: boolean
@@ -142,6 +148,8 @@ export const useSettingsStore = defineStore('settings', {
     doctorWorkspace: '' as string,
     /** 水印素材库（name → dataURL；作业纸仅引用文件路径 hint） */
     wmAssets: loadWmAssets() as Record<string, string>,
+    /** B3/D46-5：题图库（basename → dataURL；仅本浏览器，导出 JSON 只写 img_path hint） */
+    figAssets: loadFigAssets() as Record<string, string>,
   }),
   getters: {
     /** 向导未完成或跳过 → 引擎类按钮灰 + 黄色横幅（D13：不整体置灰） */
@@ -264,6 +272,18 @@ export const useSettingsStore = defineStore('settings', {
     },
     persistWmAssets() {
       try { localStorage.setItem(LS_WM_ASSETS_KEY, JSON.stringify(this.wmAssets)) } catch { /* 容量/隐私降级 */ }
+    },
+    /** B3/D46-5：题图入库（name=basename；预览按 kb 行 img_path 的 basename 命中显示真图）。 */
+    persistFigAsset(name: string, dataUrl: string) {
+      this.figAssets[name] = dataUrl
+      this.persistFigAssets()
+    },
+    removeFigAsset(name: string) {
+      delete this.figAssets[name]
+      this.persistFigAssets()
+    },
+    persistFigAssets() {
+      try { localStorage.setItem(LS_FIG_ASSETS_KEY, JSON.stringify(this.figAssets)) } catch { /* 容量/隐私降级 */ }
     },
     finishWizard() {
       this.wizardDone = true

@@ -104,6 +104,23 @@ export async function writeFileInDir(
   await writable.close()
 }
 
+/** 在目录句柄下读取文件（B3 题图回读用；不存在返回 null，不抛）。 */
+export async function readFileInDir(dir: FileSystemDirectoryHandle, path: string): Promise<File | null> {
+  const parts = path.split('/').filter(Boolean)
+  const name = parts.pop()!
+  let cur: FileSystemDirectoryHandle = dir
+  for (const seg of parts) {
+    try {
+      cur = await cur.getDirectoryHandle(seg)
+    } catch { return null }
+  }
+  try {
+    const fh = await cur.getFileHandle(name)
+    const file = await (fh as unknown as { getFile: () => Promise<File> }).getFile()
+    return file
+  } catch { return null }
+}
+
 /** 兜底：浏览器下载一个文件（降级路径，所有浏览器/场景可用，含 LAN）。 */
 export function downloadBlob(blob: Blob, filename: string): void {
   const url = URL.createObjectURL(blob)

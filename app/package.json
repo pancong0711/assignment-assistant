@@ -9,7 +9,8 @@
     "build": "vue-tsc -b && vite build",
     "preview": "vite preview",
     "predev": "node tools/copy-katex.mjs",
-    "prebuild": "node tools/copy-katex.mjs"
+    "prebuild": "node tools/copy-katex.mjs",
+    "selfcheck:roster-fig": "esbuild src/lib/rosterXlsx.ts --bundle --platform=node --format=esm --outfile=tests/rosterXlsx.bundle.mjs --external:xlsx --log-level=error && esbuild src/lib/sheetHtml.ts --bundle --platform=node --format=esm --outfile=tests/sheetHtml.bundle.mjs --external:jszip --log-level=error && node tests/selfcheck-roster-fig.mjs"
   },
   "dependencies": {
     "jszip": "^3.10.1",

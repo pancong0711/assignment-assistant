@@ -79,6 +79,7 @@ async function downloadBrowserVersion() {
       includeWatermark: props.includeWatermark,
       includePageText: props.includePageText,
       wmAssets: settings.wmAssets,
+      figAssets: settings.figAssets,
     })
     downloadData(html, `${pad.current.id}.html`, 'text/html')
     status.value = `已下载自包含 ${pad.current.id}.html：浏览器打开 → Ctrl/Cmd+P → 另存为 PDF，离线亦可开（${templateNote.value}）。`
@@ -139,6 +140,7 @@ function stringify(input: PadInput, includeSolution: boolean): string {
     includeWatermark: props.includeWatermark,
     includePageText: props.includePageText,
     wmAssets: settings.wmAssets,
+    figAssets: settings.figAssets,
     katex: 'relative',
   })
 }

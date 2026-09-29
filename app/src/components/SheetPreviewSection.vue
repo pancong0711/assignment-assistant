@@ -79,6 +79,7 @@ function templateHtml(inputs: SheetHtmlPadInput[] | SheetHtmlPadInput): string {
     includeWatermark: props.includeWatermark,
     includePageText: props.includePageText,
     wmAssets: settings.wmAssets,
+    figAssets: settings.figAssets,
     katex: 'relative',
   })
 }
@@ -120,6 +121,7 @@ async function downloadOverlayHtml() {
       includeWatermark: props.includeWatermark,
       includePageText: props.includePageText,
       wmAssets: settings.wmAssets,
+      figAssets: settings.figAssets,
     })
     downloadData(html, `sheet-preview-${new Date().toISOString().slice(0, 10)}.html`, 'text/html')
     notify(`已下载自包含 HTML（ KaTeX 内联，离线可开；${includeAnswers.value ? '含' : '不含'}参考答案 · ${showSamples.value ? '示例 2 份' : '空白 1 份'}）。`)

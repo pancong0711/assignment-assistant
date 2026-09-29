@@ -293,6 +293,7 @@ function previewWholeClass() {
     classPreviewHtml.value = stringifySheetHtml(inputs, {
       includeSolution: true,           // 整班预览保持完整版（答案开关在「作业纸设计」模板态）
       wmAssets: settingsStore.wmAssets,
+      figAssets: settingsStore.figAssets,   // B3/D46-5：题图命中显示真图
       katex: 'relative',               // 同源 ./katex/，公式离线渲染
     })
     classPreviewManifest.value = buildBatchManifest(roster.students, padJsons)
@@ -318,6 +319,7 @@ async function downloadClassPreviewHtml() {
     const html = await buildSelfContainedHtml(inputs, {
       includeSolution: true,
       wmAssets: settingsStore.wmAssets,
+      figAssets: settingsStore.figAssets,
     })
     downloadData(html, `class-sheet-preview-${new Date().toISOString().slice(0, 10)}.html`, 'text/html')
   } catch {

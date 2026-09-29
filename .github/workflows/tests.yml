@@ -48,6 +48,7 @@ jobs:
           npm run build -- --base=./ --outDir dist-test --emptyOutDir false
           node tests/selfcheck-watermark-or-doctor.mjs || true
           node tests/selfcheck-family.mjs || true
+          npm run selfcheck:roster-fig
           test -f dist/index.html
 
       - name: LAN selftest（headless chromium via playwright 缓存可用时）

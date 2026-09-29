@@ -204,7 +204,15 @@ c) 开关状态是否跨会话持久化（建议：不持久化，页内即用�
 - 冒烟：exam/custom 自动选到数据 sheet PASS、三 sheet 干扰项 PASS、显式切换 PASS、uid 存活 PASS；build 0 err。
 - 引擎侧说明：`scores.py` 本就按名匹配 sheet（`next(s for s in wb.sheetnames if sheet in s)`），CLI --sheet 语义不变，无需改。
 
-**遗留**：旧数据源（无 uid）首次👁/⇄提示"重选文件一次即可启用"（预期降级）；D46-5/B3 题图真图预览挂后续。
+**遗留**：旧数据源（无 uid）首次👁/⇄提示"重选文件一次即可启用"（预期降级）。
+
+### B3/D46-5 · 题图素材库 + 预览真图（同会话追加完成）
+- **settings store `figAssets`**（wmAssets 同模式独立 localStorage 键 `fig.assets.v1`）：basename→dataURL；
+- **KbEditorView**：img_path 列行内 📷 上传按钮 → dataURL 入 figAssets（即时生效）+ 空 img_path 自动填 `fig/<文件名>` + **FSA 可用时写回 `<kb目录>/kb/fig/<文件名>`**（引擎 CLI base64 内嵌通道从此有真图）；行内缩略图显示命中状态；未连目录给出"手动放 workspace/kb/fig/"指引；
+- **sheetHtml `figAssets` opt**：`figHtml()`——命中 basename → `<img class="q-img" src=dataURL>`（与引擎同视觉、复用既有 CSS）；未命中 → 原占位框（现状保持）；无 img_path → 不渲染；透传链=③预览段/④输出卡/整班预览/自包含下载 全场景；
+- **fsAccess `readFileInDir`** 备用读取工具（写回失败重试/未来扫描用）；
+- **回归自检 `app/tests/selfcheck-roster-fig.mjs`**（A 多sheet×4 + B 点名册×4 + C 题图×3 = 11 断言 ALL PASS），package.json `selfcheck:roster-fig` 脚本 + CI tests.yml 挂载（硬门禁，不带 || true——它稳定）；
+- localStorage 容量注意：题图 dataURL 比水印更耗空间，超限静默降级=预览回到占位框（持久化 try/catch 已有）；后续如需扩容再迁 IndexedDB（B1 同款 idbRaw 可复用）。
 
 ---
 
