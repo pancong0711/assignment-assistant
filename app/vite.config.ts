@@ -14,5 +14,13 @@ export default defineConfig({
   build: {
     outDir: 'dist',
     emptyOutDir: true,
+    rollupOptions: {
+      output: {
+        manualChunks: {
+          xlsx: ['xlsx'],
+          jszip: ['jszip'],
+        },
+      },
+    },
   },
 })

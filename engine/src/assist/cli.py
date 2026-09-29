@@ -157,7 +157,7 @@ def sheet_demo(obj, out, orientation, no_watermark, workspace, verbose):
     from . import ASSIST_ROOT
     from .paper import make_pdf
     ws = _setup(verbose or obj.get("verbose"))
-    out_dir = (ws / out).resolve()
+    out_dir = (ws / "classes" / "_demo" / "sheets" / "out").resolve()
     # 合成两张"题干图"（视频/截图占位），不含任何真实数据
     figs = []
     for i in range(1, 3):
