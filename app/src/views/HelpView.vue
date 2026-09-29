@@ -56,7 +56,7 @@ const PRINT_QA: { q: string; a: string }[] = [
   { q: '浏览器打印对话框设置', a: 'A4；边距=无；页眉页脚=关；背景图形=开（水印靠背景图形）' },
   { q: '打印在哪里最兼容', a: 'Chrome/Edge first；Firefox/Safari 差异见 docs/14 §VB-6' },
   { q: '打印结果与预览有细微差异', a: '极端排版跨浏览器会差异（引擎 reportlab/LaTeX 可做到像素一致，docs/05-D36 双引擎）' },
-  { q: 'KaTeX 公式离线', a: 'CDN 可用则公式自动渲染（0.16.4）；离线退化为 $..$ 源码显示' },
+  { q: 'KaTeX 公式', a: 'PWA 自带 KaTeX 离线（0.16.4）—— 打印/浏览器/offline全数据可用' },
 ]
 
 const FAQ: { q: string; a: string }[] = [
