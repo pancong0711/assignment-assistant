@@ -204,3 +204,13 @@ C1 登录/课程/作业浏览/下载（迁 2601 xuexitong 模块）；C2 上传=
 - ✅ C 预览合一（同模板 iframe + 相对 KaTeX）+ 清单合卡 + 整班预览唯一入口归班级页（classOverlay 第二套模板删除）；
 - ✅ D 内容开关（参考答案/学生示例，默认不勾）+ KaTeX 三模式接线（relative/raw 内联自包含）+ 设置中心自检卡 + 帮助页文案改正；
 - 验证：vue-tsc+vite 0 err；node 冒烟 pass；引擎 pytest 待 CI（j2 未动）。
+
+---
+
+# 2026-09-29 · D44 KaTeX 去仓库化（npm 依赖 + 构建期拷贝）
+
+- ✅ `katex@0.16.4` 进 `app/package.json`（锁版）；`tools/copy-katex.mjs` + predev/prebuild；
+  `.gitignore app/public/katex/` + `git rm --cached`（600KB vendor 资产退出版本控制，~600KB×1 前向不再入 git）；
+- ✅ dev/build 全链自愈（fresh clone `npm run dev` 先经 predev 拷贝）；dist/katex 608K×20 woff2 与 D43 手工 vendor 同口径；
+- ✅ 未采纳方案（SW 运行时装载 / 引擎 /install）与理由记 docs/13-D44 & docs/05-D44；start.bat/sh 未动；
+- 决策依据：xlsx/jszip 同模式先例、LAN 二屏 insecure context 对 SW 的硬伤、零用户动作优于一键安装。

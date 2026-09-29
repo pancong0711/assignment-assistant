@@ -456,3 +456,19 @@ orientation/per_page/水印/页眉页脚），教师操作路径被拆散、体�
 **实施批次**：A 输出沉底+保存上移 → B 批阅 tab → C 预览合一+清单合卡+整班入口归班级页 → D 内容开关。均不动 taskpad schema。
 
 > **实施**：2026-09-29 同日全批次落地（D43-1~6 + KaTeX 接线），验收细则与落点见 docs/13「D43 实施记录」。
+
+## D44 · KaTeX 资源归属：npm 依赖 + 构建期拷贝，仓库去 vendor（2026-09-29 用户拍板 · 按推荐）
+
+**背景**：D43-3 曾把 app/public/katex（600KB：css+js+auto-render+20 woff2）手工提交进仓库随 dist 发布；
+用户提出"katex 不应放远程仓库，应设置中心可直接配置、最好免环境管理"。讨论 A′/B/C 三路线后拍板 A′：
+**katex 转 npm 依赖（0.16.4 锁版）+ 构建期拷贝 public/katex**——与 xlsx/jszip 既有模式同构，
+仓库只留 package-lock 元数据，教师侧零动作（不需要 start.bat/sh 参与）。
+
+**决策内容**：
+1. `dependencies + katex@0.16.4`；`scripts.predev/prebuild = node tools/copy-katex.mjs`
+   （选择集拷贝：css+js+auto-render+woff2×20 = 608KB；与 j2 的 KATEX_VERSION 锁同版）；
+2. `.gitignore app/public/katex/` + `git rm --cached`（历史 blob 可留，前向不再入库）；
+3. 设置中心自检卡保留（资源仍随 dist，语义不变）；帮助页文案不变；
+4. 未采纳：B 运行时装载（SW+Cache Storage+多 CDN 探测——LAN http 二屏 insecure context 不可用）、
+   C 引擎 /install 下载 workspace/.runtime/katex + serve 挂载（PWA 离线被绑定引擎在线）——留作备选；
+5. 铁律不变：taskpad schema 不动；引擎 j2/CLI 仍 CDN（内容开关 parity 亦留待后续）。

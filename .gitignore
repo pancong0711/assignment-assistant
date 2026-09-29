@@ -62,3 +62,6 @@ app/dist/
 app/dist-lan/
 dl/
 app/public/dl/
+
+# KaTeX 资源（D44：npm 依赖 + 构建期拷贝，不入库）
+app/public/katex/
