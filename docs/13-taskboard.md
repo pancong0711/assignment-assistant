@@ -211,3 +211,37 @@ c) 开关状态是否跨会话持久化（建议：不持久化，页内即用�
 **未动**：taskpad schema；引擎 make（reportlab PDF 线）；start.bat/sh。
 
 **验证**：`vue-tsc -b && vite build` 0 err（nymHash index-E2K_YjIV.js 257.6KB）；引擎 playwright 性质：AST 解析 0 错，引擎 pytest 在 CI（tests workflow）复核（本地无 pip 环境）。
+
+---
+
+## D43-7 · 预览水印开关（第 8 轮反馈登记 · 待拍板后实施）
+
+**反馈原文**：预览作业纸模板时页面上还有"第 N 页"大字水印和占位水印框——这些也要做勾选，**默认勾选**。
+
+**现状根因（代码考古）**：③段 iframe 渲染的是完整打印 HTML，其中 `wmLayerHtml` 只要
+`pad.watermark.enabled=true` 就画两层东西：
+1. **页码大字水印**（`pageText !== false` 时的「第 N 页」灰斜大字）；
+2. **水印图层**：items 为空时按 legacy 默认三槽出**占位标记** `[水印：university（右上）]`
+   （虚线小灰框，sheetHtml.ts L254 `.wm-placeholder`）；items 有图且 wmAssets 命中则真图。
+新建作业纸缺省 enabled=true + items=[] → 教师第一眼就看到三框一大字。这不是 bug，是
+"PWA 无文件系统 → 引擎素材用路径 hint"的所见即所得提示，但确实不该未经选择就出现在
+预览/打印产物里。
+
+**建议方案（与 D43-6 开关体系同构，③段工具栏第三个 checkbox）**：
+
+| 项 | 设计 |
+|---|---|
+| 新开关 | ☑ **显示水印**（默认**勾选**=保持现状视觉；不勾=预览/打印/下载全部不画水印层） |
+| 作用面 | ③实时预览、清单行预览、连排预览、④打印浏览器版、④下载 HTML、弹层预览（与答案/示例两开关完全同机制） |
+| 数据面 | `SheetHtmlOptions.includeWatermark?: boolean`（缺省 true）→ pageBlockHtml 的 `${pad.watermark.enabled ? wmLayer : ''}` 改为 `${includeWatermark && pad.watermark.enabled ? ... : ''}`；BLANK/pageText 语义不动 |
+| 引擎 parity | CLI **已有** `assist sheet html --no-watermark`（VB-1 时代就在）——PWA 开关=该 flag 的前端镜像，parity 零新增引擎工作（比 D43-6 的答案开关还省事） |
+| 与①卡「启用水印」的关系 | 保留两级：①卡=作业纸**属性**（存 JSON，决定引擎打不打水印）；③段开关=**本次查看/输出**的临时口径（不写 JSON）。类比：target_tag 是属性，答案开关是视图口径。UI 提示语注明差异即可 |
+
+**待拍板细节**：
+a) 一个总开关 vs 拆两个（☑水印图层 / ☑页码大字）？我建议**先做一个总的**（页面按钮密度克制），
+   页码大字跟随总开关；若你日常需要"只关大字不关图层"再加拆分；
+b) 不勾时占位框的处理：整层消失（推荐，干净）vs 保留淡显轮廓提示"此处将印水印"（编辑辅助派）；
+c) 是否顺带把**题图占位框**也纳入同一开关族（独立小开关 ☑题图占位，默认勾）——同类问题同源解法。
+
+**实施批次**：并入下一批（D45 已上线；本条改动量小：sheetHtml 一参数 + SheetPreviewSection
+一 checkbox + 父级透传 + 测试冒烟；可与 D43-7c 一并做）。
