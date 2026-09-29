@@ -124,6 +124,7 @@ body {
 .sheet-body[data-grid="rows2"], .sheet-body[data-grid="rows3"] { flex-direction: column; }
 .sheet-body[data-grid="cross"] { flex-wrap: wrap; }
 .sheet-body.divided { gap: 0; position: relative; }
+.sheet-body.divided .sheet-frame { overflow: hidden; max-width: 50%; word-break: break-word; }
 .sheet-frame { flex: 1 1 0; min-width: 0; min-height: 0; border: 1px dashed var(--hairline);
   border-radius: 2mm; padding: 3mm; overflow: hidden; display: flex; flex-direction: column; gap: 2mm; }
 .sheet-body.divided .sheet-frame { border: none; border-radius: 0; padding: 3mm 4mm; }
