@@ -227,3 +227,14 @@ C1 登录/课程/作业浏览/下载（迁 2601 xuexitong 模块）；C2 上传=
 - ✅ D43 遗留②：batch zip `sheets/*.html` 换 relative KaTeX + 内嵌 `sheets/katex/**`（一次性 608KB，离线渲染）；
 - ✅ D43 遗留③：三类预览 iframe aria-label + tabindex="0"；
 - 备查：D43 遗留② 的 CDN 兜底语义保留（fetch 失败静默跳过）；引擎 make（reportlab）仍不关 answer（教师 PDF 命令行按需 --no-solution 候补）。
+
+---
+
+# 2026-09-29 · 第 8 轮反馈登记：D43-7 预览水印开关（仅讨论未实施）
+
+- 诉求：预览里的「第 N 页」大字水印 + legacy 三槽占位框要可勾选隐藏，**默认勾选**（=现状）；
+- 结论：与 D43-6 开关体系同构（③段第三个 checkbox，作用于预览/连排/清单行/④输出）；
+  数据面 = stringifySheetHtml 增 includeWatermark（缺省 true）；引擎侧**零新增**
+  （CLI 已有 --no-watermark，前端镜像即可）；①卡「启用水印」= 属性，③段开关 = 视图口径，两级并存；
+- 三个待拍板细节（总开关 vs 拆分 / 占位框隐藏方式 / 题图占位是否同批）见 docs/13 D43-7；
+- 另记：D45+D43 遗留已于 bc6f055 推送部署成功（Pages/tests CI 双绿，线上 index-CMVEb0st.js）。
