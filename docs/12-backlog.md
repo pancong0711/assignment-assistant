@@ -266,3 +266,15 @@ C1 登录/课程/作业浏览/下载（迁 2601 xuexitong 模块）；C2 上传=
   失败给前3行诊断+指引）；② 源 raw 留存=IndexedDB 全量 ArrayBuffer（预览/reparse 免二次选文件）；
   ③ 总览导出含未勾选源列（灰显）；
 - 实施方案四步细则（E1/E3/E4）见 docs/13-D46「实施方案（讨论稿）」；批次序不变 E1→E2→E3→E4。
+
+---
+
+# 2026-09-29 · E1–E4 实施完成（点名册回退/水印双开关/源行内预览/成绩总览）
+
+- ✅ **E1 D46-1/2**：readRosterXlsx 两级回退（表头自适应→前15行关键词找表头行）+ RosterParseError 结构化失败
+  （前3行原文诊断进红色 notice）；引擎 read_roster 同语义；zjxu 名册形态冒烟 PASS×3；新 engine test_roster_parse.py；
+- ✅ **E2 D43-7**：☑水印图层 + ☑页码大字双开关（默认勾），sheetHtml includeWatermark/includePageText，
+  ③④段共享；关图层=整层含占位框消失（body-DOM 冒烟 4/4）；引擎零新增（--no-watermark 镜像）；
+- ✅ **E3 D46-3**：idbRaw.ts IndexedDB 留存原始 ArrayBuffer（uid 键，降级 no-op）；行尾👁回看 + reparseFromRaw 免二次选文件；
+- ✅ **E4 D46-4**：宽表升级「全部成绩总览」：综合分列（shadow 干跑不污染 store，随勾选即时重算）+ 导出 xlsx（未勾选列标[未参与]）；
+- 构建 0 err；细则见 docs/13「E1–E4 实施记录」。遗留：无 uid 旧源首次👁引导重选文件；B1 多 sheet；D46-5/B3 题图真图。

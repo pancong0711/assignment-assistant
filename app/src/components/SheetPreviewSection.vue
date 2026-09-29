@@ -24,10 +24,12 @@ import {
 } from '../lib/sheetHtml'
 import SheetHtmlPreviewModal from './SheetHtmlPreviewModal.vue'
 
-const props = defineProps<{ includeAnswers: boolean; showSamples: boolean }>()
+const props = defineProps<{ includeAnswers: boolean; showSamples: boolean; includeWatermark: boolean; includePageText: boolean }>()
 const emit = defineEmits<{
   (e: 'update:includeAnswers', v: boolean): void
   (e: 'update:showSamples', v: boolean): void
+  (e: 'update:includeWatermark', v: boolean): void
+  (e: 'update:includePageText', v: boolean): void
   (e: 'notify', msg: string): void
 }>()
 
@@ -45,6 +47,15 @@ const includeAnswersModel = computed({
 const showSamplesModel = computed({
   get: () => props.showSamples,
   set: (v: boolean) => emit('update:showSamples', v),
+})
+/** D43-7：水印图层 / 页码大字两开关（默认勾=现状） */
+const wmLayerModel = computed({
+  get: () => props.includeWatermark,
+  set: (v: boolean) => emit('update:includeWatermark', v),
+})
+const wmPageTextModel = computed({
+  get: () => props.includePageText,
+  set: (v: boolean) => emit('update:includePageText', v),
 })
 
 
@@ -65,6 +76,8 @@ function templateHtml(inputs: SheetHtmlPadInput[] | SheetHtmlPadInput): string {
   return stringifySheetHtml(inputs, {
     students: templateStudents(),
     includeSolution: includeAnswers.value,
+    includeWatermark: props.includeWatermark,
+    includePageText: props.includePageText,
     wmAssets: settings.wmAssets,
     katex: 'relative',
   })
@@ -81,7 +94,7 @@ function scheduleLive() {
   liveTimer = window.setTimeout(() => { liveHtml.value = buildLiveHtml() }, 180)
 }
 const liveKey = computed(() =>
-  JSON.stringify([pad.current, sheetHtmlItems.value, includeAnswers.value, showSamples.value, settings.wmAssets]))
+  JSON.stringify([pad.current, sheetHtmlItems.value, includeAnswers.value, showSamples.value, props.includeWatermark, props.includePageText, settings.wmAssets]))
 watch(liveKey, scheduleLive, { immediate: true })
 
 /* ---------- 弹层预览（清单行/全部连排 & 当前模板细看） ---------- */
@@ -104,6 +117,8 @@ async function downloadOverlayHtml() {
     const html = await buildSelfContainedHtml(inputs, {
       students: templateStudents(),
       includeSolution: includeAnswers.value,
+      includeWatermark: props.includeWatermark,
+      includePageText: props.includePageText,
       wmAssets: settings.wmAssets,
     })
     downloadData(html, `sheet-preview-${new Date().toISOString().slice(0, 10)}.html`, 'text/html')
@@ -187,6 +202,12 @@ function removeFromLibrary(id: string) {
       </label>
       <label class="field" title="D43-6：勾选后按合成 学生A/B 预览 2 份；不勾 = 页眉学籍三空位、1 份空白模板">
         <input type="checkbox" v-model="showSamplesModel" /> 显示学生示例
+      </label>
+      <label class="field" title="D43-7：不勾 = 水印图层整层不画（含三槽占位框）；与①段「启用水印」属性是 AND 关系">
+        <input type="checkbox" v-model="wmLayerModel" /> 显示水印图层
+      </label>
+      <label class="field" title="D43-7：不勾 = 「第 N 页」大字水印不画（图层不受影响）">
+        <input type="checkbox" v-model="wmPageTextModel" /> 显示页码大字
       </label>
       <button class="btn" style="margin-left:8px" @click="openPreview([{ pad: JSON.parse(JSON.stringify(pad.current)), items: sheetHtmlItems }], `作业纸预览 · ${pad.current.id}`)">🔍 弹窗细看</button>
     </p>

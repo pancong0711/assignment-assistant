@@ -185,6 +185,20 @@ c) 开关状态是否跨会话持久化（建议：不持久化，页内即用�
 
 ---
 
+## E1–E4 实施记录（2026-09-29 晚 · 第 10 轮拍板后开工，本批全部完成）
+
+| 批 | 内容 | 状态 | 落点与验证 |
+|---|---|---|---|
+| E1 | D46-1/2 点名册两级回退 | ✅ | PWA `rosterXlsx.readRosterXlsx`（表头自适应→前15行关键词找表头行→RosterParseError{firstRows}结构化失败）+ `buildRosterPreview` 同口径 notes；引擎 `files/roster.py read_roster` 同款 `_map_from_matrix` 内核；RosterView 失败红条 notice（前3行原文+sheet名+指引）/成功滚宽表 flash。冒烟：zjxu 形态(前8行说明+第9行异序表头) 2 人 PASS、标准表头 PASS、失败诊断 PASS、预览注记"关键词定位表头行（第 9 行…已跳过）"PASS；引擎 stub 直测三场景 PASS；`engine/tests/test_roster_parse.py` 新增（CI pytest 复核） |
+| E2 | D43-7 水印双开关 | ✅ | sheetHtml opts `includeWatermark/includePageText`（缺省 true；与 pad.watermark.enabled AND）；③段 ☑显示水印图层 + ☑页码大字（默认勾）经 SheetDesignView 共享至④输出卡（打印/下载/自包含全受控）。body-DOM 冒烟 4/4 PASS（关图层整层含占位框消失；只关大字图层保留） |
+| E3 | D46-3 源行内👁预览 | ✅ | 新 `lib/idbRaw.ts`（IndexedDB 轻量封装，不可用静默降级）；ScoreSource.uid + addScoreSource/rescoreWithFamily 存 raw（uid 复用防孤儿键）、removeSource 删 raw；store `previewSource`（raw→PreviewTable 即时重建）+ `reparseFromRaw`（免二次选文件，无留存回退选文件）；RosterView 行尾 👁 按钮 + PreviewTableCard 展示 + 「重解析」替代「重选文件解析」文案 |
+| E4 | D46-4 全部成绩总览 | ✅ | 宽表卡更名「全部成绩总览」；综合得分列（浅拷贝 shadow 干跑 computeScoresFiltered，**不污染 store**，随勾选即时重算，正式写入仍走「重算并打 tag」）黄底高亮 + * 号注记；⬇ 导出总览 xlsx（姓名/学号/班级/各源列[未勾选标"[未参与]"]/综合/tag/punish，D46-4③按拍板含灰显列） |
+
+**构建**：vue-tsc+vite 0 err（index-QhHLCMlp.js 269KB）。**红线**：schema 不动；引擎 j2/CLI 除 roster.py 回退外未动（--no-watermark 既有故 D43-7 零新增）。
+**遗留**：旧数据源（无 uid）首次👁提示"重选文件一次即可启用回看"（预期行为）；多 sheet 成绩源（B1）仍未做；D46-5/B3 题图真图预览挂后续。
+
+---
+
 ## D45 + D43 遗留 实施记录（2026-09-29 下午 · 同日会话）
 
 ### D45 设计页段序重排 + 输出段独立拆分（用户拍板「按推荐」）

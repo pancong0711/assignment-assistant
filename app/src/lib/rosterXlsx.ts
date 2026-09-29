@@ -16,6 +16,11 @@ export const ROSTER_COLUMN_LABELS: Record<string, string> = {
   name: '姓名', number: '学号', class: '班级', tag: 'tag',
 }
 
+/** D46-3：成绩源唯一 id（IndexedDB raw 键）。crypto.randomUUID 优先，回退时间戳+随机。 */
+export function newUid(): string {
+  try { return crypto.randomUUID() } catch { return `src-${Date.now()}-${Math.random().toString(36).slice(2, 8)}` }
+}
+
 /** 名单表头自适应（engine roster.py 同款映射 + 常见变体，宽松策略） */
 const HEADER_MAP: Record<string, string> = {
   '姓名': 'name', 'name': 'name', 'student': 'name', '学生': 'name',
@@ -30,28 +35,70 @@ export const FAMILIES: ScoreFamily[] = [
 
 /** 读名单 xlsx（File/ArrayBuffer）：中文/英文表头自适应 → RosterStudent[]。
  *  tag 列原样带入（教师既有 tag 名单可直接续用）；manualTag 按是否已有 tag 置位。 */
-export async function readRosterXlsx(source: Blob | ArrayBuffer): Promise<RosterStudent[]> {
-  const buf = source instanceof Blob ? await source.arrayBuffer() : source
-  const wb = XLSX.read(buf, { type: 'array' })
-  const sheet = wb.Sheets[wb.SheetNames[0]]
-  if (!sheet) return []
-  const raw = XLSX.utils.sheet_to_json<Record<string, unknown>>(sheet, { defval: '' })
+/** 点名册读取的结构化失败（D46-1：给 UI 前 3 行原文诊断素材）。 */
+export interface RosterParseError extends Error {
+  reason: 'no-sheet' | 'no-name-column'
+  firstRows: string[][]
+  sheetNames: string[]
+}
+
+function rosterFail(reason: RosterParseError['reason'], matrix: string[][], sheetNames: string[]): never {
+  const e = new Error(reason === 'no-sheet' ? '文件内无 sheet' : '未识别出姓名列（表头自适应与关键词找表头行两级均失败）') as RosterParseError
+  e.reason = reason
+  e.firstRows = matrix.slice(0, 3)
+  e.sheetNames = sheetNames
+  throw e
+}
+
+/** 从"表头行 + 数据行矩阵"按 HEADER_MAP 映射成学生列表（两级回退共用内核）。 */
+function mapStudentsFromMatrix(matrix: string[][], headerI: number): RosterStudent[] {
+  const headers = (matrix[headerI] ?? []).map((c) => c.trim())
+  const cols: Array<{ j: number; key: 'name' | 'number' | 'class' | 'tag' }> = []
+  headers.forEach((h, j) => {
+    const key = HEADER_MAP[h.toLowerCase()] ?? HEADER_MAP[h]
+    if (key === 'name' || key === 'number' || key === 'class' || key === 'tag') cols.push({ j, key })
+  })
   const out: RosterStudent[] = []
-  for (const r of raw) {
+  for (let i = headerI + 1; i < matrix.length; i++) {
+    const row = matrix[i]
+    if (!row) continue
     const stu: RosterStudent = { name: '', number: '', class: '', tag: '', score: null, manualTag: false, punish: false }
-    for (const [k, v] of Object.entries(r)) {
-      const key = HEADER_MAP[String(k).trim().toLowerCase()] ?? HEADER_MAP[String(k).trim()]
-      if (!key) continue
-      if (key === 'tag') {
-        stu.tag = str(v)
-        stu.manualTag = stu.tag !== ''
-      } else if (key === 'name' || key === 'number' || key === 'class') {
-        stu[key] = str(v)
-      }
+    for (const { j, key } of cols) {
+      const v = str(row[j] ?? '')
+      if (key === 'tag') { stu.tag = v; stu.manualTag = v !== '' }
+      else stu[key] = v
     }
     if (stu.name) out.push(stu)
   }
   return out
+}
+
+/** 读名单 xlsx（D46-1 两级回退，zjxu 名册形态修复；去 pandas 思路用 openpyxl 等价物 SheetJS）：
+ *  ① 主路径：第 1 行为表头 → HEADER_MAP 自适应（姓名/学号/班级/tag）；
+ *  ② 回退：0 人时在前 15 行扫描含"姓名/名字/name/学生/student"的单元格行作为表头行重跑
+ *     （教务系统名册常见前 8~10 行为说明文字、无标准表头——旧 _legacy iloc[8:-3] 硬切片的稳健替代）；
+ *  ③ 仍 0 人 → 抛 RosterParseError{firstRows 前 3 行原文}（UI 红条+预览卡诊断）。 */
+export async function readRosterXlsx(source: Blob | ArrayBuffer): Promise<RosterStudent[]> {
+  const buf = source instanceof Blob ? await source.arrayBuffer() : source
+  const wb = XLSX.read(buf, { type: 'array' })
+  const sheet = wb.Sheets[wb.SheetNames[0]]
+  if (!sheet) rosterFail('no-sheet', [], wb.SheetNames)
+  const matrix = XLSX.utils.sheet_to_json<unknown[]>(sheet!, { header: 1, defval: '' })
+    .map((r) => ((r as unknown[]) ?? []).map((c) => str(c)))
+  // ① 首行表头
+  let students = mapStudentsFromMatrix(matrix, 0)
+  if (students.length) return students
+  // ② 关键词找表头行（前 15 行）
+  const NAME_TOKENS = ['姓名', '名字', 'name', '学生', 'student']
+  for (let hi = 1; hi < Math.min(15, matrix.length); hi++) {
+    const row = matrix[hi] ?? []
+    if (row.some((c) => NAME_TOKENS.includes(String(c).trim().toLowerCase()))) {
+      students = mapStudentsFromMatrix(matrix, hi)
+      if (students.length) return students
+    }
+  }
+  // ③ 结构化失败
+  rosterFail('no-name-column', matrix, wb.SheetNames)
 }
 
 /* ---------- 成绩源：原始矩阵读取（保留表头行位置信息，供固定格式解析） ---------- */
@@ -183,6 +230,7 @@ export async function readScoreSourceXlsx(
     throw new Error(`文件无数据：${fileName}`)
   }
   const base = {
+    uid: newUid(),
     name: fileName.replace(/\.xlsx$/i, ''),
     fileName,
     family,
@@ -255,21 +303,35 @@ function previewFromMatrix(headers: string[], dataRows: string[][], notes: strin
 
 /** 名单 xlsx 预览（VC-4）：宽松表头自适应 rule 与 readRosterXlsx 完全同款
  *  （HEADER_MAP + trim + 小写回退），教师可在导入前即时核对列映射。 */
+/** 名单 xlsx 预览（D46-1 与 readRosterXlsx 同两级回退：表头自适应 → 关键词找表头行；
+ *  notes 报告实际采用的模式 + 前 3 行原文诊断）。 */
 export async function buildRosterPreview(source: Blob | ArrayBuffer): Promise<PreviewTable> {
   const buf = source instanceof Blob ? await source.arrayBuffer() : source
   const wb = XLSX.read(buf, { type: 'array' })
   const sheet = wb.Sheets[wb.SheetNames[0]]
   if (!sheet) return { headers: [], rows: [], notes: ['（文件内无 sheet）'], rowCount: 0 }
-  const matrix = XLSX.utils.sheet_to_json<unknown[]>(sheet, { header: 1, defval: '' }) as unknown[]
-  const headers = ((matrix[0] as unknown[]) ?? []).map((c) => str(c))
-  const rows = matrix.slice(1).map((r) => ((r as unknown[]) ?? []).map((c) => str(c)))
-  const notes = headers
+  const matrix = XLSX.utils.sheet_to_json<unknown[]>(sheet, { header: 1, defval: '' })
+    .map((r) => ((r as unknown[]) ?? []).map((c) => str(c)))
+  const NAME_TOKENS = ['姓名', '名字', 'name', '学生', 'student']
+  let headerI = 0
+  let modeNote = '表头自适应（第 1 行）'
+  if (mapStudentsFromMatrix(matrix, 0).length === 0) {
+    const hit = matrix.slice(1, 15).findIndex((row) => (row ?? []).some((c) => NAME_TOKENS.includes(String(c).trim().toLowerCase())))
+    if (hit >= 0) {
+      headerI = hit + 1
+      modeNote = `关键词定位表头行（第 ${headerI + 1} 行含"姓名/name"——zjxu 名册形态，前 ${headerI} 行为说明文字已跳过）`
+    } else {
+      modeNote = '⚠ 两级回退均未找到姓名列：读入将失败（请核对前几行内容；若为教务名册且表头缺失，删至仅剩表头行后重试）'
+    }
+  }
+  const headers = (matrix[headerI] ?? []).map((c) => str(c))
+  const rows = matrix.slice(headerI + 1).map((r) => (r ?? []).map((c) => str(c)))
+  const notes = [modeNote, ...headers
     .filter((h) => HEADER_MAP[h] || HEADER_MAP[h.trim().toLowerCase()])
     .map((h) => {
       const key = HEADER_MAP[h] ?? HEADER_MAP[h.trim().toLowerCase()]
       return `${h} → ${key}${key === 'tag' ? '（原样带入，可后续覆盖）' : ''}`
-    })
-  if (!notes.length) notes.push('（未识别出 姓名/name 等标准列——仍会按宽松映射逐列尝试；若无姓名列将读入 0 人）')
+    })]
   return previewFromMatrix(headers, rows, notes)
 }
 

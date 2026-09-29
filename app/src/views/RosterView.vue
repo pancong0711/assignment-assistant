@@ -2,10 +2,11 @@
 import { computed, onMounted, ref } from 'vue'
 import { STUDENT_TAGS, STUDENT_TAG_LABELS } from '../lib/kb'
 import {
-  SCORE_FAMILY_PRESETS, isFixedFamily, scoreFamilyDesc, scoreFamilyLabel,
+  SCORE_FAMILY_PRESETS, isIncluded, isFixedFamily, scoreFamilyDesc, scoreFamilyLabel,
   sourceScoreMatrix,
   type ScoreFamily,
 } from '../lib/roster'
+import { computeScoresFiltered } from '../lib/roster'
 import type { PreviewTable } from '../lib/rosterXlsx'
 import { useRosterStore } from '../stores/roster'
 import { useTaskpadStore } from '../stores/taskpad'
@@ -59,6 +60,8 @@ const rosterPreviewFile = ref('')
 const sourcePreviewLatest = ref<PreviewTable | null>(null)
 const sourcePreviewLatestFile = ref('')
 
+const rosterFailNotice = ref(false)
+
 async function importRoster() {
   const file = await pickXlsx()
   if (!file) return
@@ -67,11 +70,26 @@ async function importRoster() {
     status.value = message
     rosterPreview.value = preview
     rosterPreviewFile.value = file.name
+    rosterFailNotice.value = false
+    // D46-2：成功即滚到宽表并 flash 人数 chip（所见即所导）
+    requestAnimationFrame(() => {
+      document.getElementById('wide-table')?.scrollIntoView({ behavior: 'smooth', block: 'start' })
+      wideFlash.value = true
+      setTimeout(() => { wideFlash.value = false }, 1600)
+    })
   } catch (e) {
-    status.value = `名单读入失败：${(e as Error).message}`
+    const err = e as { message?: string; reason?: string; firstRows?: string[][]; sheetNames?: string[] }
+    const hint = err.reason === 'no-name-column' && err.firstRows?.length
+      ? `｜文件前 3 行原文：${err.firstRows.map((r) => r.filter((c) => c).slice(0, 6).join(' | ') || '（空行）').join(' ／ ')}` +
+        `｜sheets：${(err.sheetNames ?? []).join(', ') || '无'}。如为教务名册且表头缺失，删至仅剩表头行后重试。`
+      : ''
+    status.value = `名单读入失败：${err.message ?? String(e)}${hint}`
+    rosterFailNotice.value = true
     rosterPreview.value = null
   }
 }
+
+const wideFlash = ref(false)
 
 async function addSource() {
   const file = await pickXlsx()
@@ -89,14 +107,46 @@ async function addSource() {
 
 /** 源内切换格式预设：需要原始 xlsx 重新解析（固定四类按 family 语义重新定位） */
 async function reparseSource(idx: number) {
-  const file = await pickXlsx()
-  if (!file) return
+  // D46-3：IndexedDB 有原始文件 → 直接重解析（免二次选文件）；无 → 回退旧流程选文件
   try {
+    if (roster.sources[idx]?.uid) {
+      const msg = await roster.reparseFromRaw(idx)
+      status.value = msg
+      if (!msg.startsWith('已按')) {
+        // 无 raw（旧数据/IDB 丢失）→ 走手动选文件
+        const file = await pickXlsx()
+        if (!file) return
+        const family = roster.sources[idx]?.family ?? 'custom'
+        await roster.rescoreWithFamily(idx, file, family)
+        status.value = `已按 ${scoreFamilyLabel(family)} 重新解析成绩源「${roster.sources[idx]?.name ?? ''}」。`
+      }
+      return
+    }
+    const file = await pickXlsx()
+    if (!file) return
     const family = roster.sources[idx]?.family ?? 'custom'
     await roster.rescoreWithFamily(idx, file, family)
     status.value = `已按 ${scoreFamilyLabel(family)} 重新解析成绩源「${roster.sources[idx]?.name ?? ''}」。`
   } catch (e) {
     status.value = `成绩源重新解析失败：${(e as Error).message}`
+  }
+}
+
+/* ---------- D46-3：成绩源行内👁预览（IndexedDB raw 即时重建 PreviewTable） ---------- */
+const sourceRowPreview = ref<PreviewTable | null>(null)
+const sourceRowPreviewFile = ref('')
+
+async function previewSourceRow(idx: number) {
+  try {
+    const pv = await roster.previewSource(idx)
+    if (!pv) {
+      status.value = '该源暂无原始文件留存（早期导入的数据）：点「重选文件解析」一次即可启用回看。'
+      return
+    }
+    sourceRowPreview.value = pv
+    sourceRowPreviewFile.value = roster.sources[idx]?.fileName ?? ''
+  } catch (e) {
+    status.value = `预览失败：${(e as Error).message}`
   }
 }
 
@@ -108,9 +158,31 @@ function recompute() {
   status.value = roster.recomputeFromChecked()
 }
 
+/* ---------- D46-4 总览导出 xlsx（SheetJS aoa；未勾选源列保留、表头加"[未参与]"标注） ---------- */
+const overviewMsg = ref('')
+async function exportOverviewXlsx() {
+  try {
+    const XLSX = (await import('xlsx')).default ?? await import('xlsx')
+    const headers = ['姓名', '学号', '班级', ...wideHeaders.value.map((h) => `${h.label}${h.excluded ? '' : (h.included ? '' : '[未参与]')}`), '综合得分', 'tag', 'punish']
+    const rows: (string | number)[][] = [headers]
+    for (const r of wideRows.value) {
+      const stu = roster.students.find((s) => s.name === r.name && s.number === r.number)
+      rows.push([r.name, r.number, stu?.class ?? '', ...r.cells.map((c) => c === '' ? '' : Number(c)), r.composite === '' ? '' : Number(r.composite), stu?.tag ?? '', stu?.punish ? '是' : ''])
+    }
+    const wb = XLSX.utils.book_new()
+    XLSX.utils.book_append_sheet(wb, XLSX.utils.aoa_to_sheet(rows), '全部成绩总览')
+    const out = XLSX.write(wb, { type: 'array', bookType: 'xlsx' })
+    downloadData(new Blob([out], { type: 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet' }),
+      `成绩总览-${new Date().toISOString().slice(0, 10)}.xlsx`)
+    overviewMsg.value = `已导出 ${roster.students.length} 生 × ${wideHeaders.value.length} 源总览（未勾选源列标"[未参与]"）。`
+  } catch (e) {
+    overviewMsg.value = `导出失败：${(e as Error).message}`
+  }
+}
+
 /* ---------- VC-5 成绩源宽表：行=学生，列=各源分数列（横向滚动） ---------- */
 /** 宽表行：学生 + 每个源该生的分数（'' = 该源无此生分数） */
-interface WideRow { name: string; number: string; cells: string[] }
+interface WideRow { name: string; number: string; cells: string[]; composite: string }
 const scoreSources = computed(() => roster.sources)
 const wideHeaders = computed(() => scoreSources.value.map((s, i) => ({
   idx: i,
@@ -122,6 +194,11 @@ const wideHeaders = computed(() => scoreSources.value.map((s, i) => ({
 const wideRows = computed<WideRow[]>(() => {
   // 列取数：源.scores（family 解析结果）优先，legacy 无 scores 时回退按所选列
   const matrices = scoreSources.value.map((s) => sourceScoreMatrix(s))
+  // D46-4 综合得分列：按当前勾选集合"干跑"加权（不落库；正式写入仍走「重算并打 tag」）。
+  //   computeScoresFiltered 直接写 stu.score——这里对浅拷贝操作，避免污染 store。
+  const shadow = roster.students.map((s) => ({ ...s }))
+  try { computeScoresFiltered(shadow, scoreSources.value.filter(isIncluded)) } catch { /* noop */ }
+  const compMap = new Map(shadow.map((s) => [`${s.name}\u0000${s.number}`, s.score]))
   return roster.students.map((stu) => ({
     name: stu.name,
     number: stu.number,
@@ -129,6 +206,10 @@ const wideRows = computed<WideRow[]>(() => {
       const v = m[stu.name]
       return typeof v === 'number' && Number.isFinite(v) ? String(v) : ''
     }),
+    composite: (() => {
+      const c = compMap.get(`${stu.name}\u0000${stu.number}`)
+      return typeof c === 'number' && Number.isFinite(c) ? c.toFixed(1) : ''
+    })(),
   }))
 })
 /** 勾选状态摘要（显示在宽表上方） */
@@ -420,7 +501,7 @@ const nonTranslationRatios = computed(() => roster.ratios.filter((g) => g.tag !=
           <span class="hint" style="color:var(--c-ok)">
             固定格式（来自{{ s.family === 'rainclass' ? '雨课堂' : s.family.startsWith('xuexitong') ? '学习通' : '教务' }}导出）·
             {{ s.family === 'roster' ? '仅接表，不计分' : `分数列：${s.scoreColumn}` }}
-            <button class="btn small" style="margin-left:4px" title="固定四类按原始表重新按 family 语义解析" @click="reparseSource(i)">重选文件解析</button>
+            <button class="btn small" style="margin-left:4px" title="用 IndexedDB 原始文件按当前格式预设重新解析（D46-3，免二次选文件；无留存时回退为选文件）" @click="reparseSource(i)">重解析</button>
           </span>
         </template>
         <template v-else>
@@ -437,17 +518,26 @@ const nonTranslationRatios = computed(() => roster.ratios.filter((g) => g.tag !=
         </template>
         <label class="field" v-if="s.family !== 'roster'">权重：<input type="number" v-model.number="s.weight" min="0.1" step="0.1" style="width:70px" @change="roster.touch()" /></label>
         <span class="hint">{{ s.rows.length }} 行 · {{ s.fileName }}</span>
-        <button class="btn small" @click="roster.removeSource(i)">移除</button>
+        <button class="btn small" style="margin-left:4px" title="D46-3：用留存原始文件即时重建解析预览（表头+前3行+定位说明）" @click="previewSourceRow(i)">👁 预览</button>
+        <button class="btn small" style="margin-left:4px" @click="roster.removeSource(i)">移除</button>
       </p>
+      <PreviewTableCard
+        v-if="sourceRowPreview"
+        title="成绩源解析预览（D46-3 行内回看）"
+        :preview="sourceRowPreview"
+        :file-name="sourceRowPreviewFile"
+        tone="ok"
+      />
       <p class="hint" v-if="fixedSourceCount">已按固定格式解析的成绩源 ×{{ fixedSourceCount }}（score_sources[].family 将随作业纸导出，与 engine CLI <code>--score family:file[:col[:weight]]</code> 同口径）。</p>
       <p class="hint" v-if="scoreSources.length">{{ checkedSummary }}</p>
       <p class="hint" v-if="scoreSources.length">{{ wideHint }}</p>
     </div>
 
-    <div class="card" v-if="scoreSources.length">
-      <h2>成绩源宽表（VC-5：每生一行 × 各源分数列 · 勾选 = 是否参与综合得分）</h2>
+    <div class="card" id="wide-table" :class="{ 'wide-flash': wideFlash }" v-if="scoreSources.length">
+      <h2>全部成绩总览（D46-4：每生一行 × 各源分数列 × 综合得分 · 勾选 = 是否参与综合）</h2>
       <p class="hint">
-        每行 = 一名学生，每列 = 一个已添加成绩源（<b>分数列</b>）——可以看到每个人名下哪个成绩源有分数；可横向滚动。
+        每行 = 一名学生，每列 = 一个已添加成绩源（<b>分数列</b>）+ 末列<b>综合得分</b>（随勾选即时重算预览，
+        正式写入需点「重算并打 tag」）；可横向滚动。
         每列<b>默认勾选 ✅</b>（includeInAggregation=true，等价"此列作为分层依据"多选叠加）；
         取消勾选的源<b>被排除出综合得分</b>（score excluding，重算时跳过），其分数值仍灰显可见（排除≠删除）；
         roster 接表源仅接表不计分（列头"—"不可勾）。
@@ -471,6 +561,7 @@ const nonTranslationRatios = computed(() => roster.ratios.filter((g) => g.tag !=
                     @click="tagBySingleColumn(h.idx)">按此列切分</button>
                 </div>
               </th>
+              <th class="composite-col" title="D46-4：按当前勾选源加权即时预览（未点「重算并打 tag」前不写库）">综合得分*</th>
             </tr>
           </thead>
           <tbody>
@@ -481,11 +572,19 @@ const nonTranslationRatios = computed(() => roster.ratios.filter((g) => g.tag !=
                 :title="c === '' ? '该源无此生分数（重算时跳过该源）' : ''">
                 <span :class="{ 'excluded-val': !wideHeaders[j].included }">{{ c === '' ? '—' : c }}</span>
               </td>
+              <td class="composite-col" :title="row.composite === '' ? '勾选集合为空或该生无任何勾选源分数' : '综合得分预览（点「重算并打 tag」正式写入并切分）'">{{ row.composite || '—' }}</td>
             </tr>
           </tbody>
         </table>
       </div>
       <p class="hint" :class="{ notice: checkedSummary.includes('已排除') }" style="margin-top:6px">{{ checkedSummary }}</p>
+      <p class="hint">
+        * 综合得分列为<b>预览口径</b>（随勾选即时重算，不写库；点「重算并打 tag」正式生效）。
+        <button class="btn small" style="margin-left:6px" :disabled="!roster.students.length"
+          title="D46-4：全部成绩总览导出 xlsx（名单+各源分数列[未勾选列保留并标注]+tag/punish/综合分）"
+          @click="exportOverviewXlsx">⬇ 导出总览 xlsx</button>
+        <span class="hint" v-if="overviewMsg" style="margin-left:8px">{{ overviewMsg }}</span>
+      </p>
       <p class="hint">
         「按此列切分」= 只用该源计算综合得分并按比例自动打 tag（<b>一列即排</b>）；
         「重算综合得分并自动切分打 tag」（下方分组比例卡）= 按<b>当前勾选集合</b>加权重算（多列加权语义：权重/权重和）。
@@ -534,7 +633,9 @@ const nonTranslationRatios = computed(() => roster.ratios.filter((g) => g.tag !=
         <button class="btn" style="margin-left:8px" @click="roster.addStudent()">＋手动添加学生</button>
         <button class="btn" style="margin-left:8px" @click="roster.clearAll()" v-if="roster.students.length">清空全部</button>
       </p>
-      <p class="hint" v-if="!roster.students.length">尚无学生：先"导入名单 xlsx"（教务导出固定格式，列自动识别）或手动添加，再配分组比例/成绩源即可自动分层；也可直接手动点选本表的 tag（=special_tag_cfg 覆盖）。</p>
+      <p class="notice" v-if="rosterFailNotice" style="border-color:#c0392b;color:#8e2419">{{ status }}</p>
+      <p class="hint" v-else-if="status">{{ status }}</p>
+      <p class="hint" v-if="!roster.students.length">尚无学生：先"导入名单 xlsx"（表头自适应 → 关键词找表头行两级回退，zjxu 名册/无表头说明文字形态均可读，docs/13 D46-1）或手动添加，再配分组比例/成绩源即可自动分层；也可直接手动点选本表的 tag（=special_tag_cfg 覆盖）。</p>
       <p>
         <label class="field">批量打 tag：姓名（逗号/顿号分隔多个学生）
           <input type="text" v-model="batchNames" placeholder="学生A, 学生B, 学生C" style="width:min(420px, 60%)" />
@@ -658,6 +759,12 @@ const nonTranslationRatios = computed(() => roster.ratios.filter((g) => g.tag !=
 
 <style scoped>
 /* VC-5 宽表：粘性首列 + 横向滚动（外层 overflow:auto 已在模板内联设置） */
+/* D46-2：导入成功后宽表卡高亮 flash（所见即所导） */
+.wide-flash { animation: wideflash 1.6s ease-out 1; }
+@keyframes wideflash {
+  0% { box-shadow: 0 0 0 3px rgba(36, 86, 196, 0.55); }
+  100% { box-shadow: 0 0 0 0 rgba(36, 86, 196, 0); }
+}
 .score-wide-table { min-width: max-content; }
 .score-wide-table th, .score-wide-table td { text-align: left; }
 .score-wide-table th.sticky-col, .score-wide-table td.sticky-col {
@@ -665,6 +772,10 @@ const nonTranslationRatios = computed(() => roster.ratios.filter((g) => g.tag !=
   border-right: 1px solid var(--c-border); z-index: 1;
 }
 .score-wide-table th.sticky-col { background: var(--c-primary-soft); }
+/* D46-4：综合得分列高亮（预览口径） */
+.score-wide-table th.composite-col, .score-wide-table td.composite-col {
+  background: #fff7df; font-weight: 700; min-width: 84px; text-align: center;
+}
 .score-wide-table .col-head { display: flex; flex-direction: column; gap: 2px; min-width: 130px; }
 .score-wide-table .col-head .inc { display: flex; align-items: center; gap: 4px; font-size: 12px; cursor: pointer; }
 .score-wide-table .col-head .col-name { font-size: 12px; word-break: break-all; }
