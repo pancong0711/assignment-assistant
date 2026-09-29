@@ -18,7 +18,7 @@ import SheetHtmlPreviewModal from '../components/SheetHtmlPreviewModal.vue'
 
 /* ========== S2b 并行备注（VC-3，docs/14 §VC-3；仅新增内容，未改既有逻辑） ==========
  * 本块为「预览整班」overlay 入口（班级与标签页 RosterView 亦有同款卡；这里放
- * 变体编排卡内的入口按钮，因为 tag→任务包绑定状态在本页维护，所见即所选）。
+ * 变体编排卡内的入口按钮，因为 tag→作业纸绑定状态在本页维护，所见即所选）。
  * 依赖 lib/classOverlay.buildClassOverlayHtml（fallback 静态生成层，纯前端、不依赖引擎）；
  * 父代理 S2a 的 stringifySheetHtml 模板就位后仅需替换该 lib 内部实现（集成点：与并行 S2a 的 sheetHtml.ts（stringifySheetHtml，模板 assignment.html.j2 同构）互不重名——本模块为 VC-3 整班预览 fallback 静态层，不承载 per-pad stringify）。
  * ========================================================================== */
@@ -51,7 +51,7 @@ function previewWholeClass() {
     return
   }
   if (!padRows.value.length) {
-    classPreviewMsg.value = '作业纸清单为空：先保存任务包（上方清单）再预览。'
+    classPreviewMsg.value = '作业纸清单为空：先保存作业纸（上方清单）再预览。'
     classPreviewShow.value = false
     return
   }
@@ -76,9 +76,9 @@ function downloadClassOverlay() {
 /* ================== /S2b VC-3 整班预览（新增块结束） ================== */
 
 /* ========== S2a 并行备注（VC-2，docs/14 §VC-2；仅新增内容，未改既有逻辑） ==========
- * 清单里任一任务包「预览」→ 同一 HTML 模板（engine/templates/assignment.html.j2 的
+ * 清单里任一作业纸「预览」→ 同一 HTML 模板（engine/templates/assignment.html.j2 的
  * TS 同构 = lib/sheetHtml.ts stringifySheetHtml）在弹窗 iframe overlay 预览
- * （版式/水印/内容全量，不依赖引擎）；「预览全部」把清单所有任务包连排在同一
+ * （版式/水印/内容全量，不依赖引擎）；「预览全部」把清单所有作业纸连排在同一
  * HTML（多包不分页）。与上方 S2b 整班预览（VC-3，classOverlay fallback 层）
  * 互不占用命名/状态；名单缺省合成 学生A/B（informational）。 */
 const settings = useSettingsStore()
@@ -92,7 +92,7 @@ function sheetStudents(): SheetHtmlStudent[] {
     : SYNTHETIC_STUDENTS
 }
 
-/** 任务包 → 题帧（kb store 取 content/solution/img_path；未命中的题跳过） */
+/** 作业纸 → 题帧（kb store 取 content/solution/img_path；未命中的题跳过） */
 function padItemsOf(p: Taskpad): SheetHtmlItem[] {
   return expandPadItems(p, (kind) => kb.book(kind))
 }
@@ -107,20 +107,20 @@ function openPreview(pads: SheetHtmlPadInput[], title: string) {
   showHtmlOverlay.value = true
 }
 
-/** 清单里单个任务包的预览（版式/水印/内容全量；docs/14 §VC-2） */
+/** 清单里单个作业纸的预览（版式/水印/内容全量；docs/14 §VC-2） */
 function previewPad(id: string) {
   const entry = pad.saved.find((s) => s.id === id)
   if (!entry) { status.value = `清单中未找到 ${id}。`; return }
   try {
     const p = parseTaskpad(JSON.parse(entry.json))
-    openPreview([{ pad: p, items: padItemsOf(p) }], `任务包预览 · ${id}`)
+    openPreview([{ pad: p, items: padItemsOf(p) }], `作业纸预览 · ${id}`)
     status.value = `已打开 ${id} 的浏览器打印版预览（同一 HTML 模板；名单：${roster.students.length ? `${roster.students.length} 人` : '合成 学生A/B'}）。`
   } catch (e) {
-    status.value = `任务包 ${id} 预览失败（JSON 损坏）：${(e as Error).message}`
+    status.value = `作业纸 ${id} 预览失败（JSON 损坏）：${(e as Error).message}`
   }
 }
 
-/** 全部清单任务包连排预览（多包不分页：不加封面/额外分页，页块仍每生分页） */
+/** 全部清单作业纸连排预览（多包不分页：不加封面/额外分页，页块仍每生分页） */
 function previewAllPads() {
   const sources: SheetHtmlPadInput[] = []
   let bad = 0
@@ -130,11 +130,11 @@ function previewAllPads() {
       sources.push({ pad: p, items: padItemsOf(p) })
     } catch { bad++ }
   }
-  if (!sources.length) { status.value = '清单为空或全部 JSON 损坏：无可预览任务包。'; return }
-  openPreview(sources, `全部任务包连排预览 · ${sources.length} 份`)
-  status.value = `已连排预览 ${sources.length} 份任务包（多包不分页；@page 方向取第一份${bad ? `；${bad} 份 JSON 损坏已跳过` : ''}）。`
+  if (!sources.length) { status.value = '清单为空或全部 JSON 损坏：无可预览作业纸。'; return }
+  openPreview(sources, `全部作业纸连排预览 · ${sources.length} 份`)
+  status.value = `已连排预览 ${sources.length} 份作业纸（多包不分页；@page 方向取第一份${bad ? `；${bad} 份 JSON 损坏已跳过` : ''}）。`
 }
-/* ================== /S2a VC-2 任务包预览（新增块结束） ================== */
+/* ================== /S2a VC-2 作业纸预览（新增块结束） ================== */
 
 /** 作业纸内容（M-A S1 拆分，docs/05-D25）：一份模板的"题目构成"。
  *  kind×章题选篮（含跨 kind/tag 提示文）→ items 列表编辑 → target_tag 标注；
@@ -192,7 +192,7 @@ function addSelection() {
   selectedIds.value = []
 }
 
-/* ---------- 当前任务包 target_tag 标注 ---------- */
+/* ---------- 当前作业纸 target_tag 标注 ---------- */
 const targetTagOn = computed({
   get: () => pad.current.target_tag ?? '',
   set: (v: string) => { pad.current.target_tag = v || undefined },
@@ -223,7 +223,7 @@ const library = computed<PadMeta[]>(() =>
 
 function loadFromLibrary(id: string) {
   if (pad.openFromLibrary(id)) {
-    status.value = `已载入任务包 ${id}（题目构成可继续编辑；保存会覆盖清单中的同名条目）。`
+    status.value = `已载入作业纸 ${id}（题目构成可继续编辑；保存会覆盖清单中的同名条目）。`
   } else {
     status.value = `清单中未找到 ${id}。`
   }
@@ -231,10 +231,10 @@ function loadFromLibrary(id: string) {
 
 function removeFromLibrary(id: string) {
   pad.removeFromLibrary(id)
-  status.value = `已从清单删除任务包 ${id}（仅删除清单记录，不影响已导出文件）。`
+  status.value = `已从清单删除作业纸 ${id}（仅删除清单记录，不影响已导出文件）。`
 }
 
-/* ---------- D23 变体编排（docs/05-D23 / 12-B3.5）：tag→任务包绑定 + 一键 batch zip ---------- */
+/* ---------- D23 变体编排（docs/05-D23 / 12-B3.5）：tag→作业纸绑定 + 一键 batch zip ---------- */
 /** 绑定下拉选项：STUDENT_TAGS + 名单里出现但不在表内的 tag（容错） */
 const tagOptions = computed<string[]>(() => {
   const set = new Set<string>(STUDENT_TAGS)
@@ -242,7 +242,7 @@ const tagOptions = computed<string[]>(() => {
   return [...set]
 })
 
-/** 各已保存任务包的绑定明细（target_tag + 有效性推断） */
+/** 各已保存作业纸的绑定明细（target_tag + 有效性推断） */
 const padRows = computed(() => pads_savedRows())
 function pads_savedRows() {
   return pad.saved.flatMap((s) => {
@@ -285,7 +285,7 @@ const batchCmdPreview = computed(() =>
 
 function setBinding(id: string, ev: Event) {
   const ok = pad.setSavedTargetTag(id, (ev.target as HTMLSelectElement).value)
-  status.value = ok ? `已把任务包 ${id} 绑定到目标 tag（target_tag 同步进任务包 JSON）。` : `任务包 ${id} 绑定失败（JSON 损坏）。`
+  status.value = ok ? `已把作业纸 ${id} 绑定到目标 tag（target_tag 同步进作业纸 JSON）。` : `作业纸 ${id} 绑定失败（JSON 损坏）。`
 }
 
 const exportingBatch = ref(false)
@@ -295,7 +295,7 @@ async function downloadBatchZip() {
     return
   }
   if (!padRows.value.length) {
-    status.value = '作业纸清单为空：先在本页保存任务包（每份可绑 target_tag）。'
+    status.value = '作业纸清单为空：先在本页保存作业纸（每份可绑 target_tag）。'
     return
   }
   exportingBatch.value = true
@@ -303,7 +303,7 @@ async function downloadBatchZip() {
     await ensureDefaultSheetHtmlProvider((kind) => kb.book(kind as never))
     const { blob, cd, padCount } = await buildVariantBatchZip(roster.students, pad.savedJsons())
     downloadBlob(blob, `batch-package-${new Date().toISOString().slice(0, 10)}.zip`)
-    status.value = `已生成整班 batch 交付包（班级 ${cd}）：${padCount} 份任务包 + roster.xlsx + batch.json + README。解压到引擎 workspace 根目录后按 README 执行 assist sheet batch 即可。`
+    status.value = `已生成整班 batch 交付包（班级 ${cd}）：${padCount} 份作业纸 + roster.xlsx + batch.json + README。解压到引擎 workspace 根目录后按 README 执行 assist sheet batch 即可。`
   } catch (e) {
     status.value = `batch 包生成失败：${(e as Error).message}`
   } finally {
@@ -317,8 +317,8 @@ async function downloadBatchZip() {
     <div class="card">
       <h2>作业纸内容 <small style="font-weight:400;color:var(--c-muted)">一份模板的"题目构成"：kind×章选题 → items → target_tag 标注（docs/05-D25）</small></h2>
       <p class="hint">
-        版式（「作业纸版式」页）+ 题目构成（本页）共同生成一个任务包（schema 不变，仅 UI 分屏）。
-        数据来自「题库编辑器」载入的 xlsx（或示例数据）。任务包 JSON 交给 engine：
+        版式（「作业纸版式」页）+ 题目构成（本页）共同生成一个作业纸（schema 不变，仅 UI 分屏）。
+        数据来自「题库编辑器」载入的 xlsx（或示例数据）。作业纸 JSON 交给 engine：
         assist sheet make --task &lt;file&gt; 即可出打印级 PDF（D1 CLI 超集）。
       </p>
       <div class="notice" v-if="!kb.hasData">题库为空：请先到「题库编辑器」载入 xlsx 或示例数据，再回来选题。</div>
@@ -346,7 +346,7 @@ async function downloadBatchZip() {
         </p>
         <p class="hint" v-if="selCrossKinds.length">
           当前包已含 kind：<code>{{ selCrossKinds.join('、') }}</code><template v-if="selCrossTags.length">；分层 tag：<code>{{ selCrossTags.map((t) => STUDENT_TAG_LABELS[t] ?? t).join('、') }}</code></template>。
-          同一份作业纸可跨 kind 混编；分层 tag 用于变体编排（每个 tag 需一份对应任务包）。
+          同一份作业纸可跨 kind 混编；分层 tag 用于变体编排（每个 tag 需一份对应作业纸）。
         </p>
         <div v-if="chapRows.length" style="max-height:260px; overflow:auto; border:1px solid var(--c-border); border-radius:8px; padding:6px">
           <label v-for="r in chapRows" :key="r.id" style="display:block; font-size:13px; padding:2px 0">
@@ -356,7 +356,7 @@ async function downloadBatchZip() {
         </div>
         <p class="hint" v-else>该 kind/章暂无题目（或题库为空）。</p>
         <p>
-          <button class="btn primary" :disabled="!selectedIds.length" @click="addSelection">加入任务包（{{ selectedIds.length }}）</button>
+          <button class="btn primary" :disabled="!selectedIds.length" @click="addSelection">加入作业纸（{{ selectedIds.length }}）</button>
         </p>
 
         <h3>② 已选组（items）</h3>
@@ -370,7 +370,7 @@ async function downloadBatchZip() {
 
         <h3>③ 目标 tag 标注（target_tag，docs/05-D23）</h3>
         <p>
-          <label class="field" title="D23 变体编排：该任务包面向的学生分层 tag；留空则引擎按 items 的唯一 tag 自动绑定（mixed-tag 包需显式指定）。">
+          <label class="field" title="D23 变体编排：该作业纸面向的学生分层 tag；留空则引擎按 items 的唯一 tag 自动绑定（mixed-tag 包需显式指定）。">
             目标 tag (target_tag)：
             <select v-model="targetTagOn" style="max-width:190px">
               <option value="">（自动：由 items 唯一 tag 推断）</option>
@@ -392,7 +392,7 @@ async function downloadBatchZip() {
           <b>变体编排绑定</b>（每份包绑定一个目标 tag，整班分层生成时引擎按学生 tag 选用对应包）。
         </p>
         <p v-if="library.length">
-          <button class="btn" title="VC-2：清单所有任务包连排在同一 HTML overlay（多包不分页；同一模板，不依赖引擎）" @click="previewAllPads">👁 预览全部任务包（连排，同一 HTML 模板）</button>
+          <button class="btn" title="VC-2：清单所有作业纸连排在同一 HTML overlay（多包不分页；同一模板，不依赖引擎）" @click="previewAllPads">👁 预览全部作业纸（连排，同一 HTML 模板）</button>
         </p>
         <table class="grid" v-if="library.length" style="font-size:12px">
           <thead>
@@ -411,17 +411,17 @@ async function downloadBatchZip() {
               <td style="white-space:nowrap">{{ m.orientation }} / {{ m.perPage }}题页</td>
               <td style="white-space:nowrap">
                 <button class="btn small" @click="loadFromLibrary(m.id)">载入编辑</button>
-                <button class="btn small" style="margin-left:4px" @click="previewPad(m.id)" title="VC-2：该任务包的浏览器打印版预览（同一 HTML 模板 overlay）">预览</button>
+                <button class="btn small" style="margin-left:4px" @click="previewPad(m.id)" title="VC-2：该作业纸的浏览器打印版预览（同一 HTML 模板 overlay）">预览</button>
                 <button class="btn small" style="margin-left:4px" @click="removeFromLibrary(m.id)">删除</button>
               </td>
             </tr>
           </tbody>
         </table>
-        <p class="hint" v-else>清单为空：到「作业纸版式」页点「仅保存」或「导出任务包 JSON」后出现在这里。</p>
+        <p class="hint" v-else>清单为空：到「作业纸版式」页点「仅保存」或「导出作业纸 JSON」后出现在这里。</p>
 
         <h3>变体编排（D23 · 整班分层作业纸，docs/05-D23 / 12-B3.5）</h3>
         <p class="hint">
-          每个学生按其 tag 领到<b>不同的任务包</b>变体（同 tag 内题目顺序引擎可轮换防抄袭）。
+          每个学生按其 tag 领到<b>不同的作业纸</b>变体（同 tag 内题目顺序引擎可轮换防抄袭）。
           下方清单即上方作业纸清单；"绑定到 tag" 与包的 <code>target_tag</code> 双向同步
           （引擎 <code>assist sheet batch</code> 按 tag 自动选用对应包）。
           名单/tag 切分在「班级与标签」页完成。
@@ -430,11 +430,11 @@ async function downloadBatchZip() {
           名单 tag 分布（roster.tagCounts，来自「班级与标签」）：<template v-for="(c, t, i) in roster.tagCounts" :key="t"><code>{{ STUDENT_TAG_LABELS[t] ?? t }}</code>×{{ c }}<template v-if="i < Object.keys(roster.tagCounts).length - 1">；</template></template>
         </p>
         <div class="notice" v-if="missingTags.length" style="border-color:#c9a227;color:#7a5c00">
-          ⚠ 缺包 tag：<code>{{ missingTags.join('、') }}</code> —— 名单里这些 tag 有学生，但没有任何任务包绑定到它，
+          ⚠ 缺包 tag：<code>{{ missingTags.join('、') }}</code> —— 名单里这些 tag 有学生，但没有任何作业纸绑定到它，
           引擎 <code>sheet batch</code> 会跳过这部分人。
-          处理：在本页为这些 tag 补建变体任务包（选题时给对应 tag），或临时用 CLI <code>--default &lt;兜底任务包&gt;</code> 为未覆盖学生兜底。
+          处理：在本页为这些 tag 补建变体作业纸（选题时给对应 tag），或临时用 CLI <code>--default &lt;兜底作业纸&gt;</code> 为未覆盖学生兜底。
         </div>
-        <p class="hint" v-if="dupTags.length">⚠ 同一 tag 被多个任务包绑定（{{ dupTags.join('、') }}）：引擎仅认先到的一份，请去重。</p>
+        <p class="hint" v-if="dupTags.length">⚠ 同一 tag 被多个作业纸绑定（{{ dupTags.join('、') }}）：引擎仅认先到的一份，请去重。</p>
         <table class="grid" v-if="padRows.length" style="font-size:12px">
           <thead>
             <tr><th>id</th><th>标题</th><th>题组/题数</th><th>版式</th><th>目标 tag 推断</th><th style="width:190px">绑定到 tag（target_tag）</th></tr>
@@ -457,7 +457,7 @@ async function downloadBatchZip() {
             </tr>
           </tbody>
         </table>
-        <p class="hint" v-else>作业纸清单为空：先在本页保存任务包后回到这里绑定。</p>
+        <p class="hint" v-else>作业纸清单为空：先在本页保存作业纸后回到这里绑定。</p>
         <p>
           <button class="btn primary" :disabled="exportingBatch || !roster.students.length || !padRows.length" @click="downloadBatchZip">📦 一键生成整班 batch 交付包（zip：roster.xlsx + tasks/*.taskpad.json + batch.json + README）</button>
           <button class="btn" style="margin-left:8px" :disabled="!roster.students.length || !padRows.length" @click="previewWholeClass" title="VC-3：按当前 tag→包映射生成整班多页 HTML overlay（纯前端，不依赖引擎；与「班级与标签」页的「预览整班」同款）">👁 预览整班（HTML overlay，不依赖引擎）</button>

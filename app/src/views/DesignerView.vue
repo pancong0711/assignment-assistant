@@ -51,7 +51,7 @@ const footerText = ref('')
 watch(headTitle, (v) => { pad.current.layout.header.title = v })
 watch(footerText, (v) => { pad.current.layout.footer.text = v })
 
-// 从任务包初始化表单
+// 从作业纸初始化表单
 function syncFromPad() {
   headTitle.value = String(pad.current.layout.header.title ?? '')
   footerText.value = String(pad.current.layout.footer.text ?? '')
@@ -120,8 +120,8 @@ function setPerPage(v: PerPage) {
   pad.setPerPage(v)
 }
 
-/* ---------- 任务包头（docs/04 §1） ---------- */
-/* D23 变体编排：任务包显式绑定目标 tag（target_tag；空 = 引擎回退 items 唯一 tag 推断） */
+/* ---------- 作业纸头部（docs/04 §1） ---------- */
+/* D23 变体编排：作业纸显式绑定目标 tag（target_tag；空 = 引擎回退 items 唯一 tag 推断） */
 const targetTagOn = computed({
   get: () => pad.current.target_tag ?? '',
   set: (v: string) => { pad.current.target_tag = v || undefined },
@@ -129,7 +129,7 @@ const targetTagOn = computed({
 /** 当前包 inference 结果展示（与 engine batch.py pad_tag 同口径：混合 tag = null） */
 const curInferredTag = computed(() => padInferredTag(pad.current.items, pad.current.target_tag))
 
-/* ---------- 任务包清单（多份作业纸管理，D19 反馈第 3 项） ---------- */
+/* ---------- 作业纸清单（多份作业纸管理，D19 反馈第 3 项） ---------- */
 interface PadMeta { id: string; term: string; cls: string; items: number; questions: number; orientation: string; perPage: number; targetTag: string; inferredTag: string | null; json: string }
 const library = computed<PadMeta[]>(() =>
   pad.saved.map((s) => {
@@ -155,7 +155,7 @@ const library = computed<PadMeta[]>(() =>
 function loadFromLibrary(id: string) {
   if (pad.openFromLibrary(id)) {
     syncFromPad()
-    status.value = `已载入任务包 ${id}（可继续编辑；保存会覆盖清单中的同名条目）。`
+    status.value = `已载入作业纸 ${id}（可继续编辑；保存会覆盖清单中的同名条目）。`
   } else {
     status.value = `清单中未找到 ${id}。`
   }
@@ -163,14 +163,14 @@ function loadFromLibrary(id: string) {
 
 function removeFromLibrary(id: string) {
   pad.removeFromLibrary(id)
-  status.value = `已从清单删除任务包 ${id}（仅删除清单记录，不影响已导出文件）。`
+  status.value = `已从清单删除作业纸 ${id}（仅删除清单记录，不影响已导出文件）。`
 }
 
-/** 导出全部：多份任务包 JSON + 题库 xlsx 打包 zip（教师解压放回 workspace：tasks/ + kb/） */
+/** 导出全部：多份作业纸 JSON + 题库 xlsx 打包 zip（教师解压放回 workspace：tasks/ + kb/） */
 const exportingAll = ref(false)
 async function exportAllZip() {
   if (!pad.saved.length) {
-    status.value = '任务包清单为空：先「仅保存」或「导出任务包 JSON」至少一份。'
+    status.value = '作业纸清单为空：先「仅保存」或「导出作业纸 JSON」至少一份。'
     return
   }
   exportingAll.value = true
@@ -181,9 +181,9 @@ async function exportAllZip() {
       if (bin) zip.file(`kb/${kind}.xlsx`, bin)
     }
     const readme = [
-      '# 任务包清单导出（assignment-assistant · 作业纸设计）',
+      '# 作业纸清单导出（assignment-assistant · 作业纸设计）',
       '',
-      '- tasks/<id>.taskpad.json — 已保存的任务包（schema 同 docs/04 §1）。',
+      '- tasks/<id>.taskpad.json — 已保存的作业纸（schema 同 docs/04 §1）。',
       '  交付引擎执行：assist sheet make --task tasks/<id>.taskpad.json',
       '- kb/<kind>.xlsx — 当前浏览器内题库（source of truth，docs/05-D3）。',
       '',
@@ -192,25 +192,25 @@ async function exportAllZip() {
       '全部文案为合成占位风格，不含真实学生数据。',
       '',
       `导出时间：${new Date().toISOString()}`,
-      `任务包数量：${pad.saved.length}`,
+      `作业纸数量：${pad.saved.length}`,
     ].join('\n')
-    zip.file('README-任务包清单.md', readme)
+    zip.file('README-作业纸清单.md', readme)
     const blob = await zip.generateAsync({ type: 'blob' })
     downloadBlob(blob, `taskpads-${new Date().toISOString().slice(0, 10)}.zip`)
-    status.value = `已导出 ${pad.saved.length} 份任务包 + 题库 xlsx（zip）。LAN 预览下请手动放回 workspace 的 tasks/ 与 kb/。`
+    status.value = `已导出 ${pad.saved.length} 份作业纸 + 题库 xlsx（zip）。LAN 预览下请手动放回 workspace 的 tasks/ 与 kb/。`
   } finally {
     exportingAll.value = false
   }
 }
 
-/** 新建空任务包（克隆当前版式/叶眉页脚/水印配置可选） */
+/** 新建空作业纸（克隆当前版式/叶眉页脚/水印配置可选） */
 function newTaskpadClone(cloneStyle: boolean) {
   pad.newPad(cloneStyle)
   syncFromPad()
   selectedIds.value = []
   status.value = cloneStyle
-    ? '已新建空任务包（克隆了当前版式/页眉页脚/水印配置）。'
-    : '已新建空任务包（默认版式）。'
+    ? '已新建空作业纸（克隆了当前版式/页眉页脚/水印配置）。'
+    : '已新建空作业纸（默认版式）。'
 }
 
 /* ---------- 导入 / 导出 ---------- */
@@ -220,24 +220,24 @@ async function importTaskpadFile() {
   try {
     const p = pad.importJson(await f.text())
     syncFromPad()
-    status.value = `已导入任务包 ${p.id}（${p.items.length} 组选题），可继续编辑。`
+    status.value = `已导入作业纸 ${p.id}（${p.items.length} 组选题），可继续编辑。`
   } catch (e) {
-    status.value = `任务包导入失败：${(e as Error).message}`
+    status.value = `作业纸导入失败：${(e as Error).message}`
   }
 }
 
 function exportTaskpadJson() {
   pad.saveToLibrary()
   downloadData(serializeTaskpad(pad.current), `${pad.current.id}.taskpad.json`, 'application/json')
-  status.value = `任务包已导出（schema 同 docs/04 §1）。交付引擎执行：assist sheet make --task ${pad.current.id}.taskpad.json`
+  status.value = `作业纸已导出（schema 同 docs/04 §1）。交付引擎执行：assist sheet make --task ${pad.current.id}.taskpad.json`
 }
 
 /* ---------- 水印编辑器（阶段4a：watermark items 列表，兼容 legacy 三槽） ---------- */
 const wmPosGrid = ['lt', 'mt', 'rt', 'lm', 'mm', 'rm', 'lb', 'mb', 'rb'] as const
 import { WATERMARK_POS_LABELS, type WatermarkItem } from '../lib/taskpad'
 
-/** 本地上传图片 → dataURL 存 settings.wmAssets（仅浏览器 localStorage，不进任务包）；
- *  任务包 items[].image 只写 file 相对路径 hint（如 assets/watermark/<文件名>），
+/** 本地上传图片 → dataURL 存 settings.wmAssets（仅浏览器 localStorage，不进作业纸）；
+ *  作业纸 items[].image 只写 file 相对路径 hint（如 assets/watermark/<文件名>），
  *  教师把图片放进该路径后引擎即可读取。 */
 function addWatermarkImage(e: Event) {
   const input = e.target as HTMLInputElement
@@ -255,7 +255,7 @@ function addWatermarkImage(e: Event) {
         alpha: 0.5,
       }
       pad.current.watermark.items = [...(pad.current.watermark.items ?? []), item]
-      status.value = `已添加水印图层 ${f.name}（图片已存本浏览器；任务包导出仅含文件路径 hint ${item.image}，教师需把图片放到 workspace 对应路径或 assets/watermark/）。`
+      status.value = `已添加水印图层 ${f.name}（图片已存本浏览器；作业纸导出仅含文件路径 hint ${item.image}，教师需把图片放到 workspace 对应路径或 assets/watermark/）。`
     }
     reader.readAsDataURL(f)
   }
@@ -291,13 +291,13 @@ function engineHint(): void {
 <template>
   <section>
     <div class="card">
-      <h2>作业纸设计 <small style="font-weight:400;color:var(--c-muted)">复用题库数据 → 所见即所得预览 → 生成任务包</small></h2>
-      <p class="hint">数据来自「题库编辑器」载入的 xlsx（或示例数据）。任务包 JSON 交给 engine： assist sheet make --task &lt;file&gt; 即可出打印级 PDF（D1 CLI 超集）。</p>
+      <h2>作业纸设计 <small style="font-weight:400;color:var(--c-muted)">复用题库数据 → 所见即所得预览 → 生成作业纸</small></h2>
+      <p class="hint">数据来自「题库编辑器」载入的 xlsx（或示例数据）。作业纸 JSON 交给 engine： assist sheet make --task &lt;file&gt; 即可出打印级 PDF（D1 CLI 超集）。</p>
       <div class="notice" v-if="!kb.hasData">题库为空：请先到「题库编辑器」载入 xlsx 或示例数据，再回来选题。</div>
       <p>
-        <button class="btn" @click="newTaskpadClone(false)">新建任务包</button>
-        <button class="btn" style="margin-left:8px" @click="newTaskpadClone(true)" title="新建空任务包，克隆当前版式/页眉页脚/水印配置">新建（克隆当前版式）</button>
-        <label class="btn as-label btn-file" style="margin-left:8px" for="pad-file">导入任务包 JSON…</label>
+        <button class="btn" @click="newTaskpadClone(false)">新建作业纸</button>
+        <button class="btn" style="margin-left:8px" @click="newTaskpadClone(true)" title="新建空作业纸，克隆当前版式/页眉页脚/水印配置">新建（克隆当前版式）</button>
+        <label class="btn as-label btn-file" style="margin-left:8px" for="pad-file">导入作业纸 JSON…</label>
         <input type="file" accept=".json,application/json" hidden id="pad-file" @change="importTaskpadFile" />
       </p>
       <p class="hint" v-if="status">{{ status }}</p>
@@ -330,7 +330,7 @@ function engineHint(): void {
         </div>
         <p class="hint" v-else>该 kind/章暂无题目（或题库为空）。</p>
         <p>
-          <button class="btn primary" :disabled="!selectedIds.length" @click="addSelection">加入任务包（{{ selectedIds.length }}）</button>
+          <button class="btn primary" :disabled="!selectedIds.length" @click="addSelection">加入作业纸（{{ selectedIds.length }}）</button>
         </p>
 
         <h3>② 已选组（items）</h3>
@@ -344,7 +344,7 @@ function engineHint(): void {
       </div>
 
       <div class="card" style="flex:0 0 380px; min-width:320px">
-        <h2>③ 版式 / 页眉页脚 / 任务包</h2>
+        <h2>③ 版式 / 页眉页脚 / 作业纸</h2>
         <p>
           <label class="field"><input type="radio" name="orient" :checked="pad.current.layout.orientation === 'portrait'" @change="setOrientation('portrait')" />竖版 A4</label>
           <label class="field"><input type="radio" name="orient" :checked="pad.current.layout.orientation === 'landscape'" @change="setOrientation('landscape')" />横版 A4</label>
@@ -376,7 +376,7 @@ function engineHint(): void {
         </p>
         <p class="hint">
           每个图层：本地上传图片 + 九宫格摆位（3x3 点选）+ 大小/透明度滑条 +
-          上下移动/删除。dataURL 只存本浏览器；任务包导出仅含
+          上下移动/删除。dataURL 只存本浏览器；作业纸导出仅含
           <code>items[].image</code> 文件相对路径 hint（教师把图片放到 workspace/assets/watermark/），
           并双写 legacy 三槽 university/text/boat（engine 现行 schema 兼容）。
         </p>
@@ -408,21 +408,21 @@ function engineHint(): void {
           <input type="file" accept="image/*" multiple hidden id="wm-img-file" @change="addWatermarkImage" />
         </p>
 
-        <h3>任务包头（docs/04 §1）</h3>
+        <h3>作业纸头部（docs/04 §1）</h3>
         <p>
           <label class="field">id：<input type="text" v-model="pad.current.id" style="width:180px" /></label>
           <label class="field">course：<input type="text" v-model="pad.current.course" style="width:110px" /></label>
           <label class="field">class：<input type="text" v-model="pad.current.class" style="width:110px" placeholder="classA" /></label>
           <label class="field">term：<input type="text" v-model="pad.current.term" style="width:110px" placeholder="2026S1" /></label>
           <label class="field">class_dir：<input type="text" v-model="pad.current.class_dir" :placeholder="settings.defaultClassDir" style="width:230px" /></label>
-          <label class="field" title="D23 变体编排：该任务包面向的学生分层 tag；留空则引擎按 items 的唯一 tag 自动绑定（mixed-tag 包需显式指定）。">
+          <label class="field" title="D23 变体编排：该作业纸面向的学生分层 tag；留空则引擎按 items 的唯一 tag 自动绑定（mixed-tag 包需显式指定）。">
             目标 tag (target_tag)：
             <select v-model="targetTagOn" style="max-width:190px">
               <option value="">（自动：由 items 唯一 tag 推断）</option>
               <option v-for="t in STUDENT_TAGS" :key="t" :value="t">{{ STUDENT_TAG_LABELS[t] }}</option>
             </select>
           </label>
-          <button class="btn small" @click="pad.renewId(); status = '已生成新任务包 id'">换新 id</button>
+          <button class="btn small" @click="pad.renewId(); status = '已生成新作业纸 id'">换新 id</button>
         </p>
         <p class="hint" v-if="curInferredTag">
           引擎 batch 绑定口径（pad_tag）：本包将面向 tag=<code>{{ curInferredTag }}</code>{{ pad.current.target_tag ? '（target_tag 显式绑定）' : '（items 唯一 tag 自动推断）' }}。
@@ -431,13 +431,13 @@ function engineHint(): void {
         <h3>grade（可留空 = 仅出作业纸）</h3>
         <p class="hint">本页仅出作业纸即可用；批阅配置（转录/评阅模型、学生范围）留空交给引擎默认值或阶段3 再细化。</p>
         <p>
-          <button class="btn primary" @click="exportTaskpadJson">导出任务包 JSON（下载 + 存入本页清单）</button>
-          <button class="btn" style="margin-left:8px" @click="pad.saveToLibrary(); status = '已保存到任务包清单'">仅保存</button>
+          <button class="btn primary" @click="exportTaskpadJson">导出作业纸 JSON（下载 + 存入本页清单）</button>
+          <button class="btn" style="margin-left:8px" @click="pad.saveToLibrary(); status = '已保存到作业纸清单'">仅保存</button>
         </p>
-        <h3>任务包清单（多份作业纸管理）</h3>
-        <p class="hint">已保存 {{ library.length }} 份。导出全部 = 多份任务包 JSON + 当前题库 xlsx 打包 zip（LAN 预览下请解压后手动放回 workspace 的 tasks/ 与 kb/）。</p>
+        <h3>作业纸清单（多份作业纸管理）</h3>
+        <p class="hint">已保存 {{ library.length }} 份。导出全部 = 多份作业纸 JSON + 当前题库 xlsx 打包 zip（LAN 预览下请解压后手动放回 workspace 的 tasks/ 与 kb/）。</p>
         <p>
-          <button class="btn" :disabled="!library.length || exportingAll" @click="exportAllZip">导出全部（zip：任务包 JSON + 题库 xlsx）</button>
+          <button class="btn" :disabled="!library.length || exportingAll" @click="exportAllZip">导出全部（zip：作业纸 JSON + 题库 xlsx）</button>
         </p>
         <table class="grid" v-if="library.length" style="font-size:12px">
           <thead>
@@ -461,7 +461,7 @@ function engineHint(): void {
             </tr>
           </tbody>
         </table>
-        <p class="hint" v-else>清单为空：点「仅保存」或「导出任务包 JSON」后出现在这里。</p>
+        <p class="hint" v-else>清单为空：点「仅保存」或「导出作业纸 JSON」后出现在这里。</p>
         <h3>引擎依赖按钮（D13 条件式置灰）</h3>
         <p>
           <button class="btn" :disabled="engineButtonsDisabled" title="需引擎在线（assist serve）后启用" @click="engineHint()">🖨 打印级 PDF（需引擎）</button>
@@ -512,7 +512,7 @@ function engineHint(): void {
             </div>
           </div>
         </div>
-        <p class="hint">说明：预览为 HTML/CSS 近似；打印级排版（reportlab 版式、真实题图、每生水印）由 engine 按同一任务包生成。多题/页时预览与打印版统一为**中间虚线**分隔（4题=十字 2×2；横版=栏间竖虚线、竖版=行间横虚线，且不穿页眉页脚；docs/05-D21）。</p>
+        <p class="hint">说明：预览为 HTML/CSS 近似；打印级排版（reportlab 版式、真实题图、每生水印）由 engine 按同一作业纸生成。多题/页时预览与打印版统一为**中间虚线**分隔（4题=十字 2×2；横版=栏间竖虚线、竖版=行间横虚线，且不穿页眉页脚；docs/05-D21）。</p>
       </div>
     </div>
   </section>

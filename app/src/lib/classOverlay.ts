@@ -1,4 +1,4 @@
-/** VC-3 整班作业纸预览（docs/14 §VC-3）：按"tag→任务包"映射为整班名单生成
+/** VC-3 整班作业纸预览（docs/14 §VC-3）：按"tag→作业纸"映射为整班名单生成
  *  一个自包含多页 HTML overlay（每生一页块 + @page A4 + @media print 自动分页），
  *  纯前端、不依赖引擎（在线/离线均可）。
  *
@@ -92,7 +92,7 @@ export function pageBlockHtml(page: StudentSheetPage, index: number): string {
   const cells = page.questions.length
     ? page.questions.map((q, i) =>
       `<div class="q"><div class="q-no">${i + 1}.</div><div class="q-text">${esc(q.text) || '<span class="ph">（题干未在题库命中：载入题库 xlsx 后重试）</span>'}</div></div>`)
-    : [`<div class="q"><div class="q-no">!</div><div class="q-text ph">未匹配到变体任务包（tag=${esc(s.tag || '空')} 未绑定）——请在「作业纸内容」页为该 tag 绑定任务包，或生成 batch 包时指定 --default 兜底。</div></div>`]
+    : [`<div class="q"><div class="q-no">!</div><div class="q-text ph">未匹配到变体作业纸（tag=${esc(s.tag || '空')} 未绑定）——请在「作业纸内容」页为该 tag 绑定作业纸，或生成 batch 包时指定 --default 兜底。</div></div>`]
   return `<section class="sheet" id="p${index}">
   <header class="sheet-head">
     <span class="t">${headerTitle}</span>
@@ -172,7 +172,7 @@ export function buildBatchManifest(
   lines.push(`- 名单：${students.length} 人；tag 分布：${
     Object.entries(tagCounts).map(([t, n]) => `${STUDENT_TAG_LABELS[t] ?? t}×${n}`).join('、') || '（无）'}`)
   lines.push('')
-  lines.push('## tag → 任务包 绑定（引擎 batch 同口径）')
+  lines.push('## tag → 作业纸 绑定（引擎 batch 同口径）')
   for (const { id, json } of padJsons) {
     try {
       const pad = parseTaskpad(JSON.parse(json))

@@ -4,13 +4,13 @@
  *
  *  zip 内容（解压到 workspace 根即为对齐 docs/04 §1 的目录结构）：
  *  - classes/<班级>/roster/roster.xlsx  （带 tag 名单，RosterView 产出）
- *  - tasks/<id>.taskpad.json ×N        （已保存任务包，含 target_tag 绑定）
+ *  - tasks/<id>.taskpad.json ×N        （已保存作业纸，含 target_tag 绑定）
  *  - batch.json                        （roster/pads/mapping 元数据清单）
  *  - README-变体编排.md                 （整条 engine 命令 + --default 说明）
  *
  *  引擎侧（已实现，engine/src/assist/paper/batch.py）：
  *  `assist sheet batch --roster <tagged.xlsx> --pads <taskpad.json...> --class-dir <dir>`
- *  —— 一个任务包对应一个 tag（包内 target_tag 字段或 items 唯一 tag 自动
+ *  —— 一个作业纸对应一个 tag（包内 target_tag 字段或 items 唯一 tag 自动
  *  绑定）；混合 tag 包需映射（本包 README 提示用 target_tag 或 --map）。 */
 import JSZip from 'jszip'
 import { writeRosterXlsx } from './rosterXlsx'
@@ -54,7 +54,7 @@ function htmlPreviewText(id: string, tag: string, hasHtml: boolean, padPath: str
   return [
     `${id}.html — 变体编排 batch：浏览器打印版（HTML 主通道）预览说明`,
     '',
-    `任务包：${padPath}`,
+    `作业纸：${padPath}`,
     `绑定 tag：${tag || '（无显式绑定，待 --map / target_tag）'}`,
     '',
     hasHtml
@@ -77,7 +77,7 @@ function htmlPreviewText(id: string, tag: string, hasHtml: boolean, padPath: str
 /** engine batch 命令示例（整条、可直接粘贴教师本机 terminal）。 */
 export function batchCommand(row: string, padFiles: string[], classDir: string, missing?: string[]): string {
   const pads = padFiles.map((f) => ` --pads ${f}`).join(' \\')
-  const def = missing?.length ? ` --default <兜底任务包.taskpad.json>` : ''
+  const def = missing?.length ? ` --default <兜底作业纸.taskpad.json>` : ''
   return `uv run assist sheet batch \\${pads} \\
   --roster ${row} \\
   --class-dir ${classDir}${def}`
@@ -92,7 +92,7 @@ export function batchPaths(cd: string) {
   }
 }
 
-/** 生成 batch 交付包 zip（D23/B3.5）。pads = 任务包清单（stored 原样 JSON）。
+/** 生成 batch 交付包 zip（D23/B3.5）。pads = 作业纸清单（stored 原样 JSON）。
  *  返回生成说明文案，blob 通过 caller 下载（保持 fsAccess 下载出口统一）。 */
 export async function buildVariantBatchZip(
   students: RosterStudent[],
@@ -103,7 +103,7 @@ export async function buildVariantBatchZip(
   const zip = new JSZip()
   zip.file(p.roster, writeRosterXlsx(students))
 
-  // mapping：显式 target_tag / items 唯一 tag → 任务包路径（与 engine --map 同口径）
+  // mapping：显式 target_tag / items 唯一 tag → 作业纸路径（与 engine --map 同口径）
   const mapping: Record<string, string> = {}
   const mixed: string[] = []
   for (const { id, json } of pads) {
@@ -118,7 +118,7 @@ export async function buildVariantBatchZip(
     }
   }
 
-  // VB-5：每个已绑定 tag 的任务包 → tasks/<id>.html-preview.txt（预览地址与流程），
+  // VB-5：每个已绑定 tag 的作业纸 → tasks/<id>.html-preview.txt（预览地址与流程），
   // 且若 sheetHtmlProvider 可用（父代理 stringifySheetHtml），再落 sheets/<id>.html。
   const padFiles = pads.map((pd) => ({ id: pd.id, path: p.task(pd.id) }))
   const htmlOf: Record<string, string | null> = {}
@@ -159,7 +159,7 @@ export async function buildVariantBatchZip(
     `  ${i + 1}. tasks/${id}.taskpad.json` +
     (tagOf[id]
       ? `（tag: ${tagOf[id]}）`
-      : '⚠ 混合 tag：请先在任务包标注 target_tag 或 CLI 加 --map'))
+      : '⚠ 混合 tag：请先在作业纸标注 target_tag 或 CLI 加 --map'))
   const tagLines = Object.entries(mapping).map(([tag, v]) =>
     `  - ${STUDENT_TAG_LABELS[tag] ?? tag} → ${v}`)
 
@@ -182,7 +182,7 @@ export async function buildVariantBatchZip(
     '',
     sheetHtmlProvider
       ? '本包已内嵌浏览器打印版 HTML：' + pads.filter((x) => htmlOf[x.id]).map((x) => `sheets/${x.id}.html`).join('、')
-      : '本包未内嵌 HTML（前端生成器未启用）——教师可先用引擎 `assist sheet html --task <任务包> [--roster 名单.xlsx]`' + '\n  自行生成（见 sheets/README-html.txt 与各 tasks/<id>.html-preview.txt）；它尚未上线时，上面 batch PDF 命令为主通道。',
+      : '本包未内嵌 HTML（前端生成器未启用）——教师可先用引擎 `assist sheet html --task <作业纸> [--roster 名单.xlsx]`' + '\n  自行生成（见 sheets/README-html.txt 与各 tasks/<id>.html-preview.txt）；它尚未上线时，上面 batch PDF 命令为主通道。',
     '',
     `打印教程一句话：${PRINT_GUIDE_SUMMARY}`,
     '',
@@ -196,15 +196,15 @@ export async function buildVariantBatchZip(
     `- \`tasks/<id>.html-preview.txt\` —— 每个已绑定 tag 包的 HTML 打印版说明（VB-5）。`,
     sheetHtmlProvider ? '- `sheets/<id>.html` —— 浏览器打印版作业纸（全部已内嵌）。' : '- `sheets/README-html.txt` —— HTML 主通道与 CLI 生成指引（前端生成器未启用时的占位注记）。',
     '',
-    '## tag → 任务包 绑定',
+    '## tag → 作业纸 绑定',
     '',
     ...(tagLines.length ? tagLines : ['-（无任何显式绑定；引擎将按 items 唯一 tag 推断或报错）']),
     '',
-    mixed.length ? `## 需要注意：${mixed.length} 份任务包为混合 tag 且未绑定 target_tag\n\n引擎会拒绝执行（提示加 --map）：请在 PWA「作业纸设计 → 任务包头」为该包绑定 target_tag 后重新导出本包。\n` : '',
+    mixed.length ? `## 需要注意：${mixed.length} 份作业纸为混合 tag 且未绑定 target_tag\n\n引擎会拒绝执行（提示加 --map）：请在 PWA「作业纸设计 → 作业纸头部」为该包绑定 target_tag 后重新导出本包。\n` : '',
     '全部学生/题目数据均为合成占位风格（学生A、2026xxxx01 等），不含真实信息。',
     '',
     `导出时间：${new Date().toISOString()}`,
-    `参与变体任务包：${pads.length} 份`,
+    `参与变体作业纸：${pads.length} 份`,
   ].join('\n')
   zip.file('README-变体编排.md', readme)
 
@@ -215,5 +215,5 @@ export async function buildVariantBatchZip(
 function missingNote(tags: string[]): string {
   if (!tags.length) return '- ⚠ 当前没有任何显式 tag 绑定：请在名单页「变体编排」面板逐条绑定后再导出。'
   const mention = tags.map((t) => STUDENT_TAG_LABELS[t] ?? t).join('、')
-  return `- 已绑定的 tag 覆盖：${mention}。未覆盖的 tag 会被人跳过（引擎 log warning）；\n  如需兜底：把某份任务包通过 --default 指定为其兜底变体。`
+  return `- 已绑定的 tag 覆盖：${mention}。未覆盖的 tag 会被人跳过（引擎 log warning）；\n  如需兜底：把某份作业纸通过 --default 指定为其兜底变体。`
 }

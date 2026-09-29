@@ -25,9 +25,9 @@ import PreviewTableCard from '../components/PreviewTableCard.vue'
  *  - VC-4/VC-6 导入预览卡（表头+前3行+列映射说明，PreviewTableCard 复用）；
  *  - VC-5 成绩源宽表（行=学生，列=各源分数列，横向滚动）+ 默认勾选/取消勾选
  *    （score excluding，includeInAggregation）+ 按勾选源重算 + 按单列切分（一列即排）；
- *  - VC-3 整班作业纸预览：tag→任务包映射生成自包含多页 HTML overlay（纯前端，
+ *  - VC-3 整班作业纸预览：tag→作业纸映射生成自包含多页 HTML overlay（纯前端，
  *    不依赖引擎；lib/classOverlay.ts 为 fallback 静态层，S2a 模板就位后切同一模板交付）。
- *  变体编排（tag→任务包绑定 + 整班 batch zip）在「作业纸内容」页（单入口，D25）。 */
+ *  变体编排（tag→作业纸绑定 + 整班 batch zip）在「作业纸内容」页（单入口，D25）。 */
 
 const roster = useRosterStore()
 const pad = useTaskpadStore()
@@ -166,13 +166,13 @@ const classTextSource = {
   },
 }
 
-/** 预览整班：按当前 tag→任务包映射生成完整多页 HTML overlay。
+/** 预览整班：按当前 tag→作业纸映射生成完整多页 HTML overlay。
  *  fallback：lib/classOverlay.ts 静态生成层（每生页块 + @page A4 + @media print，
  *  数据装配已按 S2a 模板的 pages/frames 形状预留）；同时生成 batch manifest
  *  文本（README/绑定核对，无引擎也可用）。 */
 function previewWholeClass() {
   if (!roster.students.length) { classPreviewMsg.value = '名单为空：先导入/生成带 tag 名单。'; return }
-  if (!pad.saved.length) { classPreviewMsg.value = '任务包清单为空：到「作业纸内容」页保存任务包后再预览。'; return }
+  if (!pad.saved.length) { classPreviewMsg.value = '作业纸清单为空：到「作业纸内容」页保存作业纸后再预览。'; return }
   previewingClass.value = true
   try {
     const padJsons = pad.savedJsons()
@@ -181,7 +181,7 @@ function previewWholeClass() {
       classDir: roster.students[0]?.class ?? 'classA',
     })
     classPreviewManifest.value = buildBatchManifest(roster.students, padJsons)
-    classPreviewMsg.value = `已生成整班预览（${roster.students.length} 名学生 / ${pad.saved.length} 份任务包映射）：下方 iframe 内可滚动查看；「下载 HTML」后浏览器打开 → Ctrl/Cmd+P 打印/存 PDF（每生一页，自动分页）。`
+    classPreviewMsg.value = `已生成整班预览（${roster.students.length} 名学生 / ${pad.saved.length} 份作业纸映射）：下方 iframe 内可滚动查看；「下载 HTML」后浏览器打开 → Ctrl/Cmd+P 打印/存 PDF（每生一页，自动分页）。`
     showClassPreview.value = true
   } catch (e) {
     classPreviewMsg.value = `整班预览生成失败：${(e as Error).message}`
@@ -208,7 +208,7 @@ const missingTagWarn = computed(() => {
   }
   const missing = [...new Set(roster.students.map((s) => s.tag).filter((t) => t && !bound.has(t)))]
   if (!missing.length) return ''
-  return `⚠ 以下 tag 没有任何任务包绑定（预览中这些学生页会显示"未匹配变体"占位，引擎 batch 也会跳过）：${missing.map((t) => STUDENT_TAG_LABELS[t] ?? t).join('、')}——去「作业纸内容」页补绑定，或生成 batch 包时指定 --default 兜底。`
+  return `⚠ 以下 tag 没有任何作业纸绑定（预览中这些学生页会显示"未匹配变体"占位，引擎 batch 也会跳过）：${missing.map((t) => STUDENT_TAG_LABELS[t] ?? t).join('、')}——去「作业纸内容」页补绑定，或生成 batch 包时指定 --default 兜底。`
 })
 
 /** 宽表列数（预览按钮文案用） */
@@ -298,7 +298,7 @@ async function downloadTaskPackage() {
   try {
     status.value = await roster.downloadTaskPackage()
   } catch (e) {
-    status.value = `任务包导出失败：${(e as Error).message}`
+    status.value = `作业纸导出失败：${(e as Error).message}`
   }
 }
 
@@ -412,7 +412,7 @@ const nonTranslationRatios = computed(() => roster.ratios.filter((g) => g.tag !=
         <span class="hint">{{ s.rows.length }} 行 · {{ s.fileName }}</span>
         <button class="btn small" @click="roster.removeSource(i)">移除</button>
       </p>
-      <p class="hint" v-if="fixedSourceCount">已按固定格式解析的成绩源 ×{{ fixedSourceCount }}（score_sources[].family 将随任务包导出，与 engine CLI <code>--score family:file[:col[:weight]]</code> 同口径）。</p>
+      <p class="hint" v-if="fixedSourceCount">已按固定格式解析的成绩源 ×{{ fixedSourceCount }}（score_sources[].family 将随作业纸导出，与 engine CLI <code>--score family:file[:col[:weight]]</code> 同口径）。</p>
       <p class="hint" v-if="scoreSources.length">{{ checkedSummary }}</p>
       <p class="hint" v-if="scoreSources.length">{{ wideHint }}</p>
     </div>
@@ -572,12 +572,12 @@ const nonTranslationRatios = computed(() => roster.ratios.filter((g) => g.tag !=
       <h2>产出（名单带 tag → 引擎可直接用）</h2>
       <p class="hint">
         roster.xlsx 列 = name/number/class/tag（恒英文值），<code>uv run assist sheet make &lt;task&gt; --roster roster.xlsx</code> 直接可用；
-        roster.json 供 CLI/AI；任务包 zip 内含 roster.xlsx + roster.json + task-package.json
+        roster.json 供 CLI/AI；作业纸 zip 内含 roster.xlsx + roster.json + task-package.json
         （group_cfg + special_tag_cfg + punish + score_sources[].family，docs/05-D19）+ 附带切分规则说明 md。
       </p>
       <p>
         <button class="btn primary" :disabled="exportDisabled" @click="downloadRosterJsonAndXlsx">导出 tag 名单（xlsx + JSON）</button>
-        <button class="btn" style="margin-left:8px" :disabled="exportDisabled" @click="downloadTaskPackage">下载任务包（zip，附带说明）</button>
+        <button class="btn" style="margin-left:8px" :disabled="exportDisabled" @click="downloadTaskPackage">下载作业纸（zip，附带说明）</button>
       </p>
       <p class="hint" :style="{ marginTop: '4px' }">
         punish 名单（期末补交统一题集，不按层）：
@@ -589,18 +589,18 @@ const nonTranslationRatios = computed(() => roster.ratios.filter((g) => g.tag !=
       <p class="hint" v-if="caps.insecure">LAN 预览提示：导出为浏览器下载，教师手动放回 workspace 的 <code>classes/&lt;班级&gt;/roster/</code> 即可（写回目录能力需本机 localhost/https 打开）。</p>
     </div>
     <div class="card">
-      <h2>整班作业纸预览（VC-3：按 tag→任务包映射的多页 HTML overlay，纯前端不依赖引擎）</h2>
+      <h2>整班作业纸预览（VC-3：按 tag→作业纸映射的多页 HTML overlay，纯前端不依赖引擎）</h2>
       <p class="hint">
-        变体编排绑定（tag→任务包 target_tag）在「作业纸内容」页维护（单入口，D25）；
+        变体编排绑定（tag→作业纸 target_tag）在「作业纸内容」页维护（单入口，D25）；
         本卡按当前映射 + 名单 tag 即时生成<b>完整多页 HTML overlay</b>（每生一页块、@page A4、
         @media print 自动分页，lib/classOverlay.ts）——名单里所有人按其 tag 领到对应变体（与引擎 batch 同口径）。
         S2a 的 HTML 打印模板（assignment.html.j2 / stringifySheetHtml）就位后，本预览切换为同一模板交付
         （数据装配已按其 pages/frames 形状预留，见 lib/classOverlay.ts 头注释）；当前为 fallback 静态层，无引擎也可用。
       </p>
       <p>
-        <button class="btn primary" :disabled="previewingClass || !roster.students.length || !pad.saved.length" @click="previewWholeClass">👁 预览整班（HTML overlay：{{ roster.students.length }} 名学生 × {{ pad.saved.length }} 份任务包映射）</button>
+        <button class="btn primary" :disabled="previewingClass || !roster.students.length || !pad.saved.length" @click="previewWholeClass">👁 预览整班（HTML overlay：{{ roster.students.length }} 名学生 × {{ pad.saved.length }} 份作业纸映射）</button>
         <button class="btn" style="margin-left:8px" :disabled="!classPreviewHtml" @click="downloadClassPreviewHtml">⬇ 下载 HTML（浏览器打开→Ctrl+P 打印）</button>
-        <span class="hint" v-if="!pad.saved.length">（任务包清单为空：没有可映射的任务包；先去内容页保存）.</span>
+        <span class="hint" v-if="!pad.saved.length">（作业纸清单为空：没有可映射的作业纸；先去内容页保存）.</span>
         <span class="hint" v-else-if="!pageCount">（名单为空，先导入名单。）</span>
       </p>
       <p class="hint notice warning" v-if="missingTagWarn">{{ missingTagWarn }}</p>

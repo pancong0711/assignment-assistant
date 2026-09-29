@@ -128,7 +128,7 @@ onMounted(() => {
         <p class="hint">
           两个入口：<b>本机装好引擎</b> 后（阶段4 assist serve 接管），引擎会自动定位/创建 workspace；
           <b>或现在</b>在浏览器里选择未来的 workspace 目录（Chrome/Edge），导入导出时会把
-          kb xlsx / 任务包写进去。
+          kb xlsx / 作业纸写进去。
         </p>
         <label class="field">workspace 路径：
           <input type="text" v-model="wsPathInput" style="width: 340px" placeholder="如 ~/.assignment-assistant（默认）" @change="precheckKb(); settings.setWorkspace(wsPathInput, settings.workspaceConnected)" />

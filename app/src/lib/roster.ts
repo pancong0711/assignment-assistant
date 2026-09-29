@@ -51,7 +51,7 @@ export interface ScoreSource {
   scores: Record<string, number>
   /** VC-5 勾选（docs/14 §VC-5）：该源是否参与综合得分（默认 true；
    *  教师取消勾选 = score excluding，该源被排除出加权聚合）。
-   *  不写进任务包 JSON 的权重口径（导出时仅提示"已排除"，见 buildTaskPackage）。 */
+   *  不写进作业纸 JSON 的权重口径（导出时仅提示"已排除"，见 buildTaskPackage）。 */
   includeInAggregation?: boolean
 }
 

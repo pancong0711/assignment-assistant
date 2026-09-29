@@ -19,13 +19,13 @@ const TAB_GUIDES: { tab: string; items: string[] }[] = [
     '列结构兼容 docs/05-D3（id/content/img_path/page/related/type/solution/note）',
   ]},
   { tab: '作业纸版式', items: [
-    '竖/横 A4、页眉页脚、水印 items、任务包导出/清单',
+    '竖/横 A4、页眉页脚、水印 items、作业纸导出/清单',
     '🖨 打印浏览器版（window.print）/ ⬇ 下载整班 HTML（D30 主通道）',
     'per_page 1-4：4 = 十字 2×2、横版 2/3 = 左右栏、竖版 2/3 = 上下行',
   ]},
   { tab: '作业纸内容', items: [
     '跨 kind/tag 选题篮（含题图预览）',
-    '每份任务包 target_tag 标注 → 变体编排绑定 → 一键 batch zip',
+    '每份作业纸 target_tag 标注 → 变体编排绑定 → 一键 batch zip',
     '👁 预览整班（HTML overlay，不依赖引擎）',
   ]},
   { tab: '班级与标签', items: [
@@ -35,10 +35,10 @@ const TAB_GUIDES: { tab: string; items: string[] }[] = [
   ]},
   { tab: '学习通', items: [
     '阶段 6 占位（当前公告/上传/登录 chip 均置灰 + 引导说明）',
-    '内含批阅工作台（任务包选择 / 图片本地分组 / CLI 指引）',
+    '内含批阅工作台（作业纸选择 / 图片本地分组 / CLI 指引）',
   ]},
   { tab: '导入导出', items: [
-    '题库 xlsx / 任务包 JSON / 变体 batch zip 导出',
+    '题库 xlsx / 作业纸 JSON / 变体 batch zip 导出',
     'zip 导入可重建 workspace 结构（过滤 .runtime/，D14 规范）',
   ]},
 ]
