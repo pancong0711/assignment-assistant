@@ -175,3 +175,32 @@ C1 登录/课程/作业浏览/下载（迁 2601 xuexitong 模块）；C2 上传=
 - ✅ **UI renames**（任务包→作业纸 etc 弃语版 manifest pull across views/lib）
 - ✅ **Playwright semantic**（status "yellow" 可跳过 note，green = 已装）
 - ✅ **binaries removed from repo** (~40 MB git tree clean → future engine-main.zip 80KB 不再 hit)
+
+---
+
+# 2026-09-29 · 两轮网页结构讨论拍板 → docs/13 重建需求单（D43 系列）
+
+- **docs/13-taskboard.md 已重建**：上一版在 5e3e092 被清空（当时 commit 信息称"D41 任务需求单"，
+  实际 diff 为 231 行全删；D41 实施记录以本文档 2026-09-28 条目为准）。docs/13 现恢复为
+  "当前活动需求单"，本档保持总账职能；
+- **已拍板**：D43-1 输出与交付沉底 / D43-2 保存上移至新建工具栏 / D43-3 预览合并（单一 HTML 模板渲染，
+  删 CSS 近似双轨）/ D43-4 清单+预览合卡（现状清单在设计页出现两次）/ D43-5 批阅独立选项卡
+  （grade 移出作业纸设计；GradingView.vue 复活 + DesignerView.vue 孤儿清理；#/grading hash 改向真 tab；schema grade 节保留不动；
+  **导航位置已拍板**：班级与标签 与 学习通 之间）；
+- **D43-6 口径修正（2026-09-29 第二次反馈）**："勾选"= **预览/打印内容开关**：
+  ☑参考答案（未勾→预览/打印不含答案行）+ ☑学生示例（未勾→页眉三空位、1 份空白模板；
+  勾→按合成 学生A/B 2 份），统一作用于设计页实时预览/清单行预览/预览全部连排/输出卡打印与下载；
+  **预览域分层拍板**：作业纸设计=模板级预览（仅）、整班分层预览=仅在班级与标签页（VC-3 唯一入口，
+  SheetContent 重复的"预览整班"卡移除）；现状清单预览按 roster 全班展开（28 人×N 包）须切回模板态；
+  细节（默认值/班级页是否加答案开关/持久化）见 docs/13 D43-6 待拍板；
+- 本轮为仅讨论会话：**未改任何代码**；批次顺序 A→D，红线不变（schema 不动 / D1 CLI 超集）。
+
+
+---
+
+# 2026-09-29 · D43 全批次实施完成（docs/13「实施记录」同条）
+
+- ✅ A 输出沉底+保存上移；B 批阅独立 tab（GradingView 复活/学习通纯净/#/grading 直达/DesignerView 删除）；
+- ✅ C 预览合一（同模板 iframe + 相对 KaTeX）+ 清单合卡 + 整班预览唯一入口归班级页（classOverlay 第二套模板删除）；
+- ✅ D 内容开关（参考答案/学生示例，默认不勾）+ KaTeX 三模式接线（relative/raw 内联自包含）+ 设置中心自检卡 + 帮助页文案改正；
+- 验证：vue-tsc+vite 0 err；node 冒烟 pass；引擎 pytest 待 CI（j2 未动）。

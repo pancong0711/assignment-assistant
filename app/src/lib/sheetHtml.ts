@@ -7,8 +7,12 @@
  *  - 页块结构：section.sheet-page[data-student][data-page] >（wm-layer 水印层）+
  *    sheet-header + sheet-body[data-grid]（sf-line 分隔虚线 + sheet-frame 题帧）+
  *    sheet-footer —— 类名/嵌套/标记（data-wm-item / data-wm-pos）一致；
- *  - KaTeX 走同一 CDN（0.16.4）：CDN 不可达时 renderMathInElement 不存在，
- *    公式按 $..$ 源码降级显示（不报错，分页/水印/版式不受影响）。
+ *  - KaTeX 三种资源模式（docs/13 D43-3/D43-6，PWA 先行；引擎 j2 仍 CDN，parity 后续）：
+ *    'cdn'（缺省，现状/引擎 parity 哨兵口径，断网公式源码降级）；
+ *    'relative'（同源 ./katex/，PWA 预览/隐藏 iframe 打印用 —— assets 随 dist
+ *      发布（app/public/katex，600KB，含 contrib/auto-render.min.js），断网照样渲染）；
+ *    'raw'（配合 fetchSelfContainedKatex()：下载/分发 HTML 时把 css+js+字体 base64
+ *      内联成自包含文件，教师本地 file:// 打开也渲染公式，零环境管理）。
  *  engine/tests/test_sheet_html.py 有 parity 哨兵（标记清单两处必须同时存在）。
  *  修改本文件的结构/CSS 时必须两处同改。
  *
@@ -40,6 +44,9 @@ export interface SheetHtmlItem {
 export interface SheetHtmlPadInput {
   pad: Taskpad
   items: SheetHtmlItem[]
+  /** D43-6 整班分段（班级与标签页 VC-3）/ 模板态覆盖：该包只给这些学生出页；
+   *  缺省 = opts.students（再缺省 = SYNTHETIC_STUDENTS）。 */
+  students?: SheetHtmlStudent[]
 }
 
 export interface SheetHtmlOptions {
@@ -49,9 +56,19 @@ export interface SheetHtmlOptions {
   wmAssets?: Record<string, string>
   /** 页脚/页眉日期（缺省 = 今天，YYYY-MM-DD） */
   date?: string
+  /** D43-6 内容开关：是否渲染"参考答案：…"行；缺省 true（CLI/zip 现状）。
+   *  PWA 预览/打印/导出按「显示参考答案」勾选传入（默认不勾=false）。 */
+  includeSolution?: boolean
+  /** KaTeX 资源模式（见文件头注释）：'cdn' 缺省 | 'relative' 同源 | 'raw' 内联 */
+  katex?: 'relative' | 'cdn' | 'raw'
+  /** katex='raw' 时由 fetchSelfContainedKatex() 注入的完整资源 */
+  katexRaw?: KaTeXAssets
 }
 
 export const KATEX_VERSION = '0.16.4'
+
+/** D43-6 学生示例开关未勾选时的"空白学籍"学生（页眉 班级/学号/姓名 → 手写空位线） */
+export const BLANK_STUDENT: SheetHtmlStudent = { name: '', number: '', class: '', tag: '' }
 
 /** 合成名单（与 engine paper/htmlfile.py SYNTHETIC_STUDENTS 同口径） */
 export const SYNTHETIC_STUDENTS: SheetHtmlStudent[] = [
@@ -244,12 +261,96 @@ function wmLayerHtml(wm: WmResolved[], pageText: boolean, pageN: number): string
 
 /* ---------- KaTeX（与模板同一段 include + 同一段渲染脚本） ---------- */
 
-function katexHead(): string {
+/** Mechanism docs/13 D43-3：cdn = 现状（引擎 j2 同款）；relative = 同源 ./katex/（app/public/katex
+ *  随 dist 发布；srcdoc iframe 相对路径按宿主页 base 解析 → Pages / engine serve / vite dev 全同源）；
+ *  raw = 调用方注入完整内联资源（fetchSelfContainedKatex 预取后传入）。 */
+function katexIncludeHtml(mode: 'relative' | 'cdn' | 'raw' = 'cdn', raw?: KaTeXAssets): string {
+  if (mode === 'raw' && raw) {
+    return [
+      `<!-- KaTeX ${KATEX_VERSION}（内联自包含：css+js+woff2 全部内联；file:// 离线可开） -->`,
+      '<style>',
+      raw.css,
+      '</style>',
+      '<script>',
+      raw.katexJs,
+      '</script>',
+      '<script>',
+      raw.autoRenderJs,
+      '</script>',
+    ].join('\n')
+  }
+  if (mode === 'relative') {
+    return `<!-- KaTeX ${KATEX_VERSION}（同源自托管 ./katex/，随 PWA dist 发布；离线可渲染） -->
+<link rel="stylesheet" href="./katex/katex.min.css">
+<script defer src="./katex/katex.min.js"><\/script>
+<script defer src="./katex/contrib/auto-render.min.js"><\/script>`
+  }
   return `<!-- KaTeX ${KATEX_VERSION}（CDN）：题干/答案中 $..$、$$..$$ 自动渲染。
      离线场景：CDN 不可达时 renderMathInElement 不存在，公式按 $..$ 源码降级显示。 -->
 <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/katex@${KATEX_VERSION}/dist/katex.min.css">
 <script defer src="https://cdn.jsdelivr.net/npm/katex@${KATEX_VERSION}/dist/katex.min.js"><\/script>
 <script defer src="https://cdn.jsdelivr.net/npm/katex@${KATEX_VERSION}/dist/contrib/auto-render.min.js"><\/script>`
+}
+
+/** D43-3 自包含导出资源：同源拉取 app/public/katex（css + katex.min.js + auto-render + 全部**
+ *  woff2 字体 base64），缓存模块级。供「下载 HTML（自包含）」把公式渲染资源写进文件本体
+ *  —— 教师 file:// 离线打开即渲染，无需任何环境安装。 */
+export interface KaTeXAssets { css: string; katexJs: string; autoRenderJs: string }
+
+let katexBundleCache: KaTeXAssets | null = null
+
+function blobToDataUrl(buf: ArrayBuffer): string {
+  let bin = ''
+  const bytes = new Uint8Array(buf)
+  const chunk = 0x8000
+  for (let i = 0; i < bytes.length; i += chunk) {
+    bin += String.fromCharCode(...bytes.subarray(i, i + chunk))
+  }
+  return 'data:font/woff2;base64,' + btoa(bin)
+}
+
+export async function fetchSelfContainedKatex(): Promise<KaTeXAssets> {
+  if (katexBundleCache) return katexBundleCache
+  const base = document.baseURI
+  const [cssRes, jsRes, arRes] = await Promise.all([
+    fetch(new URL('./katex/katex.min.css', base).href),
+    fetch(new URL('./katex/katex.min.js', base).href),
+    fetch(new URL('./katex/contrib/auto-render.min.js', base).href),
+  ])
+  if (!cssRes.ok || !jsRes.ok || !arRes.ok) {
+    throw new Error('KaTeX 自托管资源拉取失败（需 Pages/引擎同源环境提供 ./katex/）')
+  }
+  let css = await cssRes.text()
+  const js = await jsRes.text()
+  const autoRenderJs = await arRes.text()
+  // 字体引用内联：woff2 → dataURL；woff/ttf 引用删除（自托管 dist 仅带 woff2）
+  const names = new Set<string>()
+  for (const m of css.matchAll(/url\(fonts\/([^)'"\s]+)\.(woff2|woff|ttf)\)/g)) names.add(m[1])
+  const b64 = new Map<string, string>()
+  for (const name of names) {
+    const res = await fetch(new URL(`katex/fonts/${name}.woff2`, base).href)
+    if (res.ok) b64.set(name, blobToDataUrl(await res.arrayBuffer()))
+  }
+  css = css
+    .replace(/url\(fonts\/([^)'"\s]+)\.woff2\)/g, (m, n: string) => (b64.get(n) ? `url(${b64.get(n)})` : m))
+    .replace(/,\s*url\(fonts\/[^)]+\.woff\)\s*format\("woff"\)/g, '')
+    .replace(/,\s*url\(fonts\/[^)]+\.ttf\)\s*format\("truetype"\)/g, '')
+  katexBundleCache = { css, katexJs: js, autoRenderJs }
+  return katexBundleCache
+}
+
+/** 「⬇ 下载 HTML（自包含·离线可开）」：stringifySheetHtml(katex='raw')；资源拉取失败时
+ *  回退相对路径/同源缺失场景 → CDN 现状输出（公式断网源码降级，其余完整）。 */
+export async function buildSelfContainedHtml(
+  inputs: SheetHtmlPadInput | SheetHtmlPadInput[],
+  opts: SheetHtmlOptions = {},
+): Promise<string> {
+  try {
+    const assets = await fetchSelfContainedKatex()
+    return stringifySheetHtml(inputs, { ...opts, katex: 'raw', katexRaw: assets })
+  } catch {
+    return stringifySheetHtml(inputs, opts)
+  }
 }
 
 function katexScript(): string {
@@ -275,7 +376,8 @@ document.addEventListener('DOMContentLoaded', function () {
 
 function pageBlockHtml(pad: Taskpad, items: SheetHtmlItem[], stu: SheetHtmlStudent,
                        pagesTotal: number, pageN: number, isVeryLast: boolean,
-                       wm: WmResolved[], date: string): string {
+                       wm: WmResolved[], date: string,
+                       includeSolution = true): string {
   const layout = pad.layout
   const orientation = layout.orientation === 'landscape' ? 'landscape' : 'portrait'
   const perPage = normalizePerPage(layout.per_page, layout.orientation)
@@ -284,6 +386,11 @@ function pageBlockHtml(pad: Taskpad, items: SheetHtmlItem[], stu: SheetHtmlStude
   const footerText = String(layout.footer.text ?? '')
   const course = String(pad.course ?? '')
   const cls = stu.class || String(pad.class ?? '') || 'classA'
+  // D43-6 学生示例未勾选 → BLANK_STUDENT（页眉学籍三空位 = 手写空位线；作业/日期照常）
+  const blank = !stu.name && !stu.number && !stu.class
+  const rosterSpan = blank
+    ? '<span>班级：＿＿＿＿＿＿</span>\n      <span>学号：＿＿＿＿＿＿</span>\n      <span>姓名：＿＿＿＿＿＿</span>'
+    : `<span>班级：${escapeHtml(cls)}</span>\n      <span>学号：${escapeHtml(stu.number)}</span>\n      <span>姓名：${escapeHtml(stu.name)}</span>`
 
   const frames = lines.length
     ? lines.map((ln) => `<div class="sf-line ${ln}"></div>`).join('\n    ') + '\n    '
@@ -294,9 +401,7 @@ function pageBlockHtml(pad: Taskpad, items: SheetHtmlItem[], stu: SheetHtmlStude
   <div class="sheet-header">
     <div class="sh-title">${escapeHtml(title)}</div>
     <div class="sh-info">
-      ${course ? `<span>课程：${escapeHtml(course)}</span>\n      ` : ''}<span>班级：${escapeHtml(cls)}</span>
-      <span>学号：${escapeHtml(stu.number)}</span>
-      <span>姓名：${escapeHtml(stu.name)}</span>
+      ${course ? `<span>课程：${escapeHtml(course)}</span>\n      ` : ''}${rosterSpan}
       <span class="sh-assign">作业：${escapeHtml(pad.id)}</span>
       <span class="sh-assign">日期：${escapeHtml(date)}</span>
     </div>
@@ -306,7 +411,7 @@ function pageBlockHtml(pad: Taskpad, items: SheetHtmlItem[], stu: SheetHtmlStude
       <div class="q-id">${escapeHtml(fr.id)}${fr.tag ? ` <span class="q-tag">【${escapeHtml(fr.tag)}】</span>` : ''}</div>
       <div class="q-content">${escapeHtml(fr.content)}</div>
       ${fr.imgPath ? `<div class="q-img-ph">[题图：${escapeHtml(fr.imgPath)}]</div>` : ''}
-      ${fr.solution ? `<div class="q-solution">参考答案：${escapeHtml(fr.solution)}</div>` : ''}
+      ${(includeSolution && fr.solution) ? `<div class="q-solution">参考答案：${escapeHtml(fr.solution)}</div>` : ''}
     </div>`).join('\n    ')}
   </div>
   <div class="sheet-footer">
@@ -330,8 +435,12 @@ export function stringifySheetHtml(
 ): string {
   const pads = Array.isArray(inputs) ? inputs : [inputs]
   if (!pads.length) throw new Error('stringifySheetHtml：至少需要一份作业纸')
+  // 缺省名单（单包/全部预览模板态时由视图显式传 SYNTHETIC 或 [BLANK_STUDENT]）
   const students = opts.students?.length ? opts.students : SYNTHETIC_STUDENTS
   const date = opts.date ?? todayStr()
+  const mode = opts.katex ?? 'cdn'
+  // D43-6：参考答案开关（缺省 true = CLI/zip 现状口径；PWA 模板态默认 false）
+  const includeSolution = opts.includeSolution !== false
   const first = pads[0].pad
   const orientation = first.layout.orientation === 'landscape' ? 'landscape' : 'portrait'
   const docTitle = String(first.layout.header.title ?? '') || '作业纸'
@@ -344,12 +453,17 @@ export function stringifySheetHtml(
     for (let i = 0; i < items.length; i += perPage) chunks.push(items.slice(i, i + perPage))
     if (!chunks.length) chunks.push([])
     const wm = resolveWmItems(pad, opts.wmAssets, pad.layout.orientation === 'landscape' ? 'landscape' : 'portrait')
-    for (let si = 0; si < students.length; si++) {
-      const stu = students[si]
+    // D43-6 整班分段：每包可带自己的 students 子集（班级与标签页 VC-3 用）
+    const stuList: SheetHtmlStudent[] = (pads[padIdx].students?.length
+      ? pads[padIdx].students
+      : students) as SheetHtmlStudent[]
+    for (let si = 0; si < stuList.length; si++) {
+      const stu = stuList[si]
       chunks.forEach((chunk, pi) => {
         const veryLast = padIdx === pads.length - 1
-          && si === students.length - 1 && pi === chunks.length - 1
-        pageSections.push(pageBlockHtml(pad, chunk, stu, chunks.length, pi + 1, veryLast, wm, date))
+          && si === stuList.length - 1 && pi === chunks.length - 1
+        pageSections.push(pageBlockHtml(pad, chunk, stu, chunks.length, pi + 1, veryLast, wm, date,
+          includeSolution))
       })
     }
   }
@@ -360,7 +474,7 @@ export function stringifySheetHtml(
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>${escapeHtml(docTitle)} · ${escapeHtml(first.id)}</title>
-${katexHead()}
+${katexIncludeHtml(mode, opts.katexRaw)}
 <style>
 ${printCss(orientation)}
 </style>
@@ -368,7 +482,7 @@ ${printCss(orientation)}
 <body>
 <div class="doc-hint">
   打印（Ctrl/Cmd+P）：纸张=A4 · 边距=无 · 页眉页脚=关 · 背景图形=开（水印层依赖背景图形，docs/14 §VB-6）。
-  目标选「另存为 PDF」可保存整班 PDF。公式由 KaTeX CDN 渲染：离线时按 $..$ 源码降级显示。
+  目标选「另存为 PDF」可保存整班 PDF。公式由 KaTeX 渲染：预览/打印用 PWA 同源自托管 ./katex/（离线可渲染）；导出 HTML 自包含内联（file:// 离线可开）；CDN 版断网时按 $..$ 源码降级。
 </div>
 ${pageSections.join('\n')}
 ${katexScript()}

@@ -5,30 +5,32 @@ import SettingsView from './views/SettingsView.vue'
 import KbEditorView from './views/KbEditorView.vue'
 import SheetDesignView from './views/SheetDesignView.vue'
 import RosterView from './views/RosterView.vue'
+import GradingView from './views/GradingView.vue'
 import XxetongView from './views/XxetongView.vue'
 import TransferView from './views/TransferView.vue'
 import HelpView from './views/HelpView.vue'
 
 const settings = useSettingsStore()
 
-/** 7 项顶层导航（M-A S1 选项卡重组，docs/05-D25；docs/13 M-A） */
+/** 8 项顶层导航（docs/05-D43-D43-5：批阅独立选项卡，位置=班级与标签 与 学习通 之间；
+ *  S1"批阅并入学习通"的实施选择按用户拍板反转，GradingView 复活）。 */
 const TABS = [
   { key: 'settings', label: '设置中心', component: SettingsView },
   { key: 'kb', label: '题库编辑器', component: KbEditorView },
   { key: 'design', label: '作业纸设计', component: SheetDesignView },
   { key: 'roster', label: '班级与标签', component: RosterView },
+  { key: 'grading', label: '批阅', component: GradingView },
   { key: 'xxetong', label: '学习通', component: XxetongView },
   { key: 'transfer', label: '导入导出', component: TransferView },
   { key: 'help', label: '使用说明', component: HelpView },
 ] as const
 
-/** 旧 hash 兼容（R2.4）：#/designer → #/layout（版式页）；#/grading → #/xxetong
- *  （批阅工作台并入学习通）；#/sheet → #/content；#/roster 保持不变。 */
+/** hash 兼容（R2.4 / D43-5 修订）：#/designer #/layout #/sheet → #/design；
+ *  「批阅」自 D43-5 起为真选项卡（#/grading 直达，不再并入学习通）。 */
 const HASH_ALIASES: Record<string, string> = {
   designer: 'design',
   layout: 'design',
   content: 'design',
-  grading: 'xxetong',
   sheet: 'design',
 }
 

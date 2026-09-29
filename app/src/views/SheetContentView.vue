@@ -4,139 +4,11 @@ import { KB_KINDS, KB_KIND_LABELS, STUDENT_TAGS, STUDENT_TAG_LABELS, type KbKind
 import { useKbStore } from '../stores/kb'
 import { useTaskpadStore } from '../stores/taskpad'
 import { useRosterStore } from '../stores/roster'
-import { parseTaskpad, missingBoundTags, padInferredTag, resolveBindTag, type PadBinding, type Taskpad } from '../lib/taskpad'
-import { batchCommand, batchPaths, buildVariantBatchZip } from '../lib/variantBatch'
-import { ensureDefaultSheetHtmlProvider } from '../lib/variantBatch'
-import { buildClassOverlayHtml } from '../lib/classOverlay'
-import { downloadBlob, downloadData } from '../lib/fsAccess'
-import { useSettingsStore } from '../stores/settings'
-import {
-  stringifySheetHtml, expandPadItems, SYNTHETIC_STUDENTS,
-  type SheetHtmlItem, type SheetHtmlStudent, type SheetHtmlPadInput,
-} from '../lib/sheetHtml'
-import SheetHtmlPreviewModal from '../components/SheetHtmlPreviewModal.vue'
+import { parseTaskpad, missingBoundTags, padInferredTag, resolveBindTag, type PadBinding } from '../lib/taskpad'
+import { batchCommand, batchPaths, buildVariantBatchZip, ensureDefaultSheetHtmlProvider } from '../lib/variantBatch'
+import { downloadBlob } from '../lib/fsAccess'
 
-/* ========== S2b 并行备注（VC-3，docs/14 §VC-3；仅新增内容，未改既有逻辑） ==========
- * 本块为「预览整班」overlay 入口（班级与标签页 RosterView 亦有同款卡；这里放
- * 变体编排卡内的入口按钮，因为 tag→作业纸绑定状态在本页维护，所见即所选）。
- * 依赖 lib/classOverlay.buildClassOverlayHtml（fallback 静态生成层，纯前端、不依赖引擎）；
- * 父代理 S2a 的 stringifySheetHtml 模板就位后仅需替换该 lib 内部实现（集成点：与并行 S2a 的 sheetHtml.ts（stringifySheetHtml，模板 assignment.html.j2 同构）互不重名——本模块为 VC-3 整班预览 fallback 静态层，不承载 per-pad stringify）。
- * ========================================================================== */
-const classPreviewHtml = ref('')
-const classPreviewShow = ref(false)
-const classPreviewMsg = ref('')
-/** 兜底包（--default 语义）：为"名单里有 tag 但无包绑定"的学生指定兼任变体 */
-const classPreviewFallbackId = ref('')
-
-/** tag→包映射（与 batch.json mapping 同口径：显式 target_tag / items 唯一 tag） */
-const mappingTag = computed(() => {
-  const m: Record<string, string> = {}
-  for (const r of padRows.value) {
-    const t = resolveBindTag({ id: r.id, binding: r.targetTag, items: r.tagItems })
-    if (t) m[t] = r.id
-  }
-  return m
-})
-
-const classTextSource = {
-  text(kind: string, chap: string, id: string): string {
-    return kb.rowText(kind as never, chap, id)
-  },
-}
-
-function previewWholeClass() {
-  if (!roster.students.length) {
-    classPreviewMsg.value = '名单为空：先到「班级与标签」导入/生成带 tag 名单。'
-    classPreviewShow.value = false
-    return
-  }
-  if (!padRows.value.length) {
-    classPreviewMsg.value = '作业纸清单为空：先保存作业纸（上方清单）再预览。'
-    classPreviewShow.value = false
-    return
-  }
-  try {
-    classPreviewHtml.value = buildClassOverlayHtml(roster.students, pad.savedJsons(), classTextSource, {
-      title: '整班作业纸预览（VC-3）',
-      classDir: classDirName.value,
-      fallbackPadId: classPreviewFallbackId.value,
-    })
-    classPreviewMsg.value = `已按当前 tag→包绑定生成整班预览（${roster.students.length} 名学生）：iframe 内滚动查看 / 「下载 HTML」后浏览器打开 → Ctrl/Cmd+P 打印（每生一页、自动分页；空间不足时该页自动断页）。`
-    classPreviewShow.value = true
-  } catch (e) {
-    classPreviewMsg.value = `整班预览生成失败：${(e as Error).message}`
-  }
-}
-
-function downloadClassOverlay() {
-  if (classPreviewHtml.value) {
-    downloadData(classPreviewHtml.value, `class-sheet-preview-${new Date().toISOString().slice(0, 10)}.html`, 'text/html')
-  }
-}
-/* ================== /S2b VC-3 整班预览（新增块结束） ================== */
-
-/* ========== S2a 并行备注（VC-2，docs/14 §VC-2；仅新增内容，未改既有逻辑） ==========
- * 清单里任一作业纸「预览」→ 同一 HTML 模板（engine/templates/assignment.html.j2 的
- * TS 同构 = lib/sheetHtml.ts stringifySheetHtml）在弹窗 iframe overlay 预览
- * （版式/水印/内容全量，不依赖引擎）；「预览全部」把清单所有作业纸连排在同一
- * HTML（多包不分页）。与上方 S2b 整班预览（VC-3，classOverlay fallback 层）
- * 互不占用命名/状态；名单缺省合成 学生A/B（informational）。 */
-const settings = useSettingsStore()
-const showHtmlOverlay = ref(false)
-const overlayHtml = ref('')
-const overlayTitle = ref('')
-
-function sheetStudents(): SheetHtmlStudent[] {
-  return roster.students.length
-    ? roster.students.map((s) => ({ name: s.name, number: s.number, class: s.class, tag: s.tag }))
-    : SYNTHETIC_STUDENTS
-}
-
-/** 作业纸 → 题帧（kb store 取 content/solution/img_path；未命中的题跳过） */
-function padItemsOf(p: Taskpad): SheetHtmlItem[] {
-  return expandPadItems(p, (kind) => kb.book(kind))
-}
-
-function openPreview(pads: SheetHtmlPadInput[], title: string) {
-  if (!pads.length) return
-  overlayHtml.value = stringifySheetHtml(pads, {
-    students: sheetStudents(),
-    wmAssets: settings.wmAssets,
-  })
-  overlayTitle.value = title
-  showHtmlOverlay.value = true
-}
-
-/** 清单里单个作业纸的预览（版式/水印/内容全量；docs/14 §VC-2） */
-function previewPad(id: string) {
-  const entry = pad.saved.find((s) => s.id === id)
-  if (!entry) { status.value = `清单中未找到 ${id}。`; return }
-  try {
-    const p = parseTaskpad(JSON.parse(entry.json))
-    openPreview([{ pad: p, items: padItemsOf(p) }], `作业纸预览 · ${id}`)
-    status.value = `已打开 ${id} 的浏览器打印版预览（同一 HTML 模板；名单：${roster.students.length ? `${roster.students.length} 人` : '合成 学生A/B'}）。`
-  } catch (e) {
-    status.value = `作业纸 ${id} 预览失败（JSON 损坏）：${(e as Error).message}`
-  }
-}
-
-/** 全部清单作业纸连排预览（多包不分页：不加封面/额外分页，页块仍每生分页） */
-function previewAllPads() {
-  const sources: SheetHtmlPadInput[] = []
-  let bad = 0
-  for (const s of pad.saved) {
-    try {
-      const p = parseTaskpad(JSON.parse(s.json))
-      sources.push({ pad: p, items: padItemsOf(p) })
-    } catch { bad++ }
-  }
-  if (!sources.length) { status.value = '清单为空或全部 JSON 损坏：无可预览作业纸。'; return }
-  openPreview(sources, `全部作业纸连排预览 · ${sources.length} 份`)
-  status.value = `已连排预览 ${sources.length} 份作业纸（多包不分页；@page 方向取第一份${bad ? `；${bad} 份 JSON 损坏已跳过` : ''}）。`
-}
-/* ================== /S2a VC-2 作业纸预览（新增块结束） ================== */
-
-/** 作业纸内容（M-A S1 拆分，docs/05-D25）：一份模板的"题目构成"。
+/** 作业纸内容（M-A S1 拆分，docs/05-D25；docs/05-D43 D43-4/6 重排）：一份模板的"题目构成"。
  *  kind×章题选篮（含跨 kind/tag 提示文）→ items 列表编辑 → target_tag 标注；
  *  作业纸清单列表与 D23 变体编排绑定面板（原 RosterView「变体编排」卡整体迁入，
  *  绑定 store（taskpad.setSavedTargetTag）不动；RosterView 仅留指向本页的提示链接，
@@ -197,42 +69,6 @@ const targetTagOn = computed({
   get: () => pad.current.target_tag ?? '',
   set: (v: string) => { pad.current.target_tag = v || undefined },
 })
-
-/* ---------- 作业纸清单（多份作业纸管理，D19 反馈第 3 项） ---------- */
-interface PadMeta { id: string; term: string; cls: string; items: number; questions: number; orientation: string; perPage: number; targetTag: string; inferredTag: string | null; json: string }
-const library = computed<PadMeta[]>(() =>
-  pad.saved.map((s) => {
-    try {
-      const p = parseTaskpad(JSON.parse(s.json))
-      return {
-        id: p.id,
-        term: p.term || '—',
-        cls: p.class || p.class_dir.split('/').pop() || '—',
-        items: p.items.length,
-        questions: p.items.reduce((n, i) => n + i.ids.length, 0),
-        orientation: p.layout.orientation === 'landscape' ? '横版' : '竖版',
-        perPage: p.layout.per_page,
-        targetTag: p.target_tag ?? '',
-        inferredTag: padInferredTag(p.items, p.target_tag),
-        json: s.json,
-      }
-    } catch {
-      return { id: s.id, term: '?', cls: '?', items: 0, questions: 0, orientation: '?', perPage: 0, targetTag: '', inferredTag: null, json: s.json }
-    }
-  }))
-
-function loadFromLibrary(id: string) {
-  if (pad.openFromLibrary(id)) {
-    status.value = `已载入作业纸 ${id}（题目构成可继续编辑；保存会覆盖清单中的同名条目）。`
-  } else {
-    status.value = `清单中未找到 ${id}。`
-  }
-}
-
-function removeFromLibrary(id: string) {
-  pad.removeFromLibrary(id)
-  status.value = `已从清单删除作业纸 ${id}（仅删除清单记录，不影响已导出文件）。`
-}
 
 /* ---------- D23 变体编排（docs/05-D23 / 12-B3.5）：tag→作业纸绑定 + 一键 batch zip ---------- */
 /** 绑定下拉选项：STUDENT_TAGS + 名单里出现但不在表内的 tag（容错） */
@@ -386,40 +222,12 @@ async function downloadBatchZip() {
       </div>
 
       <div class="card" style="flex:1 1 500px; min-width:420px">
-        <h2>④ 作业纸清单（多份作业纸管理）</h2>
+        <h2>变体编排（D23 · 整班分层作业纸，docs/05-D23 / 12-B3.5）</h2>
         <p class="hint">
-          已保存 {{ library.length }} 份。导出/新建在「作业纸版式」页；本页负责题目构成与
-          <b>变体编排绑定</b>（每份包绑定一个目标 tag，整班分层生成时引擎按学生 tag 选用对应包）。
+          每份包绑定一个目标 tag，整班分层生成时引擎按学生 tag 选用对应包；
+          作业纸清单（模板级预览）已合卡到本页版式段（docs/13 D43-4，全页唯一一份）。
+          <b>整班分层预览在「班级与标签」页</b>（docs/13 D43-6 域分层：此处不再重复入口）。
         </p>
-        <p v-if="library.length">
-          <button class="btn" title="VC-2：清单所有作业纸连排在同一 HTML overlay（多包不分页；同一模板，不依赖引擎）" @click="previewAllPads">👁 预览全部作业纸（连排，同一 HTML 模板）</button>
-        </p>
-        <table class="grid" v-if="library.length" style="font-size:12px">
-          <thead>
-            <tr><th>id</th><th>学期</th><th>班级</th><th>目标 tag</th><th>选题</th><th>题数</th><th>版式</th><th style="width:170px">操作</th></tr>
-          </thead>
-          <tbody>
-            <tr v-for="m in library" :key="m.id">
-              <td style="max-width:120px; word-break:break-all">{{ m.id }}</td>
-              <td>{{ m.term }}</td>
-              <td>{{ m.cls }}</td>
-              <td style="white-space:nowrap">
-                {{ m.targetTag ? (STUDENT_TAG_LABELS[m.targetTag] ?? m.targetTag) : (m.inferredTag ? `自动推断：${m.inferredTag}` : '⚠ 混合 tag 未绑定') }}
-              </td>
-              <td style="text-align:center">{{ m.items }}</td>
-              <td style="text-align:center">{{ m.questions }}</td>
-              <td style="white-space:nowrap">{{ m.orientation }} / {{ m.perPage }}题页</td>
-              <td style="white-space:nowrap">
-                <button class="btn small" @click="loadFromLibrary(m.id)">载入编辑</button>
-                <button class="btn small" style="margin-left:4px" @click="previewPad(m.id)" title="VC-2：该作业纸的浏览器打印版预览（同一 HTML 模板 overlay）">预览</button>
-                <button class="btn small" style="margin-left:4px" @click="removeFromLibrary(m.id)">删除</button>
-              </td>
-            </tr>
-          </tbody>
-        </table>
-        <p class="hint" v-else>清单为空：到「作业纸版式」页点「仅保存」或「导出作业纸 JSON」后出现在这里。</p>
-
-        <h3>变体编排（D23 · 整班分层作业纸，docs/05-D23 / 12-B3.5）</h3>
         <p class="hint">
           每个学生按其 tag 领到<b>不同的作业纸</b>变体（同 tag 内题目顺序引擎可轮换防抄袭）。
           下方清单即上方作业纸清单；"绑定到 tag" 与包的 <code>target_tag</code> 双向同步
@@ -460,23 +268,7 @@ async function downloadBatchZip() {
         <p class="hint" v-else>作业纸清单为空：先在本页保存作业纸后回到这里绑定。</p>
         <p>
           <button class="btn primary" :disabled="exportingBatch || !roster.students.length || !padRows.length" @click="downloadBatchZip">📦 一键生成整班 batch 交付包（zip：roster.xlsx + tasks/*.taskpad.json + batch.json + README）</button>
-          <button class="btn" style="margin-left:8px" :disabled="!roster.students.length || !padRows.length" @click="previewWholeClass" title="VC-3：按当前 tag→包映射生成整班多页 HTML overlay（纯前端，不依赖引擎；与「班级与标签」页的「预览整班」同款）">👁 预览整班（HTML overlay，不依赖引擎）</button>
         </p>
-        <p class="hint" v-if="classPreviewMsg">{{ classPreviewMsg }}</p>
-        <p class="hint" v-if="Object.keys(mappingTag).length && roster.students.length">
-          兜底变体（--default 语义，预览用）：
-          <select v-model="classPreviewFallbackId" style="max-width:220px">
-            <option value="">（不兜底：未覆盖 tag 的学生页显示占位说明）</option>
-            <option v-for="r in padRows" :key="r.id" :value="r.id">{{ r.id }}（{{ mappingTag[r.id] ?? '未绑定' }}）</option>
-          </select>
-        </p>
-        <p v-if="classPreviewShow && classPreviewHtml">
-          <button class="btn small" @click="downloadClassOverlay">⬇ 下载整班预览 HTML（浏览器打开→Ctrl/Cmd+P 打印）</button>
-        </p>
-        <iframe v-if="classPreviewShow && classPreviewHtml"
-          :srcdoc="classPreviewHtml" title="整班作业纸预览（VC-3）"
-          sandbox="allow-same-origin"
-          style="width:100%; height:560px; border:1px solid var(--c-border); border-radius:8px; background:#fff"></iframe>
         <p class="hint">README 内含整条命令示例（教师本机执行即出整班分层作业纸）：</p>
         <pre class="hint" style="white-space:pre-wrap; font-size:11px; background:var(--c-bg,#f7f7f9); padding:8px; border-radius:6px"><code>{{ batchCmdPreview }}</code></pre>
         <p class="hint">
@@ -486,11 +278,5 @@ async function downloadBatchZip() {
       </div>
     </div>
 
-    <SheetHtmlPreviewModal
-      v-if="showHtmlOverlay && overlayHtml"
-      :html="overlayHtml"
-      :title="overlayTitle"
-      @close="showHtmlOverlay = false"
-    />
   </section>
 </template>

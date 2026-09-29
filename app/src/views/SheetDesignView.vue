@@ -15,9 +15,10 @@ import SheetContentView from './SheetContentView.vue'
   <section class="design-view">
     <p class="design-anchors">
       <a href="#form">① 版式</a>
-      · <a href="#items">② 内容</a>
-      · <a href="#preview">③ 预览/导出</a>
-      · <b>同一 store，同屏编辑</b>
+      · <a href="#items">② 内容/变体绑定</a>
+      · <a href="#preview">③ 预览/清单</a>
+      · <a href="#output">④ 输出与交付</a>
+      · <b>同一 store，同屏编辑（docs/05-D43）</b>
     </p>
 
     <div class="design-block" id="form">

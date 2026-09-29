@@ -10,10 +10,14 @@ import type { PreviewTable } from '../lib/rosterXlsx'
 import { useRosterStore } from '../stores/roster'
 import { useTaskpadStore } from '../stores/taskpad'
 import { getKbDirHandle } from '../stores/kb'
-import { buildBatchManifest, buildClassOverlayHtml } from '../lib/classOverlay'
+import { buildBatchManifest, partitionStudentsByTag } from '../lib/classOverlay'
 import { parseTaskpad, padInferredTag } from '../lib/taskpad'
 import { downloadData, detectCapabilities, fsWriteHint, pickReadFileFsa } from '../lib/fsAccess'
 import { useKbStore } from '../stores/kb'
+import { useSettingsStore } from '../stores/settings'
+import { stringifySheetHtml, printSheetHtml, buildSelfContainedHtml, expandPadItems,
+  type SheetHtmlPadInput } from '../lib/sheetHtml'
+import type { KbKind } from '../lib/kb'
 import PreviewTableCard from '../components/PreviewTableCard.vue'
 
 /** 班级与标签（M5 成绩管理，docs/05-D18；M-A S1 由"班级与成绩"更名，docs/05-D26）：
@@ -25,13 +29,14 @@ import PreviewTableCard from '../components/PreviewTableCard.vue'
  *  - VC-4/VC-6 导入预览卡（表头+前3行+列映射说明，PreviewTableCard 复用）；
  *  - VC-5 成绩源宽表（行=学生，列=各源分数列，横向滚动）+ 默认勾选/取消勾选
  *    （score excluding，includeInAggregation）+ 按勾选源重算 + 按单列切分（一列即排）；
- *  - VC-3 整班作业纸预览：tag→作业纸映射生成自包含多页 HTML overlay（纯前端，
- *    不依赖引擎；lib/classOverlay.ts 为 fallback 静态层，S2a 模板就位后切同一模板交付）。
+ *  - VC-3 整班作业纸预览（docs/13 D43-3/6）：同一打印模板（lib/sheetHtml.ts）渲染；
+ *    本页 = 全站唯一整班分层预览入口；lib/classOverlay.ts 只承担 tag→包分段 + manifest。
  *  变体编排（tag→作业纸绑定 + 整班 batch zip）在「作业纸内容」页（单入口，D25）。 */
 
 const roster = useRosterStore()
 const pad = useTaskpadStore()
 const kbStore = useKbStore()
+const settingsStore = useSettingsStore()
 const caps = detectCapabilities()
 const status = ref('')
 /** 成绩源添加时的格式预设选择（默认 custom = 旧行为） */
@@ -157,31 +162,38 @@ const classPreviewMsg = ref('')
 const classPreviewManifest = ref('')
 const previewingClass = ref(false)
 
-/** 题库文本取数（与 SheetContentView 同一 store；未载入题库时返回空 → 页内占位说明） */
-const classTextSource = {
-  text(kind: string, chap: string, id: string): string {
-    const book = kbStore.books[kind as keyof typeof kbStore.books]
-    const ch = book?.chapters.find((c) => c.name === chap)
-    return ch?.rows.find((r) => r.id === id)?.content ?? ''
-  },
+/** 兜底包（--default 语义，预览用）：名单里有 tag 但无包绑定的学生指定兼任变体 */
+const classPreviewFallbackId = ref('')
+
+/** D43-3/D43-6 收口：整班预览改用 stringifySheetHtml（与 CLI assignment.html.j2 同一模板）。
+ *  数组分段 = lib/classOverlay.partitionStudentsByTag（tag→包，--default 兜底同口径）；
+ *  每包段内学生 → expandPadItems 取题帧；KaTeX 相对路径（同源 ./katex/，离线也渲染）。 */
+function buildClassInputs(): { inputs: SheetHtmlPadInput[]; unmatched: number; total: number } {
+  const { groups, unmatched } = partitionStudentsByTag(
+    roster.students, pad.savedJsons(), classPreviewFallbackId.value)
+  const inputs: SheetHtmlPadInput[] = groups.map((g) => ({
+    pad: g.pad,
+    items: expandPadItems(g.pad, (kind) => kbStore.book(kind as KbKind)),
+    students: g.students.map((st) => ({ name: st.name, number: st.number, class: st.class, tag: st.tag })),
+  }))
+  return { inputs, unmatched: unmatched.length, total: roster.students.length }
 }
 
-/** 预览整班：按当前 tag→作业纸映射生成完整多页 HTML overlay。
- *  fallback：lib/classOverlay.ts 静态生成层（每生页块 + @page A4 + @media print，
- *  数据装配已按 S2a 模板的 pages/frames 形状预留）；同时生成 batch manifest
- *  文本（README/绑定核对，无引擎也可用）。 */
+/** 预览整班：同一打印模板多页 HTML；同时生成 batch manifest 文本（README/绑定核对）。 */
 function previewWholeClass() {
   if (!roster.students.length) { classPreviewMsg.value = '名单为空：先导入/生成带 tag 名单。'; return }
   if (!pad.saved.length) { classPreviewMsg.value = '作业纸清单为空：到「作业纸内容」页保存作业纸后再预览。'; return }
   previewingClass.value = true
   try {
     const padJsons = pad.savedJsons()
-    classPreviewHtml.value = buildClassOverlayHtml(roster.students, padJsons, classTextSource, {
-      title: '整班作业纸预览（VC-3）',
-      classDir: roster.students[0]?.class ?? 'classA',
+    const { inputs, unmatched, total } = buildClassInputs()
+    classPreviewHtml.value = stringifySheetHtml(inputs, {
+      includeSolution: true,           // 整班预览保持完整版（答案开关在「作业纸设计」模板态）
+      wmAssets: settingsStore.wmAssets,
+      katex: 'relative',               // 同源 ./katex/，公式离线渲染
     })
     classPreviewManifest.value = buildBatchManifest(roster.students, padJsons)
-    classPreviewMsg.value = `已生成整班预览（${roster.students.length} 名学生 / ${pad.saved.length} 份作业纸映射）：下方 iframe 内可滚动查看；「下载 HTML」后浏览器打开 → Ctrl/Cmd+P 打印/存 PDF（每生一页，自动分页）。`
+    classPreviewMsg.value = `已按当前 tag→包绑定生成整班预览（同一打印模板：${total} 名学生 / ${pad.saved.length} 份作业纸映射${unmatched ? `；${unmatched} 人 tag 未绑定未出页` : ''}）：iframe 内可滚动查看，「🖨 打印」直接出整班文档。`
     showClassPreview.value = true
   } catch (e) {
     classPreviewMsg.value = `整班预览生成失败：${(e as Error).message}`
@@ -190,9 +202,24 @@ function previewWholeClass() {
   }
 }
 
-function downloadClassPreviewHtml() {
+/** 打印当前整班 HTML（隐藏 iframe → contentWindow.print，与打印主通道同语义） */
+function printClassPreview() {
+  if (classPreviewHtml.value) printSheetHtml(classPreviewHtml.value)
+}
+
+/** 下载 = 自包含 HTML（KaTeX 内联；资源拉取失败回退同源 relative 版） */
+async function downloadClassPreviewHtml() {
   if (!classPreviewHtml.value) return
-  downloadData(classPreviewHtml.value, `class-sheet-preview-${new Date().toISOString().slice(0, 10)}.html`, 'text/html')
+  try {
+    const { inputs } = buildClassInputs()
+    const html = await buildSelfContainedHtml(inputs, {
+      includeSolution: true,
+      wmAssets: settingsStore.wmAssets,
+    })
+    downloadData(html, `class-sheet-preview-${new Date().toISOString().slice(0, 10)}.html`, 'text/html')
+  } catch {
+    downloadData(classPreviewHtml.value, `class-sheet-preview-${new Date().toISOString().slice(0, 10)}.html`, 'text/html')
+  }
 }
 
 /** 未绑定 tag 的学生提示（预览/引擎 batch 都会跳过这部分人） */
@@ -589,24 +616,31 @@ const nonTranslationRatios = computed(() => roster.ratios.filter((g) => g.tag !=
       <p class="hint" v-if="caps.insecure">LAN 预览提示：导出为浏览器下载，教师手动放回 workspace 的 <code>classes/&lt;班级&gt;/roster/</code> 即可（写回目录能力需本机 localhost/https 打开）。</p>
     </div>
     <div class="card">
-      <h2>整班作业纸预览（VC-3：按 tag→作业纸映射的多页 HTML overlay，纯前端不依赖引擎）</h2>
+      <h2>整班作业纸预览（VC-3：按 tag→作业纸映射，同一打印模板 · 全站唯一整班预览入口）</h2>
       <p class="hint">
         变体编排绑定（tag→作业纸 target_tag）在「作业纸内容」页维护（单入口，D25）；
-        本卡按当前映射 + 名单 tag 即时生成<b>完整多页 HTML overlay</b>（每生一页块、@page A4、
-        @media print 自动分页，lib/classOverlay.ts）——名单里所有人按其 tag 领到对应变体（与引擎 batch 同口径）。
-        S2a 的 HTML 打印模板（assignment.html.j2 / stringifySheetHtml）就位后，本预览切换为同一模板交付
-        （数据装配已按其 pages/frames 形状预留，见 lib/classOverlay.ts 头注释）；当前为 fallback 静态层，无引擎也可用。
+        本卡 = **整班分层预览/打印的唯一入口**（docs/13 D43-6 域分层：作业纸设计页只做模板级预览）。
+        渲染与 CLI <code>assist sheet html</code> <b>同一模板</b>（lib/sheetHtml.ts）：名单里所有人按其 tag
+        领到对应变体（引擎 batch 同口径）， KaTeX 同源渲染（离线也可）。
       </p>
       <p>
-        <button class="btn primary" :disabled="previewingClass || !roster.students.length || !pad.saved.length" @click="previewWholeClass">👁 预览整班（HTML overlay：{{ roster.students.length }} 名学生 × {{ pad.saved.length }} 份作业纸映射）</button>
-        <button class="btn" style="margin-left:8px" :disabled="!classPreviewHtml" @click="downloadClassPreviewHtml">⬇ 下载 HTML（浏览器打开→Ctrl+P 打印）</button>
+        <button class="btn primary" :disabled="previewingClass || !roster.students.length || !pad.saved.length" @click="previewWholeClass">👁 预览整班（{{ roster.students.length }} 名学生 × {{ pad.saved.length }} 份作业纸映射）</button>
+        <button class="btn" style="margin-left:8px" :disabled="!classPreviewHtml" @click="printClassPreview">🖨 打印整班</button>
+        <button class="btn" style="margin-left:8px" :disabled="!classPreviewHtml" @click="downloadClassPreviewHtml">⬇ 下载 HTML（自包含）</button>
         <span class="hint" v-if="!pad.saved.length">（作业纸清单为空：没有可映射的作业纸；先去内容页保存）.</span>
         <span class="hint" v-else-if="!pageCount">（名单为空，先导入名单。）</span>
+      </p>
+      <p class="hint" v-if="pad.saved.length">
+        兜底变体（--default 语义，预览用）：
+        <select v-model="classPreviewFallbackId" style="max-width:220px">
+          <option value="">（不兜底：未覆盖 tag 的学生不出页，见 manifest 与提示）</option>
+          <option v-for="sv in pad.saved" :key="sv.id" :value="sv.id">{{ sv.id }}</option>
+        </select>
       </p>
       <p class="hint notice warning" v-if="missingTagWarn">{{ missingTagWarn }}</p>
       <p class="hint" v-if="classPreviewMsg">{{ classPreviewMsg }}</p>
       <details open v-if="classPreviewManifest" style="margin:6px 0">
-        <summary style="cursor:pointer; font-size:13px">fallback manifest（README：tag→包绑定核对，无引擎可用）</summary>
+        <summary style="cursor:pointer; font-size:13px">manifest（README：tag→包绑定核对，无引擎可用）</summary>
         <pre class="hint" style="white-space:pre-wrap; font-size:11px; background:var(--c-bg,#f7f7f9); padding:8px; border-radius:6px"><code>{{ classPreviewManifest }}</code></pre>
       </details>
       <iframe v-if="showClassPreview && classPreviewHtml"

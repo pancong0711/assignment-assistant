@@ -95,6 +95,25 @@ async function runDoctorNow() {
 
 const statusHint = ref('')
 
+/* ---------- KaTeX 自托管资源自检（D43-3：同源 ./katex/ 应可用） ---------- */
+const katexChecking = ref(false)
+const katexStatus = ref('尚未检查（预览一般无需检查；资源已随应用打包）')
+
+async function checkKatex() {
+  katexChecking.value = true
+  try {
+    const base = new URL('./katex/katex.min.js', document.baseURI).href
+    const res = await fetch(base)
+    katexStatus.value = res.ok
+      ? `✅ 同源 KaTeX 资源可用（${base}，HTTP ${res.status}）——预览/打印/下载均离线渲染公式。`
+      : `⚠ 资源不可达（HTTP ${res.status}）：${base} —— 重新部署 Pages 或经引擎同源 serve 打开本页即可恢复。`
+  } catch (e) {
+    katexStatus.value = `⚠ 检查失败：${(e as Error).message}`
+  } finally {
+    katexChecking.value = false
+  }
+}
+
 onMounted(() => {
   // 进页即做 /status 在线检测（chip + 版本显示），不弹错误
   void settings.pingEngine()
@@ -292,6 +311,21 @@ onMounted(() => {
         <button class="btn small clip-btn" @click="copyText(SERVE_CMD, 'assist serve 命令')">复制命令</button>
         <span v-if="copyHint" style="margin-left:8px">{{ copyHint }}</span>
       </div>
+    </div>
+
+    <!-- ============ KaTeX 公式资源（自托管·同源，D43-3） ============ -->
+    <div class="card">
+      <h2>KaTeX 公式资源 <small style="font-weight:400;color:var(--c-muted)">自托管·同源（./katex/，0.16.4）· 预览公式免安装</small></h2>
+      <p class="hint">
+        作业纸预览/打印的公式渲染资源<b>已随 PWA 打包</b>（同源 <code>./katex/</code>：css + js + woff2 字体），
+        离线也可正确显示，<b>无需下载安装、无需管理环境</b>；「下载 HTML」导出时自动把资源
+        内联成自包含文件（file:// 打开同样渲染）。引擎 CLI（<code>assist sheet html</code>）暂走
+        CDN——断网时其输出按公式源码降级（引擎侧 parity 随 docs/13 D43 后续收口）。
+      </p>
+      <p>
+        <button class="btn" :disabled="katexChecking" @click="checkKatex">{{ katexChecking ? '检查中…' : '自检 KaTeX 资源' }}</button>
+        <span class="hint" style="margin-left:8px">{{ katexStatus }}</span>
+      </p>
     </div>
   </section>
 </template>

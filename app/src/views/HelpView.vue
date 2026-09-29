@@ -33,9 +33,12 @@ const TAB_GUIDES: { tab: string; items: string[] }[] = [
     '成绩源宽表（行=学生，列=各源；默认全勾 = 分层依据，可取消某列排除）',
     '重算综合得分 / 按此列切分；特殊标签 / 批量打 tag / punish',
   ]},
+  { tab: '批阅', items: [
+    '批阅工作台（作业纸选择 / 学生图片本地分组 / CLI 指引；D43-5 独立选项卡）',
+    'grade 节状态说明（留空 = 仅出作业纸，批阅参数交引擎默认值）',
+  ]},
   { tab: '学习通', items: [
     '阶段 6 占位（当前公告/上传/登录 chip 均置灰 + 引导说明）',
-    '内含批阅工作台（作业纸选择 / 图片本地分组 / CLI 指引）',
   ]},
   { tab: '导入导出', items: [
     '题库 xlsx / 作业纸 JSON / 变体 batch zip 导出',
@@ -44,8 +47,8 @@ const TAB_GUIDES: { tab: string; items: string[] }[] = [
 ]
 
 const NAV_KEYS: Record<string, string> = {
-  '设置中心': 'settings', '题库编辑器': 'kb', '作业纸版式': 'layout',
-  '作业纸内容': 'content', '班级与标签': 'roster', '学习通': 'xxetong', '导入导出': 'transfer'
+  '设置中心': 'settings', '题库编辑器': 'kb', '作业纸版式': 'design',
+  '作业纸内容': 'design', '班级与标签': 'roster', '批阅': 'grading', '学习通': 'xxetong', '导入导出': 'transfer', '使用说明': 'help'
 }
 const openTab = (label: string) => {
   const k = NAV_KEYS[label]
@@ -56,7 +59,7 @@ const PRINT_QA: { q: string; a: string }[] = [
   { q: '浏览器打印对话框设置', a: 'A4；边距=无；页眉页脚=关；背景图形=开（水印靠背景图形）' },
   { q: '打印在哪里最兼容', a: 'Chrome/Edge first；Firefox/Safari 差异见 docs/14 §VB-6' },
   { q: '打印结果与预览有细微差异', a: '极端排版跨浏览器会差异（引擎 reportlab/LaTeX 可做到像素一致，docs/05-D36 双引擎）' },
-  { q: 'KaTeX 公式', a: 'PWA 自带 KaTeX 离线（0.16.4）—— 打印/浏览器/offline全数据可用' },
+  { q: 'KaTeX 公式', a: '预览/打印用 PWA 内置同源 KaTeX（0.16.4，./katex/）——离线也正确渲染；「下载 HTML」为自包含内联文件（file:// 离线可开）' },
 ]
 
 const FAQ: { q: string; a: string }[] = [
