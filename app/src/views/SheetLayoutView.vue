@@ -17,7 +17,7 @@ import JSZip from 'jszip'
 
 /** 作业纸版式（M-A S1 拆分，docs/05-D25/D27）：一份模板的"长相"。
  *  orientation / per_page / 页眉页脚 / 水印编辑器 / 模板预览（CSS 近似）/
- *  任务包导出与清单；"打印级 PDF（模板）"语义 = 模板级（当前任务包 × 合成学生
+ *  作业纸导出与清单；"打印级 PDF（模板）"语义 = 模板级（当前作业纸 × 合成学生
  *  A/B 样例，单类型全班统一场景；docs/05-D27）。整班分层生成入口在「班级与标签」。
  *  题目构成（kind×章选题 / items / target_tag 绑定）在「作业纸内容」页（SheetContentView）。
  *  S2a（docs/14 §VB-4/§VC-1）：+「打印浏览器版」按钮（下载 HTML / window.print，
@@ -47,7 +47,7 @@ const preItems = computed<PreItem[]>(() => {
   return out
 })
 
-/* ---------- 浏览器打印主通道（VB-4：任务包 → 同一模板 HTML；无需引擎） ---------- */
+/* ---------- 浏览器打印主通道（VB-4：作业纸 → 同一模板 HTML；无需引擎） ---------- */
 const sheetHtmlItems = computed<SheetHtmlItem[]>(() =>
   preItems.value.map((p) => ({ id: p.id, content: p.content, solution: p.solution, imgPath: p.imgPath, tag: p.tag })))
 
@@ -147,7 +147,7 @@ const footerText = ref('')
 watch(headTitle, (v) => { pad.current.layout.header.title = v })
 watch(footerText, (v) => { pad.current.layout.footer.text = v })
 
-// 从任务包初始化表单（当前包切换/载入/导入后也同步）
+// 从作业纸初始化表单（当前包切换/载入/导入后也同步）
 function syncFromPad() {
   headTitle.value = String(pad.current.layout.header.title ?? '')
   footerText.value = String(pad.current.layout.footer.text ?? '')
@@ -155,7 +155,7 @@ function syncFromPad() {
 syncFromPad()
 watch(() => pad.current.id, () => syncFromPad())
 
-/* ---------- 任务包头（docs/04 §1；target_tag 绑定在「作业纸内容」页，D23/D25） ---------- */
+/* ---------- 作业纸头部（docs/04 §1；target_tag 绑定在「作业纸内容」页，D23/D25） ---------- */
 
 /* ---------- 作业纸清单（多份作业纸管理，D19 反馈第 3 项） ---------- */
 interface PadMeta { id: string; term: string; cls: string; items: number; questions: number; orientation: string; perPage: number; targetTag: string; inferredTag: string | null; json: string }
@@ -183,7 +183,7 @@ const library = computed<PadMeta[]>(() =>
 function loadFromLibrary(id: string) {
   if (pad.openFromLibrary(id)) {
     syncFromPad()
-    status.value = `已载入任务包 ${id}（可继续编辑；保存会覆盖清单中的同名条目）。`
+    status.value = `已载入作业纸 ${id}（可继续编辑；保存会覆盖清单中的同名条目）。`
   } else {
     status.value = `清单中未找到 ${id}。`
   }
@@ -191,14 +191,14 @@ function loadFromLibrary(id: string) {
 
 function removeFromLibrary(id: string) {
   pad.removeFromLibrary(id)
-  status.value = `已从清单删除任务包 ${id}（仅删除清单记录，不影响已导出文件）。`
+  status.value = `已从清单删除作业纸 ${id}（仅删除清单记录，不影响已导出文件）。`
 }
 
-/** 导出全部：多份任务包 JSON + 题库 xlsx 打包 zip（教师解压放回 workspace：tasks/ + kb/） */
+/** 导出全部：多份作业纸 JSON + 题库 xlsx 打包 zip（教师解压放回 workspace：tasks/ + kb/） */
 const exportingAll = ref(false)
 async function exportAllZip() {
   if (!pad.saved.length) {
-    status.value = '作业纸清单为空：先「仅保存」或「导出任务包 JSON」至少一份。'
+    status.value = '作业纸清单为空：先「仅保存」或「导出作业纸 JSON」至少一份。'
     return
   }
   exportingAll.value = true
@@ -211,7 +211,7 @@ async function exportAllZip() {
     const readme = [
       '# 作业纸清单导出（assignment-assistant · 作业纸）',
       '',
-      '- tasks/<id>.taskpad.json — 已保存的任务包（schema 同 docs/04 §1）。',
+      '- tasks/<id>.taskpad.json — 已保存的作业纸（schema 同 docs/04 §1）。',
       '  交付引擎执行：assist sheet make --task tasks/<id>.taskpad.json',
       '- kb/<kind>.xlsx — 当前浏览器内题库（source of truth，docs/05-D3）。',
       '',
@@ -220,24 +220,24 @@ async function exportAllZip() {
       '全部文案为合成占位风格，不含真实学生数据。',
       '',
       `导出时间：${new Date().toISOString()}`,
-      `任务包数量：${pad.saved.length}`,
+      `作业纸数量：${pad.saved.length}`,
     ].join('\n')
     zip.file('README-作业纸清单.md', readme)
     const blob = await zip.generateAsync({ type: 'blob' })
     downloadBlob(blob, `taskpads-${new Date().toISOString().slice(0, 10)}.zip`)
-    status.value = `已导出 ${pad.saved.length} 份任务包 + 题库 xlsx（zip）。LAN 预览下请手动放回 workspace 的 tasks/ 与 kb/。`
+    status.value = `已导出 ${pad.saved.length} 份作业纸 + 题库 xlsx（zip）。LAN 预览下请手动放回 workspace 的 tasks/ 与 kb/。`
   } finally {
     exportingAll.value = false
   }
 }
 
-/** 新建空任务包（克隆当前版式/页眉页脚/水印配置可选） */
+/** 新建空作业纸（克隆当前版式/页眉页脚/水印配置可选） */
 function newTaskpadClone(cloneStyle: boolean) {
   pad.newPad(cloneStyle)
   syncFromPad()
   status.value = cloneStyle
-    ? '已新建空任务包（克隆了当前版式/页眉页脚/水印配置）。选题请到「作业纸内容」页。'
-    : '已新建空任务包（默认版式）。选题请到「作业纸内容」页。'
+    ? '已新建空作业纸（克隆了当前版式/页眉页脚/水印配置）。选题请到「作业纸内容」页。'
+    : '已新建空作业纸（默认版式）。选题请到「作业纸内容」页。'
 }
 
 /* ---------- 导入 / 导出 ---------- */
@@ -249,21 +249,21 @@ async function importTaskpadFile() {
     syncFromPad()
     status.value = `已导入作业纸 ${p.id}（${p.items.length} 组选题），可继续编辑。`
   } catch (e) {
-    status.value = `任务包导入失败：${(e as Error).message}`
+    status.value = `作业纸导入失败：${(e as Error).message}`
   }
 }
 
 function exportTaskpadJson() {
   pad.saveToLibrary()
   downloadData(serializeTaskpad(pad.current), `${pad.current.id}.taskpad.json`, 'application/json')
-  status.value = `任务包已导出（schema 同 docs/04 §1）。交付引擎执行：assist sheet make --task ${pad.current.id}.taskpad.json`
+  status.value = `作业纸已导出（schema 同 docs/04 §1）。交付引擎执行：assist sheet make --task ${pad.current.id}.taskpad.json`
 }
 
 /* ---------- 水印编辑器（阶段4a：watermark items 列表，兼容 legacy 三槽） ---------- */
 const wmPosGrid = ['lt', 'mt', 'rt', 'lm', 'mm', 'rm', 'lb', 'mb', 'rb'] as const
 
-/** 本地上传图片 → dataURL 存 settings.wmAssets（仅浏览器 localStorage，不进任务包）；
- *  任务包 items[].image 只写 file 相对路径 hint（如 assets/watermark/<文件名>），
+/** 本地上传图片 → dataURL 存 settings.wmAssets（仅浏览器 localStorage，不进作业纸）；
+ *  作业纸 items[].image 只写 file 相对路径 hint（如 assets/watermark/<文件名>），
  *  教师把图片放进该路径后引擎即可读取。 */
 function addWatermarkImage(e: Event) {
   const input = e.target as HTMLInputElement
@@ -281,7 +281,7 @@ function addWatermarkImage(e: Event) {
         alpha: 0.5,
       }
       pad.current.watermark.items = [...(pad.current.watermark.items ?? []), item]
-      status.value = `已添加水印图层 ${f.name}（图片已存本浏览器；任务包导出仅含文件路径 hint ${item.image}，教师需把图片放到 workspace 对应路径或 assets/watermark/）。`
+      status.value = `已添加水印图层 ${f.name}（图片已存本浏览器；作业纸导出仅含文件路径 hint ${item.image}，教师需把图片放到 workspace 对应路径或 assets/watermark/）。`
     }
     reader.readAsDataURL(f)
   }
@@ -319,13 +319,13 @@ function engineHint(): void {
     <div class="card">
       <h2>作业纸版式 <small style="font-weight:400;color:var(--c-muted)">一份模板的"长相"：版式 / 页眉页脚 / 水印 / 模板预览（docs/05-D25）</small></h2>
       <p class="hint">
-        版式（本页）+ 题目构成（「作业纸内容」页）共同生成一个任务包（schema 不变，仅 UI 分屏）。
-        任务包 JSON 交给 engine： assist sheet make --task &lt;file&gt; 即可出打印级 PDF（D1 CLI 超集）。
+        版式（本页）+ 题目构成（「作业纸内容」页）共同生成一个作业纸（schema 不变，仅 UI 分屏）。
+        作业纸 JSON 交给 engine： assist sheet make --task &lt;file&gt; 即可出打印级 PDF（D1 CLI 超集）。
       </p>
       <div class="notice" v-if="!kb.hasData">题库为空：请先到「题库编辑器」载入 xlsx 或示例数据，再到「作业纸内容」页选题。</div>
       <p>
         <button class="btn" @click="newTaskpadClone(false)">新建作业纸</button>
-        <button class="btn" style="margin-left:8px" @click="newTaskpadClone(true)" title="新建空任务包，克隆当前版式/页眉页脚/水印配置">新建（克隆当前版式）</button>
+        <button class="btn" style="margin-left:8px" @click="newTaskpadClone(true)" title="新建空作业纸，克隆当前版式/页眉页脚/水印配置">新建（克隆当前版式）</button>
         <label class="btn as-label btn-file" style="margin-left:8px" for="pad-file">导入作业纸 JSON…</label>
         <input type="file" accept=".json,application/json" hidden id="pad-file" @change="importTaskpadFile" />
       </p>
@@ -334,7 +334,7 @@ function engineHint(): void {
 
     <div style="display:flex; gap:16px; align-items:flex-start; flex-wrap:wrap">
       <div class="card" style="flex:0 0 380px; min-width:320px">
-        <h2>① 版式 / 页眉页脚 / 任务包头</h2>
+        <h2>① 版式 / 页眉页脚 / 作业纸头部</h2>
         <p>
           <label class="field"><input type="radio" name="orient" :checked="pad.current.layout.orientation === 'portrait'" @change="setOrientation('portrait')" />竖版 A4</label>
           <label class="field"><input type="radio" name="orient" :checked="pad.current.layout.orientation === 'landscape'" @change="setOrientation('landscape')" />横版 A4</label>
@@ -355,19 +355,19 @@ function engineHint(): void {
           <label class="field">页眉标题：<input type="text" v-model="headTitle" style="width:180px" @change="pad.current.layout.header.title = headTitle" /></label>
           <label class="field">页脚：<input type="text" v-model="footerText" style="width:150px" @change="pad.current.layout.footer.text = footerText" /></label>
         </p>
-        <h3>任务包头（docs/04 §1）</h3>
+        <h3>作业纸头部（docs/04 §1）</h3>
         <p>
           <label class="field">id：<input type="text" v-model="pad.current.id" style="width:180px" /></label>
           <label class="field">course：<input type="text" v-model="pad.current.course" style="width:110px" /></label>
           <label class="field">class：<input type="text" v-model="pad.current.class" style="width:110px" placeholder="classA" /></label>
           <label class="field">term：<input type="text" v-model="pad.current.term" style="width:110px" placeholder="2026S1" /></label>
           <label class="field">class_dir：<input type="text" v-model="pad.current.class_dir" :placeholder="settings.defaultClassDir" style="width:230px" /></label>
-          <button class="btn small" @click="pad.renewId(); status = '已生成新任务包 id'">换新 id</button>
+          <button class="btn small" @click="pad.renewId(); status = '已生成新作业纸 id'">换新 id</button>
         </p>
         <h3>grade（可留空 = 仅出作业纸）</h3>
         <p class="hint">本页仅出作业纸即可用；批阅配置（转录/评阅模型、学生范围）留空交给引擎默认值或阶段3 再细化。</p>
         <p>
-          <button class="btn primary" @click="exportTaskpadJson">导出任务包 JSON（下载 + 存入本页清单）</button>
+          <button class="btn primary" @click="exportTaskpadJson">导出作业纸 JSON（下载 + 存入本页清单）</button>
           <button class="btn" style="margin-left:8px" @click="pad.saveToLibrary(); status = '已保存到作业纸清单'">仅保存</button>
         </p>
         <h3>浏览器打印主通道（无需引擎 · docs/14 §VB-4 / 05-D30）</h3>
@@ -378,7 +378,7 @@ function engineHint(): void {
         <button class="btn" @click="showGuide = true">📖 打印教程</button>
         <PrintGuideModal v-if="showGuide" @close="showGuide = false" /></p>
         <p class="hint">
-          任务包 → 与 CLI <code>assist sheet html</code> <b>同一模板</b>的 HTML（每生分页块 · @page A4 横/竖 ·
+          作业纸 → 与 CLI <code>assist sheet html</code> <b>同一模板</b>的 HTML（每生分页块 · @page A4 横/竖 ·
           per_page 网格 · 水印层 · KaTeX 渲染 $..$ 公式，docs/05-D30 主通道）。纯前端不依赖引擎/未登录可用；
           打印对话框请按「打印教程」设置（A4 / 边距=无 / 页眉页脚=关 / 背景图形=开）。
           名单：{{ roster.students.length ? `本浏览器名单 ${roster.students.length} 人` : '未导入名单 → 合成 学生A/B（informational）' }}。
@@ -389,7 +389,7 @@ function engineHint(): void {
           <button class="btn" style="margin-left:8px" :disabled="engineButtonsDisabled" title="需引擎在线（assist serve）后启用" @click="engineHint()">⬆ 上传到学习通（需引擎）</button>
         </p>
         <p class="hint">
-          「打印级 PDF（模板）」语义（docs/05-D27）：当前任务包 × 合成学生 A/B 样例，输出<b>单类型</b>作业纸模板，
+          「打印级 PDF（模板）」语义（docs/05-D27）：当前作业纸 × 合成学生 A/B 样例，输出<b>单类型</b>作业纸模板，
           适合全班统一场景；产物可直接作为「学习通」公告附件发布。
           整班分层生成（每个学生按 tag 领到不同变体）入口在「班级与标签」页 →「生成全班作业纸」（assist sheet batch）。
         </p>
@@ -407,7 +407,7 @@ function engineHint(): void {
         </p>
         <p class="hint">
           每个图层：本地上传图片 + 九宫格摆位（3x3 点选）+ 大小/透明度滑条 +
-          上下移动/删除。dataURL 只存本浏览器；任务包导出仅含
+          上下移动/删除。dataURL 只存本浏览器；作业纸导出仅含
           <code>items[].image</code> 文件相对路径 hint（教师把图片放到 workspace/assets/watermark/），
           并双写 legacy 三槽 university/text/boat（engine 现行 schema 兼容）。
         </p>
@@ -444,7 +444,7 @@ function engineHint(): void {
         <h2>③ 模板预览（A4 比例 · CSS 容器查询横竖感知）</h2>
         <p>
           <button class="btn" title="用同一 HTML 模板在弹窗 iframe 里预览（VC-1；打印/下载按钮在弹层内，不依赖引擎）" @click="openHtmlOverlay">🔍 显示为浏览器打印版（HTML overlay）</button>
-          <span class="hint" style="margin-left:6px">CSS 预览（下方）与打印版预览切换 —— 双视图共用同一任务包与水印配置（docs/14 §VC-1）。</span>
+          <span class="hint" style="margin-left:6px">CSS 预览（下方）与打印版预览切换 —— 双视图共用同一作业纸与水印配置（docs/14 §VC-1）。</span>
         </p>
         <p class="hint" v-if="!preItems.length">题目构成（items）为空 —— 预览暂无题目框；去「作业纸内容」页选题后回到这里看版式效果。版式/水印/页眉页脚的改动实时生效。</p>
         <div class="viewer">
@@ -488,12 +488,12 @@ function engineHint(): void {
             </div>
           </div>
         </div>
-        <p class="hint">说明：预览为 HTML/CSS 近似；打印级排版（reportlab 版式、真实题图、每生水印）由 engine 按同一任务包生成。多题/页时预览与打印版统一为**中间虚线**分隔（4题=十字 2×2；横版=栏间竖虚线、竖版=行间横虚线，且不穿页眉页脚；docs/05-D21）。</p>
+        <p class="hint">说明：预览为 HTML/CSS 近似；打印级排版（reportlab 版式、真实题图、每生水印）由 engine 按同一作业纸生成。多题/页时预览与打印版统一为**中间虚线**分隔（4题=十字 2×2；横版=栏间竖虚线、竖版=行间横虚线，且不穿页眉页脚；docs/05-D21）。</p>
 
         <h3>作业纸清单（多份作业纸管理）</h3>
-        <p class="hint">已保存 {{ library.length }} 份。导出全部 = 多份任务包 JSON + 当前题库 xlsx 打包 zip（LAN 预览下请解压后手动放回 workspace 的 tasks/ 与 kb/）。</p>
+        <p class="hint">已保存 {{ library.length }} 份。导出全部 = 多份作业纸 JSON + 当前题库 xlsx 打包 zip（LAN 预览下请解压后手动放回 workspace 的 tasks/ 与 kb/）。</p>
         <p>
-          <button class="btn" :disabled="!library.length || exportingAll" @click="exportAllZip">导出全部（zip：任务包 JSON + 题库 xlsx）</button>
+          <button class="btn" :disabled="!library.length || exportingAll" @click="exportAllZip">导出全部（zip：作业纸 JSON + 题库 xlsx）</button>
         </p>
         <table class="grid" v-if="library.length" style="font-size:12px">
           <thead>
@@ -517,7 +517,7 @@ function engineHint(): void {
             </tr>
           </tbody>
         </table>
-        <p class="hint" v-else>清单为空：点「仅保存」或「导出任务包 JSON」后出现在这里。</p>
+        <p class="hint" v-else>清单为空：点「仅保存」或「导出作业纸 JSON」后出现在这里。</p>
         <p class="hint">
           各包的「目标 tag 绑定 / 变体编排」在「作业纸内容」页维护；整班分层生成在「班级与标签」页。
         </p>

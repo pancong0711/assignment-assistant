@@ -1,6 +1,6 @@
-/** 任务包（taskpad）模型 —— schema 与 docs/04 §1 完全一致。
- *  任务包 = CLI 完整参数 + Web 按钮的后台实体 + 可携带执行记录（docs/05-D2）。
- *  拿到任务包后：`assist sheet make --task <taskpad.json>` 即可出 PDF（D1 CLI 超集）。
+/** 作业纸（taskpad）模型 —— schema 与 docs/04 §1 完全一致。
+ *  作业纸 = CLI 完整参数 + Web 按钮的后台实体 + 可携带执行记录（docs/05-D2）。
+ *  拿到作业纸后：`assist sheet make --task <taskpad.json>` 即可出 PDF（D1 CLI 超集）。
  *  D19 反馈：per_page 可设 1–4（layout.per_page；缺省 竖1横2；竖版为上下行、
  *  横版为左右栏）；引擎帧按 per_page 切分，多题/页时打印版式加实线分隔
  *  （横版=栏间竖线、竖版=行间横线），app 预览同口径。
@@ -9,7 +9,7 @@
  *  watermark 由 {enabled, style} 升级为 {enabled, style, items:[...]}；
  *  items 为 0..N 项水印图层，每项 {image, pos, ratio, alpha}：
  *  - image：本地图片的 file 相对路径 hint（dataURL 只存浏览器 localStorage，
- *    不进任务包 JSON——任务包可携带、不含内嵌大图）；
+ *    不进作业纸 JSON——作业纸可携带、不含内嵌大图）；
  *  - pos：九宫格 3x3（lt/mt/rt/lm/mm/rm/lb/mb/rb），与 engine logo_draw 的
  *    pos_sp 同口径；ratio：相对页宽比例；alpha：透明度 0..1。
  *  兼容 legacy 三槽 university/text/boat：读旧配置时自动映射为 items
@@ -107,7 +107,7 @@ export interface Taskpad {
   course?: string
   class?: string
   term?: string
-  /** D23 变体编排：任务包绑定的学生分组 tag（engine batch pad_tag 首选字段）。
+  /** D23 变体编排：作业纸绑定的学生分组 tag（engine batch pad_tag 首选字段）。
    *  为空 = 由 items 的唯一 tag 推断；混合 tag 包须显式标注（否则引擎报
    *  "未与唯一 tag 绑定"）。仅显式指定时写入 JSON（空值不写字段，兼容引擎）。 */
   target_tag?: string
@@ -213,13 +213,13 @@ export function parseWatermark(raw: unknown): TaskpadWatermark {
   return { enabled, style, pageText: pt === undefined ? true : Boolean(pt), items }
 }
 
-/** 从任意 JSON 解析任务包，做最小校验（容错：grade/journal 可缺省；
+/** 从任意 JSON 解析作业纸，做最小校验（容错：grade/journal 可缺省；
  *  per_page 1–4，越界/缺失按方向缺省 竖1横2；watermark 兼容 items 与
  *  legacy 三槽，见 parseWatermark）。 */
 export function parseTaskpad(raw: unknown): Taskpad {
-  if (typeof raw !== 'object' || raw == null) throw new Error('任务包 JSON 顶层应为对象')
+  if (typeof raw !== 'object' || raw == null) throw new Error('作业纸 JSON 顶层应为对象')
   const o = raw as Record<string, unknown>
-  if (typeof o.id !== 'string' || !o.id) throw new Error('任务包缺少 id')
+  if (typeof o.id !== 'string' || !o.id) throw new Error('作业纸缺少 id')
   const layout = (o.layout ?? {}) as Record<string, unknown>
   const orientation = layout.orientation === 'portrait' ? 'portrait' : 'landscape'
   return {
@@ -254,7 +254,7 @@ export function parseTaskpad(raw: unknown): Taskpad {
  *  - university/text/boat：engine 现行 preset "2603" 的 overrides 形状
  *    （{path?, pos?, ratio?, alpha?}，engine/src/assist/paper/watermark.py
  *    _watermark_paths/_ovarg），按三槽语义取 items 中对应位置的图层；
- *  - dataURL 图片不进任务包：image 为 file 相对路径 hint（调用方在
+ *  - dataURL 图片不进作业纸：image 为 file 相对路径 hint（调用方在
  *    DesignerView 把 dataURL 项映射为文件名 hint）。 */
 export function watermarkForExport(wm: TaskpadWatermark): Record<string, unknown> {
   const out: Record<string, unknown> = {
@@ -275,7 +275,7 @@ export function watermarkForExport(wm: TaskpadWatermark): Record<string, unknown
   return out
 }
 
-/** 任务包导出序列化：watermark 双写 items + 三槽兼容字段（向后兼容
+/** 作业纸导出序列化：watermark 双写 items + 三槽兼容字段（向后兼容
  *  engine 已实现的三槽消费，见 watermarkForExport）。 */
 export function serializeTaskpad(pad: Taskpad): string {
   const payload: Record<string, unknown> = {
@@ -289,7 +289,7 @@ export function serializeTaskpad(pad: Taskpad): string {
     watermark: watermarkForExport(pad.watermark),
     grade: pad.grade,
   }
-  // D23：为空不写 target_tag 字段，保持与缺字段的任务包（engine 兼容）完全一致
+  // D23：为空不写 target_tag 字段，保持与缺字段的作业纸（engine 兼容）完全一致
   if (pad.target_tag) payload.target_tag = pad.target_tag
   if (pad.journal?.length) payload.journal = pad.journal
   return JSON.stringify(payload, null, 2)
@@ -297,7 +297,7 @@ export function serializeTaskpad(pad: Taskpad): string {
 
 /* ---------- D23 变体编排纯逻辑（与 engine paper/batch.py 同口径） ---------- */
 
-/** 任务包归属 tag 推断，镜像 engine `pad_tag`：target_tag 优先；items 唯一
+/** 作业纸归属 tag 推断，镜像 engine `pad_tag`：target_tag 优先；items 唯一
  *  tag 次之；无任何 tag → 'default'；混合 tag → null（需显式绑定/映射）。 */
 export function padInferredTag(items: TaskpadItem[], targetTag?: string): string | null {
   if (targetTag) return targetTag
@@ -321,7 +321,7 @@ export function resolveBindTag(b: PadBinding): string | null {
   return padInferredTag(b.items)
 }
 
-/** 名单 tag 分布中缺包的 tag：名单里有该 tag 的学生、但没有任何任务包
+/** 名单 tag 分布中缺包的 tag：名单里有该 tag 的学生、但没有任何作业纸
  *  实际绑定/可推断到它（engine 会 log warning 跳过这些人；前端给出
  *  "可加 --default 兜底"或补绑定的黄色提示）。 */
 export function missingBoundTags(

@@ -48,7 +48,7 @@ async function exportZip() {
     })
     const name = `assignment-assistant-export-${new Date().toISOString().slice(0, 10)}.zip`
     downloadBlob(blob, name)
-    status.value = `已导出 ${name}：题库 xlsx ×${Object.keys(bin).length} + 任务包 ×${taskpads.length} + fig/README。zip 永不包含 .runtime/（docs/05-D14）。`
+    status.value = `已导出 ${name}：题库 xlsx ×${Object.keys(bin).length} + 作业纸 ×${taskpads.length} + fig/README。zip 永不包含 .runtime/（docs/05-D14）。`
   } finally {
     busy.value = false
   }
@@ -68,7 +68,7 @@ async function importZip() {
     let books = 0
     let pads = 0
     let skipped = 0
-    // 1) 内存恢复：题库 xlsx → kb store；任务包 → 任务包清单
+    // 1) 内存恢复：题库 xlsx → kb store；作业纸 → 作业纸清单
     for (const e of entries) {
       if (e.path.startsWith('kb/') && e.path.endsWith('.xlsx')) {
         const stem = e.path.replace(/^kb\//, '').replace(/\.xlsx$/, '') as KbKind
@@ -94,7 +94,7 @@ async function importZip() {
     if (caps.directoryPicker) {
       const dir = getKbDirHandle() ?? (await pickDirectory())
       if (!dir) {
-        status.value = `已恢复到浏览器内存：题库 ×${books}、任务包 ×${pads}；跳过目录写回（未选择目录）。忽略条目 ×${skipped}。`
+        status.value = `已恢复到浏览器内存：题库 ×${books}、作业纸 ×${pads}；跳过目录写回（未选择目录）。忽略条目 ×${skipped}。`
         return
       }
       if (!(await ensurePermission(dir, 'readwrite'))) {
@@ -109,9 +109,9 @@ async function importZip() {
         // 白名单路径直接落盘（.runtime/.history 已在上游过滤）
         await writeFileInDir(dir, e.path, e.data.slice().buffer as ArrayBuffer)
       }
-      status.value = `已写回 ${dir.name}/（kb/、tasks/、kb/fig/）：题库 xlsx ×${books}、任务包 ×${pads}；忽略条目 ×${skipped}。.runtime/ 永不写入。`
+      status.value = `已写回 ${dir.name}/（kb/、tasks/、kb/fig/）：题库 xlsx ×${books}、作业纸 ×${pads}；忽略条目 ×${skipped}。.runtime/ 永不写入。`
     } else {
-      status.value = `已恢复到浏览器内存（降级模式）：题库 ×${books}、任务包 ×${pads}；忽略条目 ×${skipped}。${caps.browserHint}${caps.insecure ? writeHint : ''}`
+      status.value = `已恢复到浏览器内存（降级模式）：题库 ×${books}、作业纸 ×${pads}；忽略条目 ×${skipped}。${caps.browserHint}${caps.insecure ? writeHint : ''}`
     }
   } catch (e) {
     status.value = `zip 导入失败：${(e as Error).message}`
@@ -131,11 +131,11 @@ async function connectDir() {
 <template>
   <section>
     <div class="card">
-      <h2>导入 / 导出 zip <small style="font-weight:400;color:var(--c-muted)">白名单：kb 题库 xlsx + fig 题图 + 任务包 JSON；.runtime/ 永不打包（docs/05-D14）</small></h2>
+      <h2>导入 / 导出 zip <small style="font-weight:400;color:var(--c-muted)">白名单：kb 题库 xlsx + fig 题图 + 作业纸 JSON；.runtime/ 永不打包（docs/05-D14）</small></h2>
       <p class="hint">
         包结构：<code>kb/&lt;kind&gt;.xlsx</code> × N + <code>kb/fig/</code> +
         <code>tasks/&lt;id&gt;.taskpad.json</code> + <code>manifest.json</code>。
-        导入 zip 会恢复题库与任务包到内存，Chrome/Edge 下同时写回所选本地目录。
+        导入 zip 会恢复题库与作业纸到内存，Chrome/Edge 下同时写回所选本地目录。
       </p>
       <p>
         <button class="btn primary" :disabled="busy || !kb.hasData" @click="exportZip">导出 zip（下载）</button>

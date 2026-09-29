@@ -35,7 +35,7 @@ export const PRINT_GUIDE: PrintGuide = {
     {
       title: '纸张大小 = A4',
       detail:
-        '打印对话框「纸张尺寸」选 A4（部分浏览器称 Letter/A4 自动），任务包版式按 A4 portrait/landscape 排，选错纸张会整体缩放错位。',
+        '打印对话框「纸张尺寸」选 A4（部分浏览器称 Letter/A4 自动），作业纸版式按 A4 portrait/landscape 排，选错纸张会整体缩放错位。',
     },
     {
       title: '边距 = 无（None）',

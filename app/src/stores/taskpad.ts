@@ -4,7 +4,7 @@ import {
   type Taskpad, type TaskpadItem,
 } from '../lib/taskpad'
 
-/** 任务包 store：当前正在设计的任务包 + 已保存任务包清单（library，localStorage）。 */
+/** 作业纸 store：当前正在设计的作业纸 + 已保存作业纸清单（library，localStorage）。 */
 
 const LS_KEY = 'assignment-assistant.taskpads.v1'
 
@@ -50,7 +50,7 @@ export const useTaskpadStore = defineStore('taskpad', {
     setPerPage(v: 1 | 2 | 3 | 4) {
       this.current.layout.per_page = v
     },
-    /** 新建空任务包，可选克隆当前版式/叶眉页脚/水印配置（D19 反馈第 3 项）。 */
+    /** 新建空作业纸，可选克隆当前版式/叶眉页脚/水印配置（D19 反馈第 3 项）。 */
     newPad(cloneStyle: boolean) {
       const cur = this.current
       const next = emptyTaskpad()
@@ -65,7 +65,7 @@ export const useTaskpadStore = defineStore('taskpad', {
       }
       this.current = next
     },
-    /** 导出全部已保存任务包的原始 JSON（清单导出 zip 用，保持落盘原文）。 */
+    /** 导出全部已保存作业纸的原始 JSON（清单导出 zip 用，保持落盘原文）。 */
     savedJsons(): Array<{ id: string; json: string }> {
       return this.saved.map((s) => ({ id: s.id, json: s.json }))
     },
@@ -94,7 +94,7 @@ export const useTaskpadStore = defineStore('taskpad', {
       this.current = parseTaskpad(JSON.parse(found.json))
       return true
     },
-    /** D23 变体编排：改写已保存任务包的 target_tag 绑定（'' = 清空，不写字段）。
+    /** D23 变体编排：改写已保存作业纸的 target_tag 绑定（'' = 清空，不写字段）。
      *  直接反序列化原文 → 覆盖 target_tag → 重序列化（保持其余 JSON 原样）。 */
     setSavedTargetTag(id: string, tag: string): boolean {
       const entry = this.saved.find((s) => s.id === id)
@@ -115,7 +115,7 @@ export const useTaskpadStore = defineStore('taskpad', {
       this.current = pad
       return pad
     },
-    /** 生成新的任务包 id（重复导出时避免互相覆盖） */
+    /** 生成新的作业纸 id（重复导出时避免互相覆盖） */
     renewId() {
       this.current.id = makeTaskpadId()
     },

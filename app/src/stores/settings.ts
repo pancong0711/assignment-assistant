@@ -140,7 +140,7 @@ export const useSettingsStore = defineStore('settings', {
     lastDoctorError: '' as string,
     doctorOk: false as boolean,
     doctorWorkspace: '' as string,
-    /** 水印素材库（name → dataURL；任务包仅引用文件路径 hint） */
+    /** 水印素材库（name → dataURL；作业纸仅引用文件路径 hint） */
     wmAssets: loadWmAssets() as Record<string, string>,
   }),
   getters: {
@@ -257,7 +257,7 @@ export const useSettingsStore = defineStore('settings', {
       return (await this.runDoctor()) && online
     },
     /** 水印素材库（阶段4a 水印编辑器）：name → dataURL，仅本浏览器 localStorage；
-     *  任务包导出只写 file 相对路径 hint，不内嵌 dataURL（可携带、不含大图）。 */
+     *  作业纸导出只写 file 相对路径 hint，不内嵌 dataURL（可携带、不含大图）。 */
     persistWmAsset(name: string, dataUrl: string) {
       this.wmAssets[name] = dataUrl
       this.persistWmAssets()

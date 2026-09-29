@@ -4,7 +4,7 @@ import { useSettingsStore } from '../stores/settings'
 import { parseTaskpad, type Taskpad } from '../lib/taskpad'
 
 /** 批阅工作台（阶段4a 静态可用版，docs/05-D2/D13）。
- *  职责：选任务包 + 选本地学生图片 → 显示每个学生分组的 转录/评阅/报告 占位。
+ *  职责：选作业纸 + 选本地学生图片 → 显示每个学生分组的 转录/评阅/报告 占位。
  *  API 联调（serve 触发）在后续阶段接入；当前以"用 CLI 跑"的指引为主：
  *  assist grade --task <json> --images <dir>（复制按钮）。
  *  输入目录仅列出选中文件，不做任何上传（数据全程本地）。
@@ -13,7 +13,7 @@ import { parseTaskpad, type Taskpad } from '../lib/taskpad'
 const settings = useSettingsStore()
 const status = ref('')
 
-/* ---------- 任务包选择 ---------- */
+/* ---------- 作业纸选择 ---------- */
 const parsed = ref<Taskpad | null>(null)
 const padError = ref('')
 const padFileName = ref('')
@@ -26,11 +26,11 @@ async function onPadFile(e: Event) {
   try {
     parsed.value = parseTaskpad(JSON.parse(await f.text()))
     padError.value = ''
-    status.value = `已载入任务包 ${parsed.value.id}（${parsed.value.items.length} 组选题）。`
+    status.value = `已载入作业纸 ${parsed.value.id}（${parsed.value.items.length} 组选题）。`
   } catch (err) {
     parsed.value = null
     padError.value = (err as Error).message
-    status.value = `任务包解析失败：${padError.value}`
+    status.value = `作业纸解析失败：${padError.value}`
   }
 }
 
@@ -67,7 +67,7 @@ const groups = computed<Array<{ student: string; files: ImgEntry[] }>>(() => {
 })
 
 const GRADE_CMD = computed(() =>
-  `assist grade --task <任务包.json> --images <学生图片目录>`)
+  `assist grade --task <作业纸.json> --images <学生图片目录>`)
 
 const padSummary = computed(() => {  if (!parsed.value) return null
   const p = parsed.value
@@ -95,9 +95,9 @@ onMounted(() => { void settings.pingEngine() })
 <template>
   <section>
     <div class="card">
-      <h2>批阅工作台 <small style="font-weight:400;color:var(--c-muted)">任务包 + 学生图片 → 转录 / 评阅 / 报告（阶段4a 静态版）</small></h2>
+      <h2>批阅工作台 <small style="font-weight:400;color:var(--c-muted)">作业纸 + 学生图片 → 转录 / 评阅 / 报告（阶段4a 静态版）</small></h2>
       <p class="hint">
-        三步：① 选任务包 JSON（作业纸设计页导出的 .taskpad.json）→ ② 选本地学生作业图片（可多选）
+        三步：① 选作业纸 JSON（作业纸设计页导出的 .taskpad.json）→ ② 选本地学生作业图片（可多选）
         → ③ 按学生分组查看 转录/评阅/报告 占位。本页<b>只列出本地文件，不做任何上传</b>；
         真正执行批阅由引擎完成（serve 触发联调在后续阶段接入，当前用 CLI 跑，docs/05-D1 CLI 超集）。
       </p>
@@ -112,22 +112,22 @@ onMounted(() => { void settings.pingEngine() })
     </div>
 
     <div class="card">
-      <h2>① 选择任务包</h2>
+      <h2>① 选择作业纸</h2>
       <p>
-        <label class="btn as-label" for="grade-pad-file">导入任务包 JSON…</label>
+        <label class="btn as-label" for="grade-pad-file">导入作业纸 JSON…</label>
         <input type="file" accept=".json,application/json" hidden id="grade-pad-file" @change="onPadFile" />
         <span class="hint" style="margin-left:8px">{{ padFileName || '尚未选择' }}</span>
       </p>
       <table class="grid" v-if="padSummary" style="max-width:560px">
         <tbody>
-          <tr><th style="width:110px">任务包 id</th><td>{{ padSummary.id }}</td></tr>
+          <tr><th style="width:110px">作业纸 id</th><td>{{ padSummary.id }}</td></tr>
           <tr><th>班级目录</th><td>{{ padSummary.classDir }}</td></tr>
           <tr><th>选题</th><td>{{ padSummary.items }} 组 / {{ padSummary.questions }} 题</td></tr>
-          <tr><th>grade 配置</th><td>{{ padSummary.hasGrade ? '任务包内含 grade 节' : '空（仅出作业纸；批阅参数交给引擎默认值）' }}</td></tr>
+          <tr><th>grade 配置</th><td>{{ padSummary.hasGrade ? '作业纸内含 grade 节' : '空（仅出作业纸；批阅参数交给引擎默认值）' }}</td></tr>
         </tbody>
       </table>
       <p class="hint" v-if="padError" style="color:var(--c-danger)">解析失败：{{ padError }}</p>
-      <p class="hint" v-else-if="!parsed">任务包 = CLI 完整参数（docs/05-D2/D8）：同一份 JSON 也可直接
+      <p class="hint" v-else-if="!parsed">作业纸 = CLI 完整参数（docs/05-D2/D8）：同一份 JSON 也可直接
         <code>assist sheet make --task &lt;file&gt;</code> 出作业纸 PDF。</p>
     </div>
 
@@ -159,7 +159,7 @@ onMounted(() => { void settings.pingEngine() })
 
     <div class="card">
       <h2>③ 转录 / 评阅 / 报告（按学生分组占位）</h2>
-      <p class="hint" v-if="!groups.length">选择任务包与图片后，这里按学生分组显示三步产物占位；阶段4a API 联调（serve 触发）后逐步点亮。</p>
+      <p class="hint" v-if="!groups.length">选择作业纸与图片后，这里按学生分组显示三步产物占位；阶段4a API 联调（serve 触发）后逐步点亮。</p>
       <table class="grid" v-else style="max-width:860px">
         <thead>
           <tr><th>学生</th><th>转录</th><th>评阅</th><th>报告</th></tr>
@@ -175,7 +175,7 @@ onMounted(() => { void settings.pingEngine() })
       </table>
 
       <h3>用 CLI 跑（当前阶段推荐，docs/05-D1）</h3>
-      <p class="hint">把任务包 JSON 与图片放入 workspace 后，在教师机终端执行：</p>
+      <p class="hint">把作业纸 JSON 与图片放入 workspace 后，在教师机终端执行：</p>
       <p>
         <code>{{ GRADE_CMD }}</code>
         <button class="btn small clip-btn" style="margin-left:8px" @click="copyGradeCmd">复制命令</button>

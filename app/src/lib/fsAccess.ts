@@ -7,7 +7,7 @@
  * - 因此能力检测必须同时看 `window.isSecureContext`；不满足时**静默降级**：
  *   文件导入走 <input type=file>（所有浏览器/场景可用），不弹
  *   "当前浏览器不支持" 错误横幅 —— LAN 预览下用 file input 即可完成
- *   名单/成绩/题库 xlsx 与任务包 JSON 的导入。
+ *   名单/成绩/题库 xlsx 与作业纸 JSON 的导入。
  * - "写回/另存/连接目录"等真正的写能力入口在 LAN 下不可用：界面把按钮改为
  *   "下载文件（教师手动放回 workspace）"，并通过 fsWriteHint() 说明原因
  *   （需本机打开：localhost 或 https）。

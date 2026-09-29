@@ -319,7 +319,7 @@ export function writeRosterXlsx(students: RosterStudent[]): ArrayBuffer {
   return XLSX.write(wb, { bookType: 'xlsx', type: 'array' }) as ArrayBuffer
 }
 
-/** 任务包（分组比例 + special_tag 覆盖 + 成绩源 family）→ JSON 字符串（CLI/AI 可读）。
+/** 作业纸（分组比例 + special_tag 覆盖 + 成绩源 family）→ JSON 字符串（CLI/AI 可读）。
  *  D19：score_sources 记录 family 字段，与 engine CLI
  *  `--score family:file[:col[:weight]]`（family 可省=custom）同口径。 */
 export function buildTaskPackage(
@@ -336,14 +336,14 @@ export function buildTaskPackage(
   const pkg = {
     kind: 'assignment-assistant.roster-task-package',
     version: 1,
-    note: '合成示例占位说明：分组比例 + special_tag 参数任务包（M5 成绩管理，docs/05-D18/D19）',
+    note: '合成示例占位说明：分组比例 + special_tag 参数作业纸（M5 成绩管理，docs/05-D18/D19）',
     group_cfg: ratios.map((g) => ({ group_name: g.tag, group_ratio: g.ratio })),
     special_tag_cfg: specialTag,
     punish: punishList,
     // score_sources[].family 与 engine `--score family:file[:col[:weight]]` 对齐（family 可省=custom）
     // VC-5：include_in_aggregation=false = 教师取消勾选（score excluding），
     // 教师综合得分为 PWA 端按勾选集合计算；引擎 CLI 侧需手动省略对应 --score
-    // （任务包 JSON 的该标记为核对提示）。
+    // （作业纸 JSON 的该标记为核对提示）。
     score_sources: sources.map((s) => ({
       family: s.family,
       name: s.name, file: s.fileName,
@@ -357,9 +357,9 @@ export function buildTaskPackage(
   return JSON.stringify(pkg, null, 2)
 }
 
-/** 任务包附带说明文档（md，随 zip 下载） */
+/** 作业纸附带说明文档（md，随 zip 下载） */
 export function taskPackageReadme(): string {
-  return `# 分组比例 + special_tag 任务包（M5 成绩管理 · 附带说明）
+  return `# 分组比例 + special_tag 作业纸（M5 成绩管理 · 附带说明）
 
 本包由 app「班级与标签」选项卡导出（纯前端计算，docs/05-D18/D19），供
 engine \`assist sheet make --roster\` / CLI / AI 阅读。全部示例均为占位

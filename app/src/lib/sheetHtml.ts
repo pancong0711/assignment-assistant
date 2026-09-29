@@ -316,19 +316,19 @@ function pageBlockHtml(pad: Taskpad, items: SheetHtmlItem[], stu: SheetHtmlStude
 </section>`
 }
 
-/* ---------- 主入口：任务包 → 自包含 HTML（与 CLI 同一模板） ---------- */
+/* ---------- 主入口：作业纸 → 自包含 HTML（与 CLI 同一模板） ---------- */
 
 /**
- * 任务包（1 份 = VB-4 打印 / VC-1 模板预览；多份 = VC-2 清单连排预览，
+ * 作业纸（1 份 = VB-4 打印 / VC-1 模板预览；多份 = VC-2 清单连排预览，
  * 多包不分页：包间不加封面/额外分页，页块仍按每生 page-break）。
- * 文档级 @page 方向取第一份任务包（CSS 分页媒体查询限制；预览语义）。
+ * 文档级 @page 方向取第一份作业纸（CSS 分页媒体查询限制；预览语义）。
  */
 export function stringifySheetHtml(
   inputs: SheetHtmlPadInput | SheetHtmlPadInput[],
   opts: SheetHtmlOptions = {},
 ): string {
   const pads = Array.isArray(inputs) ? inputs : [inputs]
-  if (!pads.length) throw new Error('stringifySheetHtml：至少需要一份任务包')
+  if (!pads.length) throw new Error('stringifySheetHtml：至少需要一份作业纸')
   const students = opts.students?.length ? opts.students : SYNTHETIC_STUDENTS
   const date = opts.date ?? todayStr()
   const first = pads[0].pad
@@ -420,9 +420,9 @@ export function printSheetHtml(html: string): void {
   document.body.appendChild(iframe)
 }
 
-/* ---------- 题目展开辅助（VC-2：清单里任一任务包直接预览） ---------- */
+/* ---------- 题目展开辅助（VC-2：清单里任一作业纸直接预览） ---------- */
 
-/** 任务包 items → 模板题帧：从 kb store 取 content/solution/img_path（未命中即跳过）。 */
+/** 作业纸 items → 模板题帧：从 kb store 取 content/solution/img_path（未命中即跳过）。 */
 export function expandPadItems(
   pad: Taskpad,
   bookOf: (kind: KbKind) => KbBook | undefined,

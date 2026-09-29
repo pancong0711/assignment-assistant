@@ -21,7 +21,7 @@ import JSZip from 'jszip'
  *  score excluding，重算/切分只用勾选集合（computeScores 内部按 isIncluded 过滤，
  *  所见即所选，等价 D30 已有的 sources 设置列勾选）。
  *  持久化 localStorage（同 kb store 模式，key: assignment-assistant.roster.v1）；
- *  导出 roster xlsx（engine `assist sheet make --roster` 直接可用）+ JSON + 任务包。 */
+ *  导出 roster xlsx（engine `assist sheet make --roster` 直接可用）+ JSON + 作业纸。 */
 
 interface PersistedRoster {
   students: RosterStudent[]
@@ -226,7 +226,7 @@ export const useRosterStore = defineStore('roster', {
       const list = this.students.map((s) => ({ name: s.name, number: s.number, class: s.class, tag: s.tag }))
       downloadData(JSON.stringify(list, null, 2), 'roster.json', 'application/json')
     },
-    /** 导出"分组比例+special_tag 参数"任务包 zip（xlsx + json + 附带说明 md）。
+    /** 导出"分组比例+special_tag 参数"作业纸 zip（xlsx + json + 附带说明 md）。
      *  D19：score_sources[].family 与 engine CLI --score family:file[:col:w] 对齐。 */
     async downloadTaskPackage(): Promise<string> {
       const zip = new JSZip()
