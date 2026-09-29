@@ -54,6 +54,9 @@ export interface SheetHtmlOptions {
   students?: SheetHtmlStudent[]
   /** 本浏览器水印素材库（basename → dataURL；来自 settings.wmAssets） */
   wmAssets?: Record<string, string>
+  /** B3/D46-5：题图素材库（basename → dataURL；来自 settings.figAssets）。
+   *  命中 → <img class="q-img" src=dataURL>（与引擎 base64 内嵌同视觉）；未命中 → 原占位框。 */
+  figAssets?: Record<string, string>
   /** 页脚/页眉日期（缺省 = 今天，YYYY-MM-DD） */
   date?: string
   /** D43-6 内容开关：是否渲染"参考答案：…"行；缺省 true（CLI/zip 现状）。
@@ -264,6 +267,17 @@ function wmLayerHtml(wm: WmResolved[], pageText: boolean, pageN: number): string
   return parts.join('')
 }
 
+/** B3/D46-5：题图渲染——有 img_path 且 figAssets 命中 basename → 真图；否则占位框（现状）。 */
+function figHtml(imgPath?: string, figAssets?: Record<string, string>): string {
+  if (!imgPath) return ''
+  const base = imgPath.split('/').pop() ?? imgPath
+  const hit = figAssets?.[base]
+  if (hit && hit.startsWith('data:')) {
+    return `<img class="q-img" src="${escapeHtml(hit)}" alt="题图">`
+  }
+  return `<div class="q-img-ph">[题图：${escapeHtml(imgPath)}]</div>`
+}
+
 /* ---------- KaTeX（与模板同一段 include + 同一段渲染脚本） ---------- */
 
 /** Mechanism docs/13 D43-3：cdn = 现状（引擎 j2 同款）；relative = 同源 ./katex/（app/public/katex
@@ -384,7 +398,8 @@ function pageBlockHtml(pad: Taskpad, items: SheetHtmlItem[], stu: SheetHtmlStude
                        wm: WmResolved[], date: string,
                        includeSolution = true,
                        includeWatermark = true,
-                       includePageText = true): string {
+                       includePageText = true,
+                       figAssets?: Record<string, string>): string {
   const layout = pad.layout
   const orientation = layout.orientation === 'landscape' ? 'landscape' : 'portrait'
   const perPage = normalizePerPage(layout.per_page, layout.orientation)
@@ -417,7 +432,7 @@ function pageBlockHtml(pad: Taskpad, items: SheetHtmlItem[], stu: SheetHtmlStude
     ${frames}${items.map((fr) => `<div class="sheet-frame">
       <div class="q-id">${escapeHtml(fr.id)}${fr.tag ? ` <span class="q-tag">【${escapeHtml(fr.tag)}】</span>` : ''}</div>
       <div class="q-content">${escapeHtml(fr.content)}</div>
-      ${fr.imgPath ? `<div class="q-img-ph">[题图：${escapeHtml(fr.imgPath)}]</div>` : ''}
+      ${figHtml(fr.imgPath, figAssets)}
       ${(includeSolution && fr.solution) ? `<div class="q-solution">参考答案：${escapeHtml(fr.solution)}</div>` : ''}
     </div>`).join('\n    ')}
   </div>
@@ -473,7 +488,7 @@ export function stringifySheetHtml(
         const veryLast = padIdx === pads.length - 1
           && si === stuList.length - 1 && pi === chunks.length - 1
         pageSections.push(pageBlockHtml(pad, chunk, stu, chunks.length, pi + 1, veryLast, wm, date,
-          includeSolution, includeWatermark, includePageText))
+          includeSolution, includeWatermark, includePageText, opts.figAssets))
       })
     }
   }

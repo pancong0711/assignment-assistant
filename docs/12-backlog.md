@@ -287,3 +287,14 @@ C1 登录/课程/作业浏览/下载（迁 2601 xuexitong 模块）；C2 上传=
 - ✅ ScoreSource.sheetName + normalizeSource 透传修复（**E3 隐患**：uid 之前被 normalize 吃掉 → IDB raw 键没落盘，本轮修复并冒烟复验 uid 存活）；
 - ✅ store listSourceSheets/setSourceSheet；RosterView 行尾 ⇄ sheet 切换按钮 + sheet= 显示；
 - ✅ 引擎 scores.py 本按名匹配 sheet，CLI 不动；冒烟 4/4 PASS；build 0 err。
+
+---
+
+# 2026-09-29 · B3/D46-5 题图素材库完成（预览真图 + kb/fig 写回 + 回归自检上 CI）
+
+- ✅ settings.figAssets（wmAssets 同模式）；KbEditorView 行内📷上传→即时入库+缩略+img_path 自动填 fig/名；
+- ✅ FSA 连接时写回 kb/fig/<文件名>（引擎 CLI base64 通道打通）；未连接给手动指引；
+- ✅ sheetHtml figAssets opt + figHtml()：命中→<img class=q-img>（与引擎同视觉），未命中→占位框现状；③④/整班/自包含全链透传；
+- ✅ app/tests/selfcheck-roster-fig.mjs 11 断言 ALL PASS（多sheet/点名册回退/题图三族），CI tests.yml 硬门禁挂载；
+- build 0 err；localStorage 超限静默降级=回占位框（后续可迁 IndexedDB，idbRaw 现成）。
+- 至此第 9/10 轮反馈全部清账：D46-1~4 + D43-7 + B1 + B3(前端半) 全部上线。

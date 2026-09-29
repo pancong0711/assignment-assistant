@@ -2,11 +2,60 @@
 import { computed, onMounted, ref } from 'vue'
 import { KB_KINDS, KB_KIND_LABELS, type KbKind } from '../lib/kb'
 import { useKbStore, getKbDirHandle } from '../stores/kb'
-import { detectCapabilities, fsWriteHint } from '../lib/fsAccess'
+import { detectCapabilities, fsWriteHint, writeFileInDir } from '../lib/fsAccess'
+import { useSettingsStore } from '../stores/settings'
 
 const kb = useKbStore()
+const settings = useSettingsStore()
 const caps = detectCapabilities()
 const writeHint = fsWriteHint()
+
+/* ---------- B3/D46-5：题图上传（kb/fig 素材库，水印 wmAssets 同模式） ----------
+ * 行内 📷 按钮 → 选图片 → dataURL 存 settings.figAssets[basename]（预览即时显真图）；
+ * 同时把 img_path 写入该行（缺省 fig/<文件名>）；已连接 workspace kb 目录时
+ * 尽力写回 <dir>/kb/fig/<文件名>（引擎 CLI 通道 base64 内嵌即可用真图）。 */
+async function uploadFig(row: { id: string; content: string; img_path: string; page: string; related: string; type: string; solution: string; note: string }) {
+  const input = document.createElement('input')
+  input.type = 'file'
+  input.accept = 'image/*'
+  const file = await new Promise<File | null>((res) => {
+    input.onchange = () => res(input.files?.[0] ?? null)
+    input.click()
+  })
+  if (!file) return
+  const reader = new FileReader()
+  const dataUrl = await new Promise<string>((res) => { reader.onload = () => res(String(reader.result ?? '')); reader.readAsDataURL(file) })
+  if (!dataUrl.startsWith('data:image')) { status.value = '不是有效的图片文件。'; return }
+  settings.persistFigAsset(file.name, dataUrl)
+  if (!row.img_path) row.img_path = `fig/${file.name}`
+  kb.touch(); kb.persist()
+  // 尽力写回 workspace（FSA 可用时）；失败不影响浏览器内预览
+  let wrote = ''
+  const dir = getKbDirHandle()
+  if (dir) {
+    try {
+      await writeFileInDir(dir, `kb/fig/${file.name}`, dataUrlToBlob(dataUrl))
+      wrote = '｜已写回 kb/fig/' + file.name + '（引擎 CLI 出图可用）'
+    } catch { wrote = '｜⚠ 写回 kb/fig/ 失败（仅本浏览器预览生效）' }
+  } else {
+    wrote = '｜未连接 kb 目录：图片仅存本浏览器预览；教师可手动把图放到 workspace 的 kb/fig/ 后由引擎内嵌'
+  }
+  status.value = `题图 ${file.name} 已入库（img_path=${row?.img_path || '（该行原有路径保留）'}）${wrote}`
+}
+
+function dataUrlToBlob(dataUrl: string): Blob {
+  const m = /^data:([^;,]+);base64,(.+)$/s.exec(dataUrl)
+  if (!m) return new Blob([])
+  const bin = atob(m[2])
+  const bytes = Uint8Array.from(bin, (c) => c.charCodeAt(0))
+  return new Blob([bytes], { type: m[1] })
+}
+
+function figThumb(imgPath: string): string {
+  if (!imgPath) return ''
+  const base = imgPath.split('/').pop() ?? imgPath
+  return settings.figAssets[base] ?? ''
+}
 
 const activeKind = ref<KbKind>('problems')
 const activeChap = ref('')
@@ -152,7 +201,17 @@ function addChapter() {
           <tr v-for="(r, idx) in visibleRows" :key="r.id + idx">
             <td v-for="col in (['id','content','img_path','page','related','type','solution','note'] as const)" :key="col"
                 :class="col === 'content' ? 'cell-content' : ''">
-              <input
+              <template v-if="col === 'img_path'">
+                <div style="display:flex; align-items:center; gap:4px">
+                  <input v-model="r.img_path" @change="kb.touch(); kb.persist()" placeholder="fig/xxx.png" style="min-width:70px" />
+                  <img v-if="figThumb(r.img_path)" :src="figThumb(r.img_path)" alt="题图缩略"
+                    style="height:26px; max-width:60px; object-fit:contain; border:1px solid var(--c-border); border-radius:4px"
+                    title="本浏览器素材库命中（B3/D46-5）：预览/打印显示此真图" />
+                  <button class="btn small" title="B3/D46-5：上传题图→本浏览器素材库即时预览；已连 kb 目录时写回 kb/fig/（引擎通道 base64 内嵌）"
+                    @click="uploadFig(r)">📷</button>
+                </div>
+              </template>
+              <input v-else
                 v-model="r[col]"
                 @change="kb.touch(); kb.persist()"
               />
