@@ -47,6 +47,8 @@ function download(): void {
         class="sm-frame"
         :srcdoc="html"
         title="作业纸 HTML 打印预览（每生分页 · A4 · 水印 · KaTeX）"
+        aria-label="作业纸打印版预览：Tab 聚焦后可用方向键滚动"
+        tabindex="0"
       ></iframe>
       <p class="hint" style="margin:6px 0 0">
         预览=打印一致（每生分页块 · @page A4 横/竖 · per_page 网格 · 水印层 · KaTeX 同源渲染）；

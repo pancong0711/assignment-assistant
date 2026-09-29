@@ -646,6 +646,8 @@ const nonTranslationRatios = computed(() => roster.ratios.filter((g) => g.tag !=
       <iframe v-if="showClassPreview && classPreviewHtml"
         class="class-overlay-frame"
         :srcdoc="classPreviewHtml"
+        aria-label="整班作业纸预览：Tab 聚焦后可用方向键滚动"
+        tabindex="0"
         title="整班作业纸预览"
         sandbox="allow-same-origin"
       ></iframe>

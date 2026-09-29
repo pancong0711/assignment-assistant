@@ -261,9 +261,17 @@ def build_context(task: dict, students: list[dict], kb_dir: Path, ws: Path,
 
 def render_assignment_html(task: dict, students: list[dict], kb_dir: Path, ws: Path,
                            assets_dir: Path | None = None, no_watermark: bool = False,
-                           date: str | None = None) -> str:
-    """渲染自包含 HTML 字符串（CLI 与单测共用入口）。"""
+                           date: str | None = None,
+                           include_solution: bool = True,
+                           blank_header: bool = False) -> str:
+    """渲染自包含 HTML 字符串（CLI 与单测共用入口）。
+
+    D43 遗留①：include_solution（参考答案开关）与 blank_header（空白学籍页眉）在此统一
+    灌入 doc —— StrictUndefined 下模板引用必须始终有定义（demo/测试路径也安全）。
+    """
     ctx = build_context(task, students, kb_dir, ws, assets_dir, no_watermark, date)
+    ctx["doc"]["include_solution"] = include_solution
+    ctx["doc"]["blank_header"] = blank_header
     tpl = _env().get_template(TEMPLATE_NAME)
     return tpl.render(**ctx)
 
@@ -277,21 +285,37 @@ def default_out_path(ws: Path, task: dict) -> Path:
 def sheet_html_from_task(task_path: Path, ws: Path, out_path: Path | None = None,
                          roster_path: str | None = None,
                          no_watermark: bool = False,
-                         assets_dir: Path | None = None) -> tuple[Path, int, int]:
+                         include_solution: bool = True,
+                         students_mode: str = "roster",
+                         assets_dir: Path | None = None
+                         ) -> tuple[Path, int, int]:
     """CLI 主入口：任务包 + 可选 roster → 自包含 HTML。
 
     roster 缺失/为空时用合成 学生A/B（informational，不写真实学生信息）。
+    D43 遗留①（docs/13 D43-A1 parity）：`include_solution`（--no-solution 参考答案开关，
+    与 PWA ③段「显示参考答案」同语义）与 `students_mode`（--students roster|sample|blank，
+    blank = 单份空白模板：页眉学籍三空位，与 PWA「显示学生示例」未勾同语义）。
     返回 (输出路径, 学生数, 总页数)。
     """
     task = load_task(Path(task_path).expanduser().resolve())
     ws = Path(ws).expanduser().resolve()
     kb_dir = ws / "kb"
     synthetic = False
+    blank_mode = False
     students: list[dict] = []
     if roster_path:
         rp = Path(roster_path).expanduser().resolve()
         if rp.exists():
             students = read_roster(rp)
+    if students_mode == "blank":
+        # 单份空白模板（与 PWA「显示学生示例」未勾同语义；页脚页码仍正常）
+        students = [{"name": "", "number": "", "class": "", "tag": ""}]
+        blank_mode = True
+        logger.info("--students blank → 单份空白模板（页眉学籍三空位，docs/13 D43-A1）")
+    elif students_mode == "sample":
+        synthetic = True
+        students = [dict(s) for s in SYNTHETIC_STUDENTS]
+        logger.info("--students sample → 合成 学生A/B 两份（informational）")
     if not students:
         synthetic = True
         students = [dict(s) for s in SYNTHETIC_STUDENTS]
@@ -300,6 +324,9 @@ def sheet_html_from_task(task_path: Path, ws: Path, out_path: Path | None = None
     ctx = build_context(task, students, kb_dir, ws,
                         assets_dir=assets_dir or ASSIST_ROOT / "assets",
                         no_watermark=no_watermark)
+    doc = ctx["doc"]
+    doc["include_solution"] = include_solution
+    doc["blank_header"] = blank_mode
     html = _env().get_template(TEMPLATE_NAME).render(**ctx)
     out = (Path(out_path).expanduser().resolve() if out_path
            else default_out_path(ws, task))

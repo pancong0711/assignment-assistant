@@ -33,16 +33,52 @@ export type SheetHtmlProvider = (id: string, json: string, students: RosterStude
 let sheetHtmlProvider: SheetHtmlProvider | null = null
 export function setSheetHtmlProvider(fn: SheetHtmlProvider | null) { sheetHtmlProvider = fn }
 
-/** [D33 接线] KO use the stringifySheetHtml path (sheetHtml.ts) as provider — engine zip batch 将内嵌 html */
+/** [D33 接线 + D43 遗留②] provider 使用 stringifySheetHtml（sheetHtml.ts）；
+ *  KaTeX 走同源 relative（sheets/<id>.html 相对 ./katex/）→ batch zip 需内嵌
+ *  sheets/katex/（见 addKatexToZip：从 PWA 同源 dist 经 fetch 收集，一次 608KB）。 */
 export async function ensureDefaultSheetHtmlProvider(kbBookOf: (kind: string) => unknown) {
   if (sheetHtmlProvider) return
   setSheetHtmlProvider((_id: string, json: string, students) => {
     const pad = parseTaskpad(JSON.parse(json))
     return stringifySheetHtml(
       [{ pad, items: expandPadItems(pad, kbBookOf as never) }],
-      { students: students as never }
+      { students: students as never, katex: 'relative' }
     )
   })
+}
+
+/** D43 遗留②：把 KaTeX 自托管选择集（css/js/auto-render+woff2×20）写进 zip 的
+ *  sheets/katex/** —— provider 相对路径即可离线渲染（解压后目录随行）。
+ *  资源从 PWA 同源 dist fetch（./katex/）；任一失败则跳过（HTML 该文件 CDN 兜底，不报错）。 */
+export async function addKatexToZip(zip: JSZip): Promise<boolean> {
+  try {
+    const files: Array<[string, string]> = [
+      ['katex.min.css', './katex/katex.min.css'],
+      ['katex.min.js', './katex/katex.min.js'],
+      ['contrib/auto-render.min.js', './katex/contrib/auto-render.min.js'],
+    ]
+    const cssRes = await fetch(new URL(files[0][1], document.baseURI).href)
+    if (!cssRes.ok) return false
+    const base = new URL('./katex/', document.baseURI)
+    // 字体名清单解析自 css（url(fonts/*.woff2)）——与 copy-katex 选择集同口径
+    const css = await cssRes.text()
+    const names = new Set<string>()
+    for (const m of css.matchAll(/url\(fonts\/([^)'"\s]+)\.woff2\)/g)) names.add(m[1])
+    zip.file('sheets/katex/katex.min.css', css)
+    for (const [, rel] of files.slice(1)) {
+      const res = await fetch(new URL(rel, document.baseURI).href)
+      if (!res.ok) return false
+      zip.file(`sheets/${rel.replace('../', '')}`, await res.blob())
+    }
+    for (const n of names) {
+      const res = await fetch(new URL(`fonts/${n}.woff2`, base).href)
+      if (!res.ok) return false
+      zip.file(`sheets/katex/fonts/${n}.woff2`, await res.blob())
+    }
+    return true
+  } catch {
+    return false
+  }
 }
 async function trySheetHtml(id: string, json: string, students: RosterStudent[]): Promise<string | null> {
   if (!sheetHtmlProvider) return null
@@ -131,6 +167,13 @@ export async function buildVariantBatchZip(
     if (htmlOf[id]) zip.file(`sheets/${id}.html`, htmlOf[id] as string)
   }
 
+  if (sheetHtmlProvider) {
+    // D43 遗留②：sheets/*.html 走 relative ./katex/ → zip 内嵌资源一次（~608KB）
+    const katexOk = await addKatexToZip(zip)
+    if (katexOk) zip.file('sheets/katex/README.txt',
+      'KaTeX 0.16.4 自托管选择集（katex.min.css + katex.min.js + contrib/auto-render.min.js + fonts/*.woff2）。\n' +
+      'sheets/<id>.html 以相对路径 ./katex/ 引用：解压后整目录打开 → 公式离线渲染（docs/05-D44 同源子集同口径）。\n')
+  }
   if (!sheetHtmlProvider) {
     zip.file('sheets/README-html.txt', [
       'sheets/ — VB-5 HTML 主通道产物位（docs/14 §VB-5 / 05-D30）。', '',

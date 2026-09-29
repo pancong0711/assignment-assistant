@@ -214,3 +214,16 @@ C1 登录/课程/作业浏览/下载（迁 2601 xuexitong 模块）；C2 上传=
 - ✅ dev/build 全链自愈（fresh clone `npm run dev` 先经 predev 拷贝）；dist/katex 608K×20 woff2 与 D43 手工 vendor 同口径；
 - ✅ 未采纳方案（SW 运行时装载 / 引擎 /install）与理由记 docs/13-D44 & docs/05-D44；start.bat/sh 未动；
 - 决策依据：xlsx/jszip 同模式先例、LAN 二屏 insecure context 对 SW 的硬伤、零用户动作优于一键安装。
+
+---
+
+# 2026-09-29 · D45 段序重排 + D43 遗留三件收口
+
+- ✅ **D45**（docs/05-D45）：作业纸设计页工序化重排 ①版式 ②内容 ③预览/清单 ④输出与交付；
+  输出/预览独立成组件（SheetOutputSection / SheetPreviewSection），SheetLayoutView 瘦身至表单；
+  开关挂父级共享；动线 = 版式 → 选题 → 预览 → 交付（同日反馈四段一序拍板）；
+- ✅ D43 遗留①：`assist sheet html` + `--no-solution` / `--students roster|sample|blank`
+  （与 PWA 内容开关同语义；j2/CLI/测试全通；StrictUndefined 默认值兜底）；
+- ✅ D43 遗留②：batch zip `sheets/*.html` 换 relative KaTeX + 内嵌 `sheets/katex/**`（一次性 608KB，离线渲染）；
+- ✅ D43 遗留③：三类预览 iframe aria-label + tabindex="0"；
+- 备查：D43 遗留② 的 CDN 兜底语义保留（fetch 失败静默跳过）；引擎 make（reportlab）仍不关 answer（教师 PDF 命令行按需 --no-solution 候补）。

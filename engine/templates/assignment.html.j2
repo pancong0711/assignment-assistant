@@ -128,9 +128,11 @@ body {
     <div class="sh-title">{{ doc.title }}</div>
     <div class="sh-info">
       {% if doc.course %}<span>课程：{{ doc.course }}</span>{% endif %}
-      <span>班级：{{ stu.class_display }}</span>
+      {% if doc.blank_header %}<span>班级：＿＿＿＿＿＿</span>
+      <span>学号：＿＿＿＿＿＿</span>
+      <span>姓名：＿＿＿＿＿＿</span>{% else %}<span>班级：{{ stu.class_display }}</span>
       <span>学号：{{ stu.number }}</span>
-      <span>姓名：{{ stu.name }}</span>
+      <span>姓名：{{ stu.name }}</span>{% endif %}
       <span class="sh-assign">作业：{{ doc.id }}</span>
       <span class="sh-assign">日期：{{ doc.date }}</span>
     </div>
@@ -142,7 +144,7 @@ body {
       <div class="q-id">{{ fr.id }}{% if fr.tag %} <span class="q-tag">【{{ fr.tag }}】</span>{% endif %}</div>
       <div class="q-content">{{ fr.content }}</div>
       {% if fr.img_b64 %}<img class="q-img" src="data:{{ fr.img_mime }};base64,{{ fr.img_b64 }}" alt="题图">{% elif fr.img_label %}<div class="q-img-ph">[题图：{{ fr.img_label }}]</div>{% endif %}
-      {% if fr.solution %}<div class="q-solution">参考答案：{{ fr.solution }}</div>{% endif %}
+      {% if doc.include_solution and fr.solution %}<div class="q-solution">参考答案：{{ fr.solution }}</div>{% endif %}
     </div>
     {% endfor %}
   </div>

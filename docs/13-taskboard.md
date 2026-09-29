@@ -182,3 +182,32 @@ c) 开关状态是否跨会话持久化（建议：不持久化，页内即用�
 **候选方案记录（未采纳）**：B = 设置中心运行时装载（多 CDN 源探测 + Cache Storage 写入 + 相对路径经 SW 服务；SW 现有 fetch 处理器零改动即可命中；缺点：LAN http 二屏 insecure context 下 SW 不可用）；C = 引擎侧 /install 管道下载到 workspace/.runtime/katex + serve 挂载（代价：把 PWA 离线能力绑定引擎在线）。两者留作后续可选增强，当前不实施。
 
 **验证**：`npm run build`（prebuild 自动拷贝）dist/katex 608K×20 woff2；dev `predev` 生效（/katex/* 同源 200）；bundle 哈希不变（index-CaeZC7bF.js）；Pages 部署后 /katex/katex.min.js 仍 200。
+
+---
+
+## D45 + D43 遗留 实施记录（2026-09-29 下午 · 同日会话）
+
+### D45 设计页段序重排 + 输出段独立拆分（用户拍板「按推荐」）
+| 项 | 落点 |
+|---|---|
+| 段序：①版式 → ②内容 → ③预览/清单 → ④输出（工艺顺序=版式→选题→预览→交付） | SheetDesignView 重排（锚点 sticky 导航同步；form→items→preview→output 四锚 id） |
+| 「输出与交付」独立组件 | 新增 `components/SheetOutputSection.vue`（props 注入 currentInput/templateStudents/includeAnswers/showSamples/getKbBinaries/engineButtonsDisabled；自身持 status；`#output` 卡） |
+| 「预览与清单」独立组件 | 新增 `components/SheetPreviewSection.vue`（iframe 实时 + 开关 + 清单合卡；开关 defineModel 由父级 SheetDesignView 挂载 → ③/④段共享；`#preview` 卡） |
+| ①段瘦身 | SheetLayoutView 只剩 工具栏+版式+头部+水印（535→232 行）；工具栏留在①（新建/克隆/导入/仅保存）；导出 JSON/zip 随④ |
+| 工艺闭环 | ①→②→③→④；改动①（如 per_page）→③实时刷新 → ④按同开关口径输出 |
+
+### D43 遗留① 引擎 CLI parity（`assist sheet html` 内容开关）
+- `cli.py`：+ `--no-solution`（参考答案开关，与 PWA「显示参考答案」未勾同语义）+ `--students roster|sample|blank`（对应 roster 现状/合成学生A/B/单份空白模板=「显示学生示例」未勾）；
+- `htmlfile.py`：`sheet_html_from_task(include_solution, students_mode)` + 公共入口 `render_assignment_html(..., include_solution, blank_header)`（StrictUndefined 安全：模板引用始终有定义）；
+- `templates/assignment.html.j2`：`{% if doc.include_solution and fr.solution %}` 参考答案条件化；`{% if doc.blank_header %}` 页眉三空位（＿＿＿＿＿＿，与 PWA BLANK_STUDENT 同口径）；
+- `engine/tests/test_sheet_html.py`：新增 ②b 用例（--no-solution 无"参考答案"/公式源码保留；sample=2 份；blank=1 份+三空位+data-student=""）。
+
+### D43 遗留② batch zip 内容 KaTeX 化
+- `app/src/lib/variantBatch.ts`：provider 输出改 `katex:'relative'`；新增 `addKatexToZip()`（从 PWA 同源 dist fetch → `sheets/katex/**` 一次 ~608KB：css+js+auto-render+woff2×20）；zip 内嵌后解压整目录打开 → sheets/*.html 公式离线渲染；资源拉取失败静默跳过（HTML 自身 CDN 兜底）。
+
+### D43 遗留③ iframe 键盘可达性（最小补丁）
+- ③预览 iframe / 弹层预览 iframe / 整班预览 iframe 均补 `aria-label` + `tabindex="0"`（Tab 聚焦后方向键滚动）。
+
+**未动**：taskpad schema；引擎 make（reportlab PDF 线）；start.bat/sh。
+
+**验证**：`vue-tsc -b && vite build` 0 err（nymHash index-E2K_YjIV.js 257.6KB）；引擎 playwright 性质：AST 解析 0 错，引擎 pytest 在 CI（tests workflow）复核（本地无 pip 环境）。

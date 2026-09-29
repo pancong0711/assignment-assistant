@@ -472,3 +472,17 @@ orientation/per_page/水印/页眉页脚），教师操作路径被拆散、体�
 4. 未采纳：B 运行时装载（SW+Cache Storage+多 CDN 探测——LAN http 二屏 insecure context 不可用）、
    C 引擎 /install 下载 workspace/.runtime/katex + serve 挂载（PWA 离线被绑定引擎在线）——留作备选；
 5. 铁律不变：taskpad schema 不动；引擎 j2/CLI 仍 CDN（内容开关 parity 亦留待后续）。
+
+## D45 · 作业纸设计页工序化段序：①版式 ②内容 ③预览/清单 ④输出（2026-09-29 用户拍板）
+
+**背景**：D43-4 后内容段（选题篮）排在预览之后，与"先定版式/水印 → 再选题 → 然后预览作业纸"的
+自然工序相反；预览与输出在文件归属上仍挂在 SheetLayoutView（版式视图）名下，职责不清。
+
+**决策**：
+1. 段序重排：① 版式与头部（工具栏+版式+页眉页脚+头部+水印）→ ② 内容（选题篮/items/变体绑定）
+   → ③ 预览与清单（iframe 实时+开关+清单合卡）→ ④ 输出与交付（打印/下载/引擎件/导出）；
+2. 文件拆分：SheetOutputSection / SheetPreviewSection 独立组件；SheetLayoutView 只剩表单（232 行）；
+3. 开关（includeAnswers/showSamples）挂父级 SheetDesignView，③④段共享（props/defineModel）；
+4. 职责边界：工具栏（新建/克隆/导入/仅保存）留①；"导出 JSON/导出全部 zip" 归④（输出动作）；
+   清单归③（清单+预览合卡既定语义，D43-4）；
+5. 域分层与单一预览/整班预览唯一入口不变（D43-3/6）；schema 不动。
