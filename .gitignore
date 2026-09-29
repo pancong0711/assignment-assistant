@@ -68,5 +68,3 @@ app/public/katex/
 
 # selfcheck esbuild 产物（tests/）
 app/tests/*.bundle.mjs
-# selfcheck esbuild 产物
-app/tests/*.bundle.mjs
