@@ -124,7 +124,7 @@
 | **Windows start.bat v10.3** | ✅（工程链路 hexflight）——等待用户 Windows 端对 v10（第 5 轮）复测的全部通过反馈 |
 | **TinyTeX 可选安装按钮**（体检页 + render 三档探测） | ⏳（S3 一格；非阻塞） |
 | `include_in_aggregation` 引擎侧 batch 自动省略 | 审计结论：非 gap（CLI 端 `--score` 显式列名已承重；batch.json 不需消费该字段——D37/D37.b） |
-| **KaTeX 离线打包** | ⏳（可选，目前 CDN）|
+| **KaTeX 离线打包** | ✅（npm 依赖+构建期注入 dist，0.16.4，docs/05-D44；CLI/j2 仍 CDN）|
 | **report.py TEMPLATE_HINT → j2 模板引用接管**（VB-7） | ⏳（S3 完成时其一收口） |
 | **PyPI `assist-engine` 发版** | ⏳（PyPI outage 后，恢复可走 Trusted Publisher 流程；不阻塞主线） |
 | **学习通 C 组** | ⏳（最终目标，与账号窗口联调） |

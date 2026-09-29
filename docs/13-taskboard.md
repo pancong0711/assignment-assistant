@@ -165,3 +165,20 @@ c) 开关状态是否跨会话持久化（建议：不持久化，页内即用�
 **未动**：taskpad schema（grade 节保留）；引擎代码 0 改动（CLI parity `--no-solution/--students blank|sample` 留待后续，见下"遗留"）。
 
 **遗留（非阻塞）**：① 引擎 j2/CLI 的 content 开关 parity；② batch zip 内 sheets/*.html 仍 CDN 态（体积考量）；③ WCAG：iframe 键盘导航提示。
+
+---
+
+## D44 · KaTeX 资源归属：npm 依赖 + 构建期拷贝（2026-09-29 拍板 · 本轮实施）
+
+**拍板**：KaTeX 600KB vendor 资产**不入远程仓库**；归属 = `npm 依赖（katex@0.16.4 锁版）+ 构建期拷贝 public/katex`（与 xlsx/jszip 同模式）。用户侧**零配置**（与"设置中心可直接配置、最好不需要用户管理环境"的最优解=无需配置一致）；start.bat/sh 不动。
+
+**落点**：
+- `app/package.json`：dependencies + `katex: "0.16.4"`（锁死，勿用 `^`——与 engine `htmlfile.py KATEX_VERSION` / `assignment.html.j2` CDN 口径锁定，parity 哨兵护航）；scripts + `predev/prebuild: node tools/copy-katex.mjs`；
+- `app/tools/copy-katex.mjs`：node_modules/katex/dist → public/katex（**选择集**：katex.min.css + katex.min.js + contrib/auto-render.min.js + fonts/*.woff2 ×20 = 608KB，与 D43 前手工 vendor 子集同口径；woff/ttf 不进 dist）；
+- `.gitignore` + `app/public/katex/`；`git rm -r --cached app/public/katex`（历史旧 blob 保留，前向不再入库）；
+- SettingsView 自检卡不动（语义仍真：资源随 dist 发布）；sheetHtml 三模式/predev 手动跑一次即复原。
+- fresh clone 后未 build 时 `npm run dev` 由 `predev` 自动拷贝（dev 无需先 build）。
+
+**候选方案记录（未采纳）**：B = 设置中心运行时装载（多 CDN 源探测 + Cache Storage 写入 + 相对路径经 SW 服务；SW 现有 fetch 处理器零改动即可命中；缺点：LAN http 二屏 insecure context 下 SW 不可用）；C = 引擎侧 /install 管道下载到 workspace/.runtime/katex + serve 挂载（代价：把 PWA 离线能力绑定引擎在线）。两者留作后续可选增强，当前不实施。
+
+**验证**：`npm run build`（prebuild 自动拷贝）dist/katex 608K×20 woff2；dev `predev` 生效（/katex/* 同源 200）；bundle 哈希不变（index-CaeZC7bF.js）；Pages 部署后 /katex/katex.min.js 仍 200。
