@@ -245,3 +245,67 @@ c) 是否顺带把**题图占位框**也纳入同一开关族（独立小开关 
 
 **实施批次**：并入下一批（D45 已上线；本条改动量小：sheetHtml 一参数 + SheetPreviewSection
 一 checkbox + 父级透传 + 测试冒烟；可与 D43-7c 一并做）。
+
+---
+
+## D46 · 名单/成绩导入健壮性与预览补全（第 9 轮反馈登记 · 2026-09-29）
+
+### D46-1 · 教务点名册解析失败（现场 bug，最高优先）
+
+**现象**：班级与标签页导入教务点名册 → "未读到学生行"，名单不更新。
+
+**根因（考古确认）**：新旧代码对"点名册"读的是**两种不同文件**——
+| | 旧 `_legacy/…/student.py` Student.__init__ | 新 PWA `readRosterXlsx` + 引擎 `files/roster.py` |
+|---|---|---|
+| 目标文件 | **zjxu 教学系统名册表**（无标准表头） | **姓名/学号/班级 表头的花名册** |
+| 取数方式 | 硬位置切片：`df.iloc[8:-3, 列2/列0/列4]`（第 9~倒数第 4 行；name=C 列、number=A 列、class=E 列） | `sheet_to_json` 把**首行当表头**→ HEADER_MAP 匹配 姓名/name/student/学生… |
+| 结果 | 旧代码能吃真·点名册 | 真·点名册前 8 行是说明文字、无"姓名"表头 → key_map 全 None → **0 人**（迁移时丢失的形态支持） |
+
+**pandas 回答**：**没有装、也不需要装**。Python 环境 = workspace `.runtime/venv`（uv 管理），依赖清单里
+只有 openpyxl/loguru/reportlab/pypdf/Pillow/click/jinja2 等；engine 迁移原则明确"**去 pandas/numpy**"
+（report.py/layout.py/watermark.py/grouping.py/rain.py 各文件头注都写着）。旧代码用 pandas 只是历史选择，
+openpyxl 完全等价可复刻 iloc 切片语义。**不要**为这个问题引入 pandas（体积/镜像/维护三重代价）。
+
+**修复方案（D46-1a，推荐）**：PWA `readRosterXlsx` 加**回退分支**——
+1. 主路径不变（表头自适应，命中即返回）；
+2. 若 0 人 → 原始矩阵二次扫描：在前 ~15 行找"姓名/名字/Name"单元格所在行作为表头行，从下行起按该行列位取数
+   （比旧代码硬编码 8/-3/2/0/4 稳健，兼容说明行数变化）；
+3. 再不行 → 旧式**固定位置回退**（C/A/E 三列 × 第 9 行~倒数第 4 行，姓名列非空过滤），并在预览卡 notes
+   标注「按 zjxu 名册位置模式读取（无表头）」让教师可核对；
+4. PreviewTableCard 展示实际采用的模式 + 前 3 行，所见即所选。
+同步项：`buildRosterPreview` notes 口径一致；引擎 `files/roster.py read_roster` 加同款回退（保持 CLI/PWA 同语义，
+D1 超集铁律）；新增自测用例（合成"前 8 行说明+无表头"fixture）。
+
+**其他 family 同类风险排查结论**：
+- `exam`（教务期末）：旧代码用 df["姓名"]/df["学号"]/df["期末(必填)"] **具名列**，新版 parseExam 同样按列名定位 → ✅ 无此问题；
+- `xuexitong_assignment`（学习通作业统计）：新版按"成绩"行/列关键词定位（parseXuexitongAssignment/Stat）→ 结构假设与旧代码同源，✅ 基本对齐（建议 fixture 实测一次）；
+- `rainclass`（雨课堂汇总）：新版 parseRainclass 已实现"无表头、第 2 行列标题、每课两列取均值"特殊结构 → ✅ 有专门处理；
+- ⚠️ 唯一系统性缺口 = **roster family 的 zjxu 名册形态**（本 bug）；另注意所有 family 目前只读**第一个 sheet**
+  （多 sheet 成绩源 = 既有 backlog B1 尾巴，一并列入待办）。
+
+### D46-2 · 导入名单后"没更新"（同一根因 + UX 加固）
+- 直接原因 = D46-1（0 人时 students 不覆盖，仅提示文案，宽表/整班预览自然"没更新"）；
+- UX 加固：0 人失败时状态条升级为醒目 notice（附"文件前 3 行原样显示"）；成功时自动滚动到宽表并高亮人数 chip；
+- 手动兜底入口（批量粘贴名单）已有，保留。
+
+### D46-3 · 成绩源行内「预览」按钮（VC-6 遗留尾巴）
+- 现状：只在**本次导入**后显示 `sourcePreviewLatest` 一张卡；源列表行内只有 重选文件解析/移除，**刷新页面后无法再看某源的解析预览**（且 addScoreSource 未持久化原始 buffer，预览需重新选文件）；
+- 方案：每个成绩源行尾加 👁 预览按钮 → 弹 PreviewTableCard（表头+前 3 行+family 定位说明+分数列/权重当前值）；
+  数据面：roster store 给每个 source 存轻量 rawMatrix 头部（如前 30 行截断，控制 localStorage 体积）或存整份 ArrayBuffer（IndexedDB），实施时二选一（倾向 IndexedDB 全量，重解析/rescoreWithFamily 也免二次选文件）；
+- 名单（students 主表）行不需要（宽表本身就是名单预览）。
+
+### D46-4 · 多成绩源合并总览（全部成绩预览）
+- 现状：宽表（VC-5 score-wide-table）其实已存在 = 行学生 × 列(姓名/学号/班级/各源分数/tag/punish)，但入口深、无"合并总览"语义命名，且未勾选列只显示划线值；
+- 方案：宽表升级为正式「全部成绩总览」卡：① 每列头显示源名+family+权重+勾选态；② 增加"综合得分列"显式高亮（勾选取舍即时重算预览）；③ 导出 xlsx 按钮（复用 rosterXlsx.writeRosterXlsx，带 tag/punish/score 全列）；④ 与 D46-3 的行内预览互补（总览=横向对比，行内=单源纵向核对）；
+- 规模小（现有宽表改造），放 D46-1 之后做。
+
+### 批次顺序（并入全局规划）
+| 批 | 内容 | 备注 |
+|---|---|---|
+| E1 | **D46-1(+2)** 点名册回退解析（PWA+引擎双侧）+ 失败 UX | 现场可用性 bug，最优先 |
+| E2 | **D43-7** 水印开关（默认勾） | 上一轮已登记，改动小 |
+| E3 | **D46-3** 源行内预览（含 store 侧 raw 留存决策） | 中 |
+| E4 | **D46-4** 全部成绩总览升级 | 中 |
+| 后续 | 多 sheet 成绩源（B1 尾巴）、其余 family fixture 实测 | 低 |
+
+**待拍板**：① D46-1 三级回退是否都要（推荐：表头自适应 + 关键词找表头行两级即可，固定位置回退做成"高级"开关或直接不做——旧格式若确有需求再加）；② D46-3 raw 留存走 IndexedDB 全量还是 localStorage 截断矩阵；③ D46-4 总览导出 xlsx 是否要包含未勾选源列（建议：包含但灰显，与宽表一致）。
