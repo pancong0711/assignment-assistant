@@ -35,6 +35,10 @@ const props = defineProps<{
   includeAnswers: boolean
   /** 「显示学生示例」开关（口径回显用） */
   showSamples: boolean
+  /** D43-7 水印图层开关 */
+  includeWatermark: boolean
+  /** D43-7 页码大字开关 */
+  includePageText: boolean
   /** 题库 xlsx 导出回调（导出全部 zip 用；返回 Record<kind, ArrayBuffer|undefined>） */
   getKbBinaries: () => Record<string, ArrayBuffer | undefined>
   /** 引擎依赖按钮置灰口径（与其它视图同为 settings.needsSetup） */
@@ -72,6 +76,8 @@ async function downloadBrowserVersion() {
     const html = await buildSelfContainedHtml(input, {
       students: props.templateStudents(),
       includeSolution: props.includeAnswers,
+      includeWatermark: props.includeWatermark,
+      includePageText: props.includePageText,
       wmAssets: settings.wmAssets,
     })
     downloadData(html, `${pad.current.id}.html`, 'text/html')
@@ -130,6 +136,8 @@ function stringify(input: PadInput, includeSolution: boolean): string {
   return stringifySheetHtml(input, {
     students: props.templateStudents(),
     includeSolution,
+    includeWatermark: props.includeWatermark,
+    includePageText: props.includePageText,
     wmAssets: settings.wmAssets,
     katex: 'relative',
   })

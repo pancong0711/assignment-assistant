@@ -32,6 +32,8 @@ export interface RosterStudent {
 export type ScoreFamily = 'roster' | 'exam' | 'xuexitong_assignment' | 'xuexitong_stat' | 'rainclass' | 'custom'
 
 export interface ScoreSource {
+  /** D46-3：源唯一 id（IndexedDB raw 键；创建时生成，随 persist 序列化） */
+  uid?: string
   /** 源名称（如"雨课堂-第3章签到"），教师起名 */
   name: string
   /** 原始文件名（提示用） */

@@ -59,6 +59,11 @@ export interface SheetHtmlOptions {
   /** D43-6 内容开关：是否渲染"参考答案：…"行；缺省 true（CLI/zip 现状）。
    *  PWA 预览/打印/导出按「显示参考答案」勾选传入（默认不勾=false）。 */
   includeSolution?: boolean
+  /** D43-7 水印图层开关：false = 整层不画（含三槽占位框）；缺省 true。
+   *  PWA ③段「显示水印图层」勾选传入（默认勾=现状）。与 pad.watermark.enabled（属性）是 AND 关系。 */
+  includeWatermark?: boolean
+  /** D43-7 页码大字水印开关：false = 「第 N 页」大字不画（图层不受影响）；缺省 true。 */
+  includePageText?: boolean
   /** KaTeX 资源模式（见文件头注释）：'cdn' 缺省 | 'relative' 同源 | 'raw' 内联 */
   katex?: 'relative' | 'cdn' | 'raw'
   /** katex='raw' 时由 fetchSelfContainedKatex() 注入的完整资源 */
@@ -377,7 +382,9 @@ document.addEventListener('DOMContentLoaded', function () {
 function pageBlockHtml(pad: Taskpad, items: SheetHtmlItem[], stu: SheetHtmlStudent,
                        pagesTotal: number, pageN: number, isVeryLast: boolean,
                        wm: WmResolved[], date: string,
-                       includeSolution = true): string {
+                       includeSolution = true,
+                       includeWatermark = true,
+                       includePageText = true): string {
   const layout = pad.layout
   const orientation = layout.orientation === 'landscape' ? 'landscape' : 'portrait'
   const perPage = normalizePerPage(layout.per_page, layout.orientation)
@@ -397,7 +404,7 @@ function pageBlockHtml(pad: Taskpad, items: SheetHtmlItem[], stu: SheetHtmlStude
     : ''
   // 该页题帧（调用方已按 per_page 切好）
   return `<section class="sheet-page${orientation === 'landscape' ? ' landscape' : ''}${isVeryLast ? ' last' : ''}" data-student="${escapeHtml(stu.name)}" data-page="${pageN}">
-  ${pad.watermark.enabled ? wmLayerHtml(wm, pad.watermark.pageText !== false, pageN) : ''}
+  ${pad.watermark.enabled && includeWatermark ? wmLayerHtml(wm, pad.watermark.pageText !== false && includePageText, pageN) : ''}
   <div class="sheet-header">
     <div class="sh-title">${escapeHtml(title)}</div>
     <div class="sh-info">
@@ -441,6 +448,9 @@ export function stringifySheetHtml(
   const mode = opts.katex ?? 'cdn'
   // D43-6：参考答案开关（缺省 true = CLI/zip 现状口径；PWA 模板态默认 false）
   const includeSolution = opts.includeSolution !== false
+  // D43-7：水印图层/页码大字开关（缺省 true = 现状；PWA ③段两 checkbox 默认勾）
+  const includeWatermark = opts.includeWatermark !== false
+  const includePageText = opts.includePageText !== false
   const first = pads[0].pad
   const orientation = first.layout.orientation === 'landscape' ? 'landscape' : 'portrait'
   const docTitle = String(first.layout.header.title ?? '') || '作业纸'
@@ -463,7 +473,7 @@ export function stringifySheetHtml(
         const veryLast = padIdx === pads.length - 1
           && si === stuList.length - 1 && pi === chunks.length - 1
         pageSections.push(pageBlockHtml(pad, chunk, stu, chunks.length, pi + 1, veryLast, wm, date,
-          includeSolution))
+          includeSolution, includeWatermark, includePageText))
       })
     }
   }

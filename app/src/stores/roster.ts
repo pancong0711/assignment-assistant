@@ -10,6 +10,7 @@ import {
   type PreviewTable,
 } from '../lib/rosterXlsx'
 import { downloadData, writeFileInDir } from '../lib/fsAccess'
+import { idbPut, idbGet, idbDel } from '../lib/idbRaw'
 import JSZip from 'jszip'
 
 /** 班级与成绩 store（M5 成绩管理，docs/05-D18；成绩源格式预设 docs/05-D19）。
@@ -121,6 +122,8 @@ export const useRosterStore = defineStore('roster', {
     async addScoreSource(file: File, family: ScoreFamily = 'custom'): Promise<{ message: string; preview: PreviewTable }> {
       const preview = await buildScoreSourcePreview(file, family)
       const src = await readScoreSourceXlsx(file, file.name, family)
+      // D46-3：原始 ArrayBuffer 入 IndexedDB（👁回看/reparse/rescore 免二次选文件；失败静默降级）
+      if (src.uid) void idbPut(src.uid, await file.arrayBuffer())
       this.sources.push(src)
       this.dirty = true
       this.persist()
@@ -143,12 +146,39 @@ export const useRosterStore = defineStore('roster', {
       return ''
     },
     async rescoreWithFamily(idx: number, file: File, family: ScoreFamily): Promise<void> {
+      const oldUid = this.sources[idx]?.uid
       const src = await readScoreSourceXlsx(file, file.name, family)
+      if (oldUid) src.uid = oldUid   // 沿用原 uid（raw 覆盖写，不产生孤儿键）
+      void idbPut(src.uid ?? '', await file.arrayBuffer())
       this.sources.splice(idx, 1, src)
       this.dirty = true
       this.persist()
     },
+    /** D46-3：用 IndexedDB 里的原始文件按当前 family 重新解析（免二次选文件）。 */
+    async reparseFromRaw(idx: number): Promise<string> {
+      const src = this.sources[idx]
+      if (!src?.uid) return '该源无留存原始文件（旧数据）：请「重选文件解析」。'
+      const buf = await idbGet(src.uid)
+      if (!buf) return 'IndexedDB 中原始文件缺失：请「重选文件解析」重建留存。'
+      const fresh = await readScoreSourceXlsx(new File([buf], src.fileName), src.fileName, src.family)
+      fresh.uid = src.uid
+      fresh.name = src.name          // 教师改过的源名保留
+      this.sources.splice(idx, 1, fresh)
+      this.dirty = true
+      this.persist()
+      return `已按原始文件重新解析「${src.name}」（family=${src.family}）。`
+    },
+    /** D46-3：行内👁预览——优先用 IndexedDB raw 即时重建 PreviewTable。返回 null=无 raw。 */
+    async previewSource(idx: number): Promise<PreviewTable | null> {
+      const src = this.sources[idx]
+      if (!src?.uid) return null
+      const buf = await idbGet(src.uid)
+      if (!buf) return null
+      return buildScoreSourcePreview(buf, src.family)
+    },
     removeSource(idx: number) {
+      const uid = this.sources[idx]?.uid
+      if (uid) void idbDel(uid)
       this.sources.splice(idx, 1)
       this.dirty = true
       this.persist()

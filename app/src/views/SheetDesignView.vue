@@ -27,6 +27,9 @@ const settings = useSettingsStore()
 /** D43-6 内容开关（默认不勾；③/④段共享） */
 const includeAnswers = ref(false)
 const showSamples = ref(false)
+/** D43-7：水印双开关（默认勾选 = 现状视觉） */
+const includeWatermark = ref(true)
+const includePageText = ref(true)
 
 const pageStatus = ref('')
 
@@ -75,8 +78,12 @@ onMounted(() => { /* 通知中心占位（各段经 notify 上抛 pageStatus） 
       <SheetPreviewSection
         :include-answers="includeAnswers"
         :show-samples="showSamples"
+        :include-watermark="includeWatermark"
+        :include-page-text="includePageText"
         @update:include-answers="includeAnswers = $event"
         @update:show-samples="showSamples = $event"
+        @update:include-watermark="includeWatermark = $event"
+        @update:include-page-text="includePageText = $event"
         @notify="(m) => { pageStatus = String(m) }"
       />
     </div>
@@ -87,6 +94,8 @@ onMounted(() => { /* 通知中心占位（各段经 notify 上抛 pageStatus） 
         :template-students="templateStudents"
         :include-answers="includeAnswers"
         :show-samples="showSamples"
+        :include-watermark="includeWatermark"
+        :include-page-text="includePageText"
         :get-kb-binaries="getKbBinaries"
         :engine-buttons-disabled="settings.needsSetup"
         @notify="(m) => { pageStatus = String(m) }"
