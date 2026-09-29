@@ -25,8 +25,8 @@ defineProps<{
     <p class="hint" :class="{ notice: tone === 'warn' }" v-if="preview.notes.length">
       列映射说明（与引擎同款宽松列名 rule）：<code v-for="n in preview.notes" :key="n" style="display:inline-block;margin:1px 4px 1px 0">{{ n }}</code>
     </p>
-    <p class="hint">导入 <b>{{ preview.rowCount }}</b> 条；下表为表头 + 前 3 行预览（完整数据已读入名单表/宽表，可继续核对）。</p>
-    <div style="overflow:auto; max-height:260px; border:1px solid var(--c-border); border-radius:8px">
+    <p class="hint">导入 <b>{{ preview.rowCount }}</b> 条；下表 = **全文件预览模式**（表头 + 实际数据行，最多 500 行可滚动，D47-6）。</p>
+    <div style="overflow:auto; max-height:420px; border:1px solid var(--c-border); border-radius:8px">
       <table class="grid preview-table">
         <thead>
           <tr><th v-for="h in preview.headers" :key="h">{{ h }}</th></tr>

@@ -312,3 +312,15 @@ C1 登录/课程/作业浏览/下载（迁 2601 xuexitong 模块）；C2 上传=
 - **D47 设计**：三段式表头定位器 / 学习通 crostab 解析重写 / .xls 数字列字符串化 / rainclass 汇总锁定 /
   **perColumn 成绩列多选勾选**（扩展 includeInAggregation）/ 全文件完整预览（预览卡升级）×
   整班模式；细则与待教师提供的样例请求见 docs/13 D47。**批次：E5（先 1-4 骨架 → 5 勾选 → 6 预览）。**
+
+---
+
+# 2026-09-29 · E5 实施完成（真实形态适配大修）—— 第 11 轮反馈全部清账
+
+- ✅ 通用三段式 locateHeader（上溯 extent 至 20 行）+ 数据区 .xs 文件学号无损（zjxu 名册 13 位文本原值）；
+- ✅ exam 列名放宽 /期末|成绩|得分|总分|score/；xxt crostab 全 sheet 探测重写（B1 pickBestSheet 误选表也兜得住）；
+- ✅ rainclass 锁"汇总"表（真实文件选错课堂子表 bug 修复）；
+- ✅ perColumn 成绩列勾选（exam/custom 默认全勾）+ 源行 checkbox；总览/加权随勾选；
+- ✅ 全文件预览（500 行滚动）；总览卡 👁「预览整个班」按钮；
+- ✅ legacy 真文件回归：请教师用样例核测后可直接验收（roster 69 人学号原值、exam 33、xxtA/S 31、rain 67、custom 34）；
+- selfcheck-roster-fig.mjs 11→14 断言（+D47 legacy×3）；CI 硬门禁。

@@ -188,6 +188,17 @@ export const useRosterStore = defineStore('roster', {
       } catch { return [] }
     },
     /** B1：切换该源使用的 sheet 并按当前 family 重解析（raw 留存时免选文件）。 */
+    /** D47-5：勾选/取消某源某列（perColumn——总览显示与综合加权口径随教师管理） */
+    toggleSourceColumn(idx: number, colName: string): string {
+      const src = this.sources[idx]
+      if (!src?.includedColumns || !src?.allNumericColumns) return '该源无限定数值列（旧数据或不支持）。'
+      const has = src.includedColumns.some((c) => c.name === colName)
+      src.includedColumns = has
+        ? src.includedColumns.filter((c) => c.name !== colName)
+        : [...src.includedColumns, { name: colName, index: src.allNumericColumns.find((a) => a.name === colName)?.index ?? -1 }]
+      this.touch()
+      return has ? `已取消「${colName}」列（不进该源聚合/总览）` : `已勾选「${colName}」列`
+    },
     async setSourceSheet(idx: number, sheetName: string): Promise<string> {
       const src = this.sources[idx]
       if (!src?.uid) return '该源无留存原始文件，无法切换 sheet：请「重解析」重新选文件。'

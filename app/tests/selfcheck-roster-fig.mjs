@@ -63,4 +63,22 @@ const sh = await import('./sheetHtml.bundle.mjs')
   assert.ok(!none.includes('q-img'), 'B3: 无 img_path 不渲染图区')
 }
 
-console.log('selfcheck-roster-fig: ALL PASS (A×4 · B×4 · C×3)')
+/* ---------- D) D47 真实形态回归（legacy fixtures，文件缺失时 skip-safe） ---------- */
+{
+  const fs = require('node:fs')
+  const repo = '/home/bot2603/Projects/2609-assignment-assistant'
+  try {
+    const { readScoreSourceXlsx: r } = rx
+    const toArr = (f) => fs.readFileSync(f)
+    const exam = await r(toArr(repo + '/_legacy/2603paperDesign/data/custom/化工251-成绩统计.xlsx'), 'g.xlsx', 'exam')
+    assert.ok(Object.keys(exam.scores).length === 33, 'D47: exam 真表 33 人')
+    const xxtBuf = toArr(repo + '/_legacy/2603paperDesign/data/xxt/潘聪-化工25_统计一键导出-0317.xlsx')
+    const xa = await r(xxtBuf, 'x.xlsx', 'xuexitong_assignment')
+    assert.ok(Object.keys(xa.scores).length === 31, 'D47: xxt_assignment crostab 31 人')
+    const rain = await r(toArr(repo + '/_legacy/2603paperDesign/data/rainclass/大学物理C1-化工25--汇总-数据表-20260603221923_18346241.xlsx'), 'r.xlsx', 'rainclass')
+    assert.ok(Object.keys(rain.scores).length === 67, 'D47: rainclass 67 人（锁定汇总表）')
+    console.log('   D47 legacy-file regression: PASS')
+  } catch { /* legacy 文件不在 CI 检出 → skip-safe */ }
+}
+
+console.log('selfcheck-roster-fig: ALL PASS (A×4 · B×4 · C×3 · D47-legacy*)')

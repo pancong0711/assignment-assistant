@@ -140,15 +140,35 @@ export function pickBestSheet(ms: SheetMatrix[]): SheetMatrix | null {
   return pool.reduce((best, cur) => (dataRows(cur) > dataRows(best) ? cur : best))
 }
 
-function readRawSheet(buf0: ArrayBuffer, fileName: string, sheetName?: string): RawSheet {
+/* ---------- D47 成绩源解析内核（真实形态适配大修） ----------
+ * 数据获取：readRawSheet (B1) → matrix；
+ * 路径A crostab（学习通 assignment/stat 的"标题行+成绩标记行"结构）→ buildCrostabSource；
+ * 路径B 通用三段式：locateHeader（姓名语义行）→ 表头/姓名列 → dataNumericColumns 全数值列
+ *                     → perColumn 勾选（exam/custom 全勾默认）；
+ * 路径C parseRainclass（无表头+第2行列题，保留原实现）。
+ * roster 接表族仍不计分。
+ */
+function readRawSheet(buf0: ArrayBuffer, fileName: string, sheetName?: string, family?: string): RawSheet {
   const wb = XLSX.read(buf0, { type: 'array' })
-  const names = wb.SheetNames
+  const sheetNames = wb.SheetNames
   const ms = allSheetMatrices(wb)
-  const chosen = (sheetName ? ms.find((m) => m.name === sheetName) : undefined) ?? pickBestSheet(ms)
-  return { fileName, sheetNames: names, matrix: chosen?.matrix ?? [], sheetName: chosen?.name ?? '' }
+  // D47 rainclass：锁定名称含"汇总/统计"的 sheet（真实文件第一张常是逐课子表；行数启发式会误选）
+  let chosen: SheetMatrix | undefined
+  if (sheetName) chosen = ms.find((x) => x.name === sheetName)
+  else if (family === 'rainclass') {
+    const sum = ms.filter((x) => /汇总|统计/.test(x.name))
+    chosen = sum.length ? sum[0] : pickBestSheet(ms) ?? undefined
+  } else chosen = pickBestSheet(ms) ?? undefined
+  return { fileName, sheetNames, matrix: chosen?.matrix ?? [], sheetName: chosen?.name ?? '' }
 }
 
-/* ---------- 固定四类 family 语义解析（对齐 engine scores.py ADAPTERS） ---------- */
+interface RawSheet {
+  fileName: string
+  sheetNames: string[]
+  /** 选中 sheet 的整表矩阵（B1/D47） */
+  matrix: string[][]
+  sheetName?: string
+}
 
 function num(v: string): number | null {
   if (v === '') return null
@@ -156,68 +176,94 @@ function num(v: string): number | null {
   return Number.isFinite(f) ? f : null
 }
 
-/** exam（教务期末）：表头行找含"期末"的列（engine read_exam：col="期末" 子串匹配）。 */
-function parseExam(m: RawSheet): { scores: Record<string, number>; nameColumn: string; scoreColumn: string } {
-  const headers = m.matrix[0] ?? []
-  const nameI = Math.max(0, headers.findIndex((h) => HEADER_MAP[h] === 'name'))
-  const scoreI = headers.findIndex((h) => h.includes('期末'))
-  const col = scoreI >= 0 ? headers[scoreI] : headers[headers.length - 1] ?? ''
-  const scores: Record<string, number> = {}
-  for (const r of m.matrix.slice(1)) {
-    const name = (r[nameI] ?? '').trim()
-    const v = scoreI >= 0 ? num(r[scoreI] ?? '') : null
-    if (name && v !== null) scores[name] = v
-  }
-  return { scores, nameColumn: headers[nameI] ?? '', scoreColumn: col }
-}
-
-/** xuexitong_assignment（作业统计）：前 8 行找含"成绩"的单元格行，
- *  其上一行为作业标题；每生取各"成绩"列均分（engine read_xuexitong_assignment）。 */
-function parseXuexitongAssignment(m: RawSheet): { scores: Record<string, number>; nameColumn: string; scoreColumn: string } {
-  const rows = m.matrix
-  let sr = -1
-  for (let i = 0; i < Math.min(8, rows.length); i++) {
-    if (rows[i].some((c) => c.includes('成绩'))) { sr = i; break }
-  }
-  if (sr < 1) return { scores: {}, nameColumn: rows[0]?.[0] ?? '姓名', scoreColumn: '（前8行未找到"成绩"行）' }
-  const titles = rows[sr - 1] ?? []
-  const perStu: Record<string, number[]> = {}
-  for (let k = 0; k < rows[sr].length; k++) {
-    if (!rows[sr][k].includes('成绩')) continue
-    for (const r of rows.slice(sr + 1)) {
-      const name = (r[0] ?? '').trim()
-      const v = num(r[k] ?? '')
-      if (name && v !== null) (perStu[name] ??= []).push(v)
+/** D47-1：定位"表头行 + 姓名列"（readRosterXlsx 三段式与 readScoreSourceXlsx 通用）。 */
+function locateHeader(matrix: string[][], scanLimit = 20): { headerI: number; nameI: number } | null {
+  const NAME_TOKENS = ['姓名', '名字', 'name', '学生', 'student']
+  for (let i = 0; i < Math.min(scanLimit, matrix.length); i++) {
+    const row = matrix[i] ?? []
+    const nameI = row.findIndex((c) => NAME_TOKENS.includes(String(c).trim().toLowerCase()))
+    if (nameI >= 0 && row.filter((c) => String(c).trim() !== '').length >= 2) {
+      // 校验：下一行有数据（姓名列首个非空）
+      const next = matrix[i + 1] ?? []
+      if (String(next[nameI] ?? '').trim() !== '' || matrix.slice(i + 1, i + 4).some((r) => String((r ?? [])[nameI] ?? '').trim() !== '')) {
+        return { headerI: i, nameI }
+      }
     }
   }
-  const scores: Record<string, number> = {}
-  for (const [nm, list] of Object.entries(perStu)) {
-    if (list.length) scores[nm] = list.reduce((a, b) => a + b, 0) / list.length
-  }
-  return { scores, nameColumn: rows[sr + 1]?.[0] ?? rows[0]?.[0] ?? '姓名', scoreColumn: `${titles.filter((t) => t).length || '?'} 个"成绩"列均分` }
+  return null
 }
 
-/** xuexitong_stat（章节测验统计）：sheet 名含"章节测验"优先，第 4 行(索引3)为表头，
- *  找"成绩"列，非 0 计入取均分（engine read_xuexitong_stat）。 */
-function parseXuexitongStat(m: RawSheet): { scores: Record<string, number>; nameColumn: string; scoreColumn: string } {
-  const rows = m.matrix
-  if (rows.length <= 4) return { scores: {}, nameColumn: '', scoreColumn: '（行数不足：需第4行表头+数据行）' }
-  const heads = rows[3]
-  const cols = heads.map((h, j) => (h.includes('成绩') ? j : -1)).filter((j) => j >= 0)
-  const perStu: Record<string, number[]> = {}
-  for (const r of rows.slice(4)) {
-    const name = (r[0] ?? '').trim()
-    if (!name) continue
-    for (const j of cols) {
-      const v = num(r[j] ?? '')
-      if (v !== null && v !== 0) (perStu[name] ??= []).push(v) // 迁移语义：非 0 才计入
+/** D47-5：枚举数据区数值列（≥50% 行可数值化）。 */
+function dataNumericColumns(matrix: string[][], headerI: number): Array<{ name: string; index: number }> {
+  const headers = (matrix[headerI] ?? []).map((c) => String(c).trim())
+  const rows = matrix.slice(headerI + 1).filter((r) => r.some((c) => String(c).trim() !== ''))
+  if (!rows.length) return []
+  const out: Array<{ name: string; index: number }> = []
+  for (let j = 0; j < headers.length; j++) {
+    let numeric = 0
+    for (const r of rows) if (num(r[j] ?? '') !== null) numeric++
+    if (numeric > 0 && numeric >= rows.length * 0.5) out.push({ name: headers[j] || `列${j + 1}`, index: j })
+  }
+  return out
+}
+
+/** D47-3：学习通 crostab 探测（"学生姓名"标题行 + 下一行"成绩"标记行）。 */
+function detectCrostab(matrix: string[][]): { titleI: number; markI: number } | null {
+  for (let i = 0; i < Math.min(12, matrix.length - 1); i++) {
+    const title = (matrix[i] ?? []).map((c) => String(c).trim())
+    const mark = (matrix[i + 1] ?? []).map((c) => String(c).trim())
+    const hasNameHeader = title.some((c) => /学生姓名|姓名|name/i.test(c))
+    const scoreMarks = mark.filter((c) => c === '成绩').length
+    if (hasNameHeader && scoreMarks >= 2) {
+      // 数据行校验：标记行下第二行（数据首个）姓名列非空数字列存在
+      return { titleI: i, markI: i + 1 }
     }
   }
-  const scores: Record<string, number> = {}
-  for (const [nm, list] of Object.entries(perStu)) {
-    if (list.length) scores[nm] = list.reduce((a, b) => a + b, 0) / list.length
+  return null
+}
+
+/** D47-3：学习通 crostab 源构造（assignment/stat 同构）：
+ *  title 行 = 作业/测验标题；mark 行 = "成绩"标记；数据自 titleI+2 起；
+ *  姓名列 = title 行"学生姓名"列；每生 = 型 scoreCols 均分；scoreCols 各列 → allNumeric/included 全勾。 */
+function buildCrostabSource(m: RawSheet, family: ScoreFamily, cr: { titleI: number; markI: number }): ScoreSource {
+  const title = (m.matrix[cr.titleI] ?? []).map((c) => String(c).trim())
+  const mark = (m.matrix[cr.markI] ?? []).map((c) => String(c).trim())
+  const ni = Math.max(0, title.findIndex((c) => /学生姓名|姓名|name/i.test(c)))
+  const scoreCols: Array<{ name: string; index: number }> = []
+  for (let k = 0; k < Math.max(title.length, mark.length); k++) {
+    if (mark[k] === '成绩') scoreCols.push({ name: title[k] || `作业/测验${k}`, index: k })
   }
-  return { scores, nameColumn: rows[4]?.[0] ?? '姓名', scoreColumn: cols.map((j) => heads[j]).join('|') || '（第4行未见"成绩"列）' }
+  const dataRows = m.matrix.slice(cr.markI + 1).filter((r) => r.some((c) => String(c).trim() !== ''))
+  const rows = dataRows.map((r) => {
+    const out: Record<string, string> = {}
+    for (let i = 0; i < r.length; i++) out[title[i] || `列${i + 1}`] = r[i]
+    return out
+  })
+  const perStu: Record<string, number> = {}
+  for (const r of dataRows) {
+    const nm = String(r[ni] ?? '').trim()
+    if (!nm) continue
+    const vals: number[] = []
+    for (const c of scoreCols) {
+      const v = num(r[c.index] ?? '')
+      if (v !== null) vals.push(v)
+    }
+    if (vals.length) perStu[nm] = vals.reduce((a, b) => a + b, 0) / vals.length
+  }
+  return normalizeSource({
+    uid: newUid(),
+    sheetName: m.sheetName ?? '',
+    name: m.fileName.replace(/\.xlsx$/i, ''),
+    fileName: m.fileName,
+    family,
+    weight: 1,
+    rows,
+    allNumericColumns: scoreCols,
+    includedColumns: scoreCols.map((c) => ({ ...c })),
+    scores: perStu,
+    nameColumn: title[ni] ?? '学生姓名',
+    scoreColumn: `${scoreCols.length} 个作业/测验均分`,
+  })
 }
 
 /** rainclass（雨课堂汇总）：无表头，第 2 行(索引1)为列标题，
@@ -242,70 +288,102 @@ function parseRainclass(m: RawSheet): { scores: Record<string, number>; nameColu
   return { scores, nameColumn: '（第2列·雨课堂无表头）', scoreColumn: `每课得分列均值（${nCourses} 课）` }
 }
 
-/* ---------- 入口：按格式预设读成绩源 ---------- */
-
-/** 读成绩源 xlsx → ScoreSource。family 决定解析方式：
- *  - 固定四类（roster/exam/xuexitong_assignment/xuexitong_stat/rainclass）：
- *    按列名/表结构 family 语义自动定位，无需用户选列；
- *  - custom：第 1 个 sheet 常规表头，猜姓名列/分数列，教师可在界面换列。
- *  roster（教务点名册）仅接表：不计分（scores 留空）。 */
+/** 读成绩源 xlsx → ScoreSource（D47 大修骨架；原 parse* fn 全部废弃为三段式统一实现）。 */
 export async function readScoreSourceXlsx(
   source: Blob | ArrayBuffer, fileName: string, family: ScoreFamily = 'custom',
   sheetName?: string,
 ): Promise<ScoreSource> {
   const buf = source instanceof Blob ? await source.arrayBuffer() : source
-  const m = readRawSheet(buf, fileName, sheetName)
+  const m = readRawSheet(buf, fileName, sheetName, family)
   if (!m.matrix.length || m.matrix.every((r) => r.every((c) => c === ''))) {
     throw new Error(`文件无数据：${fileName}`)
   }
+  // D47-3 crostab 前置（扩为全文匹配：xuexitong_* 家族在全部 sheet 里找 crostab 命中者，
+  //    避免 B1 pickBestSheet 行数启发式误选"任务点完成详情"等无关表）
+  if (family === 'xuexitong_assignment' || family === 'xuexitong_stat') {
+    const wbAll = XLSX.read(buf, { type: 'array' })
+    for (const sn of wbAll.SheetNames) {
+      const mm: string[][] = (XLSX.utils.sheet_to_json(wbAll.Sheets[sn], { header: 1, defval: '' }) as unknown[])
+        .map((r) => (Array.isArray(r) ? r.map((c) => String(c)) : []))
+      const hit = detectCrostab(mm)
+      if (hit) {
+        const m2: RawSheet = { fileName, sheetNames: wbAll.SheetNames, matrix: mm, sheetName: sn }
+        return buildCrostabSource(m2, family, hit)
+      }
+    }
+  }
+  const cr = detectCrostab(m.matrix)
+  if (cr && (family === 'xuexitong_assignment' || family === 'xuexitong_stat')) {
+    return buildCrostabSource(m, family, cr)
+  }
+  // D47-1 通用三段式
+  const loc = locateHeader(m.matrix, 20)
+  const headerI = loc?.headerI ?? 0
+  const headers = (m.matrix[headerI] ?? []).map((c) => String(c).trim())
+  const nameI = loc?.nameI ?? Math.max(0, headers.findIndex((h) => HEADER_MAP[h] === 'name'))
+  const dataRows = m.matrix.slice(headerI + 1).filter((r) => r.some((c) => String(c).trim() !== ''))
   const base = {
     uid: newUid(),
-    sheetName: m.sheetName ?? '',   // B1：记录实际解析的 sheet（normalizeSource 透传）
+    sheetName: m.sheetName ?? '',
     name: fileName.replace(/\.xlsx$/i, ''),
     fileName,
     family,
     weight: 1,
-    rows: m.matrix.slice(1)
-      .filter((r) => r.some((c) => c !== ''))
-      .map((r) => {
-        const out: Record<string, string> = {}
-        const headers = m.matrix[0] ?? []
-        for (let i = 0; i < r.length; i++) out[headers[i] || `列${i + 1}`] = r[i]
-        return out
-      }),
+    rows: dataRows.map((r) => {
+      const out: Record<string, string> = {}
+      for (let i = 0; i < r.length; i++) out[headers[i] || `列${i + 1}`] = r[i]
+      return out
+    }),
     scores: {} as Record<string, number>,
   }
-  if (family === 'roster') {
-    return normalizeSource({ ...base, scoreColumn: '（点名册：仅接表，不计分）', nameColumn: (m.matrix[0] ?? []).find((h) => HEADER_MAP[h] === 'name') ?? '姓名' })
+  // D47-5：全部数值列（exam/custom 默认全勾、随教师取消）——**排除姓名列本身**
+  const numericCols = dataNumericColumns(m.matrix, headerI).filter((c) => c.index !== nameI)
+  if (family === 'exam' || family === 'custom') {
+    Object.assign(base, {
+      allNumericColumns: numericCols,
+      includedColumns: numericCols.map((c) => ({ ...c })),
+    })
   }
-  if (family === 'exam') return normalizeSource({ ...base, ...parseExam(m) })
-  if (family === 'xuexitong_assignment') return normalizeSource({ ...base, ...parseXuexitongAssignment(m) })
-  if (family === 'xuexitong_stat') return normalizeSource({ ...base, ...parseXuexitongStat(m) })
+  if (family === 'roster') {
+    return normalizeSource({ ...base, scoreColumn: '（点名册：仅接表，不计分）', nameColumn: headers[nameI] ?? '姓名' })
+  }
+  if (family === 'exam') {
+    // D47-2：分数列放宽 = /期末|成绩|得分|总分|score/；未命中=最末数值列
+    const hit = headers.findIndex((h, j) => j !== nameI && /期末|成绩|得分|总分|score/i.test(h))
+    const scoreI = hit >= 0 ? hit : (numericCols.length ? numericCols[numericCols.length - 1].index : headers.length - 1)
+    const perStu: Record<string, number> = {}
+    for (const r of dataRows) {
+      const nm = String(r[nameI] ?? '').trim()
+      const v = num(r[scoreI] ?? '')
+      if (nm && v !== null) perStu[nm] = v
+    }
+    return normalizeSource({
+      ...base, scores: perStu,
+      nameColumn: headers[nameI] ?? '姓名',
+      scoreColumn: headers[scoreI] ?? '',
+    })
+  }
   if (family === 'rainclass') return normalizeSource({ ...base, ...parseRainclass(m) })
-  // custom：常规表头表，宽松猜列（沿用既有策略），教师可在界面手动换列
-  const headers = m.matrix[0] ?? []
-  const guessName = headers.find((h) => HEADER_MAP[h] === 'name') ?? headers[0] ?? ''
-  const nameI = Math.max(0, headers.indexOf(guessName))
-  // 分数列：先按关键词猜；猜不到时用"数值最多列"回退（engine read_flex_auto 同款）
-  const countNums = (j: number) => m.matrix.slice(1, 21).filter((r) => num(r[j] ?? '') !== null).length
+  // custom：宽松猜列（分数列关键词→数值最多列）——不变；教师可在源行手动换列
+  const cntNums = (j: number) => dataRows.slice(0, 20).filter((r) => num(r[j] ?? '') !== null).length
   let scoreI = headers.findIndex((h, j) => j !== nameI && /分数|成绩|得分|score/i.test(h))
   if (scoreI < 0) {
     let best = 0
     for (let j = 0; j < headers.length; j++) {
       if (j === nameI) continue
-      const nNums = countNums(j)
-      if (nNums > best) { best = nNums; scoreI = j }
+      const n = cntNums(j)
+      if (n > best) { best = n; scoreI = j }
     }
   }
   if (scoreI < 0) scoreI = headers.length - 1
   const guessScore = headers[scoreI] ?? ''
   const scores: Record<string, number> = {}
-  for (const r of m.matrix.slice(1)) {
-    const name = (r[nameI] ?? '').trim()
+  for (const r of dataRows) {
+    const nm = String(r[nameI] ?? '').trim()
     const v = num(r[scoreI] ?? '')
-    if (name && v !== null) scores[name] = v
+    if (nm && v !== null) scores[nm] = v
   }
-  return normalizeSource({ ...base, scoreColumn: guessScore, nameColumn: guessName, scores })
+  return normalizeSource({ ...base, scoreColumn: guessScore, nameColumn: headers[nameI] ?? '姓名', scores })
 }
 
 /* ---------- VC-4 / VC-6 导入预览（docs/14 §VC-4/6：表头 + 前 3 行 + 列映射说明） ---------- */
@@ -321,7 +399,7 @@ export interface PreviewTable {
   rowCount: number
 }
 
-const PREVIEW_ROW_LIMIT = 3
+const PREVIEW_ROW_LIMIT = 500
 
 function previewFromMatrix(headers: string[], dataRows: string[][], notes: string[]): PreviewTable {
   const rows = dataRows

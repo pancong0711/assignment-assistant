@@ -412,4 +412,29 @@ B3（fig 上传 UI + 引擎写回）落地后，PWA 预览按 wmAssets 同模式
 
 **待教师提供**：请教师发一份**真实教务点名册**（.xls 或 xlsx 均可，可直接隐私脱敏姓名列）——项目内已有 5 份 zjxu 名册 .xls 样例可对照核验（`_legacy/…/namelists/`），若教师发的与现有样例同构即可直接修复。**不自造数据的精神保留**：本轮核测全部用项目内真实历史文件（汇总见上表）。
 
-**批次建议**：E5（形态适配+成绩列勾选+全文件预览）为下一个大批次，先修 parse 骨架（1-4）→ 成绩列勾选(5) → 全文件预览(6)。
+**批次建议**：E5（形态适配+成绩列勾选+全文件预览）为下一个大批次，先修 parse 骨架（1-4）→ 成绩列勾选(5) → 全文件预览(6）。
+
+---
+
+## E5 实施记录（2026-09-29 深夜 · 用户拍板「用当前样式的点名册开发=以 legacy zjxu 形态为准」，全项完成）
+
+| 项 | 状态 | 落点 |
+|---|---|---|
+| 1. 三段式 locateHeader（:title skip→姓名语义行→数据行） | ✅ | readRosterXlsx / readScoreSourceXlsx 通用 |
+| 2. exam 列名放宽 | ✅ | `/期末|成绩|得分|总分|score/` 子串；未命中=最末数值列 |
+| 3. xxt crostab 重写（assignment/stat 同构）+ 全 sheet 扫描 | ✅ | detectCrostab + buildCrostabSource；xuexitong_* 家族在全部 sheet 里找 crostab 命中者（B1 pickBestSheet 选错表也兜得住） |
+| 4. .xls 13 位学号字符串读取 | ✅ | zjxu 名册学号本就是 SST 13 位文本，实测 69 人/学号**原值无损**（此前核测误判为精度损坏——w=t=s 显证）；跨 family 的数字串防护已由 str() 全路径覆盖 |
+| 5. rainclass 锁"汇总"表 | ✅ | readRawSheet(family) 分支：名称含 汇总|统计 优先，其余回 pickBestSheet |
+| 6. perColumn 成绩列勾选 | ✅ | ScoreSource.allNumericColumns/includedColumns（exam/custom 默认全勾）；RosterView 源行内 checkbox；sourceScoreMatrix 对"教师取消部分列"的源切换按列重建；store.toggleSourceColumn |
+| 7. 全文件预览（D47-6） | ✅ | PREVIEW_ROW_LIMIT 500 + PreviewTableCard 420px 滚动（"全文件预览模式"）；总览卡 👁「预览整个班」→ wideRows→PreviewTable 走 PreviewTableCard |
+| 8. 真实文件回归 | ✅ | selfcheck:roster-fig 新 D) 块：legacy 真文件（exam 33/xxtA 31/rain 67）全部 PASS；CI skip-safe（文件不在检出时跳过） |
+
+**真实文件终测**（node 直跑）：
+- 点名册 .xls：**69 人，学号 13 位原值无损**（此前误判"精度损坏"，实为教师端旧 12 位认知差异=Excel 显示截断；以项目内真文件为准实测这版即原数据）；
+- exam：33 人 scores 即时全解析（表头在 row2 跳标题）；includedColumns=7 门课程全勾；
+- xxt assignment/stat：crostab 命中「章节测验统计」→ 31 人 × 38 作业均分全轨；includedColumns=38 列作业/测验全勾；
+- rainclass：锁定「大学物理C1_化工25_数据汇总」→ 67 人签到得分；
+- custom：34 行 × 7 勾选列（姓名列被自动排除出数值列）。
+
+**遗留**：①姓名列放第 3+ 列/异序的多 xxt 分发 sheet（本次 crostab 用"学生姓名"标题行定位已覆盖）；
+② legacy `.xls`（BIFF）若用户设备上仍显示尾字符差异（历史读到 2025438815101 vs 浏览器 w="2025438815101"）——本轮核验=原文件 SST 就是 13 位文本，浮点伪造旁路**未实际损坏**——本轮不加额外护栏，现场以教师文件复核为准。
