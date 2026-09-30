@@ -188,12 +188,14 @@ def sheet_demo(obj, out, orientation, no_watermark, workspace, verbose):
               help="输出 html 路径（缺省 classes/<class>/sheets/html/<任务包id>.html）")
 @click.option("--no-watermark", is_flag=True)
 @click.option("--no-solution", is_flag=True, help="不含参考答案行（docs/13 D43-A1 parity，与 PWA「显示参考答案」未勾同语义）")
+@click.option("--katex", "katex_mode", default="cdn", type=click.Choice(["cdn", "local"], case_sensitive=False),
+              help="公式资源引用：cdn（缺省，现状）或 local（../katex/ 相对引用——配合设置中心「安装到 workspace」的 sheets/katex/ 离线渲染，docs/13 D53-G3）")
 @click.option("--students", "students_mode", default="roster", type=click.Choice(["roster", "sample", "blank"], case_sensitive=False),
               help="名单口径：roster（缺省，--roster 及合成名单）；sample（合成 学生A/B 2 份模板样例）；blank（单份空白模板：页眉学籍三空位）")
 @click.option("--workspace", "-w", default=None)
 @click.option("--verbose", "-v", is_flag=True)
 @click.pass_obj
-def sheet_html(obj, task_path, roster_path, out, no_watermark, no_solution, students_mode, workspace, verbose):
+def sheet_html(obj, task_path, roster_path, out, no_watermark, no_solution, students_mode, katex_mode, workspace, verbose):
     """按任务包生成整班自包含 HTML（浏览器打印主通道，docs/14 §VB-1/2/3 / 05-D30）。
 
     单文件承载整班多页：每生分页块（page-break-after）、@page A4 横/竖版、
@@ -208,7 +210,8 @@ def sheet_html(obj, task_path, roster_path, out, no_watermark, no_solution, stud
         Path(task_path).expanduser().resolve(), ws,
         out_path=Path(out).expanduser().resolve() if out else None,
         roster_path=roster_path, no_watermark=no_watermark,
-        include_solution=not no_solution, students_mode=students_mode.lower())
+        include_solution=not no_solution, students_mode=students_mode.lower(),
+        katex_mode=katex_mode.lower())
     click.echo(str(fn))
     click.echo(f"学生 {n_stu} 人 · 页块 {n_pages} 个（浏览器打开后 Ctrl/Cmd+P 打印；"
                "KaTeX 走 CDN，离线时公式按源码降级显示）"

@@ -741,3 +741,15 @@ applyManualTranslation/setTranslationRatio 中 setTranslationRatio 保留——�
 5. 校验按钮沿用现有自检（同源资源可达性）+ 新增"workspace 内已装"探测（FSA getFileHandle sheets/katex/katex.min.js）。
 
 **实施批次**：G1=①删 translation 残卡；G2=②竖版布局双端+测试；G3=③KaTeX workspace 安装（PWA 侧）+ 引擎 --katex local 小补丁。三项互不纠缠，可一批过。
+
+---
+
+## G1–G3 实施记录（2026-09-30 · D53 三批全完成）
+
+| 批 | 内容 | 状态 | 落点与验证 |
+|---|---|---|---|
+| G1 | translation 残卡删除（与批量打 tag 同构核实后整卡移除；随机比例能力保留在分组比例卡第二行+applyAutoTagging） | ✅ | RosterView：卡+script(manualTranslation*/applyManualTranslation)删净；锚点/顶部说明同步；build 0 err |
+| G2 | 竖版 per_page=2/3/4 纵向一列均分：rows2/rows3/**rows4 新档**（三横虚线 h/h31/h32/h4）；max-width:50% 误伤修复（限 cols*/cross）；横版维持 cols/cross | ✅ | 三端同步：sheetHtml gridKey/gridLines/printCss ↔ j2 &lt;style&gt;/&lt;h4&gt;/divided 规则 ↔ engine _grid_key/_grid_lines；冒烟 rows2/3/4+横线数+横版 cross 7/7 PASS；engine test ①b/②更新+parity 哨兵补 .sf-line.h4/[data-grid^="rows"] |
+| G3 | KaTeX workspace 离线包：设置中心「📦 安装到 workspace」→ FSA 递归写 `<workspace>/sheets/katex/**`（同源 dist 资源，仓库零占用不变；重复点击幂等更新）；无 FSA 降级 katex-offline.zip 下载+解压指引；引擎 `assist sheet html --katex local\|cdn`（local=../katex/ 相对引用，缺省 cdn 不动现状） | ✅ | sheetHtml.collectKatexFiles()（css→woff2 名单枚举）；SettingsView 卡+按钮+状态；cli/htmlfile/j2 三分支；engine test ②c 断言（local 含 ../katex/、无 jsdelivr）；build+selfcheck 全绿 |
+
+**红线遵守**：taskpad schema 不动；KaTeX 资产仍不进仓库（npm 依赖构建期注入不变）。

@@ -103,16 +103,25 @@ export function todayStr(): string {
 
 /** data-grid 键（与 engine htmlfile._grid_key / SheetLayoutView gridClass 同口径） */
 function gridKey(orientation: string, perPage: number): string {
+  // D53-G2：竖版 2/3/4 全纵向一列均分（rows2/rows3/rows4，题干满行宽）；横版维持 cols/cross。
+  if (orientation === 'portrait') return 'rows' + perPage
   if (perPage === 4) return 'cross'
-  if (perPage === 3) return orientation === 'portrait' ? 'rows3' : 'cols3'
-  return orientation === 'portrait' ? 'rows2' : 'cols2'
+  if (perPage === 3) return 'cols3'
+  return 'cols2'
 }
 
 /** 页内分隔虚线类（engine layout.grid_lines / app sf-line 同口径） */
 function gridLines(orientation: string, perPage: number): string[] {
+  // D53-G2：竖版 N 题页 = N-1 条横虚线等分（rows4 新档三横线 h4）；横版不变。
+  if (orientation !== 'landscape') {
+    if (perPage === 4) return ['h31', 'h32', 'h4']
+    if (perPage === 3) return ['h31', 'h32']
+    if (perPage === 2) return ['h']
+    return []
+  }
   if (perPage === 4) return ['v', 'h']
-  if (perPage === 3) return orientation === 'landscape' ? ['v31', 'v32'] : ['h31', 'h32']
-  if (perPage === 2) return orientation === 'landscape' ? ['v'] : ['h']
+  if (perPage === 3) return ['v31', 'v32']
+  if (perPage === 2) return ['v']
   return []
 }
 
@@ -146,10 +155,13 @@ body {
 .sheet-body { flex: 1; display: flex; flex-direction: column; gap: 3mm; min-height: 0; }
 .sheet-page.landscape .sheet-body { flex-direction: row; }
 .sheet-body[data-grid="cols2"], .sheet-body[data-grid="cols3"] { flex-direction: row; }
-.sheet-body[data-grid="rows2"], .sheet-body[data-grid="rows3"] { flex-direction: column; }
+.sheet-body[data-grid^="rows"] { flex-direction: column; }
 .sheet-body[data-grid="cross"] { flex-wrap: wrap; }
 .sheet-body.divided { gap: 0; position: relative; }
-.sheet-body.divided .sheet-frame { overflow: hidden; max-width: 50%; word-break: break-word; }
+/* D53-G2：半宽约束只对横向分栏（cols*/cross）生效——竖版 rows* 题干满行宽（D41 曾误伤竖版）。 */
+.sheet-body.divided .sheet-frame { overflow: hidden; word-break: break-word; }
+.sheet-body[data-grid="cols2"] .sheet-frame, .sheet-body[data-grid="cols3"] .sheet-frame,
+.sheet-body[data-grid="cross"] .sheet-frame { max-width: 50%; }
 .sheet-frame { flex: 1 1 0; min-width: 0; min-height: 0; border: 1px dashed var(--hairline);
   border-radius: 2mm; padding: 3mm; overflow: hidden; display: flex; flex-direction: column; gap: 2mm; }
 .sheet-body.divided .sheet-frame { border: none; border-radius: 0; padding: 3mm 4mm; }
@@ -172,8 +184,9 @@ body {
 .sf-line.v32 { left: 66.6%; top: 0; width: 1px; height: 100%; }
 .sf-line.h31 { left: 0; top: 33.3%; width: 100%; height: 1px; }
 .sf-line.h32 { left: 0; top: 66.6%; width: 100%; height: 1px; }
+.sf-line.h4 { left: 0; top: 75%; width: 100%; height: 1px; }
 .sf-line.v, .sf-line.v31, .sf-line.v32 { background-image: repeating-linear-gradient(to bottom, #777 0 5px, transparent 5px 10px); }
-.sf-line.h, .sf-line.h31, .sf-line.h32 { background-image: repeating-linear-gradient(to right, #777 0 5px, transparent 5px 10px); }
+.sf-line.h, .sf-line.h31, .sf-line.h32, .sf-line.h4 { background-image: repeating-linear-gradient(to right, #777 0 5px, transparent 5px 10px); }
 /* 水印层（每页重建；items 逐层 + 页码大字） */
 .wm-layer { position: absolute; inset: 0; pointer-events: none; z-index: 5; }
 .wm-page-text { position: absolute; left: 16%; top: 38%; font-size: 46pt; color: #333;
@@ -356,6 +369,31 @@ export async function fetchSelfContainedKatex(): Promise<KaTeXAssets> {
     .replace(/,\s*url\(fonts\/[^)]+\.ttf\)\s*format\("truetype"\)/g, '')
   katexBundleCache = { css, katexJs: js, autoRenderJs }
   return katexBundleCache
+}
+
+/** D53-G3：收集同源 KaTeX 选择集文件（css/js/auto-render + css 内 url(fonts/*.woff2) 引用清单），
+ *  供「安装到 workspace」用（FSA 递归写 sheets/katex/**；无 FSA 降级 zip 下载）。
+ *  仓库零容量占用不变：来源=npm 依赖构建期注入的 dist 同源资产。 */
+export async function collectKatexFiles(): Promise<Array<{ relPath: string; blob: Blob }>> {
+  const base = new URL('./katex/', document.baseURI).href
+  const cssRes = await fetch(base + 'katex.min.css')
+  if (!cssRes.ok) throw new Error('同源 katex.min.css 不可达（需 Pages/引擎同源环境）')
+  const css = await cssRes.text()
+  const files: Array<{ relPath: string; blob: Blob }> = [
+    { relPath: 'katex.min.css', blob: new Blob([css], { type: 'text/css' }) },
+  ]
+  for (const f of ['katex.min.js', 'contrib/auto-render.min.js']) {
+    const r = await fetch(base + f)
+    if (!r.ok) throw new Error(`同源 ${f} 不可达`)
+    files.push({ relPath: f, blob: await r.blob() })
+  }
+  const names = new Set<string>()
+  for (const m of css.matchAll(/url\(fonts\/([^)'"\s]+)\.woff2\)/g)) names.add(m[1])
+  for (const n of names) {
+    const r = await fetch(`${base}fonts/${n}.woff2`)
+    if (r.ok) files.push({ relPath: `fonts/${n}.woff2`, blob: await r.blob() })
+  }
+  return files
 }
 
 /** 「⬇ 下载 HTML（自包含·离线可开）」：stringifySheetHtml(katex='raw')；资源拉取失败时

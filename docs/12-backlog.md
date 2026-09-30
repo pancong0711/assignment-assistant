@@ -410,3 +410,12 @@ C1 登录/课程/作业浏览/下载（迁 2601 xuexitong 模块）；C2 上传=
 - ③ 定稿：设置中心「KaTeX 离线包」一键 FSA 写 `<workspace>/sheets/katex/**`（同源 dist 资源，仓库零占用）；
   引擎 `assist sheet html --katex local|cdn` 小补丁配套；无 FSA 降级=zip 下载+指引；
 - 批次 G1/G2/G3 独立可一批。详见 docs/13-D53。
+
+---
+
+# 2026-09-30 · G1–G3 实施完成（D53 清账）
+
+- ✅ G1 translation 残卡删除（双入口彻底消失；translation 仅剩比例卡随机拨给%+批量打tag+学生表下拉三形态）；
+- ✅ G2 竖版 2/3/4 纵向满行均分（rows4 新档三横线；max-width 误伤按 cols/cross 限定）三端同步+测试；
+- ✅ G3 KaTeX 一键装进 workspace（sheets/katex/，FSA/zip 双路）+ 引擎 --katex local 配套；仓库零占用不变；
+- build 0 err；布局冒烟 7/7；selfcheck 14/14；engine tests 新增 ①b/②c+② 更新。
