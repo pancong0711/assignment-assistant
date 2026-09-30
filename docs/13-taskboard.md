@@ -753,3 +753,54 @@ applyManualTranslation/setTranslationRatio 中 setTranslationRatio 保留——�
 | G3 | KaTeX workspace 离线包：设置中心「📦 安装到 workspace」→ FSA 递归写 `<workspace>/sheets/katex/**`（同源 dist 资源，仓库零占用不变；重复点击幂等更新）；无 FSA 降级 katex-offline.zip 下载+解压指引；引擎 `assist sheet html --katex local\|cdn`（local=../katex/ 相对引用，缺省 cdn 不动现状） | ✅ | sheetHtml.collectKatexFiles()（css→woff2 名单枚举）；SettingsView 卡+按钮+状态；cli/htmlfile/j2 三分支；engine test ②c 断言（local 含 ../katex/、无 jsdelivr）；build+selfcheck 全绿 |
 
 **红线遵守**：taskpad schema 不动；KaTeX 资产仍不进仓库（npm 依赖构建期注入不变）。
+
+---
+
+## D54 · 第 18 轮五问核查（KaTeX 安装直装 / 三处预览重复 / 列勾选失效 / 综合分与权重口径 —— 仅讨论）
+
+### 1️⃣ KaTeX 离线包：能否"直接装到文件夹"、不让用户解压？
+**现状代码**（SettingsView.installKatexToWorkspace）：优先用 `getKbDirHandleSafe()`（=**只在用户已连接 workspace 目录时才存在**的句柄）
+→ 有句柄=直接 FSA 写入 `sheets/katex/**`（这一步本就是"直接安装"，无需解压）；**无句柄 → 降级 zip 下载**（这才是教师看到"要解压"的来源）。
+**直装方案（推荐）**：
+- 卡片按钮改为**两态**：① 已连接 workspace →「📦 安装到 workspace（一键，直接写盘）」；② 未连接 →「📂 选择 workspace 目录并安装」
+  （点击后 `pickDirectory()` 弹一次目录选择 → 拿到句柄 → 直接递归写入，**零解压**）；
+- 只有浏览器**不支持 FSA**（Firefox/Safari）或 **LAN http://IP 非安全上下文** 时保留 zip 兜底（此时协议层不可能直接写盘）；
+- 追加引擎通道（覆盖 LAN 场景，可选）：引擎已有 `/install/{item}`+SSE 框架（R1.3/R1.4），可加 item=`katex`
+  由引擎服务端写入 `<workspace>/sheets/katex/`（引擎在线时页面按钮直接调，同样零解压）——待拍板是否本批做。
+
+### 2️⃣ 三处"预览重复"审查（结论：两处真重复、一处半重复）
+| 组合 | 判定 | 建议 |
+|---|---|---|
+| 名单模块：学生可编辑表 vs 名单预览（原文件 500 行滚动） | **半重复**：可编辑表=解析后的名单；预览=原文件全貌（含未映射列，核对解析正确性用） | 保留两者但省空间：① 可编辑表**固定高度+滚动**（max-height ~320px，鼠标滚轮，用户建议采纳）；② 名单预览收进 `<details>`（默认折叠）或行内"查看原文件"按钮弹卡 |
+| 成绩源解析状态预览（最近导入卡） vs 成绩源行内 👁 预览 | **真重复**（同一 PreviewTableCard、同一数据） | **删除"最近导入"悬浮卡**，只保留每源行内 👁（D46-3 已能回看任意源） |
+| 整班成绩预览（👁预览整个班 卡） vs 全部成绩总览（宽表） | **真重复**（同一 wideRows 数据的另一种渲染） | 删除「预览整个班」按钮与卡；宽表本身已滚动；若要大屏视图，改为「导出总览 xlsx」或宽表卡加"放大弹窗"（可选） |
+
+### 2.1️⃣ 成绩源列勾选失效 —— 根因（4 条，全部代码级确认）
+| # | 根因 | 证据 |
+|---|---|---|
+| ① **总览列模型是"每源一列"** | `wideHeaders = scoreSources.map(...)` 每源仅一列（label=源名），单元格取 `sourceScoreMatrix(s)[stu.name]`（单值）→ 勾多列也无处显示 | RosterView L225 |
+| ② **sourceScoreMatrix 不消费 includedColumns** | 函数只在"勾选数<总列数"时**绕开 scores**，然后回落用 `scoreColumn` 单列重建（等于把主列再算一遍）——多选勾选从未参与取值 | roster.ts L155-168 |
+| ③ **固定 family 未生成 allNumericColumns** | 仅 exam/custom 分支写入 allNumericColumns；xuexitong/rainclass 无勾选框（教师看到"到底勾不勾"的困惑） | rosterXlsx.ts `readScoreSourceXlsx` |
+| ④ **数值列枚举未排除元数据列** | `dataNumericColumns` 只排除了姓名列；**序号/学号/班级（数字型）** 会混进勾选框——这正是"序号班级学号的勾选意味着什么"的来源：**它们不该出现，也无任何语义**（勾了只会污染 includedColumns） | rosterXlsx.ts L199+ |
+**教师诉求确认**：一个成绩源勾选多列（如 语文+数学+外语）→ 总览出现多列、都参与加权。这需要**数据模型升级**（见 2.2 待拍板 A）。
+
+### 2.2️⃣ 综合得分公式与权重口径 —— 现状与不符预期的根因
+**当前实现**（computeScoresFiltered + srcScoreOf）：
+```
+综合分 = 100 × Σ_i [ (raw_i / max_i) × (w_i / Σw) ]      i=成绩源；max_i=该源全班最大值
+```
+- **单源时 → 综合分 = 100 × raw / max**，所以勾一列期末（85 分、班内最高 92）→ 综合分≈92.4，**与原始分不等**——这就是教师看到的"综合得分与这列成绩不能对应"；
+- **权重**（每源一个 weight）：仅在**多源之间**起作用（相对占比），单源时改权重不改变结果；且权重是"源"级而非"列"级；
+- **归一化**是源内按最大值线性缩放（0~max → 0~100），不同源不同量纲靠它对齐——设计初衷如此，但教师要的是"单列=原始分"的直觉。
+**建议（待拍板）**：
+- **A. 多列模型**：ScoreSource 增 `scoresByColumn: Record<列名, Record<学生, 数>>`（raw 已在 rows，可直接派生）；总览列=Σ(源×勾选列)；
+  综合分= 每列归一后按**列权重**（或源权重均分到列）加权；
+- **B. 单列直用**：当勾选集合只有一列时，综合分=原始分（跳过归一）——满足直觉；多列/多源时保留归一（并显示"已按班内最高分归一"提示）；
+- **C. 公式上屏**：总览卡标题下常显公式文本（当前值：`综合 = 100×Σ(源内归一×权重占比)`），并注明归一规则与"切分口径一致"；
+- **D. 列权重 UI**：勾选框旁可编辑每列权重（默认源权重均分），或先保持"源权重"、仅支持多列等权（更简，待拍板）。
+
+### 待拍板清单（D54）
+1. KaTeX：直装两态按钮（选目录+写入）+ 是否同批做引擎 `/install/katex` 服务端通道；
+2. 预览收敛三件套（可编辑表滚动/原文件预览折叠/删最近导入卡/删预览整个班）是否全做；
+3. 多列模型（A）+ 单列直用（B）+ 公式上屏（C）是否本批；列权重 UI（D）先等权还是可编辑；
+4. 数值列黑名单（序号/学号/工号/班级/班号…）+ 固定四类也生成 allNumericColumns（勾选对所有 family 生效）。
