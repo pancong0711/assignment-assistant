@@ -139,7 +139,7 @@ def test_sheet_html_cli_dual_layout_and_template_markers(ws: Path):
     # ---- ①b D53-G2：竖版 per_page=4 = 纵向四行均分（rows4 + 三横虚线 h/h31/h32/h4），非十字 ----
     task_p4 = _write_task(ws, "portrait", 4, {"enabled": False, "style": "default"})
     res_p4 = runner.invoke(cli, ["sheet", "html", "--task", str(task_p4),
-                                 "--students", "sample",
+                                 "--students", "sample", "--no-watermark",
                                  "--workspace", str(ws),
                                  "-o", str(ws / "tmp" / "sheet-p4.html")])
     assert res_p4.exit_code == 0, res_p4.output
