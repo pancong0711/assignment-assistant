@@ -453,3 +453,18 @@ C1 登录/课程/作业浏览/下载（迁 2601 xuexitong 模块）；C2 上传=
 - ✅ H3 多列模型 + 综合=原始分加权平均（去班内最高分归一，与引擎 merge_scores 同口径）+ 列权重输入 + 公式上屏；
 - ✅ H4 非成绩列黑名单（序号/学号/班级…）+ task-package 按列展开 + PWA/引擎一致性回归用例；
 - build 0 err；selfcheck 全绿；engine 测试新增（CI 复核）。
+
+---
+
+# 2026-09-30 · 重大仓库缺陷修复：engine/src/assist/roster/ 从未入库（D55 收尾发现）
+
+- **根因**：`.gitignore` 的 `roster/` 规则本意拦截学生数据目录（classes/*/roster/），
+  却同时命中了 `engine/src/assist/roster/` 源码目录 → 该包 4 个文件（__init__/grouping/rain/scores）
+  **从未进入 git**；此前 CI 全绿只是因为既有测试不在模块级 import 它（CLI 内为延迟导入），
+  而 H1–H4 新增的 `test_scores_parity.py` 顶层 import 触发 `ModuleNotFoundError: No module named 'assist.roster'`；
+- **影响面**（此前被掩盖）：任何 fresh clone / 仓库快照 engine-main.zip / CI 安装的引擎，
+  其 `assist roster tag`、scores 读取等基于 roster 包的功能都会缺模块而失败；
+- **修复**：`.gitignore` 增 `!engine/src/assist/roster/`（与 grading 同款例外）；
+  `tools/check-secrets.sh` 对 `engine/src/assist/roster/*` 放行（学生数据目录 classes/*/roster/ 仍拦截）；
+  `git add engine/src/assist/roster/*.py`（4 文件入库）；校验：全部 engine/src *.py 已入库 + 脱敏通过；
+- **CI 增强（保留）**：pytest 失败时上传完整日志 artifact + 关键行 error 注解（无 admin 亦可经 annotations API 排障）。

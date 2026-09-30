@@ -12,7 +12,12 @@ log() { echo -e "\033[31m[脱敏失败] $*\033[0m"; fail=1; }
 banned_regex='(^|/)(_legacy|roster|exports|handwriting|submissions|作业)/|(^|/)kb/[^/]+\.xlsx$|\.env$'
 while IFS= read -r f; do
   [[ -e "$f" ]] || continue
-  echo "$f" | grep -Eq "$banned_regex" && log "路径命中红线: $f"
+  if echo "$f" | grep -Eq "$banned_regex"; then
+    # 引擎源码例外：engine/src/assist/{grading,roster}/ 是代码（学生数据目录 classes/*/roster/ 仍拦截）
+    if [[ "$f" == engine/src/assist/grading/* || "$f" == engine/src/assist/roster/* ]]; then :; else
+      log "路径命中红线: $f"
+    fi
+  fi
   if echo "$f" | grep -Eq '(^|/)grading/' && [[ "$f" != engine/src/assist/grading/* ]]; then
     log "路径命中红线(grading 学生数据目录): $f"
   fi
