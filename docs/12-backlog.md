@@ -335,3 +335,15 @@ C1 登录/课程/作业浏览/下载（迁 2601 xuexitong 模块）；C2 上传=
   空名单警示。待拍板（改名 vs 移除 roster 下拉选项），师重发点名册 .xls 可同验；
 - **历史教训**：本批 D19 初期设计与 roster family 的"接表"语义在 M-C 的 UI 里出现了两个入口——
   教师预告的/errors 与 'roster' family 的红色灰显 Filtering 兼容性提醒不足，本批落 D48 予以授权修复。
+
+---
+
+# 2026-09-29 · D49 登记（第 13 轮：accept 扩展 + 班级为中心重设计 + 产出文件管理）
+
+- 原因补充分析：除 pickXlsx accept 只认 .xlsx 外，主因仍是 D48 双入口（点名册走成绩源入口→roster.students 从未写入）；
+  另列旧 bundle 缓存/提示性不足两个次因；accept 修正=.xlsx,.xls,.csv 三处（FSA+input）；
+- **班级与标签重设计**（教师提案结构化）：班级配置栏 + 名单/成绩加权/标签/产出四模块 + 班级清单栏（载入/删除）；
+  多班级 store（classes: Record<id, workspace> + activeClassId）；班级清单字段建议 6 项（人数/tag 分布/源清单/
+  缺源警示/关联作业纸/最近产出物+三态徽标）；
+- **产出文件管理三件套**：产出登记簿（artifacts[] 元数据）/ overview/ 归档路径 / 目录定位按钮；未连接降级语义；
+- 批次：F1(D48+accept) → F2(多班级) → F3(登记簿) → F4(产出段整合)；四项待拍板见 docs/13-D49。
