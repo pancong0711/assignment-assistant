@@ -26,11 +26,18 @@
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>{{ doc.title }} · {{ doc.id }}</title>
+{% if doc.katex_mode == 'local' -%}
+<!-- KaTeX {{ doc.katex_version }}（workspace 本地包 ../katex/，D53-G3：设置中心「安装到 workspace」后断网渲染） -->
+<link rel="stylesheet" href="../katex/katex.min.css">
+<script defer src="../katex/katex.min.js"></script>
+<script defer src="../katex/contrib/auto-render.min.js"></script>
+{%- else -%}
 <!-- KaTeX {{ doc.katex_version }}（CDN）：题干/答案中 $..$、$$..$$ 自动渲染。
      离线场景：CDN 不可达时 renderMathInElement 不存在，公式按 $..$ 源码降级显示。 -->
 <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/katex@{{ doc.katex_version }}/dist/katex.min.css">
 <script defer src="https://cdn.jsdelivr.net/npm/katex@{{ doc.katex_version }}/dist/katex.min.js"></script>
 <script defer src="https://cdn.jsdelivr.net/npm/katex@{{ doc.katex_version }}/dist/contrib/auto-render.min.js"></script>
+{%- endif %}
 <style>
 /* ===== assignment.html.j2 打印主通道样式（与 app/src/lib/sheetHtml.ts PRINT_CSS 逐字同步） ===== */
 :root { --ink:#1f2937; --line:#333; --muted:#6b7280; --accent:#2456c4; --hairline:#c3cad6; }
@@ -59,7 +66,7 @@ body {
 .sheet-body { flex: 1; display: flex; flex-direction: column; gap: 3mm; min-height: 0; }
 .sheet-page.landscape .sheet-body { flex-direction: row; }
 .sheet-body[data-grid="cols2"], .sheet-body[data-grid="cols3"] { flex-direction: row; }
-.sheet-body[data-grid="rows2"], .sheet-body[data-grid="rows3"] { flex-direction: column; }
+.sheet-body[data-grid^="rows"] { flex-direction: column; }
 .sheet-body[data-grid="cross"] { flex-wrap: wrap; }
 .sheet-body.divided { gap: 0; position: relative; }
 .sheet-frame { flex: 1 1 0; min-width: 0; min-height: 0; border: 1px dashed var(--hairline);
@@ -84,8 +91,9 @@ body {
 .sf-line.v32 { left: 66.6%; top: 0; width: 1px; height: 100%; }
 .sf-line.h31 { left: 0; top: 33.3%; width: 100%; height: 1px; }
 .sf-line.h32 { left: 0; top: 66.6%; width: 100%; height: 1px; }
+.sf-line.h4 { left: 0; top: 75%; width: 100%; height: 1px; }
 .sf-line.v, .sf-line.v31, .sf-line.v32 { background-image: repeating-linear-gradient(to bottom, #777 0 5px, transparent 5px 10px); }
-.sf-line.h, .sf-line.h31, .sf-line.h32 { background-image: repeating-linear-gradient(to right, #777 0 5px, transparent 5px 10px); }
+.sf-line.h, .sf-line.h31, .sf-line.h32, .sf-line.h4 { background-image: repeating-linear-gradient(to right, #777 0 5px, transparent 5px 10px); }
 /* 水印层（每页重建；items 逐层 + 页码大字） */
 .wm-layer { position: absolute; inset: 0; pointer-events: none; z-index: 5; }
 .wm-page-text { position: absolute; left: 16%; top: 38%; font-size: 46pt; color: #333;

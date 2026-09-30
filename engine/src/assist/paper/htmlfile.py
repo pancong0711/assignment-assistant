@@ -88,23 +88,33 @@ def _resolve_asset(ws: Path, hint: str, assets_dir: Path | None) -> Path | None:
 
 
 def _grid_key(orientation: str, per_page: int) -> str:
-    """data-grid 键（与 app SheetLayoutView gridClass 同口径）：
-    4=十字；3=竖版行/横版列；1/2=竖版行/横版列。"""
+    """data-grid 键（D53-G2 定稿，与 app sheetHtml.gridKey 同口径）：
+    竖版 2/3/4 = 纵向一列均分 rows2/rows3/rows4；横版 2/3=左右栏、4=十字。"""
+    if orientation == "portrait":
+        return f"rows{per_page}"
     if per_page == 4:
         return "cross"
     if per_page == 3:
-        return "rows3" if orientation == "portrait" else "cols3"
-    return "rows2" if orientation == "portrait" else "cols2"
+        return "cols3"
+    return "cols2"
 
 
 def _grid_lines(orientation: str, per_page: int) -> list[str]:
-    """页内虚线分隔线类（镜像 engine layout.grid_lines / app sf-line 口径）。"""
+    """页内虚线分隔线类（D53-G2：竖版 N 题页=N-1 条横虚线等分，rows4 三横线含 h4；横版不变）。"""
+    if orientation != "landscape":
+        if per_page == 4:
+            return ["h31", "h32", "h4"]
+        if per_page == 3:
+            return ["h31", "h32"]
+        if per_page == 2:
+            return ["h"]
+        return []
     if per_page == 4:
         return ["v", "h"]
     if per_page == 3:
-        return ["v31", "v32"] if orientation == "landscape" else ["h31", "h32"]
+        return ["v31", "v32"]
     if per_page == 2:
-        return ["v"] if orientation == "landscape" else ["h"]
+        return ["v"]
     return []
 
 
@@ -272,6 +282,7 @@ def render_assignment_html(task: dict, students: list[dict], kb_dir: Path, ws: P
     ctx = build_context(task, students, kb_dir, ws, assets_dir, no_watermark, date)
     ctx["doc"]["include_solution"] = include_solution
     ctx["doc"]["blank_header"] = blank_header
+    ctx["doc"].setdefault("katex_mode", "cdn")
     tpl = _env().get_template(TEMPLATE_NAME)
     return tpl.render(**ctx)
 
@@ -287,6 +298,7 @@ def sheet_html_from_task(task_path: Path, ws: Path, out_path: Path | None = None
                          no_watermark: bool = False,
                          include_solution: bool = True,
                          students_mode: str = "roster",
+                         katex_mode: str = "cdn",
                          assets_dir: Path | None = None
                          ) -> tuple[Path, int, int]:
     """CLI 主入口：任务包 + 可选 roster → 自包含 HTML。
@@ -327,6 +339,7 @@ def sheet_html_from_task(task_path: Path, ws: Path, out_path: Path | None = None
     doc = ctx["doc"]
     doc["include_solution"] = include_solution
     doc["blank_header"] = blank_mode
+    doc["katex_mode"] = katex_mode if katex_mode in ("cdn", "local") else "cdn"
     html = _env().get_template(TEMPLATE_NAME).render(**ctx)
     out = (Path(out_path).expanduser().resolve() if out_path
            else default_out_path(ws, task))

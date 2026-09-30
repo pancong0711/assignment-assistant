@@ -1,7 +1,8 @@
 <script setup lang="ts">
 import { computed, onMounted, ref } from 'vue'
 import { useSettingsStore } from '../stores/settings'
-import { pickDirectory, detectCapabilities, fsWriteHint } from '../lib/fsAccess'
+import { pickDirectory, detectCapabilities, fsWriteHint, downloadData } from '../lib/fsAccess'
+import { getKbDirHandle } from '../stores/kb'
 import { statusGlyph } from '../lib/engineClient'
 
 const settings = useSettingsStore()
@@ -97,6 +98,37 @@ const statusHint = ref('')
 
 /* ---------- KaTeX 自托管资源自检（D43-3：同源 ./katex/ 应可用） ---------- */
 const katexChecking = ref(false)
+const katexInstalling = ref(false)
+
+/** D53-G3：安装 KaTeX 离线包到 workspace（sheets/katex/**，~608KB，幂等覆盖）。
+ *  FSA 可用=递归 writeFileInDir；不可用=打包 zip 浏览器下载 + 解压位置指引。 */
+async function installKatexToWorkspace() {
+  katexInstalling.value = true
+  try {
+    const { collectKatexFiles } = await import('../lib/sheetHtml')
+    const files = await collectKatexFiles()
+    const dir = getKbDirHandleSafe()
+    if (dir) {
+      const { writeFileInDir } = await import('../lib/fsAccess')
+      for (const f of files) await writeFileInDir(dir, `sheets/katex/${f.relPath}`, f.blob)
+      katexStatus.value = `✅ 已安装 ${files.length} 个文件 → <workspace>/sheets/katex/（引擎 CLI --katex local 配套；重复点击=更新）。`
+    } else {
+      const JSZip = (await import('jszip')).default
+      const zip = new JSZip()
+      for (const f of files) zip.file(`katex/${f.relPath}`, f.blob)
+      const blob = await zip.generateAsync({ type: 'blob' })
+      downloadData(blob, 'katex-offline.zip')
+      katexStatus.value = `⚠ 未连接 workspace 目录（LAN/非安全上下文）：已下载 katex-offline.zip——解压到 <workspace>/sheets/ 下（得到 sheets/katex/…）。`
+    }
+  } catch (e) {
+    katexStatus.value = `⚠ 安装失败：${(e as Error).message}`
+  } finally {
+    katexInstalling.value = false
+  }
+}
+function getKbDirHandleSafe(): FileSystemDirectoryHandle | null {
+  try { return getKbDirHandle() ?? null } catch { return null }
+}
 const katexStatus = ref('尚未检查（预览一般无需检查；资源已随应用打包）')
 
 async function checkKatex() {
@@ -324,7 +356,13 @@ onMounted(() => {
       </p>
       <p>
         <button class="btn" :disabled="katexChecking" @click="checkKatex">{{ katexChecking ? '检查中…' : '自检 KaTeX 资源' }}</button>
+        <button class="btn primary" style="margin-left:8px" :disabled="katexInstalling" @click="installKatexToWorkspace"
+          title="D53-G3：把同源 KaTeX 选择集（css/js/auto-render+woff2×20，~608KB）写入 <workspace>/sheets/katex/——引擎 CLI 产物离线渲染配套；重复点击=更新">📦 {{ katexInstalling ? '安装中…' : '安装到 workspace（离线包）' }}</button>
         <span class="hint" style="margin-left:8px">{{ katexStatus }}</span>
+      </p>
+      <p class="hint">
+        「安装到 workspace」= 引擎通道离线化：装完后 <code>assist sheet html --katex local</code>（或本 PWA「下载 HTML」自包含文件，无需此步）
+        生成的 sheets/*.html 引用 ../katex/ 相对路径即可断网渲染公式。未连接 workspace 目录时自动降级为下载 katex-offline.zip（解压到 &lt;workspace&gt;/sheets/ 下）。
       </p>
     </div>
   </section>

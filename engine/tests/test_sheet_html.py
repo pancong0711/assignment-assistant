@@ -136,6 +136,18 @@ def test_sheet_html_cli_dual_layout_and_template_markers(ws: Path):
     assert 'class="q-img" src="data:image/png;base64,' in html
     assert '<div class="q-img-ph">' not in html
 
+    # ---- ①b D53-G2：竖版 per_page=4 = 纵向四行均分（rows4 + 三横虚线 h/h31/h32/h4），非十字 ----
+    task_p4 = _write_task(ws, "portrait", 4, {"enabled": False, "style": "default"})
+    res_p4 = runner.invoke(cli, ["sheet", "html", "--task", str(task_p4),
+                                 "--students", "sample",
+                                 "--workspace", str(ws),
+                                 "-o", str(ws / "tmp" / "sheet-p4.html")])
+    assert res_p4.exit_code == 0, res_p4.output
+    html_p4 = (ws / "tmp" / "sheet-p4.html").read_text(encoding="utf-8")
+    assert 'data-grid="rows4"' in html_p4          # 不再是 cross
+    assert 'class="sf-line h"' in html_p4 and 'class="sf-line h4"' in html_p4
+    assert '.sheet-body[data-grid^="rows"] { flex-direction: column; }' in html_p4
+
     # ---- ② portrait per_page=4 + 无 roster（合成 学生A/B informational；缺省输出路径） ----
     task2 = _write_task(ws, "portrait", 4,
                         {"enabled": False, "style": "default"})
@@ -147,8 +159,8 @@ def test_sheet_html_cli_dual_layout_and_template_markers(ws: Path):
     html2 = default_out.read_text(encoding="utf-8")
     assert html2.count('<section class="sheet-page') == len(SYNTHETIC_STUDENTS)
     assert "@page { size: A4 portrait" in html2
-    assert 'data-grid="cross"' in html2          # 4题/页 = 十字 2×2
-    assert 'class="sf-line v"' in html2 and 'class="sf-line h"' in html2
+    assert 'data-grid="rows4"' in html2          # D53-G2：竖版 4 题/页 = 纵向四行均分
+    assert 'class="sf-line h"' in html2 and 'class="sf-line h4"' in html2
     assert "watermark" not in ""                 # noop（防手滑改断言）
     assert 'data-wm-item' not in html2           # enabled=false → 无水印层（CSS 选择器仍在）
     assert '<span class="wm-page-text">' not in html2
@@ -190,6 +202,18 @@ def test_sheet_html_cli_dual_layout_and_template_markers(ws: Path):
     assert "班级：＿＿＿＿＿＿" in html_bl and "姓名：＿＿＿＿＿＿" in html_bl and "学号：＿＿＿＿＿＿" in html_bl
     assert "data-student=""" in html_bl
 
+    # ---- ②c D53-G3：--katex local → ../katex/ 相对引用（workspace 离线包配套） ----
+    res_kl = runner.invoke(cli, ["sheet", "html", "--task", str(task),
+                                 "--roster", str(ws / "roster.xlsx"),
+                                 "--katex", "local",
+                                 "--workspace", str(ws),
+                                 "-o", str(ws / "tmp" / "sheet-katexlocal.html")])
+    assert res_kl.exit_code == 0, res_kl.output
+    html_kl = (ws / "tmp" / "sheet-katexlocal.html").read_text(encoding="utf-8")
+    assert '../katex/katex.min.css' in html_kl and '../katex/contrib/auto-render.min.js' in html_kl
+    assert 'cdn.jsdelivr.net' not in html_kl
+    # 缺省 cdn 不受影响（① 用例已证 jsdelivr 存在）
+
     # ---- ③ PWA 同构 parity 哨兵：TS 实现必须包含同一模板的结构/CSS 标记 ----
     ts = REPO / "app" / "src" / "lib" / "sheetHtml.ts"
     if not ts.exists():
@@ -198,5 +222,6 @@ def test_sheet_html_cli_dual_layout_and_template_markers(ws: Path):
     for marker in ["page-break-after: always", "@page { size: A4 ",
                    'class="sheet-page', "data-grid=", "wm-page-text",
                    "data-wm-item", "data-wm-pos", "sf-line",
-                   "katex@", "0.16.4", "auto-render.min.js", "renderMathInElement"]:
+                   "katex@", "0.16.4", "auto-render.min.js", "renderMathInElement",
+                   ".sf-line.h4", '[data-grid^="rows"]']:
         assert marker in ts_src, f"TS 同构缺少标记: {marker}"
