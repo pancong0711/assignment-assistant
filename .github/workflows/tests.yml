@@ -23,7 +23,14 @@ jobs:
           uv venv --python 3.13 .venv
           uv pip install -e . --python .venv/bin/python
           uv pip install pytest --python .venv/bin/python
-          .venv/bin/python -m pytest tests -q
+          set +e
+          .venv/bin/python -m pytest tests -q 2>&1 | tee /tmp/pytest.log
+          rc=${PIPESTATUS[0]}
+          if [ "$rc" -ne 0 ]; then
+            echo "::warning::pytest 退出码 $rc；末 60 行见下方 error 注解"
+            while IFS= read -r line; do echo "::error::$line"; done < <(tail -n 60 /tmp/pytest.log)
+            exit "$rc"
+          fi
 
       - name: start 脚本 lint（cmd 解析坑防御，docs/13 M-D）
         run: python3 tools/lint_bat.py
