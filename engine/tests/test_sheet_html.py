@@ -145,7 +145,8 @@ def test_sheet_html_cli_dual_layout_and_template_markers(ws: Path):
     assert res_p4.exit_code == 0, res_p4.output
     html_p4 = (ws / "tmp" / "sheet-p4.html").read_text(encoding="utf-8")
     assert 'data-grid="rows4"' in html_p4          # 不再是 cross
-    assert 'class="sf-line h"' in html_p4 and 'class="sf-line h4"' in html_p4
+    assert 'class="sf-line h"' in html_p4 and 'class="sf-line h25"' in html_p4 \
+        and 'class="sf-line h4"' in html_p4   # 竖版4题页=三横虚线四等分（25/50/75%，rows4 新档）
     assert '.sheet-body { flex-direction: column; }' in html_p4 and '[data-grid^="cols"]' in html_p4
 
     # ---- ② portrait per_page=4 + 无 roster（合成 学生A/B informational；缺省输出路径） ----
@@ -223,5 +224,5 @@ def test_sheet_html_cli_dual_layout_and_template_markers(ws: Path):
                    'class="sheet-page', "data-grid=", "wm-page-text",
                    "data-wm-item", "data-wm-pos", "sf-line",
                    "katex@", "0.16.4", "auto-render.min.js", "renderMathInElement",
-                   ".sf-line.h4", '[data-grid^="cols"]']:
+                   ".sf-line.h4", ".sf-line.h25", '[data-grid^="cols"]']:
         assert marker in ts_src, f"TS 同构缺少标记: {marker}"

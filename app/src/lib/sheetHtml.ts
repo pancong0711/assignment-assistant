@@ -114,7 +114,7 @@ function gridKey(orientation: string, perPage: number): string {
 function gridLines(orientation: string, perPage: number): string[] {
   // D53-G2：竖版 N 题页 = N-1 条横虚线等分（rows4 新档三横线 h4）；横版不变。
   if (orientation !== 'landscape') {
-    if (perPage === 4) return ['h31', 'h32', 'h4']
+    if (perPage === 4) return ['h25', 'h', 'h4']   // 四等分线：25/50/75%
     if (perPage === 3) return ['h31', 'h32']
     if (perPage === 2) return ['h']
     return []
@@ -185,9 +185,10 @@ body {
 .sf-line.v32 { left: 66.6%; top: 0; width: 1px; height: 100%; }
 .sf-line.h31 { left: 0; top: 33.3%; width: 100%; height: 1px; }
 .sf-line.h32 { left: 0; top: 66.6%; width: 100%; height: 1px; }
+.sf-line.h25 { left: 0; top: 25%; width: 100%; height: 1px; }
 .sf-line.h4 { left: 0; top: 75%; width: 100%; height: 1px; }
 .sf-line.v, .sf-line.v31, .sf-line.v32, .sf-line.v4 { background-image: repeating-linear-gradient(to bottom, #777 0 5px, transparent 5px 10px); }
-.sf-line.h, .sf-line.h31, .sf-line.h32, .sf-line.h4 { background-image: repeating-linear-gradient(to right, #777 0 5px, transparent 5px 10px); }
+.sf-line.h, .sf-line.h25, .sf-line.h31, .sf-line.h32, .sf-line.h4 { background-image: repeating-linear-gradient(to right, #777 0 5px, transparent 5px 10px); }
 /* 水印层（每页重建；items 逐层 + 页码大字） */
 .wm-layer { position: absolute; inset: 0; pointer-events: none; z-index: 5; }
 .wm-page-text { position: absolute; left: 16%; top: 38%; font-size: 46pt; color: #333;

@@ -103,7 +103,7 @@ def _grid_lines(orientation: str, per_page: int) -> list[str]:
     """页内虚线分隔线类（D53-G2：竖版 N 题页=N-1 条横虚线等分，rows4 三横线含 h4；横版不变）。"""
     if orientation != "landscape":
         if per_page == 4:
-            return ["h31", "h32", "h4"]
+            return ["h25", "h", "h4"]   # D53-G2：四等分线 25/50/75%
         if per_page == 3:
             return ["h31", "h32"]
         if per_page == 2:
