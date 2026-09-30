@@ -388,3 +388,13 @@ C1 登录/课程/作业浏览/下载（迁 2601 xuexitong 模块）；C2 上传=
 - ✅ 特殊标签→「标签预览」卡（移除导入按钮、tag 分布统计、批量打 tag 保留、逐人下拉覆盖）；
 - ✅ translation 比例并入分组比例卡（两行制），面板瘦身为手动点名；卡序定稿+sticky 锚点导航；
 - store 冒烟 6 项 PASS；build 0 err；纯前端零 schema/引擎改动。
+
+---
+
+# 2026-09-30 · D52 三问题核查登记（仅讨论）
+
+- ① 双 translation = D50b 残留：比例已并入分组比例卡，但旧卡标题/hint 未清理 → 改名"translation 手动点名"+删重复描述；
+- ② KaTeX：npm 依赖+构建期注入（仓库不存资产）；PWA 零下载；下载 HTML 自包含；唯一缺口=引擎 CLI 产物离线渲染，
+  可选补丁=设置中心「导出 katex 文件夹到 workspace」（FSA 一次点击），待拍板；
+- ③ 竖版 2/3/4 半宽错乱根因=D41 的 `.divided .sheet-frame{max-width:50%}` 误伤竖版 + gridKey 竖版4恒十字；
+  修法=max-width 按 cols*/cross 限定 + 竖版4→rows4（新档三横线）；engine 双端同步；两小案待拍板（4 的竖/横语义）。
