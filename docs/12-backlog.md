@@ -398,3 +398,15 @@ C1 登录/课程/作业浏览/下载（迁 2601 xuexitong 模块）；C2 上传=
   可选补丁=设置中心「导出 katex 文件夹到 workspace」（FSA 一次点击），待拍板；
 - ③ 竖版 2/3/4 半宽错乱根因=D41 的 `.divided .sheet-frame{max-width:50%}` 误伤竖版 + gridKey 竖版4恒十字；
   修法=max-width 按 cols*/cross 限定 + 竖版4→rows4（新档三横线）；engine 双端同步；两小案待拍板（4 的竖/横语义）。
+
+---
+
+# 2026-09-30 · D53 三拍板落档（translation 卡删除/per_page 竖横语义/KaTeX workspace 安装）
+
+- ① 核实：手动点名打 translation 与批量打 tag 逐行同构 → 「translation 拨给」卡整体删除成立；
+  随机比例能力在 applyAutoTagging+比例卡第二行（不受影响）；
+- ② 定稿：竖版 2/3/4 全纵向一列均分（rows4 新档三横线）+ rows* 解除 max-width:50% 误伤；横版维持 cols/cross；
+  printCss/j2/engine _grid_key 三端同步；
+- ③ 定稿：设置中心「KaTeX 离线包」一键 FSA 写 `<workspace>/sheets/katex/**`（同源 dist 资源，仓库零占用）；
+  引擎 `assist sheet html --katex local|cdn` 小补丁配套；无 FSA 降级=zip 下载+指引；
+- 批次 G1/G2/G3 独立可一批。详见 docs/13-D53。

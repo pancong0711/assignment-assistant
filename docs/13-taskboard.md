@@ -703,3 +703,41 @@ score_sources 的 roster 语义由系统内部在导出时自动生成，教师�
   2. gridKey：竖版 per_page=4 → `'rows4'`（新增一档：四行均分+三条横线分隔），横版保持 cross?——**待拍板**：(a) 竖版 4=纵向四行、横版 4=十字（推荐，符合"书写区满行"直觉）；(b) 两端都纵向；
   3. gridLines 相应扩 rows4=['h31','h32','h4']（三横虚线）；engine `_grid_key/_grid_lines` 同口径跟改（CLI/PWA 一致）；
   4. selfcheck/engine test 补竖版 2/3/4 断言（frame 宽度不受 50% 限制、rows4 存在）。
+
+---
+
+## D53 · 第 17 轮三拍板落档（仅讨论）
+
+### ① translation 卡去留 —— **你的判断成立，但有一处不等价**
+代码事实：`applyManualTranslation()`（手动点名打 translation）与 `applyBatchTag()`（批量打 tag，tag 下拉含
+translation）**逐行同构**（split 姓名→findIndex→缺失可新增→赋 tag→touch），唯一差异是 batchTag 下拉可选任意 tag、
+translation 版写死 translation——**功能完全被标签预览卡的批量打 tag 覆盖 → 该卡整体删除成立**。
+⚠️ 不等价的只剩一项：**"随机拨给比例"**——它不在旧卡里而在 applyAutoTagging（recompute 的随机散布），
+且输入框已并入分组比例卡第二行（D50b）。所以删卡不丢任何能力。
+**定稿动作**：删除「translation 拨给」整卡 + 其 script（manualTranslationNames/manualCreateIfAbsent/
+applyManualTranslation/setTranslationRatio 中 setTranslationRatio 保留——比例输入还在比例卡用）；
+页面顶部说明与锚点条同步去掉 translation 段；translation 在系统里的存在形态收敛为三个：
+比例卡第二行的"随机拨给%"（自动）、批量打 tag 选 translation（手动点名）、学生表 tag 下拉（逐人）。
+
+### ② per_page 布局语义定稿（用户拍板）
+- **竖版 2/3/4 全部纵向一列均分**：rows2（一中横虚线）/ rows3（两横）/ **rows4 新档（三横虚线四等分）**；
+  题干满行宽（废除 divided 对 rows* 的 max-width:50% 误伤，改按 `data-grid^="cols"`/cross 限定）；
+- **横版维持现状**：2/3=左右栏 cols2/cols3，4=十字 cross 2×2；
+- 双端同步：printCss()+j2 <style>（parity 哨兵）+ engine `_grid_key/_grid_lines`（rows4/h4 线）+
+  SheetLayoutView? （CSS 近似预览已在 D43-3 删除，无需动）+ selfcheck/engine test 断言补竖版 2/3/4。
+
+### ③ KaTeX 离线方案定稿（用户拍板：下载到 workspace，仓库零容量占用）
+**设计 = 设置中心「KaTeX 离线包」卡一键安装到 workspace**：
+1. 资源来源=**同源 dist fetch**（./katex/… 随 PWA 构建产物分发，npm 依赖供给，仓库不存资产——与 D44 一致）；
+   复用现成 `fetchSelfContainedKatex()` 的资源枚举逻辑（css→woff2 名单解析）；
+2. 落点=`<workspace>/sheets/katex/**`（FSA `writeFileInDir` 递归建目录；连接句柄=getKbDirHandle 同款机制）；
+   体积 ~608KB 一次写入；重复点击=覆盖更新（幂等）；
+3. 引擎侧衔接（零 j2 改动即可用的过渡 + 小补丁终态）：
+   - 过渡：教师把 CLI 生成的 HTML 放 `<workspace>/sheets/` 下打开时，CDN 引用不变仍可联网渲染；离线场景走 PWA「下载 HTML（自包含）」通道（已内联）；
+   - 终态小补丁（建议同批做）：`assist sheet html` 增 `--katex local|cdn`（缺省 cdn 不动现状），local 时模板输出
+     `../katex/...` 相对引用——配合本安装的 sheets/katex/ 目录即全离线；CLI 超集铁律不破（PWA 先行）；
+4. UI：设置中心卡片显示状态（未安装/已安装@路径/版本 0.16.4），按钮「📦 安装 KaTeX 到 workspace」
+   （无 FSA 上下文降级=打包 katex-folder.zip 浏览器下载+指引解压位置）；
+5. 校验按钮沿用现有自检（同源资源可达性）+ 新增"workspace 内已装"探测（FSA getFileHandle sheets/katex/katex.min.js）。
+
+**实施批次**：G1=①删 translation 残卡；G2=②竖版布局双端+测试；G3=③KaTeX workspace 安装（PWA 侧）+ 引擎 --katex local 小补丁。三项互不纠缠，可一批过。
