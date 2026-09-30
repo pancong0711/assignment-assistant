@@ -657,3 +657,20 @@ score_sources 的 roster 语义由系统内部在导出时自动生成，教师�
 - [ ] 卡序重排为上序；成绩源预览卡归位成绩源卡
 - **待确认**：translation 比例"并入分组比例卡内两行制" vs "独立卡紧贴"（我有倾向前者——一次看到两组比例）；
   标签预览是否也显示"按综合得分的档位边界"（即每档分数区间）——信息量大，推荐第一版先不做。
+
+---
+
+## D50b 实施记录（2026-09-30 · 班级与标签"四段+三预览"重排完成）
+
+| 拍板项 | 状态 | 落点 |
+|---|---|---|
+| ① 名单模块独立成卡（导入 xlsx/xls/csv + 手动增删 + 学生基本表[姓名/学号/班级] + **名单预览**归位） | ✅ | RosterView `#roster-module`（从特殊标签卡拆出；按钮更名带 📥 前缀更醒目） |
+| ② 成绩源卡吸收"解析状态预览"悬浮卡（**成绩预览**=全文件模式 500 行滚动 + 行内👁/⇄sheet 保留） | ✅ | `#score-module` 内 PreviewTableCard 归位 |
+| ③ translation 比例**并入分组比例卡两行制**（其他档合计 + translation 独立%提示行）；「⚙ 重算并自动切分打 tag」按钮文案强化"调比例后必点" | ✅ | `#ratio-module` |
+| ③ 特殊标签卡 → **「标签预览」卡**：移除导入带 tag 名单按钮；新增 tag 分布统计行（label×人数+未打数）；批量打 tag 行保留；每生 tag/punish 只读→下拉覆盖表 | ✅ | `#tag-preview` |
+| translation 面板瘦身=仅手动点名 manual 覆盖（比例输入已上移，卡内注明回比例卡统一生效） | ✅ | — |
+| 卡序定稿：班级配置→①名单→②成绩源+总览→③比例→标签预览→translation 手动→④产出→整班预览→班级清单 | ✅ | template 重排 |
+| sticky 段内锚点导航（D45 同风格 design-anchors） | ✅ | 顶部跳转条 |
+
+**验证**：vue-tsc+vite 0 err；store 冒烟 PASS（recompute/tagCounts/createClass 切换清空/switchClass 回载 students 完整/registerArtifact/classList 三态徽标）。
+**红线**：schema/引擎零改动；数据面完全复用（tagCounts getter/students/persist），无新依赖。
