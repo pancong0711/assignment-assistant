@@ -567,3 +567,21 @@ score_sources 的 roster 语义由系统内部在导出时自动生成，教师�
 | F4 | ④产出段整合（预览全部作业纸/产出名单/下载作业纸集中化） | 中 |
 
 **待拍板**：① roster 预设"改名"还是"移除"（推荐移除）；② 多班级 store 的持久化键升级（`roster.v1` → `roster-classes.v2`，需一次性迁移老数据到"默认班级"）；③ 班级清单栏字段取舍（上面 6 项是否全要）；④ 产出登记簿是否也记"源导入"动作（推荐只记产出，导入史由 sources.uid+时间戳自然承载）。
+
+---
+
+## F1–F4 实施记录（2026-09-30 · D49 四拍板全按推荐，全部完成）
+
+| 批 | 内容 | 状态 | 落点 |
+|---|---|---|---|
+| F1 | accept 扩 `.xlsx,.xls,.csv`（FSA types 三 MIME + input 串）| ✅ | fsAccess.ts 两处；RosterView pickXlsx |
+| F1 | roster 预设**移除**（成绩源下拉 filter）；**单写路径**：addScoreSource(family='roster') 同步写回 students（按学号 merge 补齐） | ✅ | RosterView + store |
+| F1 | 空名单黄条（总览卡：⚠ 名单尚未导入…指向专用按钮） | ✅ | RosterView 总览卡 |
+| F2 | **多班级 store**：`classes: Record<cid, RosterClass>` + classOrder + activeClassId；v2 键 `roster-classes.v2`；**v1→v2 一次性迁移**（老数据自动入"默认班级"）；state 代理字段（students/sources/ratios）保持旧视图代码零改动 | ✅ | roster.ts loadClasses/persist 重写 |
+| F2 | 班级配置栏（改名/学期/新建/保存 + 人数·源·产出计数）+ **班级清单栏**（表格：名称/学期/人数/tag 分布/源数/三态徽标/最近产出/更新时间 + 载入/删除；删除清 IndexedDB raw） | ✅ | RosterView 顶部/底部两卡 |
+| F3 | **产出登记簿** `registerArtifact`（cap 30 条）：roster.xlsx（下载/FSA 写回两路）、roster.json、roster-task-package.zip、成绩总览 xlsx、batch zip（SheetContentView 产出点）全部登记；班级清单栏显示最近产出 | ✅ | store + 两视图 |
+| F4 | 产出卡文案收口（集中入口说明 + FSA 归档路径说明 + batch 包产出点指引） | ✅ | RosterView 产出卡 |
+
+**红线**：taskpad schema 不动；引擎零改动；视图层旧字段（students/sources/ratios）读写代理保持兼容（E1–E4/B1/B3 全部功能不受影响）。
+**验证**：vue-tsc+vite 0 err（index-BwrlFyW8.js 287KB）；selfcheck-roster-fig 14 断言 PASS。
+**待现场验收**：多班级载入/删除/新建、点名册从两入口导入都写名单、.xls 可选中、总览空名单黄条、产出登记显示。

@@ -144,7 +144,7 @@ export function pickReadFile(accept: string): Promise<File | null> {
   return new Promise((resolve) => {
     const input = document.createElement('input')
     input.type = 'file'
-    input.accept = accept
+    input.accept = accept  // 如 '.xlsx,.xls,.csv'（浏览器原生多扩展逗号串）
     input.onchange = () => resolve(input.files?.[0] ?? null)
     input.oncancel = () => resolve(null)
     input.click()
@@ -159,7 +159,14 @@ export async function pickReadFileFsa(accept: string): Promise<File | null> {
     try {
       const [handle] = await window.showOpenFilePicker({
         multiple: false,
-        types: [{ description: accept, accept: { 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet': ['.xlsx'] } }],
+        types: [{
+          description: '电子表格（xlsx/xls/csv）',
+          accept: {
+            'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet': ['.xlsx'],
+            'application/vnd.ms-excel': ['.xls'],
+            'text/csv': ['.csv'],
+          },
+        }],
       })
       return await handle.getFile()
     } catch {
