@@ -674,3 +674,32 @@ score_sources 的 roster 语义由系统内部在导出时自动生成，教师�
 
 **验证**：vue-tsc+vite 0 err；store 冒烟 PASS（recompute/tagCounts/createClass 切换清空/switchClass 回载 students 完整/registerArtifact/classList 三态徽标）。
 **红线**：schema/引擎零改动；数据面完全复用（tagCounts getter/students/persist），无新依赖。
+
+---
+
+## D52 · 第 16 轮三问题核查（仅讨论登记）
+
+### ① 班级与标签出现两个 translation —— 确认：D50b 半截工程残留
+- 「分组比例卡」内第二行已并入 translation 随机拨给比例输入（L774-779）；
+- 但原「translation 拨给」卡的 **h2 标题与首段 hint 仍是旧文案**（"按比例随机点名…（可调）"），
+  虽第二行 hint 已注明"比例输入已并入上方"，视觉上仍像有两个比例入口 → **教师看到两个 translation**。
+- **修法（待实施）**：该卡整体降格为「标签预览」卡内的附属小节或改名「translation 手动点名（manual 覆盖）」，
+  删除 h2 里的"随机比例"字样与重复描述段——只保留手动点名行。一处比例、一处点名、一卡预览。
+
+### ② KaTeX 渲染现状链路确认（回答"要不要下载/代码在哪/如何到本地工作目录"）
+| 环节 | 现状 |
+|---|---|
+| 渲染方式 | `lib/sheetHtml.ts` 三模式：**relative**（预览/打印 iframe→同源 `./katex/`）、**cdn**（引擎 CLI/j2 输出）、**raw**（下载 HTML=css+js+woff2 base64 全内联自包含） |
+| 资源本体 | **不在远程仓库**（D44 拍板：`app/public/katex/` 已 gitignore）；归属=npm 依赖 `katex@0.16.4`（package.json+lock），CI `npm ci` → prebuild `tools/copy-katex.mjs` 拷选择集（css/js/auto-render/woff2×20≈608KB）进 dist |
+| 用户是否需下载 | **PWA 网页本身零动作**：Pages/引擎 serve 打开时资源随页面同源分发（含 SW 缓存后离线可用）；「下载 HTML」按钮产出的文件已自包含内联，双击即开即渲染 |
+| 唯一需要"到本地工作目录"的场景 | 教师用**引擎 CLI** 生成的 HTML（j2 模板走 CDN）。若断网想让它也离线渲染：把 PWA dist 的 katex 子集放进 workspace（如 `<workspace>/sheets/katex/`），HTML 相对路径即可命中——**当前无一键安装入口**（B 方案曾否决因 LAN 二屏 SW 不可用）。可选小补丁（待拍板）：设置中心加「导出 katex 文件夹到 workspace」按钮（FSA 写回 `sheets/katex/**`，~608KB，一次点击，无需用户管环境） |
+| 自检 | 设置中心已有「KaTeX 公式资源」自检卡（fetch ./katex/ 验证 200） |
+
+### ③ 竖版 per_page=2/3/4 布局问题 —— 根因定位（两处叠加）
+- **数据层没错**：`gridKey()` 竖版 2/3 已是 rows2/rows3（纵向一列均分），**唯独 per_page=4 不分方向都返回 'cross'**（十字 2×2）——这就是"现在的 3/4 都是十字花排布"的直接原因之一（3 其实不该是十字；见下 max-width 效应）；
+- **CSS 层主犯**：D41 overflow 修复引入 `.sheet-body.divided .sheet-frame { max-width: 50% }`——本意防横版栏内容跨虚线，但 divided 类对**竖版同样生效** → 竖版 rows2/rows3 的题帧被压成半宽（题干只占一半行宽！）且靠左堆叠，观感直接错乱；
+- **修法（待实施，双端同步）**：
+  1. CSS：max-width 约束改为**按 grid 类型区分**——`.sheet-body[data-grid^="cols"] .sheet-frame, [data-grid=cross] .sheet-frame { max-width:50% }`（横向分栏才限宽），rows* 不限宽（改 word-break 保留防溢出即可）；`printCss()` 与 j2 `<style>` 两处逐字同步（parity 哨兵护航）；
+  2. gridKey：竖版 per_page=4 → `'rows4'`（新增一档：四行均分+三条横线分隔），横版保持 cross?——**待拍板**：(a) 竖版 4=纵向四行、横版 4=十字（推荐，符合"书写区满行"直觉）；(b) 两端都纵向；
+  3. gridLines 相应扩 rows4=['h31','h32','h4']（三横虚线）；engine `_grid_key/_grid_lines` 同口径跟改（CLI/PWA 一致）；
+  4. selfcheck/engine test 补竖版 2/3/4 断言（frame 宽度不受 50% 限制、rows4 存在）。
