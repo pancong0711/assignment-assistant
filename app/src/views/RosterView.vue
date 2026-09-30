@@ -42,6 +42,8 @@ const caps = detectCapabilities()
 const status = ref('')
 /** 成绩源添加时的格式预设选择（默认 custom = 旧行为） */
 const presetFamily = ref<ScoreFamily>('custom')
+// D49-F1：成绩源下拉已移除 roster 预设（名单=「导入名单 xlsx…」专用按钮的唯一入口）；
+// addScoreSource 收到 family='roster' 时走单写路径（见 store）
 const presetDesc = computed(() => scoreFamilyDesc(presetFamily.value))
 const presetIsFixed = computed(() => isFixedFamily(presetFamily.value))
 
@@ -51,7 +53,8 @@ onMounted(() => {
 
 function pickXlsx(): Promise<File | null> {
   // LAN（http://IP）/Firefox/Safari 下静默降级为 file input（fsAccess 内部处理）
-  return pickReadFileFsa('.xlsx')
+  // D49-F1：accept 扩 .xls/.csv（教务点名册=.xls、成绩 custom 可 .csv——此前只认 .xlsx 是教师导入失败链的一环）
+  return pickReadFileFsa('.xlsx,.xls,.csv')
 }
 
 /* ---------- VC-4/VC-6 导入预览（表头+前 3 行+列映射说明） ---------- */
@@ -90,6 +93,42 @@ async function importRoster() {
 }
 
 const wideFlash = ref(false)
+
+/* ---------- D49-F2：班级配置栏 handlers ---------- */
+function renameCurrent(name: string) {
+  if (!roster.activeMeta) return
+  roster.renameClass(roster.activeMeta.id, name || roster.activeMeta.name)
+  status.value = `班级名已更新为「${name}」。`
+}
+function renameCurrentTerm(term: string) {
+  if (!roster.activeMeta) return
+  roster.renameClass(roster.activeMeta.id, roster.activeMeta.name, term)
+  status.value = `学期已更新为「${term}」。`
+}
+function loadClassAction(cid: string) {
+  if (roster.switchClass(cid)) {
+    status.value = `已载入班级「${roster.activeMeta?.name ?? cid}」（名单/成绩/标签/产出全部切换）。`
+  }
+}
+async function deleteClassAction(cid: string, name: string) {
+  if (!window.confirm(`确认删除班级「${name}」？（其名单/成绩源/产出登记一并清除，IndexedDB 原始文件同步删除；不可恢复）`)) return
+  const ok = await roster.deleteClass(cid)
+  status.value = ok ? `已删除班级「${name}」。` : '删除失败（班级不存在）。'
+}
+function rosterTagCountsOf(cid: string): Record<string, number> {
+  const out: Record<string, number> = {}
+  for (const stu of roster.classes[cid]?.students ?? []) {
+    if (stu.tag) out[stu.tag] = (out[stu.tag] ?? 0) + 1
+  }
+  return out
+}
+function createClassAction() {
+  const name = window.prompt('新班级名称（如：化工251-2026S1）：', `班级${roster.classOrder.length + 1}`)
+  if (name === null) return
+  const cid = roster.createClass(name.trim() || undefined)
+  status.value = `已新建并切换到班级「${name}」（名单/成绩从零开始；分组比例沿用上一班级配置）。`
+  void cid
+}
 
 async function addSource() {
   const file = await pickXlsx()
@@ -496,6 +535,19 @@ const nonTranslationRatios = computed(() => roster.ratios.filter((g) => g.tag !=
       S2b 预览整合（docs/14 §VC）：名单/成绩导入预览卡 + 成绩源宽表（勾选=分层依据，默认全勾）
       + 整班作业纸预览（纯前端 overlay，不依赖引擎）。
     </p>
+
+    <!-- ============ D49-F2 班级配置栏（班级为中心重设计） ============ -->
+    <div class="card" id="class-config">
+      <h2>班级配置 <small style="font-weight:400;color:var(--c-muted)">当前工作区 = 载入的班级（docs/13 D49）</small></h2>
+      <p>
+        <label class="field">班级名称：<input type="text" :value="roster.activeMeta?.name ?? ''" @change="renameCurrent(($event.target as HTMLInputElement).value)" style="width:180px" /></label>
+        <label class="field">学期：<input type="text" :value="roster.activeMeta?.term ?? ''" placeholder="2026S1" @change="renameCurrentTerm(($event.target as HTMLInputElement).value)" style="width:110px" /></label>
+        <button class="btn" @click="createClassAction">＋新建班级</button>
+        <button class="btn primary" style="margin-left:8px" @click="roster.persist(); status = '已保存当前班级'">💾 保存班级</button>
+        <span class="hint" style="margin-left:8px">人数 {{ roster.students.length }} · 源 {{ roster.sources.length }} · 产出 {{ roster.activeMeta?.artifacts.length ?? 0 }}</span>
+      </p>
+      <p class="hint">名单/成绩/标签/产出各模块都作用于当前班级；切换班级用页面底部「班级清单」。数据自动保存在本浏览器（D49 v2 多班级存储，老数据已自动迁入"默认班级"）。</p>
+    </div>
     <div class="notice" v-if="!caps.full && caps.browserHint">{{ caps.browserHint }}</div>
     <div class="notice info" v-if="caps.insecure" style="margin-top:6px">
       当前为局域网预览（http://IP，非安全上下文）：导入名单/成绩/题库均可用（文件选择方式）；
@@ -520,7 +572,7 @@ const nonTranslationRatios = computed(() => roster.ratios.filter((g) => g.tag !=
       <p>
         <label class="field">格式预设：
           <select v-model="presetFamily" style="min-width:230px">
-            <option v-for="p in SCORE_FAMILY_PRESETS" :key="p.value" :value="p.value">{{ p.label }}</option>
+            <option v-for="p in SCORE_FAMILY_PRESETS.filter((x) => x.value !== 'roster')" :key="p.value" :value="p.value">{{ p.label }}</option>
           </select>
         </label>
         <button class="btn primary" style="margin-left:8px" @click="addSource">＋添加成绩源（选 xlsx）</button>
@@ -534,7 +586,7 @@ const nonTranslationRatios = computed(() => roster.ratios.filter((g) => g.tag !=
         <label class="field">源名：<input type="text" v-model="s.name" style="width:150px" @change="roster.touch()" /></label>
         <label class="field" :title="scoreFamilyDesc(s.family)">格式预设：
           <select :value="s.family" @change="roster.setSourceFamily(i, (($event.target as HTMLSelectElement).value) as ScoreFamily, null)" style="max-width:190px">
-            <option v-for="p in SCORE_FAMILY_PRESETS" :key="p.value" :value="p.value">{{ p.label }}</option>
+            <option v-for="p in SCORE_FAMILY_PRESETS.filter((x) => x.value !== 'roster')" :key="p.value" :value="p.value">{{ p.label }}</option>
           </select>
         </label>
         <template v-if="isFixedFamily(s.family)">
@@ -586,6 +638,10 @@ const nonTranslationRatios = computed(() => roster.ratios.filter((g) => g.tag !=
     </div>
 
     <div class="card" id="wide-table" :class="{ 'wide-flash': wideFlash }" v-if="scoreSources.length">
+      <div class="notice" v-if="!roster.students.length" style="border-color:#c9a227;color:#7a5c00">
+        ⚠ 名单尚未导入（总览无行可显示）——请点上方「导入名单 xlsx…」导入教务点名册/姓名列表（docs/13 D48 单写路径：
+        无论从哪个入口导入，名单都会写入）。
+      </div>
       <h2>全部成绩总览（D46-4：每生一行 × 各源分数列 × 综合得分 · 勾选 = 是否参与综合）</h2>
       <p class="hint">
         每行 = 一名学生，每列 = 一个已添加成绩源（<b>分数列</b>）+ 末列<b>综合得分</b>（随勾选即时重算预览，
@@ -764,6 +820,9 @@ const nonTranslationRatios = computed(() => roster.ratios.filter((g) => g.tag !=
         roster.xlsx 列 = name/number/class/tag（恒英文值），<code>uv run assist sheet make &lt;task&gt; --roster roster.xlsx</code> 直接可用；
         roster.json 供 CLI/AI；作业纸 zip 内含 roster.xlsx + roster.json + task-package.json
         （group_cfg + special_tag_cfg + punish + score_sources[].family，docs/05-D19）+ 附带切分规则说明 md。
+        <b>D49-F4</b>：本卡 = 当前班级的产出集中入口（导出即登记进班级产出簿，见下方清单/班级清单栏）；
+        整班分层作业纸的 batch 交付包在「作业纸设计→内容/变体绑定」卡生成（也会登记）。
+        FSA 已连接 workspace 时：导出走 <code>classes/&lt;班级&gt;/roster/</code> 原地写回（产出簿记 fsa-write 路径）。
       </p>
       <p>
         <button class="btn primary" :disabled="exportDisabled" @click="downloadRosterJsonAndXlsx">导出 tag 名单（xlsx + JSON）</button>
@@ -816,7 +875,37 @@ const nonTranslationRatios = computed(() => roster.ratios.filter((g) => g.tag !=
       ></iframe>
     </div>
 
-  </section>
+      <!-- ============ D49-F2 班级清单栏（汇总 + 载入/删除） ============ -->
+    <div class="card" id="class-list">
+      <h2>班级清单 <small style="font-weight:400;color:var(--c-muted)">已添加班级汇总 · 载入/删除（docs/13 D49）</small></h2>
+      <p class="hint">新学年归档旧班级、或删除误操作的班级；载入后上方所有模块切换为该班级的工作区。</p>
+      <table class="grid" v-if="roster.classList.length" style="font-size:12px">
+        <thead>
+          <tr><th>班级</th><th>学期</th><th>人数</th><th>tag 分布</th><th>成绩源</th><th>状态</th><th>最近产出</th><th>更新时间</th><th style="width:120px">操作</th></tr>
+        </thead>
+        <tbody>
+          <tr v-for="c in roster.classList" :key="c.id" :style="c.id === roster.activeClassId ? 'background:var(--c-primary-soft)' : ''">
+            <td><b>{{ c.name }}</b><span class="hint" v-if="c.id === roster.activeClassId">（当前）</span></td>
+            <td>{{ c.term || '—' }}</td>
+            <td style="text-align:center">{{ c.studentsCount }}</td>
+            <td style="font-size:11px">{{ Object.entries(rosterTagCountsOf(c.id)).map(([t, n]) => `${t}×${n}`).join('，') || '—' }}</td>
+            <td style="text-align:center">{{ c.sourceCount }}</td>
+            <td>{{ c.status }}</td>
+            <td style="font-size:11px; max-width:180px; word-break:break-all">{{ c.artifacts[0] ? `${c.artifacts[0].name}（${new Date(c.artifacts[0].at).toLocaleDateString()}）` : '—' }}</td>
+            <td>{{ new Date(c.updatedAt).toLocaleDateString() }}</td>
+            <td style="white-space:nowrap">
+              <button class="btn small" :disabled="c.id === roster.activeClassId" @click="loadClassAction(c.id)">载入</button>
+              <button class="btn small" style="margin-left:4px" :disabled="roster.classList.length <= 1" @click="deleteClassAction(c.id, c.name)">删除</button>
+            </td>
+          </tr>
+        </tbody>
+      </table>
+      <p class="hint" v-else>尚无班级。</p>
+      <p class="hint" v-if="roster.activeMeta?.artifacts.length">
+        当前班级产出登记：<code v-for="a in roster.activeMeta.artifacts.slice(0, 5)" :key="a.name + a.at" style="display:inline-block;margin:1px 4px 1px 0">{{ a.name }}（{{ a.kind }}）</code>
+      </p>
+    </div>
+</section>
 </template>
 
 <style scoped>

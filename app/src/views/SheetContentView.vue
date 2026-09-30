@@ -139,6 +139,7 @@ async function downloadBatchZip() {
     await ensureDefaultSheetHtmlProvider((kind) => kb.book(kind as never))
     const { blob, cd, padCount } = await buildVariantBatchZip(roster.students, pad.savedJsons())
     downloadBlob(blob, `batch-package-${new Date().toISOString().slice(0, 10)}.zip`)
+    roster.registerArtifact({ name: `batch-package-${new Date().toISOString().slice(0, 10)}.zip`, kind: 'batch-zip', via: 'browser-download', bytes: blob.size })
     status.value = `已生成整班 batch 交付包（班级 ${cd}）：${padCount} 份作业纸 + roster.xlsx + batch.json + README。解压到引擎 workspace 根目录后按 README 执行 assist sheet batch 即可。`
   } catch (e) {
     status.value = `batch 包生成失败：${(e as Error).message}`

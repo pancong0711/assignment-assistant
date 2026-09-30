@@ -5,7 +5,7 @@ import {
   type GroupRatio, type RosterStudent, type ScoreFamily, type ScoreSource,
 } from '../lib/roster'
 import {
-  buildRosterPreview, buildScoreSourcePreview, buildTaskPackage, readRosterXlsx,
+  buildRosterPreview, buildScoreSourcePreview, buildTaskPackage, newUid, readRosterXlsx,
   readScoreSourceXlsx, taskPackageReadme, writeRosterXlsx,
   type PreviewTable,
 } from '../lib/rosterXlsx'
@@ -49,18 +49,106 @@ function fromPersisted(raw: string): PersistedRoster | null {
   }
 }
 
+/* ---------- D49：多班级 store（班级为中心重设计，F2） ----------
+ *  班级清单 = classes: Record<cid, RosterClass>；activeClassId = 当前工作区指针。
+ *  持久化键 roster-classes.v2；首启一次性迁移 roster.v1 → 默认班级（meta.name='默认班级'）。
+ *  产出登记簿 artifacts[] 挂每班级（F3）；载入=切 activeClassId；删除=从 classes 移除。 */
+
+export interface ClassArtifact {
+  /** 文件名（含扩展名） */
+  name: string
+  /** 类型：tagged-roster / overview-xlsx / batch-zip / sheet-html / other */
+  kind: 'tagged-roster' | 'overview-xlsx' | 'batch-zip' | 'sheet-html' | 'other'
+  /** 产出方式：fsa-write（FSA 写回）或 browser-download */
+  via: 'fsa-write' | 'browser-download'
+  /** FSA 写回时的目标相对路径（workspace 相对） */
+  path?: string
+  bytes: number
+  at: string
+}
+
+export interface RosterClassMeta {
+  id: string
+  name: string
+  term?: string
+  createdAt: string
+  updatedAt: string
+  /** 产出登记簿（F3） */
+  artifacts: ClassArtifact[]
+}
+
+export interface RosterClass extends RosterClassMeta {
+  students: RosterStudent[]
+  sources: ScoreSource[]
+  ratios: GroupRatio[]
+}
+
+const LS_CLASSES_KEY = 'assignment-assistant.roster-classes.v2'
+
+function nowIso(): string { return new Date().toISOString() }
+function emptyClass(name = '新班级'): RosterClass {
+  return {
+    id: newUid(), name, term: '',
+    createdAt: nowIso(), updatedAt: nowIso(), artifacts: [],
+    students: [], sources: [], ratios: [...DEFAULT_GROUP_RATIOS],
+  }
+}
+
+function loadClasses(): { classes: Record<string, RosterClass>; order: string[]; activeId: string } {
+  try {
+    const raw = localStorage.getItem(LS_CLASSES_KEY)
+    if (raw) {
+      const obj = JSON.parse(raw) as { classes: Record<string, RosterClass>; order?: string[]; activeId?: string }
+      const order = obj.order ?? Object.keys(obj.classes)
+      return { classes: obj.classes ?? {}, order, activeId: obj.activeId ?? order[0] ?? '' }
+    }
+  } catch { /* fallthrough 迁移 */ }
+  // 一次性迁移：roster.v1 → 默认班级
+  const legacy = fromPersisted(localStorage.getItem(LS_KEY) ?? '')
+  const c: RosterClass = legacy
+    ? { id: newUid(), name: '默认班级', term: '', createdAt: legacy.savedAt || nowIso(), updatedAt: nowIso(),
+        artifacts: [], students: legacy.students, sources: legacy.sources, ratios: legacy.ratios }
+    : emptyClass('默认班级')
+  return { classes: { [c.id]: c }, order: [c.id], activeId: c.id }
+}
+
 export const useRosterStore = defineStore('roster', {
   state: () => {
-    const p = fromPersisted(localStorage.getItem(LS_KEY) ?? '')
+    const loaded = loadClasses()
+    const cur = loaded.classes[loaded.activeId]
     return {
-      students: p?.students ?? [],
-      sources: p?.sources ?? [],
-      ratios: p?.ratios ?? [...DEFAULT_GROUP_RATIOS],
-      savedAt: p?.savedAt ?? '',
+      // —— D49 多班级 ——
+      classes: loaded.classes as Record<string, RosterClass>,
+      classOrder: loaded.order as string[],
+      activeClassId: loaded.activeId as string,
+      // —— 当前工作区代理（兼容旧视图代码：读写这些字段 = 读写 active 班级） ——
+      students: (cur?.students ?? []) as RosterStudent[],
+      sources: (cur?.sources ?? []) as ScoreSource[],
+      ratios: (cur?.ratios ?? [...DEFAULT_GROUP_RATIOS]) as GroupRatio[],
+      savedAt: cur?.updatedAt ?? '',
       dirty: false,
     }
   },
   getters: {
+    /** D49：班级清单（供清单栏渲染） */
+    classList(state): Array<RosterClassMeta & { studentsCount: number; taggedCount: number; sourceCount: number; status: '仅名单' | '已打tag' | '已产出' }> {
+      return state.classOrder
+        .map((cid) => state.classes[cid])
+        .filter(Boolean)
+        .map((c) => {
+          const tagged = c.students.filter((x) => x.tag).length
+          const status: '仅名单' | '已打tag' | '已产出' = c.artifacts.length ? '已产出' : (tagged > 0 ? '已打tag' : '仅名单')
+          return { id: c.id, name: c.name, term: c.term, createdAt: c.createdAt, updatedAt: c.updatedAt, artifacts: c.artifacts,
+                   studentsCount: c.students.length, taggedCount: tagged, sourceCount: c.sources.length, status }
+        })
+    },
+    activeMeta(state): RosterClassMeta | null {
+      return state.classes[state.activeClassId]
+        ? { id: state.classes[state.activeClassId].id, name: state.classes[state.activeClassId].name, term: state.classes[state.activeClassId].term,
+            createdAt: state.classes[state.activeClassId].createdAt, updatedAt: state.classes[state.activeClassId].updatedAt,
+            artifacts: state.classes[state.activeClassId].artifacts }
+        : null
+    },
     hasData: (s) => s.students.length > 0,
     /** 每档 tag 人数统计（含手动覆盖与 punish） */
     tagCounts(state): Record<string, number> {
@@ -82,22 +170,93 @@ export const useRosterStore = defineStore('roster', {
   },
   actions: {
     persist() {
-      const data: PersistedRoster = {
-        students: this.students, sources: this.sources, ratios: this.ratios,
-        savedAt: new Date().toISOString(),
+      // D49：写回 active 班级 + v2 键（兼容字段 students/sources/ratios 直接来自 state 代理）
+      const cur = this.classes[this.activeClassId]
+      if (cur) {
+        cur.students = this.students
+        cur.sources = this.sources
+        cur.ratios = this.ratios
+        cur.updatedAt = nowIso()
       }
       try {
-        localStorage.setItem(LS_KEY, JSON.stringify(data))
-        this.savedAt = data.savedAt
+        localStorage.setItem(LS_CLASSES_KEY, JSON.stringify({
+          classes: this.classes, order: this.classOrder, activeId: this.activeClassId,
+        }))
+        this.savedAt = cur?.updatedAt ?? nowIso()
       } catch {
         // 超出 localStorage 配额时静默跳过（内存中仍可编辑/导出）
       }
+    },
+    /** D49：新建班级（可选从当前班级克隆配置/比例；名单与源不复制=全新开始） */
+    createClass(name?: string, cloneRatios = true): string {
+      const c = emptyClass(name || `班级${this.classOrder.length + 1}`)
+      if (cloneRatios) c.ratios = this.ratios.map((r) => ({ ...r }))
+      this.classes[c.id] = c
+      this.classOrder.push(c.id)
+      this.switchClass(c.id)
+      return c.id
+    },
+    /** D49：载入班级（切 activeClassId；当前工作区状态先回写） */
+    switchClass(cid: string): boolean {
+      const c = this.classes[cid]
+      if (!c) return false
+      // 回写当前
+      const cur = this.classes[this.activeClassId]
+      if (cur) { cur.students = this.students; cur.sources = this.sources; cur.ratios = this.ratios }
+      this.activeClassId = cid
+      this.students = c.students
+      this.sources = c.sources
+      this.ratios = c.ratios
+      this.savedAt = c.updatedAt
+      this.dirty = false
+      this.persist()
+      return true
+    },
+    /** D49：删除班级（新学年归档/误操作清除；IndexedDB raw 随源 uid 清理） */
+    async deleteClass(cid: string): Promise<boolean> {
+      const c = this.classes[cid]
+      if (!c) return false
+      for (const src of c.sources) { if (src.uid) { try { const { idbDel } = await import('../lib/idbRaw'); void idbDel(src.uid) } catch { /* noop */ } } }
+      delete this.classes[cid]
+      this.classOrder = this.classOrder.filter((x) => x !== cid)
+      if (this.activeClassId === cid) {
+        const next = this.classOrder[0]
+        if (next) { this.switchClass(next) } else {
+          const fresh = emptyClass('默认班级')
+          this.classes[fresh.id] = fresh
+          this.classOrder.push(fresh.id)
+          this.switchClass(fresh.id)
+        }
+      } else {
+        this.persist()
+      }
+      return true
+    },
+    /** D49：重命名/改学期 */
+    renameClass(cid: string, name: string, term?: string): boolean {
+      const c = this.classes[cid]
+      if (!c) return false
+      c.name = name
+      if (term !== undefined) c.term = term
+      c.updatedAt = nowIso()
+      this.persist()
+      return true
+    },
+    /** F3：产出登记簿（按拍板=只记产出） */
+    registerArtifact(a: Omit<ClassArtifact, 'at'>): void {
+      const cur = this.classes[this.activeClassId]
+      if (!cur) return
+      cur.artifacts.unshift({ ...a, at: nowIso() })
+      if (cur.artifacts.length > 30) cur.artifacts.length = 30
+      this.persist()
     },
     clearAll() {
       this.students = []
       this.sources = []
       this.ratios = [...DEFAULT_GROUP_RATIOS]
       this.dirty = false
+      this.persist()
+      // v1 键清除（迁移已完成）
       localStorage.removeItem(LS_KEY)
     },
     async loadRosterFile(file: File): Promise<{ message: string; preview: PreviewTable }> {
@@ -122,6 +281,27 @@ export const useRosterStore = defineStore('roster', {
     async addScoreSource(file: File, family: ScoreFamily = 'custom'): Promise<{ message: string; preview: PreviewTable }> {
       const preview = await buildScoreSourcePreview(file, family)
       const src = await readScoreSourceXlsx(file, file.name, family)
+      // D49-F1 单写路径：roster 源同时写回 students[]（双入口语义合一——教师无论从哪个入口导入点名册，
+      // 名单都会进来；已存在 students 时按学号 merge 补齐姓名/班级，无 students 时全量填充）。
+      if (family === 'roster') {
+        const byNumber = new Map(this.students.map((x) => [x.number, x] as const))
+        const merged: RosterStudent[] = src.rows.map((r) => {
+          const name = String(r[src.nameColumn] ?? '').trim()
+          const number = String(r['学号'] ?? r['number'] ?? '').trim()
+          const cls = String(r['班级'] ?? r['class'] ?? '').trim()
+          const existing = byNumber.get(number) ?? byNumber.get(name)
+          if (existing) {
+            if (!existing.number && number) existing.number = number
+            if (!existing.class && cls) existing.class = cls
+            return existing
+          }
+          return { name, number, class: cls, tag: '', score: null, manualTag: false, punish: false }
+        }).filter((x) => x.name)
+        if (merged.length) {
+          this.students = merged
+          this.dirty = true
+        }
+      }
       // D46-3：原始 ArrayBuffer 入 IndexedDB（👁回看/reparse/rescore 免二次选文件；失败静默降级）
       if (src.uid) void idbPut(src.uid, await file.arrayBuffer())
       this.sources.push(src)
@@ -284,13 +464,16 @@ export const useRosterStore = defineStore('roster', {
     },
     /** 导出 roster xlsx（带 tag 列；engine `assist sheet make --roster` 直接可用） */
     downloadRosterXlsx() {
-      downloadData(writeRosterXlsx(this.students), 'roster.xlsx',
+      const buf = writeRosterXlsx(this.students)
+      downloadData(buf, 'roster.xlsx',
         'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet')
+      this.registerArtifact({ name: 'roster.xlsx', kind: 'tagged-roster', via: 'browser-download', bytes: buf.byteLength })
     },
     /** 导出 roster.json（CLI/AI 用） */
     downloadRosterJson() {
       const list = this.students.map((s) => ({ name: s.name, number: s.number, class: s.class, tag: s.tag }))
       downloadData(JSON.stringify(list, null, 2), 'roster.json', 'application/json')
+      this.registerArtifact({ name: 'roster.json', kind: 'other', via: 'browser-download', bytes: JSON.stringify(list).length })
     },
     /** 导出"分组比例+special_tag 参数"作业纸 zip（xlsx + json + 附带说明 md）。
      *  D19：score_sources[].family 与 engine CLI --score family:file[:col:w] 对齐。 */
@@ -303,6 +486,7 @@ export const useRosterStore = defineStore('roster', {
       zip.file('README-切分规则说明.md', taskPackageReadme())
       const blob = await zip.generateAsync({ type: 'blob' })
       downloadData(blob, 'roster-task-package.zip')
+      this.registerArtifact({ name: 'roster-task-package.zip', kind: 'other', via: 'browser-download', bytes: blob.size })
       return '已导出 roster-task-package.zip（roster.xlsx + roster.json + task-package.json（含成绩源 family）+ 附带说明）。'
     },
     /** 已连接 workspace 目录时原地写入 classes/<班级>/roster/（Chrome/Edge） */
@@ -314,6 +498,7 @@ export const useRosterStore = defineStore('roster', {
         this.students.map((s) => ({ name: s.name, number: s.number, class: s.class, tag: s.tag })), null, 2))
       await writeFileInDir(dirHandle, `${dir}/task-package.json`,
         buildTaskPackage(this.students, this.sources, this.ratios))
+      this.registerArtifact({ name: 'roster.xlsx', kind: 'tagged-roster', via: 'fsa-write', path: `${dir}/roster.xlsx`, bytes: writeRosterXlsx(this.students).byteLength })
       return `已写回 ${dirHandle.name}/${dir}/（roster.xlsx + roster.json + task-package.json）。`
     },
   },
