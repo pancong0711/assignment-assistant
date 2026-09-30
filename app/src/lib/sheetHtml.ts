@@ -185,7 +185,7 @@ body {
 .sf-line.h31 { left: 0; top: 33.3%; width: 100%; height: 1px; }
 .sf-line.h32 { left: 0; top: 66.6%; width: 100%; height: 1px; }
 .sf-line.h4 { left: 0; top: 75%; width: 100%; height: 1px; }
-.sf-line.v, .sf-line.v31, .sf-line.v32 { background-image: repeating-linear-gradient(to bottom, #777 0 5px, transparent 5px 10px); }
+.sf-line.v, .sf-line.v31, .sf-line.v32, .sf-line.v4 { background-image: repeating-linear-gradient(to bottom, #777 0 5px, transparent 5px 10px); }
 .sf-line.h, .sf-line.h31, .sf-line.h32, .sf-line.h4 { background-image: repeating-linear-gradient(to right, #777 0 5px, transparent 5px 10px); }
 /* 水印层（每页重建；items 逐层 + 页码大字） */
 .wm-layer { position: absolute; inset: 0; pointer-events: none; z-index: 5; }
