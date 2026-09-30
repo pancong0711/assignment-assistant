@@ -3,9 +3,9 @@ import { computed, onMounted, ref } from 'vue'
 import { STUDENT_TAGS, STUDENT_TAG_LABELS } from '../lib/kb'
 import {
   SCORE_FAMILY_PRESETS, isIncluded, isFixedFamily, scoreFamilyDesc, scoreFamilyLabel,
-  sourceScoreMatrix,
   type ScoreFamily,
 } from '../lib/roster'
+import { columnScoreOf, scoreColumnsOf } from '../lib/rosterXlsx'
 import { computeScoresFiltered } from '../lib/roster'
 import type { PreviewTable } from '../lib/rosterXlsx'
 import { useRosterStore } from '../stores/roster'
@@ -60,8 +60,6 @@ function pickXlsx(): Promise<File | null> {
 /* ---------- VC-4/VC-6 导入预览（表头+前 3 行+列映射说明） ---------- */
 const rosterPreview = ref<PreviewTable | null>(null)
 const rosterPreviewFile = ref('')
-const sourcePreviewLatest = ref<PreviewTable | null>(null)
-const sourcePreviewLatestFile = ref('')
 
 const rosterFailNotice = ref(false)
 
@@ -134,10 +132,8 @@ async function addSource() {
   const file = await pickXlsx()
   if (!file) return
   try {
-    const { message, preview } = await roster.addScoreSource(file, presetFamily.value)
+    const { message } = await roster.addScoreSource(file, presetFamily.value)
     status.value = message
-    sourcePreviewLatest.value = preview
-    sourcePreviewLatestFile.value = file.name
   } catch (e) {
     status.value = `成绩源读入失败：${(e as Error).message}`
     
@@ -224,17 +220,6 @@ function recompute() {
   status.value = roster.recomputeFromChecked()
 }
 
-/* ---------- D47-6 整班预览（wideRows → PreviewTable 走 PreviewTableCard 展示） ---------- */
-const classPreview = ref<PreviewTable | null>(null)
-function classOverviewPreview() {
-  const headers = ['姓名', '学号', '班级', ...wideHeaders.value.map((h) => `${h.label}${h.included ? '' : '[未参与]'}`), '综合得分', 'tag', 'punish']
-  const rows = wideRows.value.map((r) => {
-    const stu = roster.students.find((x) => x.name === r.name && x.number === r.number)
-    return [r.name, r.number, stu?.class ?? '', ...r.cells, r.composite, stu?.tag ?? '', stu?.punish ? '是' : '']
-  })
-  classPreview.value = { headers, rows, notes: ['整班模式（docs/13 D47-6）：每生一行，含各源分数/综合/tag/punish；列勾选影响"[未参与]"标注与综合。'], rowCount: rows.length }
-}
-
 /* ---------- D46-4 总览导出 xlsx（SheetJS aoa；未勾选源列保留、表头加"[未参与]"标注） ---------- */
 const overviewMsg = ref('')
 async function exportOverviewXlsx() {
@@ -261,31 +246,46 @@ async function exportOverviewXlsx() {
 /** 宽表行：学生 + 每个源该生的分数（'' = 该源无此生分数） */
 interface WideRow { name: string; number: string; cells: string[]; composite: string }
 const scoreSources = computed(() => roster.sources)
-const wideHeaders = computed(() => scoreSources.value.map((s, i) => ({
-  idx: i,
-  label: s.name || s.fileName || `源${i + 1}`,
-  title: `${s.fileName} · family=${s.family} · 分数列：${s.scoreColumn} · 权重 ${s.weight} · ${isFixedFamily(s.family) ? '固定格式' : 'custom'}`,
-  included: s.includeInAggregation !== false,
-  excluded: s.family === 'roster',
-})))
+/** D55-H3：总览列 = 每源 × 每勾选列（一个源可多列）；列头带权重输入与单列切分。 */
+interface WideHeader {
+  si: number; ci: number
+  label: string; title: string
+  included: boolean; excluded: boolean
+  col: { name: string; index: number; weight: number } | null
+}
+const wideHeaders = computed<WideHeader[]>(() =>
+  scoreSources.value.flatMap((s, si): WideHeader[] => {
+    if (s.family === 'roster') {
+      return [{ si, ci: -1, label: s.name || s.fileName || '点名册', title: '教务点名册：仅接表不计分',
+                included: false, excluded: true, col: null }]
+    }
+    const cols = scoreColumnsOf(s)
+    return cols.map((col, ci): WideHeader => ({
+      si, ci,
+      col,
+      label: s.name ? `${s.name}·${col.name}` : col.name,
+      title: `${s.fileName} · family=${s.family} · 列：${col.name} · 权重 ${col.weight ?? 1}`,
+      included: isIncluded(s) && Number(col.weight ?? 1) > 0,
+      excluded: false,
+    }))
+  }))
 const wideRows = computed<WideRow[]>(() => {
-  // 列取数：源.scores（family 解析结果）优先，legacy 无 scores 时回退按所选列
-  const matrices = scoreSources.value.map((s) => sourceScoreMatrix(s))
-  // D46-4 综合得分列：按当前勾选集合"干跑"加权（不落库；正式写入仍走「重算并打 tag」）。
-  //   computeScoresFiltered 直接写 stu.score——这里对浅拷贝操作，避免污染 store。
+  const headers = wideHeaders.value
+  // D46-4/D55-H3 综合得分列：按当前勾选源×列"干跑"原始分加权平均（不落库；正式写入走「重算并打 tag」）
   const shadow = roster.students.map((s) => ({ ...s }))
   try { computeScoresFiltered(shadow, scoreSources.value.filter(isIncluded)) } catch { /* noop */ }
   const compMap = new Map(shadow.map((s) => [`${s.name}\u0000${s.number}`, s.score]))
   return roster.students.map((stu) => ({
     name: stu.name,
     number: stu.number,
-    cells: matrices.map((m) => {
-      const v = m[stu.name]
+    cells: headers.map((h) => {
+      if (!h.col || h.excluded) return ''
+      const v = columnScoreOf(scoreSources.value[h.si], h.col, stu.name)
       return typeof v === 'number' && Number.isFinite(v) ? String(v) : ''
     }),
     composite: (() => {
       const c = compMap.get(`${stu.name}\u0000${stu.number}`)
-      return typeof c === 'number' && Number.isFinite(c) ? c.toFixed(1) : ''
+      return typeof c === 'number' && Number.isFinite(c) ? c.toFixed(2) : ''
     })(),
   }))
 })
@@ -303,15 +303,18 @@ const wideHint = computed(() =>
   `多列加权口径：综合得分 = Σ(勾选源归一化分数 × 源权重 / 勾选源权重和) × 100（源内按该源最大值归一）。`)
 
 /** 单列切分按钮（一列即排） */
-function tagBySingleColumn(idx: number) {
+function tagBySingleColumn(si: number, colName?: string) {
   if (!roster.students.length) { status.value = '请先导入/手动建立名单。'; return }
-  status.value = roster.tagByColumn(idx)
+  status.value = roster.tagByColumn(si, colName)
+}
+function toggleColumnInclude(si: number, colName: string, on: boolean) {
+  status.value = roster.toggleColumnInclude(si, colName, on)
+}
+function setColumnWeight(si: number, colName: string, raw: string) {
+  const w = Number(raw)
+  status.value = roster.setColumnWeight(si, colName, Number.isFinite(w) ? w : 1)
 }
 
-/** 供模板使用的勾选切换（checkbox 直接绑 includeInAggregation） */
-function toggleInclude(idx: number, ev: Event) {
-  roster.setSourceIncluded(idx, (ev.target as HTMLInputElement).checked)
-}
 
 /* ---------- VC-3 整班作业纸预览（HTML overlay，纯前端不依赖引擎） ---------- */
 const showClassPreview = ref(false)
@@ -592,13 +595,11 @@ const nonTranslationRatios = computed(() => roster.ratios.filter((g) => g.tag !=
         <template v-if="presetIsFixed">这是固定格式（来自{{ presetFamily === 'rainclass' ? '雨课堂' : presetFamily.startsWith('xuexitong') ? '学习通' : '教务' }}导出）——无需选列，自动按列名语义解析。说明：{{ presetDesc }}</template>
         <template v-else>{{ presetDesc }}</template>
       </p>
-      <PreviewTableCard
-        title="成绩源解析状态预览（最近导入，VC-6/D47 全文件模式）"
-        :preview="sourcePreviewLatest"
-        :file-name="sourcePreviewLatestFile"
-        tone="ok"
-      />
       <div v-if="!roster.sources.length" class="notice">尚无成绩源：可只导名单不打 tag（tag 列留空），或添加若干成绩源后「重算并打 tag」。</div>
+      <p class="hint" style="margin-top:2px">
+        D55-H3：每源可勾选<b>多列</b>（勾选框见各行）——每勾一列即成为总览的一列并参与加权；
+        <b>每列权重在总览表头逐列可调</b>（默认 1）。综合 = Σ(原始分×权重)/Σ权重，不做班内最高分归一。
+      </p>
       <p v-for="(s, i) in roster.sources" :key="i" class="hint" style="border-bottom:1px dashed var(--c-border);padding:6px 0">
         <label class="field">源名：<input type="text" v-model="s.name" style="width:150px" @change="roster.touch()" /></label>
         <label class="field" :title="scoreFamilyDesc(s.family)">格式预设：
@@ -660,6 +661,11 @@ const nonTranslationRatios = computed(() => roster.ratios.filter((g) => g.tag !=
         无论从哪个入口导入，名单都会写入）。
       </div>
       <h2>全部成绩总览（D46-4：每生一行 × 各源分数列 × 综合得分 · 勾选 = 是否参与综合）</h2>
+      <p class="notice info" style="margin:0 0 6px">
+        <b>综合得分算法（D55-H3 拍板）</b>：<code>综合 = Σ(列原始分 × 列权重) / Σ列权重</code> ——
+        只统计「已勾选」的列；<b>不做班内最高分归一</b>；单列（或全权重=1）时即该列原始分。
+        与引擎 <code>assist roster tag</code>（merge_scores 原始分加权平均）同口径；列权重在每列表头可调（默认 1）。
+      </p>
       <p class="hint">
         每行 = 一名学生，每列 = 一个已添加成绩源（<b>分数列</b>）+ 末列<b>综合得分</b>（随勾选即时重算预览，
         正式写入需点「重算并打 tag」）；可横向滚动。
@@ -673,17 +679,24 @@ const nonTranslationRatios = computed(() => roster.ratios.filter((g) => g.tag !=
             <tr>
               <th class="sticky-col">姓名</th>
               <th class="sticky-col">学号</th>
-              <th v-for="h in wideHeaders" :key="h.idx" :title="h.title" :class="{ 'col-excluded': h.excluded }">
+              <th v-for="h in wideHeaders" :key="h.si + '-' + h.ci" :title="h.title" :class="{ 'col-excluded': h.excluded }">
                 <div class="col-head">
-                  <label class="inc" v-if="!h.excluded"
-                    :title="h.included ? '取消勾选：该源被排除出综合得分（score excluding）' : '重新勾选：该源重新参与综合得分加权'">
-                    <input type="checkbox" :checked="h.included" @change="toggleInclude(h.idx, $event)" />✅
+                  <label class="inc" v-if="!h.excluded && h.col"
+                    :title="h.included ? '取消勾选：该列不进总览/加权' : '勾选：该列进入总览与加权'">
+                    <input type="checkbox" :checked="h.included" @change="toggleColumnInclude(h.si, h.col!.name, ($event.target as HTMLInputElement).checked)" />✅
                   </label>
                   <span v-else title="教务点名册仅接表不计分（不可勾选）" style="color:var(--c-muted)">—</span>
                   <span class="col-name">{{ h.label }}</span>
-                  <button class="btn small" style="margin-top:2px" :disabled="h.excluded || !roster.students.length"
-                    title="VC-5：按该源的分数列单独切分打 tag（一列即排，其余源不参与加权）"
-                    @click="tagBySingleColumn(h.idx)">按此列切分</button>
+                  <label v-if="!h.excluded && h.col" class="field" style="margin:2px 0; font-size:11px"
+                    title="D55-H3：该列权重（默认 1；综合分 = Σ原始分×权重 / Σ权重）">
+                    权重
+                    <input type="number" min="0" step="0.1" style="width:52px"
+                      :value="h.col!.weight ?? 1"
+                      @change="setColumnWeight(h.si, h.col!.name, ($event.target as HTMLInputElement).value)" />
+                  </label>
+                  <button class="btn small" style="margin-top:2px" :disabled="h.excluded || !h.col || !roster.students.length"
+                    title="D55-H3：按该列原始分单独切分打 tag（一列即排，其余列/源不参与）"
+                    @click="tagBySingleColumn(h.si, h.col ? h.col.name : undefined)">按此列切分</button>
                 </div>
               </th>
               <th class="composite-col" title="D46-4：按当前勾选源加权即时预览（未点「重算并打 tag」前不写库）">综合得分*</th>
@@ -703,18 +716,8 @@ const nonTranslationRatios = computed(() => roster.ratios.filter((g) => g.tag !=
         </table>
       </div>
       <p class="hint" :class="{ notice: checkedSummary.includes('已排除') }" style="margin-top:6px">{{ checkedSummary }}</p>
-      <PreviewTableCard
-        v-if="classPreview"
-        title="整班成绩预览（D47-6 全班模式）"
-        :preview="classPreview"
-        tone="ok"
-      />
       <p class="hint">
         * 综合得分列为<b>预览口径</b>（随勾选即时重算，不写库；点「重算并打 tag」正式生效）。
-        <button class="btn small" style="margin-left:6px" :disabled="!roster.students.length"
-          title="D47-6：把全部成绩总览转成整班预览卡（每个学生一行，含各源分数/综合/tag/punish）"
-          @click="classOverviewPreview">👁 预览整个班</button>
-        <span class="hint" v-if="classPreview" style="margin-left:6px">整班 {{ roster.students.length }} 人（滚动查看）。</span>
         <button class="btn small" style="margin-left:6px" :disabled="!roster.students.length"
           title="D46-4：全部成绩总览导出 xlsx（名单+各源分数列[未勾选列保留并标注]+tag/punish/综合分）"
           @click="exportOverviewXlsx">⬇ 导出总览 xlsx</button>

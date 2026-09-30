@@ -115,9 +115,9 @@ export const useKbStore = defineStore('kb', {
       this.persist()
     },
     connectWorkspaceDir(): Promise<boolean> {
-      return pickDirectory().then((dir) => {
+      return pickDirectory().then(async (dir) => {
         if (!dir) return false
-        setKbDirHandle(dir)
+        await connectKbDir(dir)
         this.fsDirName = dir.name
         this.origin = this.origin === 'none' ? 'fs' : this.origin
         return true
@@ -215,6 +215,26 @@ export const useKbStore = defineStore('kb', {
 const moduleAny = useKbStore as unknown as { _dirHandle?: FileSystemDirectoryHandle }
 export function setKbDirHandle(handle: FileSystemDirectoryHandle | undefined) {
   moduleAny._dirHandle = handle
+}
+
+/** D55/H1：连接 workspace 目录（设置句柄 + IndexedDB 持久化，刷新后自动恢复）。 */
+export async function connectKbDir(handle: FileSystemDirectoryHandle): Promise<void> {
+  setKbDirHandle(handle)
+  try {
+    const { saveDirHandle } = await import('../lib/dirHandleStore')
+    await saveDirHandle(handle)
+  } catch { /* 降级：仅会话内有效 */ }
+}
+
+/** D55/H1：启动时恢复 workspace 句柄（IDB → 权限检查/请求）；返回是否恢复成功。 */
+export async function restoreKbDir(): Promise<boolean> {
+  try {
+    const { loadDirHandle, ensureDirPermission } = await import('../lib/dirHandleStore')
+    const h = await loadDirHandle()
+    if (!h) return false
+    if (await ensureDirPermission(h)) { setKbDirHandle(h); return true }
+    return false
+  } catch { return false }
 }
 export function getKbDirHandle(): FileSystemDirectoryHandle | undefined {
   return moduleAny._dirHandle

@@ -30,7 +30,53 @@ from loguru import logger
 from . import __version__
 
 CHECK_IDS = ("python_env", "uv", "deps", "playwright", "xelatex", "fonts", "settings", "kb")
-INSTALL_ITEMS = ("deps", "playwright", "fonts", "tex_guide", "python_guide", "uv", "kb_init")
+INSTALL_ITEMS = ("deps", "playwright", "fonts", "tex_guide", "python_guide", "uv", "kb_init", "katex")
+
+KATEX_VERSION = "0.16.4"
+
+
+def install_katex(ws: Path, emit) -> int:
+    """D55/H1：把 KaTeX 选择集写入 <workspace>/sheets/katex/**（零解压直装）。
+    优先从引擎同源静态目录（app/dist/katex，构建期 npm 注入）复制；缺失时回退 jsdelivr 下载。
+    emit(line) 逐行汇报。返回 0=成功。"""
+    dest = ws / "sheets" / "katex"
+    src = _static_root()
+    kat = (src / "katex") if src else None
+    if kat and (kat / "katex.min.js").exists():
+        count = 0
+        for f in sorted(kat.rglob("*")):
+            if not f.is_file():
+                continue
+            rel = f.relative_to(kat)
+            target = dest / rel
+            target.parent.mkdir(parents=True, exist_ok=True)
+            shutil.copy2(f, target)
+            count += 1
+            emit(f"写入 sheets/katex/{rel.as_posix()}（{target.stat().st_size} B）")
+        emit(f"完成：{count} 个文件（来源=引擎同源 dist，版本 {KATEX_VERSION}）")
+        return 0
+    # 回退：CDN 下载（无本地 dist 的裸引擎场景）
+    import urllib.request
+    base = f"https://cdn.jsdelivr.net/npm/katex@{KATEX_VERSION}/dist"
+    try:
+        css = urllib.request.urlopen(f"{base}/katex.min.css", timeout=30).read().decode("utf-8")
+    except Exception as e:  # noqa: BLE001
+        emit(f"失败：无法获取 katex.min.css（{e}）；请先在 PWA 侧构建 dist 或联网重试")
+        return 1
+    files = ["katex.min.css", "katex.min.js", "contrib/auto-render.min.js"]
+    files += [f"fonts/{n}.woff2" for n in sorted(set(re.findall(r"url\(fonts/([^)'\"\s]+)\.woff2\)", css)))]
+    for rel in files:
+        try:
+            data = urllib.request.urlopen(f"{base}/{rel}", timeout=60).read()
+        except Exception as e:  # noqa: BLE001
+            emit(f"失败：{rel}（{e}）")
+            return 1
+        target = dest / rel
+        target.parent.mkdir(parents=True, exist_ok=True)
+        target.write_bytes(data)
+        emit(f"下载写入 sheets/katex/{rel}（{len(data)} B）")
+    emit(f"完成：{len(files)} 个文件（来源=jsdelivr，版本 {KATEX_VERSION}）")
+    return 0
 
 _JOBS: dict[str, dict] = {}
 _JOBS_LOCK: threading.Lock = threading.Lock()
@@ -174,6 +220,24 @@ class Handler(BaseHTTPRequestHandler):
         return (not Handler.token) or qs.get("token", [""])[0] == Handler.token
 
     def _start_job(self, job_id: str, item: str):
+        if item == "katex":
+            # D55/H1：workspace 直装（服务端写盘，零解压；LAN/无 FSA 场景主通道）
+            q: "queue.Queue[str]" = queue.Queue()
+            out: list[str] = []
+            with _JOBS_LOCK:
+                _JOBS[job_id] = {"item": item, "queue": q, "lines": out, "status": "running", "returncode": None}
+            def kworker():
+                try:
+                    rc = install_katex(_ws(), lambda line: (q.put(line), out.append(line)))
+                    _JOBS[job_id]["status"] = "ok" if rc == 0 else "fail"
+                    _JOBS[job_id]["returncode"] = rc
+                    q.put(f"__DONE__{rc}__")
+                except Exception as e:  # noqa: BLE001
+                    q.put(f"异常：{e}"); out.append(str(e))
+                    _JOBS[job_id]["status"] = "fail"; _JOBS[job_id]["returncode"] = 1
+                    q.put("__DONE__1__")
+            threading.Thread(target=kworker, daemon=True).start()
+            return
         cmd, guide = installer_for(item) if item != "kb_init" else (None, None)
         if item in ("kb_init",):
             _, guide = installer_for("kb_init")
