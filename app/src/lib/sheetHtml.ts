@@ -153,9 +153,10 @@ body {
   font-weight: 400; font-size: 10.5pt; text-align: left; margin-top: 1.6mm; color: #222; }
 .sh-assign { color: var(--muted); }
 .sheet-body { flex: 1; display: flex; flex-direction: column; gap: 3mm; min-height: 0; }
-.sheet-page.landscape .sheet-body { flex-direction: row; }
-.sheet-body[data-grid="cols2"], .sheet-body[data-grid="cols3"] { flex-direction: row; }
-.sheet-body[data-grid^="rows"] { flex-direction: column; }
+/* D53-G2：flex 方向由 data-grid 驱动（竖版 rows*=column 满行；横版 cols*/cross=row，
+   cross 再 wrap 成 2×2）——不再依赖 .landscape/.divided 类，横竖四档语义完备。 */
+.sheet-body { flex-direction: column; }
+.sheet-body[data-grid^="cols"], .sheet-body[data-grid="cross"] { flex-direction: row; }
 .sheet-body[data-grid="cross"] { flex-wrap: wrap; }
 .sheet-body.divided { gap: 0; position: relative; }
 /* D53-G2：半宽约束只对横向分栏（cols*/cross）生效——竖版 rows* 题干满行宽（D41 曾误伤竖版）。 */
