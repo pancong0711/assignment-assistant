@@ -528,10 +528,20 @@ const nonTranslationRatios = computed(() => roster.ratios.filter((g) => g.tag !=
 
 <template>
   <section>
+    <!-- D50b 段内锚点导航（与作业纸设计页 D45 同风格） -->
+    <p class="design-anchors">
+      <a href="#class-config">班级配置</a> ·
+      <a href="#roster-module">① 名单</a> ·
+      <a href="#score-module">② 成绩源/总览</a> ·
+      <a href="#ratio-module">③ 比例→标签预览</a> ·
+      <a href="#output-module">④ 产出</a> ·
+      <a href="#class-list">班级清单</a>
+    </p>
     <p class="hint" style="margin-top:0">
       名单列自适应（姓名|name、学号|number、班级|class、tag|tag）；成绩源支持<b>格式预设</b>
       （docs/05-D19：固定四类教务/学习通/雨课堂 + custom）；综合得分 = 多源加权归一均值；
-      分组比例自动切分 tag；「特殊标签」栏随时人工覆盖（special_tag_cfg）。
+      分组比例自动切分 tag；「标签预览」卡随时人工覆盖（special_tag_cfg，D50b 更名）。
+      <b>D50b 卡序</b>：班级配置 → ①名单 → ②成绩源+总览 → ③分组比例(含 translation 比例)→标签预览→translation 手动点名 → ④产出 → 整班作业纸预览 → 班级清单。
       S2b 预览整合（docs/14 §VC）：名单/成绩导入预览卡 + 成绩源宽表（勾选=分层依据，默认全勾）
       + 整班作业纸预览（纯前端 overlay，不依赖引擎）。
     </p>
@@ -554,14 +564,39 @@ const nonTranslationRatios = computed(() => roster.ratios.filter((g) => g.tag !=
       "写回 workspace 目录"不可用——请用下方导出按钮下载文件，教师手动放回 workspace。
       {{ writeHint }}
     </div>
-    <PreviewTableCard
-      title="成绩源解析状态预览（表头 + 前 3 行，VC-6）"
-      :preview="sourcePreviewLatest"
-      :file-name="sourcePreviewLatestFile"
-      tone="ok"
-    />
+    <!-- ============ D50b ① 名单模块（导入/手动/基本表 + 名单预览） ============ -->
+    <div class="card" id="roster-module">
+      <h2>名单 <small style="font-weight:400;color:var(--c-muted)">教务点名册 / 姓名列表 / 手动输入（docs/13 D50b：名单模块独立成卡）</small></h2>
+      <p>
+        <button class="btn primary" @click="importRoster">📥 导入名单 xlsx/xls/csv…</button>
+        <button class="btn" style="margin-left:8px" @click="roster.addStudent()">＋手动添加学生</button>
+        <button class="btn" style="margin-left:8px" @click="roster.clearAll()" v-if="roster.students.length">清空全部</button>
+        <span class="hint" style="margin-left:8px">当前 {{ roster.students.length }} 人</span>
+      </p>
+      <p class="notice" v-if="rosterFailNotice" style="border-color:#c0392b;color:#8e2419">{{ status }}</p>
+      <p class="hint" v-if="!roster.students.length">尚无学生：导入教务点名册（表头自适应→关键词找表头行两级回退，zjxu 名册/无表头说明文字形态均可读，docs/13 D46-1/E5）或手动添加。</p>
+      <table class="grid" v-if="roster.students.length">
+        <thead>
+          <tr><th style="width:140px">姓名</th><th style="width:170px">学号</th><th style="width:170px">班级</th><th style="width:40px"></th></tr>
+        </thead>
+        <tbody>
+          <tr v-for="(s, i) in roster.students" :key="i">
+            <td><input v-model="s.name" @change="roster.touch()" /></td>
+            <td><input v-model="s.number" @change="roster.touch()" /></td>
+            <td><input v-model="s.class" @change="roster.touch()" /></td>
+            <td><button class="btn small" @click="roster.removeStudent(i)" title="移除此学生">✕</button></td>
+          </tr>
+        </tbody>
+      </table>
+      <PreviewTableCard
+        title="名单预览（全文件模式：表头 + 数据行滚动，D47-6）"
+        :preview="rosterPreview"
+        :file-name="rosterPreviewFile"
+        tone="ok"
+      />
+    </div>
 
-    <div class="card">
+    <div class="card" id="score-module">
       <h2>成绩源（格式预设 + 任意 xlsx，docs/05-D19）</h2>
       <p class="hint">
         先选<b>格式预设</b>再选文件：固定四类无需选列（自动按该格式的列名语义定位）；
@@ -581,6 +616,12 @@ const nonTranslationRatios = computed(() => roster.ratios.filter((g) => g.tag !=
         <template v-if="presetIsFixed">这是固定格式（来自{{ presetFamily === 'rainclass' ? '雨课堂' : presetFamily.startsWith('xuexitong') ? '学习通' : '教务' }}导出）——无需选列，自动按列名语义解析。说明：{{ presetDesc }}</template>
         <template v-else>{{ presetDesc }}</template>
       </p>
+      <PreviewTableCard
+        title="成绩源解析状态预览（最近导入，VC-6/D47 全文件模式）"
+        :preview="sourcePreviewLatest"
+        :file-name="sourcePreviewLatestFile"
+        tone="ok"
+      />
       <div v-if="!roster.sources.length" class="notice">尚无成绩源：可只导名单不打 tag（tag 列留空），或添加若干成绩源后「重算并打 tag」。</div>
       <p v-for="(s, i) in roster.sources" :key="i" class="hint" style="border-bottom:1px dashed var(--c-border);padding:6px 0">
         <label class="field">源名：<input type="text" v-model="s.name" style="width:150px" @change="roster.touch()" /></label>
@@ -710,7 +751,7 @@ const nonTranslationRatios = computed(() => roster.ratios.filter((g) => g.tag !=
       </p>
     </div>
 
-    <div class="card">
+    <div class="card" id="ratio-module">
       <h2>分组比例 + 自动切分打 tag</h2>
       <p class="hint">
         2603 默认比例模板可改（punish 不参与比例，仅手动勾选覆盖；docs/05-D17/D18）。
@@ -730,7 +771,15 @@ const nonTranslationRatios = computed(() => roster.ratios.filter((g) => g.tag !=
         </span>
       </p>
       <p>
-        <button class="btn primary" @click="recompute">重算综合得分并自动切分打 tag</button>
+        <label class="field" title="D50b：translation 独立随机拨给比例（不占上行合计，docs/05-D24）">
+          <b>translation（随机拨给，独立）</b>
+          <input type="number" :value="Math.round(translationRatioPct)" min="0" max="100" step="1" style="width:60px"
+            @change="setTranslationRatio(($event.target as HTMLInputElement).value)" />%
+        </label>
+        <span class="hint">其他档合计 {{ (roster.ratioSum * 100).toFixed(1) }}% + translation {{ Math.round(translationRatioPct) }}%（translation 随机散布、与档位切分正交）</span>
+      </p>
+      <p>
+        <button class="btn primary" @click="recompute">⚙ 重算综合得分并自动切分打 tag（调比例后必点）</button>
         <button class="btn" style="margin-left:8px" :disabled="exportDisabled" @click="saveToWorkspace" v-if="dirHandle">写回 workspace roster/</button>
       </p>
       <p class="hint" v-if="dirHandle && writeHint">{{ writeHint }}</p>
@@ -744,65 +793,51 @@ const nonTranslationRatios = computed(() => roster.ratios.filter((g) => g.tag !=
       tone="ok"
     />
 
-    <div class="card">
-      <h2>特殊标签（手动覆盖 special_tag_cfg，批量打 tag）</h2>
-      <p>
-        <button class="btn primary" @click="importRoster">导入名单 xlsx…</button>
-        <button class="btn" style="margin-left:8px" @click="roster.addStudent()">＋手动添加学生</button>
-        <button class="btn" style="margin-left:8px" @click="roster.clearAll()" v-if="roster.students.length">清空全部</button>
+    <!-- ============ D50b ③ 标签预览（分布统计 + 每生 tag/punish + 批量打 tag） ============ -->
+    <div class="card" id="tag-preview">
+      <h2>标签预览 <small style="font-weight:400;color:var(--c-muted)">比例切分结果 + 手动覆盖（special_tag_cfg；docs/13 D50b：原"特殊标签"卡更名）</small></h2>
+      <p class="hint">调整任何比例 → 在上方「分组比例」卡点「重算并自动切分打 tag」→ 本预览即时变化。手动改 tag = special_tag 覆盖（重算不被冲掉）。</p>
+      <p class="hint" v-if="roster.students.length">
+        分布：<code v-for="(n, t) in roster.tagCounts" :key="t" style="margin-right:6px">{{ STUDENT_TAG_LABELS[t] ?? t }}×{{ n }}</code>
+        <span class="hint">未打 {{ roster.students.filter((x) => !x.tag).length }} 人</span>
       </p>
-      <p class="notice" v-if="rosterFailNotice" style="border-color:#c0392b;color:#8e2419">{{ status }}</p>
-      <p class="hint" v-else-if="status">{{ status }}</p>
-      <p class="hint" v-if="!roster.students.length">尚无学生：先"导入名单 xlsx"（表头自适应 → 关键词找表头行两级回退，zjxu 名册/无表头说明文字形态均可读，docs/13 D46-1）或手动添加，再配分组比例/成绩源即可自动分层；也可直接手动点选本表的 tag（=special_tag_cfg 覆盖）。</p>
+      <p class="hint" v-else>名单为空时本卡无内容。</p>
       <p>
         <label class="field">批量打 tag：姓名（逗号/顿号分隔多个学生）
           <input type="text" v-model="batchNames" placeholder="学生A, 学生B, 学生C" style="width:min(420px, 60%)" />
         </label>
         <label class="field">tag：
           <select v-model="batchTag">
-            <option v-for="t2 in STUDENT_TAGS" :key="t2" :value="t2">{{ STUDENT_TAG_LABELS[t2] }}</option>
+            <option v-for="t2 in STUDENT_TAGS" :key="t2" :value="t2">{{ STUDENT_TAG_LABELS[t2] ?? t2 }}</option>
           </select>
         </label>
         <label class="field" style="white-space:nowrap"><input type="checkbox" v-model="batchCreateIfAbsent" /> 缺失者自动新增</label>
         <button class="btn" style="margin-left:8px" @click="applyBatchTag" :disabled="!batchNames.trim()">应用到多个学生</button>
         <span class="hint" v-if="batchMsg"> {{ batchMsg }}</span>
       </p>
-      <table class="grid">
+      <table class="grid" v-if="roster.students.length" style="font-size:12px">
         <thead>
-          <tr><th style="width:120px">姓名</th><th style="width:150px">学号</th><th style="width:150px">班级</th><th style="width:180px">tag</th><th style="width:60px">punish</th><th style="width:40px"></th></tr>
+          <tr><th>姓名</th><th>学号</th><th>tag（下拉=手动覆盖）</th><th style="width:70px">punish</th></tr>
         </thead>
         <tbody>
           <tr v-for="(s, i) in roster.students" :key="i">
-            <td><input v-model="s.name" @change="roster.touch()" /></td>
-            <td><input v-model="s.number" @change="roster.touch()" /></td>
-            <td><input v-model="s.class" @change="roster.touch()" /></td>
+            <td>{{ s.name || '（未命名）' }}</td>
+            <td>{{ s.number || '—' }}</td>
             <td>
               <select :value="s.tag" @change="setTag(i, $event)">
                 <option value="">（未打）</option>
-                <option v-for="t in STUDENT_TAGS" :key="t" :value="t">{{ STUDENT_TAG_LABELS[t] }}</option>
+                <option v-for="t in STUDENT_TAGS" :key="t" :value="t">{{ STUDENT_TAG_LABELS[t] ?? t }}</option>
               </select>
             </td>
             <td style="text-align:center"><input type="checkbox" :checked="s.punish" @change="setPunish(i, $event)" title="punish：期末补作业统一题集（不参与比例）" /></td>
-            <td><button class="btn small" @click="roster.removeStudent(i)">✕</button></td>
           </tr>
         </tbody>
       </table>
-      <p class="hint" style="margin-top:8px">
-        手动改 tag = special_tag 覆盖（等价 _legacy special_tag_cfg）；重算自动切分时手动覆盖不被冲掉。
-      </p>
     </div>
-
     <div class="card">
-    <div class="card">
-      <h2>translation 分发面板（D40 方案 C）</h2>
+      <h2>translation 拨给（随机比例 + 手动点名，D40/D24）</h2>
       <p class="hint">translation 为<b>独立随机拨给</b>（不占比例合计，docs/05-D24）：按比例随机点名打 translation tag（可调）；下方手动名单点名 manual 覆盖。</p>
-      <p>
-        <label class="field">随机拨给比例：
-          <input type="number" :value="Math.round(translationRatioPct)" min="0" max="100" step="1" style="width:60px"
-            @change="setTranslationRatio(($event.target as HTMLInputElement).value)" />%
-        </label>
-        <button class="btn primary" style="margin-left:8px" @click="recompute()">重算综合得分与 translation 拨给</button>
-      </p>
+      <p class="hint">随机拨给<b>比例输入已并入上方「分组比例」卡（两行制，D50b）</b>；改完比例在那里点「重算」统一生效。本卡只做手动点名 manual 覆盖。</p>
       <p>
         <label class="field">手动点名（逗号/顿号分隔多个学生）：
           <input type="text" v-model="manualTranslationNames" placeholder="学生A, 学生B, 学生C" style="width:min(420px, 60%)" />
@@ -815,7 +850,8 @@ const nonTranslationRatios = computed(() => roster.ratios.filter((g) => g.tag !=
       </p>
     </div>
 
-      <h2>产出（名单带 tag → 引擎可直接用）</h2>
+    <div class="card" id="output-module">
+      <h2>产出 <small style="font-weight:400;color:var(--c-muted)">名单带 tag → 引擎可直接用（docs/13 D50b ④产出段）</small></h2>
       <p class="hint">
         roster.xlsx 列 = name/number/class/tag（恒英文值），<code>uv run assist sheet make &lt;task&gt; --roster roster.xlsx</code> 直接可用；
         roster.json 供 CLI/AI；作业纸 zip 内含 roster.xlsx + roster.json + task-package.json
