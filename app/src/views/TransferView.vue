@@ -1,7 +1,7 @@
 <script setup lang="ts">
 import { onMounted, ref } from 'vue'
 import { KB_KINDS, type KbKind } from '../lib/kb'
-import { useKbStore, setKbDirHandle, getKbDirHandle } from '../stores/kb'
+import { useKbStore, connectKbDir, getKbDirHandle } from '../stores/kb'
 import { useTaskpadStore } from '../stores/taskpad'
 import {
   buildWorkspaceZip, readWorkspaceZip, type ZipEntry,
@@ -102,7 +102,7 @@ async function importZip() {
         return
       }
       if (dir.name !== kb.fsDirName) {
-        setKbDirHandle(dir)
+        await connectKbDir(dir)
         kb.fsDirName = dir.name
       }
       for (const e of entries) {

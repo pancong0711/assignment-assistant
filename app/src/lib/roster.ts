@@ -8,6 +8,7 @@
  *  比例，仅手动勾选覆盖；special_tag_cfg 等价功能 = 表内手动指定 tag 覆盖。 */
 
 import { STUDENT_TAGS } from './kb'
+import { columnScoreOf, scoreColumnsOf } from './rosterXlsx'
 
 export type StudentTag = (typeof STUDENT_TAGS)[number]
 
@@ -42,8 +43,8 @@ export interface ScoreSource {
   sheetName?: string
   /** D47-5：该数据区**全部数值列**（列名+原始列索引），供总览 perColumn 勾选管理 */
   allNumericColumns?: Array<{ name: string; index: number }>
-  /** D47-5：教师勾选的参与列（perColumn 默认全勾；取消的列不进综合加权/总览） */
-  includedColumns?: Array<{ name: string; index: number }>
+  /** D47-5/D55-H3：教师勾选的参与列（默认全勾；每列可带权重，默认 1；权重参与"原始分加权平均"） */
+  includedColumns?: Array<{ name: string; index: number; weight?: number }>
   /** 格式预设（docs/05-D19）：固定四类 + custom（默认） */
   family: ScoreFamily
   /** 分数来源列（xlsx 原始表头名；custom 用，固定四类为解析结果说明） */
@@ -129,36 +130,34 @@ export function computeScores(students: RosterStudent[], sources: ScoreSource[])
 export function computeScoresFiltered(
   students: RosterStudent[], sources: ScoreSource[],
 ): ScoreSource[] {
-  const valid = sources.filter((s) => s.weight > 0 && s.rows.length > 0
-    && (Object.keys(s.scores ?? {}).length > 0 || s.scoreColumn !== ''))
-  const totalWeight = valid.reduce((sum, s) => sum + s.weight, 0)
+  // D55-H3 拍板：综合得分 = Σ(原始分 × 列权重) / Σ列权重（**不再除以班内最高分**）。
+  // 单列/等权时 = 该列原始分（与单列成绩完全对应）；与引擎 merge_scores(weight_normalize=True) 同口径。
+  const valid = sources.filter((s) => isIncluded(s)
+    && (scoreColumnsOf(s).length > 0 || Object.keys(s.scores ?? {}).length > 0))
   for (const stu of students) {
-    if (valid.length === 0 || totalWeight <= 0) {
-      stu.score = null
-      continue
-    }
     let acc = 0
+    let wsum = 0
     for (const src of valid) {
-      const raw = srcScoreOf(src, stu.name)
-      if (raw === null) continue
-      const nums = Object.values(srcScores(src)).filter((v) => v !== null) as number[]
-      const max = nums.length ? Math.max(...nums) : 0
-      acc += (max > 0 ? raw / max : 0) * (src.weight / totalWeight)
+      for (const col of scoreColumnsOf(src)) {
+        const w = Number(col.weight ?? 1)
+        if (!(w > 0)) continue
+        const raw = columnScoreOf(src, col, stu.name)
+        if (raw === null) continue
+        acc += raw * w
+        wsum += w
+      }
     }
-    stu.score = Math.round(acc * 1000) / 10 // 0~100，保留 1 位小数
+    stu.score = wsum > 0 ? Math.round((acc / wsum) * 100) / 100 : null
   }
   return valid
 }
 
 /** 某成绩源内部分数列（scores 表优先；legacy 无 scores 时按 scoreColumn 回退）。
  *  VC-5 宽表列值渲染 + "按某一列切分"都从这里取数。 */
+/** 兼容入口：单"主列"矩阵（scores 优先，回退 scoreColumn 列）。
+ *  D55-H3 起总览/加权走 columnScoreOf+scoreColumnsOf（多列），本函数仅供存量调用。 */
 export function sourceScoreMatrix(src: ScoreSource): Record<string, number> {
-  // D47-5 perColumn：教师勾选 includedColumns 时——
-  //   crostab 学习通源（列=作业均分语义行）与普通源 rows 都可裁剪；scores 已聚合的源以之为准。
-  //   但若教师明确取消了部分列（includedColumns ⊂ allNumericColumns），普通源按"还原 raw 矩阵重算均值/重组分数"：
-  //   实现简则：对 numeric source（exam/custom）rows 中取每个 included 列的平均值作为该源多项综合。
-  if (src.scores && Object.keys(src.scores).length > 0 && !(src.allNumericColumns && src.includedColumns
-    && src.includedColumns.length < src.allNumericColumns.length)) return src.scores
+  if (src.scores && Object.keys(src.scores).length > 0) return src.scores
   const out: Record<string, number> = {}
   for (const row of src.rows) {
     const nm = str(row[src.nameColumn])
@@ -178,9 +177,6 @@ export function srcScoreOf(src: ScoreSource, name: string): number | null {
   return row ? num(row[src.scoreColumn]) : null
 }
 
-function srcScores(src: ScoreSource): Record<string, number> {
-  return src.scores ?? {}
-}
 
 /** 切分打 tag（重算入口）：
  *  1) 综合得分降序排序（并列保持原序）；无成绩源时保持名单顺序；

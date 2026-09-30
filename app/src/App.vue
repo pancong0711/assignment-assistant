@@ -50,6 +50,13 @@ function readHash(): string {
 activeKey.value = readHash()
 const onHash = () => { activeKey.value = readHash() }
 onMounted(() => window.addEventListener('hashchange', onHash))
+// D55/H1：启动时恢复 workspace 目录句柄（IndexedDB 持久化 + 权限恢复）
+onMounted(async () => {
+  try {
+    const { restoreKbDir } = await import('./stores/kb')
+    await restoreKbDir()
+  } catch { /* noop */ }
+})
 onUnmounted(() => window.removeEventListener('hashchange', onHash))
 
 function go(key: string) {

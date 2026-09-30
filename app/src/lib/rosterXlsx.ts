@@ -194,17 +194,76 @@ function locateHeader(matrix: string[][], scanLimit = 20): { headerI: number; na
 }
 
 /** D47-5：枚举数据区数值列（≥50% 行可数值化）。 */
+/* D54/D55-H3：非成绩列黑名单（序号/学号/班级等元数据列不得进入勾选与加权）。 */
+const META_HEADER_TOKENS = ['序号', '编号', '学号', '工号', '学籍号', '班级', '班号', '姓名', '名字',
+  '备注', '排名', '层次', '专业', '函授站', '任课', '教师', '时间', '日期']
+const META_HEADER_ASCII = new Set(['name', 'id', 'number', 'class', 'tag', 'punish', 'no', 'index'])
+
+function isMetaHeader(h: string): boolean {
+  const raw = h.trim()
+  const low = raw.toLowerCase()
+  if (META_HEADER_TOKENS.some((k) => raw.includes(k))) return true
+  if (META_HEADER_ASCII.has(low)) return true
+  if (/^(id|no|index)[-_ ]?\d*$/i.test(low)) return true
+  return false
+}
+
+/** 启发式：整列取值唯一且恰为 1..n 连续整数 = 行号/序号列（防御无表头命名的元数据列）。 */
+function looksLikeRowIndex(rows: string[][], j: number): boolean {
+  const vals: number[] = []
+  for (const r of rows) {
+    const v = num(r[j] ?? '')
+    if (v === null) continue
+    if (!Number.isInteger(v)) return false
+    vals.push(v)
+  }
+  if (vals.length < 5 || vals.length !== rows.length) return false
+  const uniq = new Set(vals)
+  if (uniq.size !== vals.length) return false
+  const sorted = [...vals].sort((a, b) => a - b)
+  return sorted.every((v, i) => v === i + 1)
+}
+
 function dataNumericColumns(matrix: string[][], headerI: number): Array<{ name: string; index: number }> {
   const headers = (matrix[headerI] ?? []).map((c) => String(c).trim())
   const rows = matrix.slice(headerI + 1).filter((r) => r.some((c) => String(c).trim() !== ''))
   if (!rows.length) return []
   const out: Array<{ name: string; index: number }> = []
   for (let j = 0; j < headers.length; j++) {
+    const h = headers[j] || `列${j + 1}`
+    if (isMetaHeader(headers[j] ?? '')) continue          // D54/H3 黑名单
+    if (looksLikeRowIndex(rows, j)) continue               // 行号启发式
     let numeric = 0
     for (const r of rows) if (num(r[j] ?? '') !== null) numeric++
-    if (numeric > 0 && numeric >= rows.length * 0.5) out.push({ name: headers[j] || `列${j + 1}`, index: j })
+    if (numeric > 0 && numeric >= rows.length * 0.5) out.push({ name: h, index: j })
   }
   return out
+}
+
+/** D55-H3：某源参与总览/加权的列集合（缺省=主列；缺口数据源按 includedColumns）。
+ *  返回 [{name, index, weight}]；index<0 表示用聚合 scores（雨课堂/旧数据）。 */
+export function scoreColumnsOf(src: ScoreSource): Array<{ name: string; index: number; weight: number }> {
+  if (src.includedColumns && src.includedColumns.length) {
+    return src.includedColumns.map((c) => ({ name: c.name, index: c.index, weight: c.weight ?? 1 }))
+  }
+  const main = src.scoreColumn && src.scoreColumn !== '' ? src.scoreColumn : ''
+  if (main) return [{ name: main, index: -1, weight: src.weight ?? 1 }]
+  return []
+}
+
+/** D55-H3：某源某列在某生上的原始分（index>=0 走 rows 原表；<0 走聚合 scores）。 */
+export function columnScoreOf(src: ScoreSource, col: { name: string; index: number }, name: string): number | null {
+  if (col.index >= 0) {
+    const row = src.rows.find((r) => str(r[src.nameColumn]) === name)
+    if (row) {
+      const v = row[col.name] ?? row[`列${col.index + 1}`] ?? ''
+      const n = num(v)
+      if (n !== null) return n
+    }
+    return null
+  }
+  const v = src.scores?.[name]
+  return typeof v === 'number' && Number.isFinite(v) ? v : null
 }
 
 /** D47-3：学习通 crostab 探测（"学生姓名"标题行 + 下一行"成绩"标记行）。 */
@@ -259,7 +318,7 @@ function buildCrostabSource(m: RawSheet, family: ScoreFamily, cr: { titleI: numb
     weight: 1,
     rows,
     allNumericColumns: scoreCols,
-    includedColumns: scoreCols.map((c) => ({ ...c })),
+    includedColumns: scoreCols.map((c) => ({ ...c, weight: 1 })),
     scores: perStu,
     nameColumn: title[ni] ?? '学生姓名',
     scoreColumn: `${scoreCols.length} 个作业/测验均分`,
@@ -341,7 +400,7 @@ export async function readScoreSourceXlsx(
   if (family === 'exam' || family === 'custom') {
     Object.assign(base, {
       allNumericColumns: numericCols,
-      includedColumns: numericCols.map((c) => ({ ...c })),
+      includedColumns: numericCols.map((c) => ({ ...c, weight: 1 })),
     })
   }
   if (family === 'roster') {
@@ -363,7 +422,15 @@ export async function readScoreSourceXlsx(
       scoreColumn: headers[scoreI] ?? '',
     })
   }
-  if (family === 'rainclass') return normalizeSource({ ...base, ...parseRainclass(m) })
+  if (family === 'rainclass') {
+    const r = parseRainclass(m)
+    const colName = r.scoreColumn || '雨课堂汇总（每课均值）'
+    return normalizeSource({
+      ...base, ...r,
+      allNumericColumns: [{ name: colName, index: -1 }],
+      includedColumns: [{ name: colName, index: -1, weight: 1 }],
+    })
+  }
   // custom：宽松猜列（分数列关键词→数值最多列）——不变；教师可在源行手动换列
   const cntNums = (j: number) => dataRows.slice(0, 20).filter((r) => num(r[j] ?? '') !== null).length
   let scoreI = headers.findIndex((h, j) => j !== nameI && /分数|成绩|得分|score/i.test(h))
@@ -516,14 +583,26 @@ export function buildTaskPackage(
     // VC-5：include_in_aggregation=false = 教师取消勾选（score excluding），
     // 教师综合得分为 PWA 端按勾选集合计算；引擎 CLI 侧需手动省略对应 --score
     // （作业纸 JSON 的该标记为核对提示）。
-    score_sources: sources.map((s) => ({
-      family: s.family,
-      name: s.name, file: s.fileName,
-      score_column: s.scoreColumn, name_column: s.nameColumn,
-      weight: s.weight,
-      include_in_aggregation: isIncluded(s),
-      excluded: !isIncluded(s) || undefined,
-    })),
+    // D55-H3：一个源可勾多列 → 每列一条（engine `--score family:file:col:weight` 天然支持多条，
+    // merge_scores 即"原始分加权平均"，与 PWA 综合分同口径；未勾选的源展开为一条 excluded 记录供核对）。
+    score_sources: sources.flatMap((s) => {
+      const cols = scoreColumnsOf(s)
+      if (!isIncluded(s)) {
+        return [{ family: s.family, name: s.name, file: s.fileName, score_column: s.scoreColumn,
+                  name_column: s.nameColumn, weight: s.weight, include_in_aggregation: false, excluded: true }]
+      }
+      if (!cols.length) {
+        return [{ family: s.family, name: s.name, file: s.fileName, score_column: s.scoreColumn,
+                  name_column: s.nameColumn, weight: s.weight, include_in_aggregation: true }]
+      }
+      return cols.map((c) => ({
+        family: s.family,
+        name: s.name, file: s.fileName,
+        score_column: c.name, name_column: s.nameColumn,
+        weight: c.weight,
+        include_in_aggregation: true,
+      }))
+    }),
     generated_at: new Date().toISOString(),
   }
   return JSON.stringify(pkg, null, 2)

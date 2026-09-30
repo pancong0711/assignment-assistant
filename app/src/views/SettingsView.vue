@@ -48,6 +48,9 @@ async function chooseWorkspace() {
     const dir = await pickDirectory()
     if (dir) {
       settings.setWorkspace(dir.name, true)
+      // D55/H1 根因①修复：设置中心选目录必须同时连接句柄（此前只存名字，导致 KaTeX/写回永远"未连接"）
+      const { connectKbDir } = await import('../stores/kb')
+      await connectKbDir(dir)
       wsPathInput.value = dir.name
       kbPrecheck.value = 'exists'
     }
@@ -107,19 +110,38 @@ async function installKatexToWorkspace() {
   try {
     const { collectKatexFiles } = await import('../lib/sheetHtml')
     const files = await collectKatexFiles()
-    const dir = getKbDirHandleSafe()
+    // ① 已连接 workspace 句柄（会话内或 IDB 恢复）→ 直接写盘（零解压）
+    let dir = getKbDirHandleSafe()
+    // ② 未连接但支持目录选择 → 弹一次选择目录 → 连接（持久化）→ 直接写盘（零解压）
+    if (!dir && caps.directoryPicker) {
+      const picked = await pickDirectory()
+      if (picked) {
+        const { connectKbDir } = await import('../stores/kb')
+        await connectKbDir(picked)
+        dir = picked
+      }
+    }
     if (dir) {
       const { writeFileInDir } = await import('../lib/fsAccess')
       for (const f of files) await writeFileInDir(dir, `sheets/katex/${f.relPath}`, f.blob)
-      katexStatus.value = `✅ 已安装 ${files.length} 个文件 → <workspace>/sheets/katex/（引擎 CLI --katex local 配套；重复点击=更新）。`
-    } else {
-      const JSZip = (await import('jszip')).default
-      const zip = new JSZip()
-      for (const f of files) zip.file(`katex/${f.relPath}`, f.blob)
-      const blob = await zip.generateAsync({ type: 'blob' })
-      downloadData(blob, 'katex-offline.zip')
-      katexStatus.value = `⚠ 未连接 workspace 目录（LAN/非安全上下文）：已下载 katex-offline.zip——解压到 <workspace>/sheets/ 下（得到 sheets/katex/…）。`
+      katexStatus.value = `✅ 已直装 ${files.length} 个文件 → <workspace>/sheets/katex/（目录句柄已记住，刷新后仍连接；重复点击=更新）。引擎 CLI 加 --katex local 即离线渲染。`
+      return
     }
+    // ③ 浏览器不能写盘（Firefox/Safari）但引擎在线 → 引擎服务端直装（零解压、零句柄）
+    if (settings.engineOnline) {
+      const ok = await settings.runInstall('katex')
+      katexStatus.value = ok
+        ? `✅ 已由引擎直装到 <workspace>/sheets/katex/（服务端写盘）。引擎日志见安装输出。`
+        : `⚠ 引擎直装失败：${settings.installLog.slice(-200) || '见设置中心安装输出'}`
+      return
+    }
+    // ④ 兜底：zip 下载（LAN http / 无引擎 / 无 FSA 的最后一档）
+    const JSZip = (await import('jszip')).default
+    const zip = new JSZip()
+    for (const f of files) zip.file(`katex/${f.relPath}`, f.blob)
+    const blob = await zip.generateAsync({ type: 'blob' })
+    downloadData(blob, 'katex-offline.zip')
+    katexStatus.value = `⚠ 当前无法直装（无目录句柄、无引擎）：已下载 katex-offline.zip——解压到 <workspace>/sheets/ 下（得到 sheets/katex/…）。`
   } catch (e) {
     katexStatus.value = `⚠ 安装失败：${(e as Error).message}`
   } finally {
@@ -357,7 +379,7 @@ onMounted(() => {
       <p>
         <button class="btn" :disabled="katexChecking" @click="checkKatex">{{ katexChecking ? '检查中…' : '自检 KaTeX 资源' }}</button>
         <button class="btn primary" style="margin-left:8px" :disabled="katexInstalling" @click="installKatexToWorkspace"
-          title="D53-G3：把同源 KaTeX 选择集（css/js/auto-render+woff2×20，~608KB）写入 <workspace>/sheets/katex/——引擎 CLI 产物离线渲染配套；重复点击=更新">📦 {{ katexInstalling ? '安装中…' : '安装到 workspace（离线包）' }}</button>
+          title="D53-G3：把同源 KaTeX 选择集（css/js/auto-render+woff2×20，~608KB）写入 <workspace>/sheets/katex/——引擎 CLI 产物离线渲染配套；重复点击=更新">📦 {{ katexInstalling ? '安装中…' : '直装到 workspace（零解压）' }}</button>
         <span class="hint" style="margin-left:8px">{{ katexStatus }}</span>
       </p>
       <p class="hint">

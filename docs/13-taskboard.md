@@ -844,3 +844,21 @@ applyManualTranslation/setTranslationRatio 中 setTranslationRatio 保留——�
 - 列权重 UI：每勾选列一个权重输入（默认 1）还是所有列等权第一版；
 - KaTeX 修句柄：仅修①（选目录即连接）还是①+②（IndexedDB 持久化+权限恢复）；引擎 `/install/katex` 是否本批；
 - 多列导出到 task-package（每列一条 score_sources）是否本批一起做。
+---
+
+## H1–H4 实施记录（2026-09-30 · D55 四拍板全落地）
+
+| 批 | 内容 | 状态 | 落点 |
+|---|---|---|---|
+| H1a | **workspace 句柄根因修复**：设置中心选目录即连接（connectKbDir）；句柄 IndexedDB 持久化 + 启动权限恢复（dirHandleStore + restoreKbDir，App 启动调）；Transfer/KbEditor/Kb 三处调用点统一 connectKbDir | ✅ | SettingsView / kb.ts / dirHandleStore.ts / App.vue |
+| H1b | **KaTeX 四态直装**：①已连接句柄→直接写盘；②未连接但可 FSA→弹一次目录选择即连接直装（零解压）；③引擎在线→`POST /install/katex` 服务端直装；④兜底 zip（仅 LAN/无引擎/无 FSA） | ✅ | SettingsView + engine serve.py `install_katex`（同源 dist 复制，回退 jsdelivr）+ INSTALL_ITEMS 增 katex + engine test_katex_install.py 两用例 |
+| H2 | **预览收敛**：名单可编辑表固定高 320 滚动；名单原文预览折叠（details）；删"成绩源最近导入"悬浮卡（只留行内👁）；删"预览整个班"卡/按钮 | ✅ | RosterView |
+| H3 | **多列模型 + 原始分加权平均（拍板）**：ScoreSource.includedColumns 带 weight；`scoreColumnsOf/columnScoreOf`（rosterXlsx 导出）；`computeScoresFiltered` 重写为 `Σ(原始分×列权重)/Σ列权重`（去掉班内最高分归一，与引擎 merge_scores 同口径）；总览表头=每源×每勾选列（列头：列级勾选 + 权重输入 + 按此列切分）；公式上屏（总览卡 notice） | ✅ | rosterXlsx.ts / roster.ts / stores/roster.ts / RosterView.vue |
+| H3b | **列权重新动作**：toggleColumnInclude / setColumnWeight（至少保留一列）；tagByColumn(si, colName) 单列切分（原始分即排） | ✅ | stores/roster.ts |
+| H4 | **黑名单**：序号/编号/学号/工号/学籍号/班级/班号/姓名/名字/备注/排名/层次/专业/函授站 + ascii(name/id/number/class/tag/punish/no/index) + 1..n 连续整数行号启发式；固定四类（rainclass 单列集合、crostab 每作业列）也生成列集合 | ✅ | rosterXlsx.ts dataNumericColumns |
+| H4b | **task-package 多列展开**：每勾选列一条 score_sources（family/file/col/weight），引擎 `--score` 多条天然兼容；未勾选源保留一条 excluded 核对记录 | ✅ | rosterXlsx.ts buildTaskPackage |
+| H4c | **一致性回归**：PWA selfcheck E 块（黑名单/单列=原始分/等权平均/2:1 加权=109.33/scoreColumnsOf）；引擎 test_scores_parity.py（merge_scores 原始分加权平均 109/95/109.33/单列=85） | ✅ | app/tests/selfcheck-roster-fig.mjs + engine/tests/test_scores_parity.py |
+
+**验证**：vue-tsc+vite 0 err；selfcheck 全 PASS（新增 E 块）；engine 测试由 CI 复核。
+**红线**：taskpad schema 不动；引擎除新增 katex 安装项与测试外零改动（merge_scores 本就是目标口径，无需改）。
+**现场验收**：①设置中心选 workspace 后 KaTeX 卡显示已连接并可直装；刷新后仍连接（Chrome）；②名单表滚动、原文预览折叠；③教务期末导入 → 勾多列（语文/数学/…）→ 总览多列 + 各自权重输入 → 综合分=原始分加权平均；单列时=原始分；④序号/学号/班级不再出现勾选框。

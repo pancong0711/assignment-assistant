@@ -6,7 +6,7 @@ import {
 } from '../lib/roster'
 import {
   buildRosterPreview, buildScoreSourcePreview, buildTaskPackage, newUid, readRosterXlsx,
-  readScoreSourceXlsx, taskPackageReadme, writeRosterXlsx,
+  readScoreSourceXlsx, scoreColumnsOf, taskPackageReadme, writeRosterXlsx,
   type PreviewTable,
 } from '../lib/rosterXlsx'
 import { downloadData, writeFileInDir } from '../lib/fsAccess'
@@ -437,15 +437,59 @@ export const useRosterStore = defineStore('roster', {
     /** VC-5"按某单一列切分打 tag"（一列即排）：只用该源计算综合得分
      *  （该源权重 100%，等价"此列作为分层依据"），再按比例自动切分。
      *  手动覆盖/punish 语义与 recompute 完全一致（不被冲掉）。 */
-    tagByColumn(idx: number): string {
+    tagByColumn(idx: number, colName?: string): string {
       const src = this.sources[idx]
       if (!src) return '未找到该成绩源。'
       if (src.family === 'roster') return '「教务点名册」仅接表不计分，不能作为分层依据。'
-      computeScoresFiltered(this.students, [src])
+      let use = src
+      if (colName) {
+        const all = src.includedColumns?.length ? src.includedColumns : scoreColumnsOf(src)
+        const hit = all.filter((c) => c.name === colName).map((c) => ({ ...c, weight: 1 }))
+        if (!hit.length) return `未找到列「${colName}」。`
+        use = { ...src, includedColumns: hit }
+      }
+      computeScoresFiltered(this.students, [use])
       applyAutoTagging(this.students, this.ratios)
       this.dirty = true
       this.persist()
-      return `已按「${src.name}」单列（${src.scoreColumn}）切分打 tag（一列即排；其余源未参与）。`
+      return colName
+        ? `已按「${src.name}·${colName}」单列原始分切分打 tag（一列即排；其余列/源未参与）。`
+        : `已按「${src.name}」全部勾选列的原始分加权平均切分打 tag。`
+    },
+    /** D55-H3：列级勾选（includedColumns 增删；未勾列不进总览/加权）。 */
+    toggleColumnInclude(idx: number, colName: string, on: boolean): string {
+      const src = this.sources[idx]
+      if (!src) return '未找到该成绩源。'
+      const all = src.allNumericColumns?.length ? src.allNumericColumns : scoreColumnsOf(src)
+      const base = (src.includedColumns?.length ? src.includedColumns : scoreColumnsOf(src)).map((c) => ({ ...c }))
+      if (on) {
+        if (!base.some((c) => c.name === colName)) {
+          const hit = all.find((c) => c.name === colName)
+          if (!hit) return `未找到列「${colName}」。`
+          base.push({ name: hit.name, index: hit.index, weight: 1 })
+        }
+      } else {
+        const i = base.findIndex((c) => c.name === colName)
+        if (i < 0) return `列「${colName}」本未勾选。`
+        if (base.length <= 1) return '至少保留一列（否则该源无分数）。'
+        base.splice(i, 1)
+      }
+      src.includedColumns = base
+      this.touch()
+      return on ? `已勾选列「${colName}」（进入总览与加权）` : `已取消列「${colName}」（退出总览与加权）`
+    },
+    /** D55-H3：列权重（综合=Σ原始分×权重/Σ权重；默认 1）。 */
+    setColumnWeight(idx: number, colName: string, weight: number): string {
+      const src = this.sources[idx]
+      if (!src) return '未找到该成绩源。'
+      const w = Number.isFinite(weight) && weight >= 0 ? weight : 1
+      const base = (src.includedColumns?.length ? src.includedColumns : scoreColumnsOf(src)).map((c) => ({ ...c }))
+      const hit = base.find((c) => c.name === colName)
+      if (!hit) return `未找到列「${colName}」。`
+      hit.weight = w
+      src.includedColumns = base
+      this.touch()
+      return `列「${colName}」权重 = ${w}`
     },
     /** VC-5 勾选/取消勾选某成绩源（false = score excluding，重算时排除）。 */
     setSourceIncluded(idx: number, included: boolean) {

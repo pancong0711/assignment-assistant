@@ -81,4 +81,53 @@ const sh = await import('./sheetHtml.bundle.mjs')
   } catch { /* legacy 文件不在 CI 检出 → skip-safe */ }
 }
 
+/* ---------- E) D55-H3 多列模型 + 原始分加权平均 + 黑名单 ---------- */
+{
+  const { computeScoresFiltered } = await import('./roster.bundle.mjs')
+  // E1 黑名单：序号/学号 不进入数值列
+  const wb = XLSX.utils.book_new()
+  XLSX.utils.book_append_sheet(wb, XLSX.utils.aoa_to_sheet([
+    ['序号', '学号', '姓名', '语文', '数学'],
+    [1, '2025001', '学生A', 110, 108],
+    [2, '2025002', '学生B', 100, 90],
+    [3, '2025003', '学生C', 90, 80],
+    [4, '2025004', '学生D', 80, 70],
+    [5, '2025005', '学生E', 70, 60],
+  ]), 'S')
+  const buf = XLSX.write(wb, { bookType: 'xlsx', type: 'buffer' })
+  const src = await rx.readScoreSourceXlsx(buf, 'exam.xlsx', 'custom')
+  const colNames = (src.includedColumns || []).map((c) => c.name)
+  assert.ok(colNames.includes('语文') && colNames.includes('数学'), 'H3: 成绩列进入勾选集')
+  assert.ok(!colNames.includes('序号') && !colNames.includes('学号'), 'H3: 序号/学号被黑名单排除')
+  // E2 单列 → 综合分 = 原始分（不做班内最高分归一）
+  const one = { ...src, includedColumns: [{ name: '语文', index: colNames && 0, weight: 1 }] }
+  // index 用真实列位（语文=第3列→索引3）
+  one.includedColumns = [{ name: '语文', index: 3, weight: 1 }]
+  const students = [
+    { name: '学生A', number: '1', class: 'c', tag: '', score: null, manualTag: false, punish: false },
+    { name: '学生B', number: '2', class: 'c', tag: '', score: null, manualTag: false, punish: false },
+  ]
+  computeScoresFiltered(students, [one])
+  assert.equal(students[0].score, 110, 'H3: 单列=原始分(110)')
+  assert.equal(students[1].score, 100, 'H3: 单列=原始分(100)')
+  // E3 多列加权平均：语文(110,100)+数学(108,90)，权重 1:1 → (218/2, 190/2)
+  const two = { ...src, includedColumns: [{ name: '语文', index: 3, weight: 1 }, { name: '数学', index: 4, weight: 1 }] }
+  const students2 = [
+    { name: '学生A', number: '1', class: 'c', tag: '', score: null, manualTag: false, punish: false },
+    { name: '学生B', number: '2', class: 'c', tag: '', score: null, manualTag: false, punish: false },
+  ]
+  computeScoresFiltered(students2, [two])
+  assert.equal(students2[0].score, 109, 'H3: 多列等权平均 (110+108)/2=109')
+  assert.equal(students2[1].score, 95, 'H3: (100+90)/2=95')
+  // E4 权重 2:1 → (110*2+108)/3 = 109.33
+  const three = { ...src, includedColumns: [{ name: '语文', index: 3, weight: 2 }, { name: '数学', index: 4, weight: 1 }] }
+  const students3 = [{ name: '学生A', number: '1', class: 'c', tag: '', score: null, manualTag: false, punish: false }]
+  computeScoresFiltered(students3, [three])
+  assert.equal(students3[0].score, 109.33, 'H3: 列权重 2:1 → 109.33')
+  // E5 scoreColumnsOf / columnScoreOf 基本行为
+  assert.equal(rx.scoreColumnsOf(two).length, 2, 'H3: scoreColumnsOf 两列')
+  assert.equal(rx.columnScoreOf(two, { name: '数学', index: 4 }, '学生A'), 108, 'H3: columnScoreOf 取原始值')
+  console.log('   D55-H3 multi-column/weighted-average/blacklist: PASS')
+}
+
 console.log('selfcheck-roster-fig: ALL PASS (A×4 · B×4 · C×3 · D47-legacy*)')
