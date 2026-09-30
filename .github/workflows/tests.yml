@@ -27,10 +27,17 @@ jobs:
           .venv/bin/python -m pytest tests -q 2>&1 | tee /tmp/pytest.log
           rc=${PIPESTATUS[0]}
           if [ "$rc" -ne 0 ]; then
-            echo "::warning::pytest 退出码 $rc；末 60 行见下方 error 注解"
-            while IFS= read -r line; do echo "::error::$line"; done < <(tail -n 60 /tmp/pytest.log)
-            exit "$rc"
+            echo "::warning::pytest 退出码 $rc；完整日志见 artifact pytest-log 与 error 注解"
+            while IFS= read -r line; do echo "::error::$line"; done < <(grep -nE "Error|error|FAILED|ERROR|assert|Traceback" /tmp/pytest.log | tail -n 40)
           fi
+          exit "$rc"
+
+      - name: Upload pytest log（失败时）
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: pytest-log
+          path: /tmp/pytest.log
 
       - name: start 脚本 lint（cmd 解析坑防御，docs/13 M-D）
         run: python3 tools/lint_bat.py
