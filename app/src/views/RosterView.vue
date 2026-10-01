@@ -63,6 +63,13 @@ const rosterPreviewFile = ref('')
 
 const rosterFailNotice = ref(false)
 
+/** D56-I4：清空当前班级的名单+成绩源+比例（破坏性操作，二次确认）。 */
+function clearAllAction() {
+  if (!window.confirm(`确认清空当前班级「${roster.activeMeta?.name ?? ''}」的全部名单、成绩源与分组比例？（不可恢复）`)) return
+  roster.clearAll()
+  status.value = '已清空当前班级的名单/成绩源/分组比例。'
+}
+
 async function importRoster() {
   const file = await pickXlsx()
   if (!file) return
@@ -449,8 +456,13 @@ function applyBatchTag() {
 
 function setPunish(stuIdx: number, ev: Event) {
   const stu = roster.students[stuIdx]
-  if ((ev.target as HTMLInputElement).checked) roster.setManualTag(stu, 'punish')
-  else roster.setManualTag(stu, '')
+  if ((ev.target as HTMLInputElement).checked) {
+    roster.setManualTag(stu, 'punish')
+    return
+  }
+  // D56-I3：取消 punish 仅在"当前 tag 就是 punish"时清空；否则保留学生原有 tag（此前会误清）
+  if (stu.tag === 'punish') roster.setManualTag(stu, '')
+  else roster.touch()
 }
 
 // punish 快捷勾选：见下面名单表操作说明（tag 选择即覆盖，punish 在下拉中）
@@ -508,6 +520,7 @@ const nonTranslationRatios = computed(() => roster.ratios.filter((g) => g.tag !=
 <template>
   <section>
     <!-- D50b 段内锚点导航（与作业纸设计页 D45 同风格） -->
+    <div class="roster-topbar">
     <p class="design-anchors">
       <a href="#class-config">班级配置</a> ·
       <a href="#roster-module">① 名单</a> ·
@@ -516,6 +529,8 @@ const nonTranslationRatios = computed(() => roster.ratios.filter((g) => g.tag !=
       <a href="#output-module">④ 产出</a> ·
       <a href="#class-list">班级清单</a>
     </p>
+    <p class="roster-status" v-if="status" :class="{ 'status-fail': rosterFailNotice }">{{ status }}</p>
+    </div>
     <p class="hint" style="margin-top:0">
       名单列自适应（姓名|name、学号|number、班级|class、tag|tag）；成绩源支持<b>格式预设</b>
       （docs/05-D19：固定四类教务/学习通/雨课堂 + custom）；综合得分 = 多源加权归一均值；
@@ -549,12 +564,12 @@ const nonTranslationRatios = computed(() => roster.ratios.filter((g) => g.tag !=
       <p>
         <button class="btn primary" @click="importRoster">📥 导入名单 xlsx/xls/csv…</button>
         <button class="btn" style="margin-left:8px" @click="roster.addStudent()">＋手动添加学生</button>
-        <button class="btn" style="margin-left:8px" @click="roster.clearAll()" v-if="roster.students.length">清空全部</button>
+        <button class="btn" style="margin-left:8px" @click="clearAllAction" v-if="roster.students.length">清空全部</button>
         <span class="hint" style="margin-left:8px">当前 {{ roster.students.length }} 人</span>
       </p>
-      <p class="notice" v-if="rosterFailNotice" style="border-color:#c0392b;color:#8e2419">{{ status }}</p>
       <p class="hint" v-if="!roster.students.length">尚无学生：导入教务点名册（表头自适应→关键词找表头行两级回退，zjxu 名册/无表头说明文字形态均可读，docs/13 D46-1/E5）或手动添加。</p>
-      <table class="grid" v-if="roster.students.length">
+      <div class="table-scroll h320" v-if="roster.students.length">
+      <table class="grid">
         <thead>
           <tr><th style="width:140px">姓名</th><th style="width:170px">学号</th><th style="width:170px">班级</th><th style="width:40px"></th></tr>
         </thead>
@@ -567,21 +582,28 @@ const nonTranslationRatios = computed(() => roster.ratios.filter((g) => g.tag !=
           </tr>
         </tbody>
       </table>
-      <PreviewTableCard
-        title="名单预览（全文件模式：表头 + 数据行滚动，D47-6）"
-        :preview="rosterPreview"
-        :file-name="rosterPreviewFile"
-        tone="ok"
-      />
+      </div>
+      <p class="hint" style="margin-top:6px">
+        提示：改名/改学号后，各成绩源按姓名匹配的分数不会自动重映射——改动后请到对应成绩源行点「重解析」并核对列映射。
+      </p>
+      <details v-if="rosterPreview" style="margin-top:8px">
+        <summary style="cursor:pointer;font-size:13px">查看导入文件原文预览（{{ rosterPreview.rowCount }} 行 · 点击展开，表内滚轮查看）</summary>
+        <PreviewTableCard
+          title="名单原始文件预览"
+          :preview="rosterPreview"
+          :file-name="rosterPreviewFile"
+          tone="ok"
+        />
+      </details>
     </div>
 
     <div class="card" id="score-module">
       <h2>成绩源（格式预设 + 任意 xlsx，docs/05-D19）</h2>
       <p class="hint">
-        先选<b>格式预设</b>再选文件：固定四类无需选列（自动按该格式的列名语义定位）；
-        custom（自定义）需手动指定"分数来源列" + 权重（雨课堂签到次数、作业完成度、考试分数等均可）。
-        列值在其源内按最大值归一到 0~100；综合得分 = weighted mean
-        （ <b>VC-5</b>：只聚合下方宽表中<b>勾选中</b>的源；取消勾选 = score excluding）。
+        先选<b>格式预设</b>再选文件：固定四类按格式语义自动定位列；custom（自定义）可手动多选列。
+        <b>D55-H3 口径</b>：每源可勾选<b>多列</b>，综合得分 = <code>Σ(列原始分 × 列权重) / Σ列权重</code>
+        （<b>不做班内最高分归一</b>；单列/等权即原始分；列权重在下方总览表头逐列可调，默认 1）。
+        <b>VC-5</b>：取消勾选源/列 = 该源/列不进总览与加权（score excluding）。
       </p>
       <p>
         <label class="field">格式预设：
@@ -628,13 +650,30 @@ const nonTranslationRatios = computed(() => roster.ratios.filter((g) => g.tag !=
         </template>
         <label class="field" v-if="s.family !== 'roster'">权重：<input type="number" v-model.number="s.weight" min="0.1" step="0.1" style="width:70px" @change="roster.touch()" /></label>
         <span class="hint">{{ s.rows.length }} 行 · {{ s.fileName }}<template v-if="s.sheetName"> · sheet={{ s.sheetName }}</template></span>
-        <label v-for="c in (s.allNumericColumns ?? [])" :key="c.name" class="field" style="margin-right:4px"
-          :title="`D47-5 perColumn：${(s.includedColumns ?? []).some((ic) => ic.name === c.name) ? '已勾选参与总览/加权' : '未勾选（此列不出现在总览）'}`">
-          <input type="checkbox"
-            :checked="(s.includedColumns ?? []).some((ic) => ic.name === c.name)"
-            @change="colToggleMsg(i, c.name)" />
-          {{ c.name }}
-        </label>
+        <template v-if="(s.allNumericColumns ?? []).length">
+          <details v-if="(s.allNumericColumns ?? []).length > 6" style="margin:2px 0">
+            <summary style="cursor:pointer;font-size:12px">
+              列勾选（共 {{ s.allNumericColumns!.length }} 列，已勾 {{ (s.includedColumns ?? []).length }} 列；点击展开逐列选择）
+            </summary>
+            <label v-for="c in (s.allNumericColumns ?? [])" :key="c.name" class="field" style="margin-right:8px; font-size:12px"
+              :title="`D55-H3：${(s.includedColumns ?? []).some((ic) => ic.name === c.name) ? '已勾选（进总览与加权，权重见总览表头）' : '未勾选（不出现在总览）'}`">
+              <input type="checkbox"
+                :checked="(s.includedColumns ?? []).some((ic) => ic.name === c.name)"
+                @change="colToggleMsg(i, c.name)" />
+              {{ c.name }}
+            </label>
+          </details>
+          <template v-else>
+            <label v-for="c in (s.allNumericColumns ?? [])" :key="c.name" class="field" style="margin-right:8px"
+              :title="`D55-H3：${(s.includedColumns ?? []).some((ic) => ic.name === c.name) ? '已勾选（进总览与加权，权重见总览表头）' : '未勾选（不出现在总览）'}`">
+              <input type="checkbox"
+                :checked="(s.includedColumns ?? []).some((ic) => ic.name === c.name)"
+                @change="colToggleMsg(i, c.name)" />
+              {{ c.name }}
+            </label>
+          </template>
+        </template>
+        <span v-else class="hint">（旧数据源：点「重解析」一次即可启用多列勾选与逐列权重）</span>
         <button class="btn small" style="margin-left:4px" title="D46-3：用留存原始文件即时重建解析预览（表头+前3行+定位说明）" @click="previewSourceRow(i)">👁 预览</button>
         <select v-if="sheetChoices[i]" style="margin-left:4px" :value="s.sheetName" @change="switchSourceSheet(i, $event)"
           title="B1：该源原始文件含多张 sheet——切换后按当前格式预设重新解析">
@@ -786,15 +825,18 @@ const nonTranslationRatios = computed(() => roster.ratios.filter((g) => g.tag !=
           <input type="text" v-model="batchNames" placeholder="学生A, 学生B, 学生C" style="width:min(420px, 60%)" />
         </label>
         <label class="field">tag：
-          <select v-model="batchTag">
-            <option v-for="t2 in STUDENT_TAGS" :key="t2" :value="t2">{{ STUDENT_TAG_LABELS[t2] ?? t2 }}</option>
+          <select v-model="batchTag" title="批量打 tag（punish 请用每生行内勾选框）">
+            <option v-for="t2 in STUDENT_TAGS.filter((x) => x !== 'punish')" :key="t2" :value="t2">{{ STUDENT_TAG_LABELS[t2] ?? t2 }}</option>
           </select>
         </label>
         <label class="field" style="white-space:nowrap"><input type="checkbox" v-model="batchCreateIfAbsent" /> 缺失者自动新增</label>
         <button class="btn" style="margin-left:8px" @click="applyBatchTag" :disabled="!batchNames.trim()">应用到多个学生</button>
         <span class="hint" v-if="batchMsg"> {{ batchMsg }}</span>
       </p>
-      <table class="grid" v-if="roster.students.length" style="font-size:12px">
+      <details open v-if="roster.students.length" style="margin-top:6px">
+      <summary style="cursor:pointer;font-size:13px">每生 tag / punish 一览（{{ roster.students.length }} 人 · 点击折叠，表内滚轮查看）</summary>
+      <div class="table-scroll h360">
+      <table class="grid" style="font-size:12px">
         <thead>
           <tr><th>姓名</th><th>学号</th><th>tag（下拉=手动覆盖）</th><th style="width:70px">punish</th></tr>
         </thead>
@@ -803,15 +845,17 @@ const nonTranslationRatios = computed(() => roster.ratios.filter((g) => g.tag !=
             <td>{{ s.name || '（未命名）' }}</td>
             <td>{{ s.number || '—' }}</td>
             <td>
-              <select :value="s.tag" @change="setTag(i, $event)">
+              <select :value="s.tag" @change="setTag(i, $event)" title="tag 下拉=手动覆盖（punish 请用右侧勾选框）">
                 <option value="">（未打）</option>
-                <option v-for="t in STUDENT_TAGS" :key="t" :value="t">{{ STUDENT_TAG_LABELS[t] ?? t }}</option>
+                <option v-for="t in STUDENT_TAGS.filter((x) => x !== 'punish')" :key="t" :value="t">{{ STUDENT_TAG_LABELS[t] ?? t }}</option>
               </select>
             </td>
             <td style="text-align:center"><input type="checkbox" :checked="s.punish" @change="setPunish(i, $event)" title="punish：期末补作业统一题集（不参与比例）" /></td>
           </tr>
         </tbody>
       </table>
+      </div>
+      </details>
     </div>
     <div class="notice" v-if="!caps.full && caps.browserHint">{{ caps.browserHint }}</div>
     <div class="notice info" v-if="caps.insecure" style="margin-top:6px">

@@ -479,3 +479,14 @@ C1 登录/课程/作业浏览/下载（迁 2601 xuexitong 模块）；C2 上传=
 - J 批（一致性）：成绩源卡公式文案过期 / 大列数源勾选折叠 / 旧源降级提示 / 导出&amp;README 口径同步 /
   KaTeX 卡句柄状态回显+点击前 ping / 改名匹配提示 / punish 双入口 / 黑名单收紧 / title 文案；
 - 状态 ⏸ 待执行；续作指引与验收清单见 docs/13-D56。基线 f33c5ce（CI 双绿，引擎 roster 入库修复已完成）。
+
+---
+
+# 2026-09-30 · D56 实施完成（I 批 UI 收敛+P0 / J 批一致性，共 15 项）
+
+- ✅ I1 三表滚动/折叠/粘性表头统一；I2 顶部状态条（status 全量可见+失败红条）；I3 setPunish 不再误清 tag；
+  I4 清空二次确认；I5 锚点样式全局化+吸顶；
+- ✅ J1 成绩源文案=D55-H3 口径；J2 大列数源勾选折叠；J3 旧源重解析提示；J4 task-package README/note 同步；
+  J5 KaTeX 卡句柄状态回显+决策前 ping；J6 改名匹配提示；J7 deleteClass 清 v1 键；J8 punish 单一入口（下拉隐藏）；
+  J9 黑名单整词收紧；J10 title 文案；
+- build 0 err；selfcheck 全绿；下一步：现场验收（清单见 docs/13-D56）。

@@ -194,18 +194,23 @@ function locateHeader(matrix: string[][], scanLimit = 20): { headerI: number; na
 }
 
 /** D47-5：枚举数据区数值列（≥50% 行可数值化）。 */
-/* D54/D55-H3：非成绩列黑名单（序号/学号/班级等元数据列不得进入勾选与加权）。 */
-const META_HEADER_TOKENS = ['序号', '编号', '学号', '工号', '学籍号', '班级', '班号', '姓名', '名字',
-  '备注', '排名', '层次', '专业', '函授站', '任课', '教师', '时间', '日期']
+/* D54/D55-H3 + D56-J9：非成绩列黑名单（整词匹配，避免"作业编号/专业题"等误伤）。
+ * 规则：表头按 / 、 拆分逐段做"精确匹配"；ASCII 全等；id/no/index+数字后缀。 */
+const META_HEADER_EXACT = new Set(['序号', '编号', '学号', '工号', '学籍号', '班级', '班号', '姓名', '名字',
+  '备注', '排名', '层次', '专业', '函授站', '任课教师', '教师', '时间', '日期'])
 const META_HEADER_ASCII = new Set(['name', 'id', 'number', 'class', 'tag', 'punish', 'no', 'index'])
 
 function isMetaHeader(h: string): boolean {
   const raw = h.trim()
-  const low = raw.toLowerCase()
-  if (META_HEADER_TOKENS.some((k) => raw.includes(k))) return true
-  if (META_HEADER_ASCII.has(low)) return true
-  if (/^(id|no|index)[-_ ]?\d*$/i.test(low)) return true
-  return false
+  if (!raw) return false
+  const parts = raw.split(/[\/、,，]+/).map((x) => x.trim()).filter(Boolean)
+  return parts.some((p) => {
+    const low = p.toLowerCase()
+    if (META_HEADER_EXACT.has(p)) return true
+    if (META_HEADER_ASCII.has(low)) return true
+    if (/^(id|no|index)[-_ ]?\d*$/i.test(low)) return true
+    return false
+  })
 }
 
 /** 启发式：整列取值唯一且恰为 1..n 连续整数 = 行号/序号列（防御无表头命名的元数据列）。 */
@@ -575,7 +580,7 @@ export function buildTaskPackage(
   const pkg = {
     kind: 'assignment-assistant.roster-task-package',
     version: 1,
-    note: '合成示例占位说明：分组比例 + special_tag 参数作业纸（M5 成绩管理，docs/05-D18/D19）',
+    note: '合成示例占位说明：分组比例 + special_tag + 多列成绩源参数（M5 成绩管理，docs/05-D18/D19/D55-H3）',
     group_cfg: ratios.map((g) => ({ group_name: g.tag, group_ratio: g.ratio })),
     special_tag_cfg: specialTag,
     punish: punishList,
@@ -629,11 +634,15 @@ engine \`assist sheet make --roster\` / CLI / AI 阅读。全部示例均为占�
   - xuexitong_stat（学习通章节测验：第 4 行"成绩"列，非 0 均分）
   - rainclass（雨课堂汇总：第 2 行标题，前 3 列学号/姓名/汇总，每课 2 列取均值）
 - roster（教务点名册）：仅接表，不计分。
-- custom：教师手动选列/列名 list + 权重。
-- CLI 对应：\`--score family:file[:col[:weight]]\`（family 可省=custom）。
+- custom：教师手动勾选列（可多列）+ 逐列权重。
+- CLI 对应：\`--score family:file[:col[:weight]]\`（family 可省=custom）；
+  **D55-H3 多列语义**：一个源勾选多列时，score_sources 会展开为多条（每条一族一列一权重），
+  CLI 对应写多条 \`--score\` 即可，与引擎 merge_scores 原始分加权平均同口径。
 
 ## 切分规则（与 _legacy student.py 对齐）
-1. 按综合得分（各成绩源按权重加权、源内按最大值归一到 0~100）降序排序；
+1. 按综合得分降序排序——**D55-H3 口径**：\`综合 = Σ(列原始分 × 列权重) / Σ列权重\`，
+   只统计已勾选列，**不做班内最高分归一**（单列/等权时等于该列原始分）；
+   未勾选的源/列不出现在总览与导出中（score excluding）；
 2. 自上而下逐比例切分档次：int(人数×比例)，余数补到最后一个非 translation 项；
 3. translation 特殊：按比例随机散布到全名单（legacy 同款"随机挑选"语义）；
 4. special_tag_cfg / punish：手动指定学生 tag 覆盖，不被自动切分冲掉；

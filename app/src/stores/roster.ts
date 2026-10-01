@@ -230,6 +230,8 @@ export const useRosterStore = defineStore('roster', {
       } else {
         this.persist()
       }
+      // D56-J7：顺手清理 v1 迁移键（迁移早已在 loadClasses 完成）
+      try { localStorage.removeItem(LS_KEY) } catch { /* noop */ }
       return true
     },
     /** D49：重命名/改学期 */
