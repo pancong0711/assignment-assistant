@@ -468,3 +468,14 @@ C1 登录/课程/作业浏览/下载（迁 2601 xuexitong 模块）；C2 上传=
   `tools/check-secrets.sh` 对 `engine/src/assist/roster/*` 放行（学生数据目录 classes/*/roster/ 仍拦截）；
   `git add engine/src/assist/roster/*.py`（4 文件入库）；校验：全部 engine/src *.py 已入库 + 脱敏通过；
 - **CI 增强（保留）**：pytest 失败时上传完整日志 artifact + 关键行 error 注解（无 admin 亦可经 annotations API 排障）。
+
+---
+
+# 2026-09-30 · D56 任务单建立（第 20 轮审核；待 feishu4dsh 重启后执行）
+
+- 用户诉求：名单预览/标签预览与全部成绩总览一致（折叠 + 滚轮 + 吸顶表头）；
+- I 批（UI 收敛+P0）：三表滚动折叠统一 / status 反馈可见性（29 处写入仅失败可见）/ setPunish 误清 tag /
+  清空全部确认 / 锚点条样式失效；
+- J 批（一致性）：成绩源卡公式文案过期 / 大列数源勾选折叠 / 旧源降级提示 / 导出&amp;README 口径同步 /
+  KaTeX 卡句柄状态回显+点击前 ping / 改名匹配提示 / punish 双入口 / 黑名单收紧 / title 文案；
+- 状态 ⏸ 待执行；续作指引与验收清单见 docs/13-D56。基线 f33c5ce（CI 双绿，引擎 roster 入库修复已完成）。
