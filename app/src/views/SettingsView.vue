@@ -102,12 +102,28 @@ const statusHint = ref('')
 /* ---------- KaTeX 自托管资源自检（D43-3：同源 ./katex/ 应可用） ---------- */
 const katexChecking = ref(false)
 const katexInstalling = ref(false)
+const dirHandleConnected = ref(false)
+const dirName = ref('')
+
+/** D56-J5：刷新 workspace 句柄状态（会话内 + IndexedDB 恢复）。 */
+async function refreshWorkspaceState() {
+  try {
+    const { restoreKbDir, getKbDirHandle } = await import('../stores/kb')
+    await restoreKbDir()
+    const h = getKbDirHandle()
+    dirHandleConnected.value = !!h
+    dirName.value = h?.name ?? ''
+  } catch { dirHandleConnected.value = false }
+}
 
 /** D53-G3：安装 KaTeX 离线包到 workspace（sheets/katex/**，~608KB，幂等覆盖）。
  *  FSA 可用=递归 writeFileInDir；不可用=打包 zip 浏览器下载 + 解压位置指引。 */
 async function installKatexToWorkspace() {
   katexInstalling.value = true
   try {
+    // D56-J5：决策前先刷新句柄状态并 ping 引擎（引擎晚启动时不至于误走 zip 兜底）
+    await refreshWorkspaceState()
+    await settings.pingEngine()
     const { collectKatexFiles } = await import('../lib/sheetHtml')
     const files = await collectKatexFiles()
     // ① 已连接 workspace 句柄（会话内或 IDB 恢复）→ 直接写盘（零解压）
@@ -124,6 +140,8 @@ async function installKatexToWorkspace() {
     if (dir) {
       const { writeFileInDir } = await import('../lib/fsAccess')
       for (const f of files) await writeFileInDir(dir, `sheets/katex/${f.relPath}`, f.blob)
+      dirHandleConnected.value = true
+      dirName.value = dir?.name ?? dirName.value
       katexStatus.value = `✅ 已直装 ${files.length} 个文件 → <workspace>/sheets/katex/（目录句柄已记住，刷新后仍连接；重复点击=更新）。引擎 CLI 加 --katex local 即离线渲染。`
       return
     }
@@ -169,6 +187,8 @@ async function checkKatex() {
 }
 
 onMounted(() => {
+  // D56-J5：恢复并显示 workspace 句柄状态
+  void refreshWorkspaceState()
   // 进页即做 /status 在线检测（chip + 版本显示），不弹错误
   void settings.pingEngine()
   wsPathInput.value = settings.workspaceLabel
@@ -373,8 +393,12 @@ onMounted(() => {
       <p class="hint">
         作业纸预览/打印的公式渲染资源<b>已随 PWA 打包</b>（同源 <code>./katex/</code>：css + js + woff2 字体），
         离线也可正确显示，<b>无需下载安装、无需管理环境</b>；「下载 HTML」导出时自动把资源
-        内联成自包含文件（file:// 打开同样渲染）。引擎 CLI（<code>assist sheet html</code>）暂走
-        CDN——断网时其输出按公式源码降级（引擎侧 parity 随 docs/13 D43 后续收口）。
+        内联成自包含文件（file:// 打开同样渲染）。引擎 CLI（<code>assist sheet html</code>）用
+        <code>--katex local</code> 时读取本卡安装的 workspace 离线包。
+      </p>
+      <p class="hint">
+        workspace 目录：<b>{{ dirHandleConnected ? '✅ 已连接（可直接写盘，刷新后自动恢复）' : '⚠ 未连接（点安装时会让你选一次目录；若引擎在线也可由引擎服务端直装）' }}</b>
+        <span v-if="dirName">（{{ dirName }}）</span>
       </p>
       <p>
         <button class="btn" :disabled="katexChecking" @click="checkKatex">{{ katexChecking ? '检查中…' : '自检 KaTeX 资源' }}</button>

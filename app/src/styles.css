@@ -302,3 +302,19 @@ button.wizard-step-pill.as-btn:disabled { opacity: 0.5; cursor: not-allowed; }
 }
 .modal h2 { margin-top: 0; }
 
+/* ===== D56-I1/I2/I5：班级与标签页 UI 收敛（锚点吸顶/状态条/滚动容器/粘性表头）===== */
+.design-anchors {
+  position: sticky; top: 0; z-index: 3;
+  background: var(--c-bg, #fff); padding: 6px 12px;
+  border-bottom: 1px solid var(--c-border); font-size: 14px;
+}
+.roster-topbar { position: sticky; top: 0; z-index: 4; background: var(--c-bg, #fff); border-bottom: 1px solid var(--c-border); }
+.roster-topbar .design-anchors { position: static; border-bottom: none; }
+.roster-status { margin: 0; padding: 4px 12px 6px; font-size: 13px; color: var(--c-muted, #475569); }
+.roster-status.status-fail { color: #8e2419; border-left: 3px solid #c0392b; background: #fdf1ef; }
+.table-scroll { overflow: auto; border: 1px solid var(--c-border); border-radius: 8px; }
+.table-scroll table.grid { border: none; }
+.table-scroll.h320 { max-height: 320px; }
+.table-scroll.h360 { max-height: 360px; }
+/* 滚动区内表头吸顶（宽表左侧 sticky 列同时保留 left:0，两者可叠加） */
+.table-scroll thead th, .score-wide-table thead th, .preview-table thead th { position: sticky; top: 0; z-index: 2; background: var(--c-primary-soft, #eef2fb); }

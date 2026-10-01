@@ -901,3 +901,31 @@ applyManualTranslation/setTranslationRatio 中 setTranslationRatio 保留——�
 2. 先 I 批（B 后 J 批），每批：改码 → `vue-tsc+vite` 0 err → selfcheck →（必要时）`/tmp/venv313` 跑引擎 pytest（12/12 基线）；
 3. push 注意：GitHub 连接间歇抖动，用"后台重试循环"模式（本会话已验证有效）；
 4. 现场验收清单：①三表滚轮+折叠+吸顶；②每步操作有可见反馈；③punish 勾选取消不丢 tag；④清空有确认；⑤成绩源卡文案=新公式；⑥38 列源可折叠；⑦总览列名=源·列、未勾列不出现；⑧KaTeX 卡显示已连接并可直装（引擎离线/在线两路）。
+
+---
+
+## D56 实施记录（2026-09-30 · I/J 两批全部完成）
+
+> 状态更新：本任务单 I 批 5 项 + J 批 10 项均已实施（下表为落地要点与验收）。
+
+| 编号 | 状态 | 落地 |
+|---|---|---|
+| I1 | ✅ | 名单可编辑表→`.table-scroll.h320`（滚轮+粘性表头）；名单原文预览→`<details>`（默认收起）；标签预览→`<details open>`+`.table-scroll.h360`；总览补粘性表头（全局 CSS `.table-scroll/.score-wide-table/.preview-table thead th{position:sticky;top:0}`） |
+| I2 | ✅ | 顶部 `roster-topbar`（锚点条+状态条同时吸顶）：`status` 全量可见，失败态 `.status-fail` 红条；移除旧"仅失败可见"的单点展示 |
+| I3 | ✅ | `setPunish`：取消仅当 `tag==='punish'` 才清空，否则保留原 tag（`roster.touch()`） |
+| I4 | ✅ | `clearAllAction()` 二次确认（含班级名提示），取消零变更 |
+| I5 | ✅ | `.design-anchors` 提为全局样式（styles.css），两页共用；RosterView 顶部套 `.roster-topbar` 吸顶 |
+| J1 | ✅ | 成绩源卡文案重写为 D55-H3 口径（多列勾选 / 原始分加权平均 / 不归一 / 列权重在总览表头） |
+| J2 | ✅ | 列数 >6 的源：列勾选折叠为 `<details>`（显示"共 N 列/已勾 M 列"），≤6 内联 |
+| J3 | ✅ | 无 `allNumericColumns` 的旧源：行内提示"点「重解析」一次启用多列勾选与逐列权重" |
+| J4 | ✅ | `taskPackageReadme` 同步：多列展开多条 score_sources / 原始分加权平均 / 未勾列不出现在总览导出；`buildTaskPackage.note` 同步 |
+| J5 | ✅ | KaTeX 卡显示 workspace 句柄实时状态（已连接/未连接+目录名）；安装前先 `restoreKbDir()` + `pingEngine()` 再决策（四态顺序不变）；安装成功回写状态 |
+| J6 | ✅ | 名单表下提示"改名/改学号后源匹配不自动重映射，请重解析核对" |
+| J7 | ✅ | `deleteClass` 顺手清 `roster.v1` 迁移键 |
+| J8 | ✅ | tag 下拉（逐人 + 批量）隐藏 punish 选项（punish 统一走行内勾选框），title 注明 |
+| J9 | ✅ | 黑名单收紧：按 `/ 、 ，` 拆段做**整词精确匹配**（"作业编号"不再误伤）；ASCII 全等；id/no/index+数字后缀 |
+| J10 | ✅ | 勾选框 title 文案更新为 D55-H3 多列语义 |
+
+**验证**：`vue-tsc+vite` 0 err；`selfcheck-roster-fig` 全 PASS（含 E 块多列/加权/黑名单用例，J9 收紧后仍 PASS）。
+**现场验收**：①名单/标签预览可折叠+滚轮、表头吸顶；②任一操作后顶部状态条有反馈；③punish 勾选取消不丢 tag；④清空有确认；
+⑤成绩源文案=新口径；⑥38 列源可折叠；⑦总览列名=源·列、未勾列不出现；⑧KaTeX 卡显示已连接并四态直装。
