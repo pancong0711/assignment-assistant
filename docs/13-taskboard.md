@@ -929,3 +929,33 @@ applyManualTranslation/setTranslationRatio 中 setTranslationRatio 保留——�
 **验证**：`vue-tsc+vite` 0 err；`selfcheck-roster-fig` 全 PASS（含 E 块多列/加权/黑名单用例，J9 收紧后仍 PASS）。
 **现场验收**：①名单/标签预览可折叠+滚轮、表头吸顶；②任一操作后顶部状态条有反馈；③punish 勾选取消不丢 tag；④清空有确认；
 ⑤成绩源文案=新口径；⑥38 列源可折叠；⑦总览列名=源·列、未勾列不出现；⑧KaTeX 卡显示已连接并四态直装。
+
+---
+
+## D57 · 整班预览/输出的「参考答案/水印」开关对齐（第 21 轮反馈 · 待实施→实施）
+
+### 核查结论（先纠正上轮口头范围）
+- **问题成立**：班级与标签页「整班作业纸预览」把 `includeSolution` **硬编码为 true**（预览/打印/下载三处），
+  而作业纸设计页 D43-6 早就有「显示参考答案」开关 → 整班要出**学生版（不含答案）**时无路可走，属实施遗漏。
+- **范围修正（代码核实）**：
+  1. PWA 整班预览/打印/下载走 HTML 模板 → **需要开关**（本单 D57-1）；
+  2. batch zip 内嵌的 `sheets/*.html`（variantBatch provider）默认含答案 → **需要开关**（D57-2）；
+  3. 引擎 `assist sheet batch` 走 **reportlab PDF（make_pdf）**，`resolve_items → (content, img, tag)`
+     **根本不渲染参考答案**（layout.py 无 solution 逻辑）→ 该通道天然是"出题版"，**无需加 `--no-solution`**；
+     引擎 HTML 通道 `assist sheet html --no-solution` 已在 D43 遗留①实现（前一轮"batch 缺 flag"的说法作废）。
+
+### 任务项（全部实施）
+| 项 | 内容 | 验收 |
+|---|---|---|
+| D57-1 | 整班预览卡加 3 开关：`☑显示参考答案`（默认**不勾**=出题版）、`☑显示水印图层`（默认勾）、`☑显示页码大字`（默认勾）；作用于 **预览/打印整班/下载 HTML**；切换开关时已打开的预览实时重建 | 不勾答案 → 预览/下载 HTML 无「参考答案：」行；水印/页码开关即时生效 |
+| D57-2 | 作业纸内容页「变体编排」卡加 `☑ 内嵌 HTML 含参考答案`（默认**不勾**）；`variantBatch` provider 接该开关 → batch zip 的 `sheets/<id>.html` 按开关出题版/教师版；zip README 提示该开关语义 | zip 内 HTML 默认无答案；勾选后含答案；README 有说明 |
+| D57-3 | 文档口径统一：引擎 batch PDF 天然不含答案；`sheet html --no-solution` 已有；三通道（PWA 预览 / zip HTML / CLI html）语义对照表写入 docs | docs/13/14 口径一致 |
+| D57-4 | 回归：selfcheck 增 `includeSolution=false 不含'参考答案'` 断言；PWA 构建 0 err | selfcheck 全绿 |
+
+### D57 实施记录（2026-09-30 · 全部完成）
+| 项 | 状态 | 落点 |
+|---|---|---|
+| D57-1 整班预览卡三开关 | ✅ | RosterView：`classIncludeAnswers`（默认不勾）/`classIncludeWatermark`/`classIncludePageText`（默认勾）；`buildClassPreviewHtml()` 统一构建；开关变化时已打开预览实时重建（watch）；预览/打印/下载三处同一 opts；状态文案标注"学生版/教师版" |
+| D57-2 batch zip HTML 开关 | ✅ | variantBatch：`setBatchHtmlIncludeSolution`（默认 false）+ provider 传 `includeSolution`；SheetContentView 变体卡加 `☑内嵌 HTML 含参考答案`；生成提示标注口径；zip README 语义由开关决定 |
+| D57-3 三通道口径对照 | ✅ | docs/14 新增对照表（模板/整班/zip/CLI html/CLI PDF/KaTeX local） |
+| D57-4 回归 | ✅ | selfcheck 新增 F 组：`includeSolution=false 无「参考答案」`、`=true 含答案`、水印图层/页码关断断言 → ALL PASS |

@@ -152,3 +152,13 @@
   kbEditor 支持 kind=translation 编辑/新增；
 - 特殊标签（translation 专属）独立面板：比例输入框 + 手动名单 textarea + 分布统计；manual > 随机（覆盖优先）；
 - 引擎 batch：target_tag=translation 零改动（已通；tag→任务包绑定即可出整班 translation 作业纸）。
+
+## D57（2026-09-30）· 参考答案开关的三通道语义对照
+| 通道 | 输出形态 | 参考答案控制 | 说明 |
+|---|---|---|---|
+| 作业纸设计页（模板级） | HTML 预览/打印/下载 | `☑显示参考答案`（默认不勾） | D43-6 既有 |
+| 班级与标签页（整班分层） | HTML 预览/打印/下载 | `☑显示参考答案`（默认不勾）+ 水印/页码开关 | D57-1 本次补齐 |
+| batch zip 内嵌 `sheets/*.html` | HTML（随 zip） | `☑内嵌 HTML 含参考答案`（默认不勾） | D57-2 本次补齐 |
+| 引擎 `assist sheet html` | HTML | `--no-solution` | D43 遗留① 既有 |
+| 引擎 `assist sheet make/batch` | reportlab PDF | 天然不含答案（`resolve_items` 只出 content/img/tag） | 无需 flag |
+| 引擎 HTML 带本机 KaTeX | HTML | `--katex local` 配合设置中心离线包 | D53-G3 既有 |

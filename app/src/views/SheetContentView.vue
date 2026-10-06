@@ -5,7 +5,7 @@ import { useKbStore } from '../stores/kb'
 import { useTaskpadStore } from '../stores/taskpad'
 import { useRosterStore } from '../stores/roster'
 import { parseTaskpad, missingBoundTags, padInferredTag, resolveBindTag, type PadBinding } from '../lib/taskpad'
-import { batchCommand, batchPaths, buildVariantBatchZip, ensureDefaultSheetHtmlProvider } from '../lib/variantBatch'
+import { batchCommand, batchPaths, buildVariantBatchZip, ensureDefaultSheetHtmlProvider, setBatchHtmlIncludeSolution } from '../lib/variantBatch'
 import { downloadBlob } from '../lib/fsAccess'
 
 /** 作业纸内容（M-A S1 拆分，docs/05-D25；docs/05-D43 D43-4/6 重排）：一份模板的"题目构成"。
@@ -124,6 +124,9 @@ function setBinding(id: string, ev: Event) {
   status.value = ok ? `已把作业纸 ${id} 绑定到目标 tag（target_tag 同步进作业纸 JSON）。` : `作业纸 ${id} 绑定失败（JSON 损坏）。`
 }
 
+/** D57-2：zip 内嵌 sheets/*.html 是否含参考答案（默认不勾=学生版/出题版）。 */
+const batchIncludeAnswers = ref(false)
+
 const exportingBatch = ref(false)
 async function downloadBatchZip() {
   if (!roster.students.length) {
@@ -137,10 +140,11 @@ async function downloadBatchZip() {
   exportingBatch.value = true
   try {
     await ensureDefaultSheetHtmlProvider((kind) => kb.book(kind as never))
+    setBatchHtmlIncludeSolution(batchIncludeAnswers.value)   // D57-2
     const { blob, cd, padCount } = await buildVariantBatchZip(roster.students, pad.savedJsons())
     downloadBlob(blob, `batch-package-${new Date().toISOString().slice(0, 10)}.zip`)
     roster.registerArtifact({ name: `batch-package-${new Date().toISOString().slice(0, 10)}.zip`, kind: 'batch-zip', via: 'browser-download', bytes: blob.size })
-    status.value = `已生成整班 batch 交付包（班级 ${cd}）：${padCount} 份作业纸 + roster.xlsx + batch.json + README。解压到引擎 workspace 根目录后按 README 执行 assist sheet batch 即可。`
+    status.value = `已生成整班 batch 交付包（班级 ${cd}）：${padCount} 份作业纸 + roster.xlsx + batch.json + README（内嵌 HTML 口径：${batchIncludeAnswers.value ? '教师版含答案' : '学生版不含答案'}）。解压到引擎 workspace 根目录后按 README 执行 assist sheet batch 即可（batch PDF 通道本身不含答案）。`
   } catch (e) {
     status.value = `batch 包生成失败：${(e as Error).message}`
   } finally {
@@ -268,6 +272,9 @@ async function downloadBatchZip() {
         </table>
         <p class="hint" v-else>作业纸清单为空：先在本页保存作业纸后回到这里绑定。</p>
         <p>
+          <label class="field" title="D57-2：不勾=zip 内嵌 sheets/*.html 为学生版（不含参考答案）；勾选=教师版。引擎 batch PDF 通道本身不含答案，此开关只影响 zip 内 HTML。">
+            <input type="checkbox" v-model="batchIncludeAnswers" /> 内嵌 HTML 含参考答案
+          </label>
           <button class="btn primary" :disabled="exportingBatch || !roster.students.length || !padRows.length" @click="downloadBatchZip">📦 一键生成整班 batch 交付包（zip：roster.xlsx + tasks/*.taskpad.json + batch.json + README）</button>
         </p>
         <p class="hint">README 内含整条命令示例（教师本机执行即出整班分层作业纸）：</p>

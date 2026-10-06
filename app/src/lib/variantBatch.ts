@@ -33,6 +33,12 @@ export type SheetHtmlProvider = (id: string, json: string, students: RosterStude
 let sheetHtmlProvider: SheetHtmlProvider | null = null
 export function setSheetHtmlProvider(fn: SheetHtmlProvider | null) { sheetHtmlProvider = fn }
 
+/** D57-2：batch zip 内嵌 sheets/*.html 是否含参考答案（默认 false=学生版/出题版）。
+ *  UI：作业纸内容页「变体编排」卡开关 → downloadBatchZip 前调用本 setter。 */
+let batchHtmlIncludeSolution = false
+export function setBatchHtmlIncludeSolution(v: boolean) { batchHtmlIncludeSolution = v }
+export function getBatchHtmlIncludeSolution(): boolean { return batchHtmlIncludeSolution }
+
 /** [D33 接线 + D43 遗留②] provider 使用 stringifySheetHtml（sheetHtml.ts）；
  *  KaTeX 走同源 relative（sheets/<id>.html 相对 ./katex/）→ batch zip 需内嵌
  *  sheets/katex/（见 addKatexToZip：从 PWA 同源 dist 经 fetch 收集，一次 608KB）。 */
@@ -42,7 +48,7 @@ export async function ensureDefaultSheetHtmlProvider(kbBookOf: (kind: string) =>
     const pad = parseTaskpad(JSON.parse(json))
     return stringifySheetHtml(
       [{ pad, items: expandPadItems(pad, kbBookOf as never) }],
-      { students: students as never, katex: 'relative' }
+      { students: students as never, katex: 'relative', includeSolution: batchHtmlIncludeSolution }   // D57-2
     )
   })
 }

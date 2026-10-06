@@ -490,3 +490,16 @@ C1 登录/课程/作业浏览/下载（迁 2601 xuexitong 模块）；C2 上传=
   J5 KaTeX 卡句柄状态回显+决策前 ping；J6 改名匹配提示；J7 deleteClass 清 v1 键；J8 punish 单一入口（下拉隐藏）；
   J9 黑名单整词收紧；J10 title 文案；
 - build 0 err；selfcheck 全绿；下一步：现场验收（清单见 docs/13-D56）。
+
+---
+
+# 2026-09-30 · D57 实施完成（整班预览/输出参考答案开关对齐）
+
+- ✅ D57-1：班级与标签「整班作业纸预览」卡新增 ☑显示参考答案（默认不勾=学生版）、☑显示水印图层、☑显示页码大字；
+  统一 `buildClassPreviewHtml()`，作用于 预览/打印整班/下载 HTML；开关变化实时重建已打开预览；状态标注学生版/教师版；
+- ✅ D57-2：作业纸内容页「变体编排」卡新增 ☑内嵌 HTML 含参考答案（默认不勾）；variantBatch provider 接
+  `setBatchHtmlIncludeSolution` → batch zip 的 sheets/*.html 按口径输出；
+- ✅ D57-3：docs/14 增"三通道语义对照表"（模板/整班/zip/CLI html/CLI PDF/KaTeX local）；
+  口径澄清：引擎 `assist sheet batch` 走 reportlab PDF，**天然不含答案**，无需 --no-solution；`sheet html --no-solution` 已有；
+- ✅ D57-4：selfcheck 新增 F 组（答案关/开、水印图层关、页码关断言）→ ALL PASS；
+- build 0 err；脱敏通过。

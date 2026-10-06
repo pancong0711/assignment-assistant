@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { computed, onMounted, ref } from 'vue'
+import { computed, onMounted, ref, watch } from 'vue'
 import { STUDENT_TAGS, STUDENT_TAG_LABELS } from '../lib/kb'
 import {
   SCORE_FAMILY_PRESETS, isIncluded, isFixedFamily, scoreFamilyDesc, scoreFamilyLabel,
@@ -330,6 +330,11 @@ const classPreviewMsg = ref('')
 const classPreviewManifest = ref('')
 const previewingClass = ref(false)
 
+/** D57-1：整班输出内容开关（默认=学生版：不含答案；水印/页码保持现状勾选）。 */
+const classIncludeAnswers = ref(false)
+const classIncludeWatermark = ref(true)
+const classIncludePageText = ref(true)
+
 /** 兜底包（--default 语义，预览用）：名单里有 tag 但无包绑定的学生指定兼任变体 */
 const classPreviewFallbackId = ref('')
 
@@ -348,21 +353,29 @@ function buildClassInputs(): { inputs: SheetHtmlPadInput[]; unmatched: number; t
 }
 
 /** 预览整班：同一打印模板多页 HTML；同时生成 batch manifest 文本（README/绑定核对）。 */
+/** D57-1：按当前开关构建整班 HTML（含答案/水印/页码三开关；与设计页同语义）。 */
+function buildClassPreviewHtml(): string {
+  const { inputs } = buildClassInputs()
+  return stringifySheetHtml(inputs, {
+    includeSolution: classIncludeAnswers.value,
+    includeWatermark: classIncludeWatermark.value,
+    includePageText: classIncludePageText.value,
+    wmAssets: settingsStore.wmAssets,
+    figAssets: settingsStore.figAssets,   // B3/D46-5：题图命中显示真图
+    katex: 'relative',                    // 同源 ./katex/，公式离线渲染
+  })
+}
+
 function previewWholeClass() {
   if (!roster.students.length) { classPreviewMsg.value = '名单为空：先导入/生成带 tag 名单。'; return }
   if (!pad.saved.length) { classPreviewMsg.value = '作业纸清单为空：到「作业纸内容」页保存作业纸后再预览。'; return }
   previewingClass.value = true
   try {
     const padJsons = pad.savedJsons()
-    const { inputs, unmatched, total } = buildClassInputs()
-    classPreviewHtml.value = stringifySheetHtml(inputs, {
-      includeSolution: true,           // 整班预览保持完整版（答案开关在「作业纸设计」模板态）
-      wmAssets: settingsStore.wmAssets,
-      figAssets: settingsStore.figAssets,   // B3/D46-5：题图命中显示真图
-      katex: 'relative',               // 同源 ./katex/，公式离线渲染
-    })
+    const { unmatched, total } = buildClassInputs()
+    classPreviewHtml.value = buildClassPreviewHtml()
     classPreviewManifest.value = buildBatchManifest(roster.students, padJsons)
-    classPreviewMsg.value = `已按当前 tag→包绑定生成整班预览（同一打印模板：${total} 名学生 / ${pad.saved.length} 份作业纸映射${unmatched ? `；${unmatched} 人 tag 未绑定未出页` : ''}）：iframe 内可滚动查看，「🖨 打印」直接出整班文档。`
+    classPreviewMsg.value = `已按当前 tag→包绑定生成整班预览（同一打印模板：${total} 名学生 / ${pad.saved.length} 份作业纸映射${unmatched ? `；${unmatched} 人 tag 未绑定未出页` : ''}；口径：${classIncludeAnswers.value ? '教师版（含答案）' : '学生版（不含答案）'}）：iframe 内可滚动查看，「🖨 打印」直接出整班文档。`
     showClassPreview.value = true
   } catch (e) {
     classPreviewMsg.value = `整班预览生成失败：${(e as Error).message}`
@@ -377,12 +390,23 @@ function printClassPreview() {
 }
 
 /** 下载 = 自包含 HTML（KaTeX 内联；资源拉取失败回退同源 relative 版） */
+/** D57-1：开关变化时，已打开的预览实时重建（未打开则不动作）。 */
+watch([classIncludeAnswers, classIncludeWatermark, classIncludePageText], () => {
+  if (!showClassPreview.value || !roster.students.length || !pad.saved.length) return
+  try {
+    classPreviewHtml.value = buildClassPreviewHtml()
+    classPreviewMsg.value = `已按新开关重建整班预览（口径：${classIncludeAnswers.value ? '教师版（含答案）' : '学生版（不含答案）'}）。`
+  } catch { /* 保持原预览 */ }
+})
+
 async function downloadClassPreviewHtml() {
   if (!classPreviewHtml.value) return
   try {
     const { inputs } = buildClassInputs()
     const html = await buildSelfContainedHtml(inputs, {
-      includeSolution: true,
+      includeSolution: classIncludeAnswers.value,
+      includeWatermark: classIncludeWatermark.value,
+      includePageText: classIncludePageText.value,
       wmAssets: settingsStore.wmAssets,
       figAssets: settingsStore.figAssets,
     })
@@ -894,6 +918,18 @@ const nonTranslationRatios = computed(() => roster.ratios.filter((g) => g.tag !=
         本卡 = **整班分层预览/打印的唯一入口**（docs/13 D43-6 域分层：作业纸设计页只做模板级预览）。
         渲染与 CLI <code>assist sheet html</code> <b>同一模板</b>（lib/sheetHtml.ts）：名单里所有人按其 tag
         领到对应变体（引擎 batch 同口径）， KaTeX 同源渲染（离线也可）。
+      </p>
+      <p>
+        <label class="field" title="D57-1：不勾=学生版（预览/打印/下载均不含『参考答案：』行）；勾选=教师版">
+          <input type="checkbox" v-model="classIncludeAnswers" /> 显示参考答案
+        </label>
+        <label class="field" title="D57-1：整班输出的水印图层开关（默认勾选=现状）">
+          <input type="checkbox" v-model="classIncludeWatermark" /> 显示水印图层
+        </label>
+        <label class="field" title="D57-1：整班输出的页码大字开关（默认勾选=现状）">
+          <input type="checkbox" v-model="classIncludePageText" /> 显示页码大字
+        </label>
+        <span class="hint">当前口径：{{ classIncludeAnswers ? '教师版（含答案）' : '学生版（不含答案）' }}</span>
       </p>
       <p>
         <button class="btn primary" :disabled="previewingClass || !roster.students.length || !pad.saved.length" @click="previewWholeClass">👁 预览整班（{{ roster.students.length }} 名学生 × {{ pad.saved.length }} 份作业纸映射）</button>

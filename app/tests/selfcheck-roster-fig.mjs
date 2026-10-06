@@ -130,4 +130,25 @@ const sh = await import('./sheetHtml.bundle.mjs')
   console.log('   D55-H3 multi-column/weighted-average/blacklist: PASS')
 }
 
-console.log('selfcheck-roster-fig: ALL PASS (A×4 · B×4 · C×3 · D47-legacy*)')
+/* ---------- F) D57 整班/模板输出内容开关（includeSolution） ---------- */
+{
+  const pad = { id: 't', class_dir: '', course: '', class: 'c', term: '',
+    layout: { orientation: 'portrait', per_page: 1, header: { title: 'T' }, footer: {} },
+    items: [], watermark: { enabled: false, style: 'default', pageText: true, items: [] }, grade: {} }
+  const items = [{ id: 'q1', content: '题干', solution: '答案内容XYZ' }]
+  const bodyOf = (h) => h.slice(h.indexOf('<body'))
+  const off = bodyOf(sh.stringifySheetHtml([{ pad, items }], { includeSolution: false }))
+  const on = bodyOf(sh.stringifySheetHtml([{ pad, items }], { includeSolution: true }))
+  assert.ok(!off.includes('参考答案') && !off.includes('答案内容XYZ'), 'D57: 不勾答案 → 无参考答案行')
+  assert.ok(on.includes('参考答案') && on.includes('答案内容XYZ'), 'D57: 勾选答案 → 含参考答案行')
+  // 水印/页码开关（整班卡同源 opts）
+  const padWm = { ...pad, watermark: { enabled: true, style: 'default', pageText: true, items: [] } }
+  const noWm = bodyOf(sh.stringifySheetHtml([{ pad: padWm, items }], { includeWatermark: false }))
+  const noPt = bodyOf(sh.stringifySheetHtml([{ pad: padWm, items }], { includePageText: false }))
+  assert.ok(!noWm.includes('wm-layer') && !noWm.includes('wm-page-text'), 'D57: 关水印图层 → 整层消失')
+  assert.ok(noPt.includes('wm-anchor') || noPt.includes('wm-layer'), 'D57: 只关页码 → 图层保留')
+  assert.ok(!noPt.includes('wm-page-text'), 'D57: 只关页码 → 无页码大字')
+  console.log('   D57 output switches (solution/watermark/pagetext): PASS')
+}
+
+console.log('selfcheck-roster-fig: ALL PASS (A×4 · B×4 · C×3 · D47-legacy* · D57-switches)')
