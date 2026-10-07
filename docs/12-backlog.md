@@ -539,3 +539,10 @@ C1 登录/课程/作业浏览/下载（迁 2601 xuexitong 模块）；C2 上传=
 - ✅ engine test_grid.py 新增 + test_sheet_html 更新 D61 口径（本地 26 passed）；PWA build/selfcheck 全绿；
 - ✅ 修复：engine data-grid 去 `grid` 前缀与 PWA 统一；test_grid 断言按真实实现口径修正；
 - D60 讨论条目标记已实施。
+---
+
+# 2026-10-07 · D61 收尾（文档口径同步 + 清单显示网格）
+- ✅ HelpView/docs/04/docs/15/taskpad.ts/SheetLayoutView.vue 的旧「per_page 1–4/横竖十字」口径
+  统一为 D61「N(1..12) + 显式 行×列」；
+- ✅ 作业纸清单「版式」列显示实际 `行×列`；
+- 验证：engine pytest 26/26；PWA build 0 err；selfcheck ALL PASS；lint/secrets 全绿。

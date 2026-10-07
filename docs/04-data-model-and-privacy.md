@@ -51,7 +51,9 @@
 
   "class_dir": "classes/2026S1-大学物理-classA",
   "course": "大学物理C1", "class": "classA", "term": "2026S1",
-  "layout": { "orientation": "portrait" | "landscape", "per_page": 1|2,
+  "layout": { "orientation": "portrait" | "landscape",
+              "per_page": 1..12,                 // D61：每页题数 N
+              "grid_rows": 2, "grid_cols": 2,    // D61 可选：显式网格；缺省时走旧兼容语义
               "header": {"title": "..."}, "footer": {...} },
   "items": [ { "kb": "problems", "chap": "chap10", "ids": [...],
                "tag": "distinguish" }, ... ],

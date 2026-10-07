@@ -1030,3 +1030,9 @@ applyManualTranslation/setTranslationRatio 中 setTranslationRatio 保留——�
 - 版式卡出现 网格行/列 输入（默认 1×2 竖版）；改 4×1/2×2/3×2 预览即时变化、虚线位置正确；
 - 旧任务包（无 grid 字段）载入后按 legacy 默认正常渲染；导出 JSON 含 grid_rows/grid_cols；
 - 引擎：`assist sheet html/make/batch` 用显式网格出 PDF/HTML 与 PWA 预览一致（哨兵护航）。
+
+### D61 收尾（2026-10-07）
+- 同步用户可见文档口径：HelpView 删除「per_page 1-4/旧横竖十字」旧说明，改为 D61 行×列语义；
+  docs/04 layout 示例补 `per_page 1..12` 与可选 `grid_rows/grid_cols`；docs/15 增 D61 速查；
+  `taskpad.ts`/`SheetLayoutView.vue` 注释同步。
+- 作业纸清单「版式」列补显示实际 `行×列`（`resolveGrid`），便于教师核对默认/显式网格。

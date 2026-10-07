@@ -15,7 +15,7 @@ import { STUDENT_TAG_LABELS, type KbKind } from '../lib/kb'
 import { useKbStore } from '../stores/kb'
 import { useSettingsStore } from '../stores/settings'
 import { useTaskpadStore } from '../stores/taskpad'
-import { parseTaskpad, padInferredTag, type Taskpad } from '../lib/taskpad'
+import { parseTaskpad, padInferredTag, resolveGrid, type Taskpad } from '../lib/taskpad'
 import { downloadData } from '../lib/fsAccess'
 import {
   stringifySheetHtml, buildSelfContainedHtml, expandPadItems,
@@ -162,7 +162,7 @@ function previewAllPads() {
 }
 
 /* ---------- 作业纸清单（D43-4：全页唯一一份） ---------- */
-interface PadMeta { id: string; term: string; cls: string; items: number; questions: number; orientation: string; perPage: number; targetTag: string; inferredTag: string | null }
+interface PadMeta { id: string; term: string; cls: string; items: number; questions: number; orientation: string; perPage: number; grid: string; targetTag: string; inferredTag: string | null }
 const library = computed<PadMeta[]>(() =>
   pad.saved.map((s) => {
     try {
@@ -175,11 +175,15 @@ const library = computed<PadMeta[]>(() =>
         questions: p.items.reduce((n, i) => n + i.ids.length, 0),
         orientation: p.layout.orientation === 'landscape' ? '横版' : '竖版',
         perPage: p.layout.per_page,
+        grid: (() => {
+          const g = resolveGrid(p.layout)
+          return `${g.rows}×${g.cols}`
+        })(),
         targetTag: p.target_tag ?? '',
         inferredTag: padInferredTag(p.items, p.target_tag),
       }
     } catch {
-      return { id: s.id, term: '?', cls: '?', items: 0, questions: 0, orientation: '?', perPage: 0, targetTag: '', inferredTag: null }
+      return { id: s.id, term: '?', cls: '?', items: 0, questions: 0, orientation: '?', perPage: 0, grid: '?×?', targetTag: '', inferredTag: null }
     }
   }))
 
@@ -239,7 +243,7 @@ function removeFromLibrary(id: string) {
           </td>
           <td style="text-align:center">{{ m.items }}</td>
           <td style="text-align:center">{{ m.questions }}</td>
-          <td style="white-space:nowrap">{{ m.orientation }} / {{ m.perPage }}题页</td>
+          <td style="white-space:nowrap">{{ m.orientation }} / {{ m.perPage }}题页 · {{ m.grid }}</td>
           <td style="white-space:nowrap">
             <button class="btn small" @click="loadFromLibrary(m.id)">载入</button>
             <button class="btn small" style="margin-left:4px" @click="previewPad(m.id)" title="该作业纸的模板态预览（同一 HTML 模板 overlay）">预览</button>

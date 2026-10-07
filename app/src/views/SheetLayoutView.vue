@@ -45,7 +45,7 @@ async function importTaskpadFile() {
   }
 }
 
-/* ---------- 版式编辑（D19：per_page 1–4；竖=上下行、横=左右栏） ---------- */
+/* ---------- 版式编辑（D61：per_page + 显式 grid_rows×grid_cols） ---------- */
 function setOrientation(o: 'portrait' | 'landscape') {
   pad.setOrientation(o)
 }

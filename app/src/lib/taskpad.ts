@@ -1,9 +1,10 @@
 /** 作业纸（taskpad）模型 —— schema 与 docs/04 §1 完全一致。
  *  作业纸 = CLI 完整参数 + Web 按钮的后台实体 + 可携带执行记录（docs/05-D2）。
  *  拿到作业纸后：`assist sheet make --task <taskpad.json>` 即可出 PDF（D1 CLI 超集）。
- *  D19 反馈：per_page 可设 1–4（layout.per_page；缺省 竖1横2；竖版为上下行、
- *  横版为左右栏）；引擎帧按 per_page 切分，多题/页时打印版式加实线分隔
- *  （横版=栏间竖线、竖版=行间横线），app 预览同口径。
+ *  D61（取代 D19/D53 的固定档位）：per_page = 每页题数 N（1..12），
+ *  grid_rows/grid_cols = 显式网格（缺省时兼容旧任务：竖版 2/3/4=rowsN、
+ *  横版 2/3=colsN、4=2×2）。竖版帧按行优先、横版按列优先；rows×cols≥N，
+ *  多余格留空（空位在阅读顺序末尾），app/HTML/PDF 三端同口径。
  *
  *  阶段4a 水印编辑器（D20 方向，父代并线实现 engine list 支持）：
  *  watermark 由 {enabled, style} 升级为 {enabled, style, items:[...]}；
@@ -307,8 +308,9 @@ export function parseWatermark(raw: unknown): TaskpadWatermark {
 }
 
 /** 从任意 JSON 解析作业纸，做最小校验（容错：grade/journal 可缺省；
- *  per_page 1–4，越界/缺失按方向缺省 竖1横2；watermark 兼容 items 与
- *  legacy 三槽，见 parseWatermark）。 */
+ *  per_page 1..MAX_PER_PAGE，越界/缺失按方向缺省 竖1横2；
+ *  grid_rows/grid_cols 可选，非法/缺失时渲染层走 legacy 兼容网格；
+ *  watermark 兼容 items 与 legacy 三槽，见 parseWatermark）。 */
 export function parseTaskpad(raw: unknown): Taskpad {
   if (typeof raw !== 'object' || raw == null) throw new Error('作业纸 JSON 顶层应为对象')
   const o = raw as Record<string, unknown>
