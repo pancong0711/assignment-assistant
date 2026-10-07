@@ -29,7 +29,9 @@
 - `docs/06-roadmap.md` — 六阶段路线图（0–5，含验收标准）
 - `docs/07-incremental-vs-rewrite.md` — 增量迁移 vs 重写的开发思路判定
 - `docs/11-deployment.md` — GitHub Pages 部署（阶段4b）
-- `docs/13-taskboard.md` — **任务需求单 / 近轮实施记录**（D43–D58）
+- `docs/13-taskboard.md` — **任务需求单 / 近轮实施记录**（D43–D62）
+- `docs/15-usage-manual.md` — 教师使用说明（同源 HelpView）
+- `docs/16-xuexitong-integration.md` — **阶段6 学习通整合任务需求单**（登录/读取/下载/上传/发布）
 - `_legacy/` — 原始两项目解档（仅本地参考，已被 gitignore，永不推送）
 
 ## 里程碑
