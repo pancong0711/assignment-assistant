@@ -530,3 +530,12 @@ C1 登录/课程/作业浏览/下载（迁 2601 xuexitong 模块）；C2 上传=
 - 💬 **D60 网格布局讨论**：用户提出 `rows×cols` 灵活选项（如 4×1、2×2）与
   行优先/列优先/均匀分布；结论可行，建议保留 `per_page` + 新增 `grid_mode/grid_rows/grid_cols`
   向后兼容，待拍板数据模型/均匀分布退化策略/UI 位置；本轮不改布局代码。
+
+---
+
+# 2026-10-07 · D61 实施收口（feishu4dsh 重启续作）
+
+- ✅ rows×cols 显式网格上线（数据模型/解析内核/CSS Grid 渲染/虚线百分比内联/UI 双输入/三端 parity）；
+- ✅ engine test_grid.py 新增 + test_sheet_html 更新 D61 口径（本地 26 passed）；PWA build/selfcheck 全绿；
+- ✅ 修复：engine data-grid 去 `grid` 前缀与 PWA 统一；test_grid 断言按真实实现口径修正；
+- D60 讨论条目标记已实施。

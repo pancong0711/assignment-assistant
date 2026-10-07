@@ -13,7 +13,7 @@ import { useKbStore } from '../stores/kb'
 import { useTaskpadStore } from '../stores/taskpad'
 import { useSettingsStore } from '../stores/settings'
 import { pickReadFile } from '../lib/fsAccess'
-import { WATERMARK_POS_LABELS, type PerPage } from '../lib/taskpad'
+import { WATERMARK_POS_LABELS, MAX_PER_PAGE, MAX_GRID_DIM, autoSquareGrid, defaultGrid, resolveGrid, type PerPage } from '../lib/taskpad'
 
 const kb = useKbStore()
 const pad = useTaskpadStore()
@@ -51,8 +51,45 @@ function setOrientation(o: 'portrait' | 'landscape') {
 }
 
 function setPerPage(v: PerPage) {
-  pad.setPerPage(v)
+  pad.setPerPage(Number(v))
 }
+
+/* ---------- D61：显式 rows×cols 网格 ---------- */
+const gridInfo = computed(() => resolveGrid(pad.current.layout))
+const gridRows = computed({
+  get: () => pad.current.layout.grid_rows ?? gridInfo.value.rows,
+  set: (v: number) => {
+    const n = Math.min(MAX_GRID_DIM, Math.max(1, Math.round(Number(v) || 1)))
+    pad.setGridSize(n, pad.current.layout.grid_cols ?? gridInfo.value.cols)
+  },
+})
+const gridCols = computed({
+  get: () => pad.current.layout.grid_cols ?? gridInfo.value.cols,
+  set: (v: number) => {
+    const n = Math.min(MAX_GRID_DIM, Math.max(1, Math.round(Number(v) || 1)))
+    pad.setGridSize(pad.current.layout.grid_rows ?? gridInfo.value.rows, n)
+  },
+})
+const gridDisplay = computed(() => {
+  const r = Number(gridRows.value)
+  const c = Number(gridCols.value)
+  return { rows: r, cols: c, capacity: r * c, empty: Math.max(0, r * c - pad.current.layout.per_page) }
+})
+function resetDefaultGrid() {
+  const g = defaultGrid(pad.current.layout.per_page)
+  pad.setGridSize(g.rows, g.cols)
+  notify(`已按 N=${pad.current.layout.per_page} 重置为 ${g.rows}行×${g.cols}列（默认 N/2×2）`)
+}
+function resetSquareGrid() {
+  const g = autoSquareGrid(pad.current.layout.per_page)
+  pad.setGridSize(g.rows, g.cols)
+  notify(`已按 N=${pad.current.layout.per_page} 匀好为 ${g.rows}行×${g.cols}列（最接近方阵）`)
+}
+const gridWarning = computed(() => {
+  const r = Number(gridRows.value); const c = Number(gridCols.value); const n = pad.current.layout.per_page
+  if (r * c < n) return `⚠ 当前网格容量 ${r}×${c}=${r * c} < 每页题数 ${n}；渲染时会回退到方向默认网格，请调大行/列数。`
+  return ''
+})
 
 /* ---------- 页眉页脚 ---------- */
 const headTitle = ref('')
@@ -152,18 +189,22 @@ function saveOnly() {
         <p>
           <label class="field"><input type="radio" name="orient" :checked="pad.current.layout.orientation === 'portrait'" @change="setOrientation('portrait')" />竖版 A4</label>
           <label class="field"><input type="radio" name="orient" :checked="pad.current.layout.orientation === 'landscape'" @change="setOrientation('landscape')" />横版 A4</label>
-          <label class="field">每页题数 per_page：
-            <select :value="pad.current.layout.per_page" @change="setPerPage(Number(($event.target as HTMLSelectElement).value) as PerPage)" title="1–4（docs/05-D19：竖版为上下行、横版为左右栏；引擎帧按 per_page 切分，缺省 竖1横2）">
-              <option :value="1">1</option>
-              <option :value="2">2</option>
-              <option :value="3">3</option>
-              <option :value="4">4</option>
+          <label class="field">每页题数 N：
+            <select :value="pad.current.layout.per_page" @change="setPerPage(Number(($event.target as HTMLSelectElement).value) as PerPage)" title="1–12（D61：题数 + 显式行列网格；缺省 竖1横2）">
+              <option v-for="n in MAX_PER_PAGE" :key="n" :value="n">{{ n }}</option>
             </select>
           </label>
+          <label class="field">行：<input type="number" min="1" :max="MAX_GRID_DIM" step="1" v-model.number="gridRows" style="width:64px" /></label>
+          <label class="field">列：<input type="number" min="1" :max="MAX_GRID_DIM" step="1" v-model.number="gridCols" style="width:64px" /></label>
+          <button class="btn small" @click="resetDefaultGrid">按 N 重置默认</button>
+          <button class="btn small" style="margin-left:6px" @click="resetSquareGrid">均匀方阵</button>
         </p>
         <p class="hint">
-          per_page 1–4（docs/05-D19）：竖版为上下行、横版为左右栏；缺省 竖1横2。
-          预览多题/页的分隔线（横版=栏间竖线、竖版=行间横线）与引擎打印 PDF 同口径（虚线）。
+          D61 网格语义：N 题/页，行×列 可容纳 N 题时多余格子留空（空位在阅读顺序末尾）。
+          竖版=行优先（左→右、上→下）；横版=列优先（上→下、左→右）。
+          当前容量 {{ gridDisplay.rows }}×{{ gridDisplay.cols }}={{ gridDisplay.capacity }}，空位 {{ gridDisplay.empty }} 个。
+          <span v-if="gridWarning" class="status-fail">{{ gridWarning }}</span>
+          预览/打印虚线分隔与引擎 PDF 同口径。
         </p>
         <p>
           <label class="field">页眉标题：<input type="text" v-model="headTitle" style="width:180px" @change="pad.current.layout.header.title = headTitle" /></label>

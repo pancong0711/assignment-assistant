@@ -992,10 +992,41 @@ applyManualTranslation/setTranslationRatio 中 setTranslationRatio 保留——�
 | B4 serve/PWA | ✅ | `POST /kb/write` + CORS OPTIONS；`saveKind` 引擎优先 → FSA → 下载 |
 | 回归 | ✅ | engine pytest 22/22；PWA build 0 err；selfcheck ALL PASS（含 B2 number fallback） |
 
-## D60 · 作业纸网格布局讨论（2026-10-07 · 未实施）
+## D60 · 作业纸网格布局讨论（2026-10-07 · **已实施为 D61**，见下方实施记录）
 
 - 用户想法：`rows×cols` 可选（4×1 行均分、2×2 十字），2/3 题也可横/纵；
   增加「按行 / 按列 / 均匀分布（自动最接近方阵）」选项。
 - 结论：可行；建议保留 `layout.per_page`，新增可选 `grid_mode/grid_rows/grid_cols`，
   旧任务包无需迁移；均匀分布按最接近方阵的因子对计算，不用 N² 个空位。
 - 待拍板：① 数据模型方案；② 质数/非完全平方数退化方向；③ UI 放版式卡还是预览卡。
+
+## D61 · rows×cols 显式网格实施（2026-10-07 · feishu4dsh 重启后续作收口）
+
+### 实施范围（与 D60 方案一致）
+- **数据模型**：`TaskpadLayout` 增可选 `grid_rows/grid_cols`（1..12）；`per_page` 保留并放宽到 1..12；
+  `normalizePerPage`（PWA `taskpad.ts`）与 `normalize_per_page`（engine `paper/grid.py`）同口径；
+- **解析内核**：PWA `resolveGrid()` / engine `resolve_grid()`——显式网格优先（且 rows×cols≥per_page 才生效，
+  否则 legacy 回落：竖版 N=rowsN、横版 2/3=colsN、4=2×2；order：竖版 row、横版 col）；
+- **渲染**：sheet-body 改 **CSS Grid**（`display:grid` + `grid-template-rows/columns:repeat(N,minmax(0,1fr))`
+  + `grid-auto-flow` 内联样式 `gridBodyStyle/grid_body_style`）；`data-grid="RxC"` + `data-order/data-rows/data-cols`
+  标记；分隔虚线改为**百分比内联定位**（`gridLineStyles/grid_line_styles`：cols-1 竖线 + rows-1 横线，任意网格通吃）；
+  旧 cross/rows*/cols*/h25/h31/h32/h4 类全部废弃（j2/PWA 同步删除）；
+- **双端 parity**：engine 新增 `paper/grid.py`（独立内核，htmlfile/layout/batch 复用）；j2 `<style>` 与
+  PWA `printCss()` 逐字同步（grid 版）；j2 模板标记与 PWA 同名（含 `data-grid="RxC"`，去旧 `grid` 前缀——本会话修复）；
+- **UI**（SheetLayoutView）：网格行/列两个数字输入（MAX 12）+ `defaultGrid/autoSquareGrid`（按最接近方阵
+  自动建议）+ `pad.setGridSize`；版式卡内 ①卡可见；
+- **batch/make**：`batch.py`/`task.py`/`__init__.py` 传 `grid_rows/grid_cols` 透传到 `make_pdf/resolve_grid`。
+
+### 测试与验证
+- engine：新增 `tests/test_grid.py`（normalize/legacy/显式/线与 body 样式 4 用例）+ `test_sheet_html.py`
+  更新为 D61 口径（data-grid="1x2"/"4x1"、线计数按"每页×人数"、parity 哨兵新标记 data-order/data-rows/data-cols）
+  → **本地 py3.13 全套 26 passed**；
+- PWA：`npm run build` 0 err（index-DshiiYhK.js 313KB）；`selfcheck-roster-fig` 全 PASS；
+- 本会话事故修复记录：① 删卡脚本切片事故曾造成模板整段双份（D56 审核发现并修复，h2/id 唯一性扫描已入流程）；
+  ② 本次续作：engine `data-grid` 曾带 `grid` 前缀与 PWA 不一致 → 统一；test_grid 断言按实现真实口径修正
+  （order 由方向决定 / 键名 per_page / 紧凑 css）；test_sheet_html 计数改"每页×人数"。
+
+### 现场验收（D61）
+- 版式卡出现 网格行/列 输入（默认 1×2 竖版）；改 4×1/2×2/3×2 预览即时变化、虚线位置正确；
+- 旧任务包（无 grid 字段）载入后按 legacy 默认正常渲染；导出 JSON 含 grid_rows/grid_cols；
+- 引擎：`assist sheet html/make/batch` 用显式网格出 PDF/HTML 与 PWA 预览一致（哨兵护航）。

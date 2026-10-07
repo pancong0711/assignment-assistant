@@ -22,7 +22,7 @@
  *  base64 内嵌真实图片。整班名单缺省用合成 学生A/B（informational）。
  */
 
-import { normalizePerPage, type Taskpad } from './taskpad'
+import { gridBodyStyle, gridLineStyles, resolveGrid, type Taskpad } from './taskpad'
 import type { KbBook, KbKind } from './kb'
 
 export interface SheetHtmlStudent {
@@ -101,28 +101,11 @@ export function todayStr(): string {
   return `${d.getFullYear()}-${p(d.getMonth() + 1)}-${p(d.getDate())}`
 }
 
-/** data-grid 键（与 engine htmlfile._grid_key / SheetLayoutView gridClass 同口径） */
-function gridKey(orientation: string, perPage: number): string {
-  // D53-G2：竖版 2/3/4 全纵向一列均分（rows2/rows3/rows4，题干满行宽）；横版维持 cols/cross。
-  if (orientation === 'portrait') return 'rows' + perPage
-  if (perPage === 4) return 'cross'
-  if (perPage === 3) return 'cols3'
-  return 'cols2'
-}
+/* ---------- D61 网格：rows×cols 显式布局（旧任务无字段时 resolveGrid 兼容回退） ---------- */
 
-/** 页内分隔虚线类（engine layout.grid_lines / app sf-line 同口径） */
-function gridLines(orientation: string, perPage: number): string[] {
-  // D53-G2：竖版 N 题页 = N-1 条横虚线等分（rows4 新档三横线 h4）；横版不变。
-  if (orientation !== 'landscape') {
-    if (perPage === 4) return ['h25', 'h', 'h4']   // 四等分线：25/50/75%
-    if (perPage === 3) return ['h31', 'h32']
-    if (perPage === 2) return ['h']
-    return []
-  }
-  if (perPage === 4) return ['v', 'h']
-  if (perPage === 3) return ['v31', 'v32']
-  if (perPage === 2) return ['v']
-  return []
+/** 页内分隔虚线（generic：竖线 left%、横线 top%；与 engine grid_line_styles 同口径）。 */
+function gridLines(rows: number, cols: number): Array<{ dir: 'v' | 'h'; style: string }> {
+  return gridLineStyles(rows, cols)
 }
 
 /* ---------- PRINT_CSS（与 assignment.html.j2 <style> 块逐字同步；@page 方向参数化） ---------- */
@@ -152,21 +135,13 @@ body {
 .sh-info { display: flex; justify-content: space-between; gap: 3mm; flex-wrap: wrap;
   font-weight: 400; font-size: 10.5pt; text-align: left; margin-top: 1.6mm; color: #222; }
 .sh-assign { color: var(--muted); }
-.sheet-body { flex: 1; display: flex; flex-direction: column; gap: 3mm; min-height: 0; }
-/* D53-G2：flex 方向由 data-grid 驱动（竖版 rows*=column 满行；横版 cols*/cross=row，
-   cross 再 wrap 成 2×2）——不再依赖 .landscape/.divided 类，横竖四档语义完备。 */
-.sheet-body { flex-direction: column; }
-.sheet-body[data-grid^="cols"], .sheet-body[data-grid="cross"] { flex-direction: row; }
-.sheet-body[data-grid="cross"] { flex-wrap: wrap; }
+.sheet-body { flex: 1; display: grid; gap: 3mm; min-height: 0; min-width: 0; }
+/* D61：rows×cols 显式网格；行优先/列优先由内联 grid-auto-flow 决定，空位在阅读顺序末尾。 */
 .sheet-body.divided { gap: 0; position: relative; }
-/* D53-G2：半宽约束只对横向分栏（cols*/cross）生效——竖版 rows* 题干满行宽（D41 曾误伤竖版）。 */
 .sheet-body.divided .sheet-frame { overflow: hidden; word-break: break-word; }
-.sheet-body[data-grid="cols2"] .sheet-frame, .sheet-body[data-grid="cols3"] .sheet-frame,
-.sheet-body[data-grid="cross"] .sheet-frame { max-width: 50%; }
-.sheet-frame { flex: 1 1 0; min-width: 0; min-height: 0; border: 1px dashed var(--hairline);
+.sheet-frame { min-width: 0; min-height: 0; border: 1px dashed var(--hairline);
   border-radius: 2mm; padding: 3mm; overflow: hidden; display: flex; flex-direction: column; gap: 2mm; }
 .sheet-body.divided .sheet-frame { border: none; border-radius: 0; padding: 3mm 4mm; }
-.sheet-body[data-grid="cross"] .sheet-frame { flex: 0 0 50%; height: 50%; }
 .q-id { font-weight: 700; color: var(--accent); font-size: 11pt; }
 .q-tag { font-weight: 400; color: var(--muted); font-size: 9pt; }
 .q-content { font-size: 11.5pt; line-height: 1.8; white-space: pre-wrap; }
@@ -179,16 +154,8 @@ body {
   color: var(--muted); display: flex; justify-content: space-between; gap: 3mm; }
 /* 多题/页分隔线（虚线，止于内容区，不穿页眉页脚；与 CSS 预览/引擎 PDF 同口径） */
 .sf-line { position: absolute; pointer-events: none; z-index: 2; }
-.sf-line.v { left: 50%; top: 0; width: 1px; height: 100%; }
-.sf-line.h { left: 0; top: 50%; width: 100%; height: 1px; }
-.sf-line.v31 { left: 33.3%; top: 0; width: 1px; height: 100%; }
-.sf-line.v32 { left: 66.6%; top: 0; width: 1px; height: 100%; }
-.sf-line.h31 { left: 0; top: 33.3%; width: 100%; height: 1px; }
-.sf-line.h32 { left: 0; top: 66.6%; width: 100%; height: 1px; }
-.sf-line.h25 { left: 0; top: 25%; width: 100%; height: 1px; }
-.sf-line.h4 { left: 0; top: 75%; width: 100%; height: 1px; }
-.sf-line.v, .sf-line.v31, .sf-line.v32, .sf-line.v4 { background-image: repeating-linear-gradient(to bottom, #777 0 5px, transparent 5px 10px); }
-.sf-line.h, .sf-line.h25, .sf-line.h31, .sf-line.h32, .sf-line.h4 { background-image: repeating-linear-gradient(to right, #777 0 5px, transparent 5px 10px); }
+.sf-line.v { top: 0; bottom: 0; width: 1px; background-image: repeating-linear-gradient(to bottom, #777 0 5px, transparent 5px 10px); }
+.sf-line.h { left: 0; right: 0; height: 1px; background-image: repeating-linear-gradient(to right, #777 0 5px, transparent 5px 10px); }
 /* 水印层（每页重建；items 逐层 + 页码大字） */
 .wm-layer { position: absolute; inset: 0; pointer-events: none; z-index: 5; }
 .wm-page-text { position: absolute; left: 16%; top: 38%; font-size: 46pt; color: #333;
@@ -442,8 +409,8 @@ function pageBlockHtml(pad: Taskpad, items: SheetHtmlItem[], stu: SheetHtmlStude
                        figAssets?: Record<string, string>): string {
   const layout = pad.layout
   const orientation = layout.orientation === 'landscape' ? 'landscape' : 'portrait'
-  const perPage = normalizePerPage(layout.per_page, layout.orientation)
-  const lines = gridLines(orientation, perPage)
+  const grid = resolveGrid(layout)
+  const lines = gridLines(grid.rows, grid.cols)
   const title = String(layout.header.title ?? '') || '作业纸'
   const footerText = String(layout.footer.text ?? '')
   const course = String(pad.course ?? '')
@@ -455,7 +422,7 @@ function pageBlockHtml(pad: Taskpad, items: SheetHtmlItem[], stu: SheetHtmlStude
     : `<span>班级：${escapeHtml(cls)}</span>\n      <span>学号：${escapeHtml(stu.number)}</span>\n      <span>姓名：${escapeHtml(stu.name)}</span>`
 
   const frames = lines.length
-    ? lines.map((ln) => `<div class="sf-line ${ln}"></div>`).join('\n    ') + '\n    '
+    ? lines.map((ln) => `<div class="sf-line ${ln.dir}" style="${ln.style}"></div>`).join('\n    ') + '\n    '
     : ''
   // 该页题帧（调用方已按 per_page 切好）
   return `<section class="sheet-page${orientation === 'landscape' ? ' landscape' : ''}${isVeryLast ? ' last' : ''}" data-student="${escapeHtml(stu.name)}" data-page="${pageN}">
@@ -468,7 +435,7 @@ function pageBlockHtml(pad: Taskpad, items: SheetHtmlItem[], stu: SheetHtmlStude
       <span class="sh-assign">日期：${escapeHtml(date)}</span>
     </div>
   </div>
-  <div class="sheet-body${lines.length ? ' divided' : ''}" data-grid="${gridKey(orientation, perPage)}">
+  <div class="sheet-body${lines.length ? ' divided' : ''}" data-grid="${grid.rows}x${grid.cols}" data-order="${grid.order}" data-rows="${grid.rows}" data-cols="${grid.cols}" style="${gridBodyStyle(grid.rows, grid.cols, grid.order)}">
     ${frames}${items.map((fr) => `<div class="sheet-frame">
       <div class="q-id">${escapeHtml(fr.id)}${fr.tag ? ` <span class="q-tag">【${escapeHtml(fr.tag)}】</span>` : ''}</div>
       <div class="q-content">${escapeHtml(fr.content)}</div>
@@ -513,7 +480,7 @@ export function stringifySheetHtml(
   const pageSections: string[] = []
   for (let padIdx = 0; padIdx < pads.length; padIdx++) {
     const { pad, items } = pads[padIdx]
-    const perPage = normalizePerPage(pad.layout.per_page, pad.layout.orientation)
+    const perPage = resolveGrid(pad.layout).perPage
     const chunks: SheetHtmlItem[][] = []
     for (let i = 0; i < items.length; i += perPage) chunks.push(items.slice(i, i + perPage))
     if (!chunks.length) chunks.push([])

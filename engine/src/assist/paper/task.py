@@ -91,6 +91,8 @@ def sheets_from_task(task_path: Path, ws: Path, out_dir: Path | None = None,
         watermark=not no_watermark,
         user_cfg=user_cfg,
         per_page=lay.get("per_page"),
+        grid_rows=lay.get("grid_rows"),
+        grid_cols=lay.get("grid_cols"),
     )
 
 

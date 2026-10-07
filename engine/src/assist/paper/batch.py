@@ -89,6 +89,8 @@ def batch_sheets(roster_fn: Path, task_files: list[Path], ws: Path,
             notes_prefix=f"{tag}:{pad.get('id', '')}",
             watermark=lay.get("watermark", {}).get("enabled", True) is not False,
             per_page=lay.get("per_page"),
+            grid_rows=lay.get("grid_rows"),
+            grid_cols=lay.get("grid_cols"),
         )
         generated += files
         seen[tag] = pad_names.get(tag, pad.get("id"))

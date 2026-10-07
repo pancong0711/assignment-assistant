@@ -1,6 +1,6 @@
 import { defineStore } from 'pinia'
 import {
-  emptyTaskpad, parseTaskpad, serializeTaskpad, makeTaskpadId,
+  defaultGrid, emptyTaskpad, parseTaskpad, serializeTaskpad, makeTaskpadId,
   type Taskpad, type TaskpadItem,
 } from '../lib/taskpad'
 
@@ -45,10 +45,22 @@ export const useTaskpadStore = defineStore('taskpad', {
     },
     setOrientation(orientation: 'portrait' | 'landscape') {
       this.current.layout.orientation = orientation
-      this.current.layout.per_page = orientation === 'landscape' ? 2 : 1
+      const n = orientation === 'landscape' ? 2 : 1
+      this.current.layout.per_page = n
+      const g = defaultGrid(n)
+      this.current.layout.grid_rows = g.rows
+      this.current.layout.grid_cols = g.cols
     },
-    setPerPage(v: 1 | 2 | 3 | 4) {
+    setPerPage(v: number) {
       this.current.layout.per_page = v
+      const g = defaultGrid(v)
+      this.current.layout.grid_rows = g.rows
+      this.current.layout.grid_cols = g.cols
+    },
+    /** D61：显式设置 rows×cols（UI 输入后调用；非法值由 resolveGrid/渲染层兜底）。 */
+    setGridSize(rows: number, cols: number) {
+      this.current.layout.grid_rows = rows
+      this.current.layout.grid_cols = cols
     },
     /** 新建空作业纸，可选克隆当前版式/叶眉页脚/水印配置（D19 反馈第 3 项）。 */
     newPad(cloneStyle: boolean) {
@@ -58,6 +70,8 @@ export const useTaskpadStore = defineStore('taskpad', {
         next.layout = {
           orientation: cur.layout.orientation,
           per_page: cur.layout.per_page,
+          grid_rows: cur.layout.grid_rows,
+          grid_cols: cur.layout.grid_cols,
           header: { ...cur.layout.header },
           footer: { ...cur.layout.footer },
         }

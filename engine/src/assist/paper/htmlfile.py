@@ -23,6 +23,7 @@ from loguru import logger
 
 from .. import ASSIST_ROOT
 from ..files.roster import read_roster
+from .grid import grid_body_style, grid_line_styles, normalize_per_page, resolve_grid
 from .task import load_task
 
 TEMPLATE_NAME = "assignment.html.j2"
@@ -87,35 +88,9 @@ def _resolve_asset(ws: Path, hint: str, assets_dir: Path | None) -> Path | None:
     return None
 
 
-def _grid_key(orientation: str, per_page: int) -> str:
-    """data-grid 键（D53-G2 定稿，与 app sheetHtml.gridKey 同口径）：
-    竖版 2/3/4 = 纵向一列均分 rows2/rows3/rows4；横版 2/3=左右栏、4=十字。"""
-    if orientation == "portrait":
-        return f"rows{per_page}"
-    if per_page == 4:
-        return "cross"
-    if per_page == 3:
-        return "cols3"
-    return "cols2"
-
-
-def _grid_lines(orientation: str, per_page: int) -> list[str]:
-    """页内虚线分隔线类（D53-G2：竖版 N 题页=N-1 条横虚线等分，rows4 三横线含 h4；横版不变）。"""
-    if orientation != "landscape":
-        if per_page == 4:
-            return ["h25", "h", "h4"]   # D53-G2：四等分线 25/50/75%
-        if per_page == 3:
-            return ["h31", "h32"]
-        if per_page == 2:
-            return ["h"]
-        return []
-    if per_page == 4:
-        return ["v", "h"]
-    if per_page == 3:
-        return ["v31", "v32"]
-    if per_page == 2:
-        return ["v"]
-    return []
+def _grid_lines(rows: int, cols: int) -> list[dict]:
+    """HTML 页内虚线（generic：竖线 left%，横线 top%；D61 rows×cols）。"""
+    return grid_line_styles(rows, cols)
 
 
 def _watermark_items(task: dict, ws: Path, assets_dir: Path | None,
@@ -222,12 +197,9 @@ def build_context(task: dict, students: list[dict], kb_dir: Path, ws: Path,
     """任务包 + 名单 → 模板上下文（模板零业务逻辑；TS sheetHtml.ts 同构）。"""
     lay = task.get("layout", {}) or {}
     orientation = "landscape" if lay.get("orientation") == "landscape" else "portrait"
-    per_page = lay.get("per_page")
-    try:
-        per_page = int(per_page) if per_page else (2 if orientation == "landscape" else 1)
-    except (TypeError, ValueError):
-        per_page = 2 if orientation == "landscape" else 1
-    per_page = max(1, min(4, per_page))
+    per_page = normalize_per_page(lay.get("per_page"), orientation)
+    grid = resolve_grid(orientation, per_page,
+                        lay.get("grid_rows"), lay.get("grid_cols"))
     frames = expand_items_html(task, kb_dir)
     wm_raw = task.get("watermark") or {}
     wm_enabled = (not no_watermark) and wm_raw.get("enabled", True) is not False
@@ -242,7 +214,12 @@ def build_context(task: dict, students: list[dict], kb_dir: Path, ws: Path,
         "date": date or f"{datetime.now():%Y-%m-%d}",
         "orientation": orientation,
         "per_page": per_page,
-        "grid": _grid_key(orientation, per_page),
+        "grid_rows": grid["rows"],
+        "grid_cols": grid["cols"],
+        "grid_order": grid["order"],
+        "grid_capacity": grid["capacity"],
+        "grid": f"{grid['rows']}x{grid['cols']}",   # D61：与 PWA sheetHtml data-grid 同口径（去 grid 前缀）
+        "grid_body_style": grid_body_style(grid["rows"], grid["cols"], grid["order"]),
         "footer_text": str((lay.get("footer") or {}).get("text") or ""),
         "katex_version": KATEX_VERSION,
     }
@@ -251,13 +228,14 @@ def build_context(task: dict, students: list[dict], kb_dir: Path, ws: Path,
     for stu in students:
         pages = [frames[i:i + per_page] for i in range(0, len(frames), per_page)] or [[]]
         n_total_pages_total += len(pages)
+        page_lines = _grid_lines(grid["rows"], grid["cols"])
         stu_out.append({
             "name": str(stu.get("name") or ""),
             "number": str(stu.get("number") or ""),
             "class_display": str(stu.get("class") or doc["class_name"]),
             "tag": str(stu.get("tag") or ""),
             "pages": [{"n": i + 1, "total": len(pages), "last": False,
-                       "grid_lines": _grid_lines(orientation, per_page),
+                       "grid_lines": page_lines,
                        "frames": pg}
                       for i, pg in enumerate(pages)],
         })
@@ -265,7 +243,7 @@ def build_context(task: dict, students: list[dict], kb_dir: Path, ws: Path,
     if stu_out:
         stu_out[-1]["pages"][-1]["last"] = True
     logger.info(f"HTML 上下文：{len(stu_out)} 生 × 共 {n_total_pages_total} 页"
-                f"（{orientation} per_page={per_page}）")
+                f"（{orientation} per_page={per_page} grid={grid['rows']}x{grid['cols']} order={grid['order']}）")
     return {"doc": doc, "watermark": wm, "students": stu_out}
 
 

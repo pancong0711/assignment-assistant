@@ -116,9 +116,9 @@ def test_sheet_html_cli_dual_layout_and_template_markers(ws: Path):
     assert 'data-student="学生A"' in html and 'data-student="学生B"' in html
     assert "page-break-after: always" in html and "break-after: page" in html
     assert 'class="sheet-page landscape last"' in html
-    # 横版 + per_page=2 网格（cols2 + 栏间竖线）
+    # 横版 + per_page=2 网格（D61：data-grid="1x2"，一列竖虚线）
     assert "@page { size: A4 landscape" in html
-    assert 'data-grid="cols2"' in html and 'class="sf-line v"' in html
+    assert 'data-grid="1x2"' in html and 'class="sf-line v"' in html
     # 页眉（课程/班级/学号/姓名/作业标识/日期）+ 页脚（作业id-第p/N页/签名/日期）
     assert "课程：大学物理" in html and "学号：2026xxxx01" in html
     assert "作业：demo-html" in html and "签名：" in html
@@ -136,7 +136,7 @@ def test_sheet_html_cli_dual_layout_and_template_markers(ws: Path):
     assert 'class="q-img" src="data:image/png;base64,' in html
     assert '<div class="q-img-ph">' not in html
 
-    # ---- ①b D53-G2：竖版 per_page=4 = 纵向四行均分（rows4 + 三横虚线 h/h31/h32/h4），非十字 ----
+    # ---- ①b D61：竖版 per_page=4 = 4x1 纵向均分（三横虚线），非十字 ----
     task_p4 = _write_task(ws, "portrait", 4, {"enabled": False, "style": "default"})
     res_p4 = runner.invoke(cli, ["sheet", "html", "--task", str(task_p4),
                                  "--students", "sample", "--no-watermark",
@@ -144,10 +144,9 @@ def test_sheet_html_cli_dual_layout_and_template_markers(ws: Path):
                                  "-o", str(ws / "tmp" / "sheet-p4.html")])
     assert res_p4.exit_code == 0, res_p4.output
     html_p4 = (ws / "tmp" / "sheet-p4.html").read_text(encoding="utf-8")
-    assert 'data-grid="rows4"' in html_p4          # 不再是 cross
-    assert 'class="sf-line h"' in html_p4 and 'class="sf-line h25"' in html_p4 \
-        and 'class="sf-line h4"' in html_p4   # 竖版4题页=三横虚线四等分（25/50/75%，rows4 新档）
-    assert '.sheet-body { flex-direction: column; }' in html_p4 and '[data-grid^="cols"]' in html_p4
+    assert 'data-grid="4x1"' in html_p4            # D61：不再 cross
+    assert html_p4.count('class="sf-line h"') == 3 * len(SYNTHETIC_STUDENTS)   # 每页3横线 × 2 生（四等分）
+    assert '.sheet-body { flex: 1; display: grid;' in html_p4
 
     # ---- ② portrait per_page=4 + 无 roster（合成 学生A/B informational；缺省输出路径） ----
     task2 = _write_task(ws, "portrait", 4,
@@ -160,8 +159,8 @@ def test_sheet_html_cli_dual_layout_and_template_markers(ws: Path):
     html2 = default_out.read_text(encoding="utf-8")
     assert html2.count('<section class="sheet-page') == len(SYNTHETIC_STUDENTS)
     assert "@page { size: A4 portrait" in html2
-    assert 'data-grid="rows4"' in html2          # D53-G2：竖版 4 题/页 = 纵向四行均分
-    assert 'class="sf-line h"' in html2 and 'class="sf-line h4"' in html2
+    assert 'data-grid="4x1"' in html2            # D61：竖版 4 题/页 = 4x1 纵向均分
+    assert html2.count('class="sf-line h"') == 3 * len(SYNTHETIC_STUDENTS)
     assert "watermark" not in ""                 # noop（防手滑改断言）
     assert 'data-wm-item' not in html2           # enabled=false → 无水印层（CSS 选择器仍在）
     assert '<span class="wm-page-text">' not in html2
@@ -221,8 +220,7 @@ def test_sheet_html_cli_dual_layout_and_template_markers(ws: Path):
         pytest.skip("app/src/lib/sheetHtml.ts 不在当前检出中")
     ts_src = ts.read_text(encoding="utf-8")
     for marker in ["page-break-after: always", "@page { size: A4 ",
-                   'class="sheet-page', "data-grid=", "wm-page-text",
-                   "data-wm-item", "data-wm-pos", "sf-line",
-                   "katex@", "0.16.4", "auto-render.min.js", "renderMathInElement",
-                   ".sf-line.h4", ".sf-line.h25", '[data-grid^="cols"]']:
+                   'class="sheet-page', "data-grid=", "data-order=", "data-rows=", "data-cols=",
+                   "wm-page-text", "data-wm-item", "data-wm-pos", "sf-line",
+                   "katex@", "0.16.4", "auto-render.min.js", "renderMathInElement"]:
         assert marker in ts_src, f"TS 同构缺少标记: {marker}"

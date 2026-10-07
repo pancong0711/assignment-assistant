@@ -17,7 +17,9 @@
 
 export type Orientation = 'portrait' | 'landscape'
 
-export type PerPage = 1 | 2 | 3 | 4
+export type PerPage = number
+export const MAX_PER_PAGE = 12
+export const MAX_GRID_DIM = 12
 
 export interface TaskpadLayoutHeader {
   title?: string
@@ -30,8 +32,12 @@ export interface TaskpadLayoutFooter {
 
 export interface TaskpadLayout {
   orientation: Orientation
-  /** 每页题数 1–4（D19 反馈；缺省 竖1横2；横版 A4 左右栏、竖版上下行） */
+  /** 每页题数 1..MAX_PER_PAGE（缺省 竖1横2；显式网格由 grid_rows/grid_cols 控制） */
   per_page: PerPage
+  /** D61：显式网格行数；缺省（旧任务）按 orientation+per_page 兼容推导 */
+  grid_rows?: number
+  /** D61：显式网格列数；缺省（旧任务）按 orientation+per_page 兼容推导 */
+  grid_cols?: number
   header: TaskpadLayoutHeader
   footer: TaskpadLayoutFooter
 }
@@ -135,6 +141,8 @@ export function emptyTaskpad(): Taskpad {
     layout: {
       orientation: 'landscape',
       per_page: 2,
+      grid_rows: 1,
+      grid_cols: 2,
       header: { title: '大学物理 作业纸' },
       footer: {},
     },
@@ -144,11 +152,96 @@ export function emptyTaskpad(): Taskpad {
   }
 }
 
-/** layout.per_page 规范化：1–4 之外回落到方向缺省（竖1横2），与引擎同口径。 */
+/** layout.per_page 规范化：1..MAX_PER_PAGE 之外回落到方向缺省（竖1横2），与引擎同口径。 */
 export function normalizePerPage(v: unknown, orientation: Orientation): PerPage {
   const n = Number(v)
-  if (n === 1 || n === 2 || n === 3 || n === 4) return n
+  if (Number.isInteger(n) && n >= 1 && n <= MAX_PER_PAGE) return n
   return orientation === 'landscape' ? 2 : 1
+}
+
+export interface ResolvedGrid {
+  rows: number
+  cols: number
+  perPage: number
+  order: 'row' | 'col'
+  capacity: number
+  empty: number
+  legacy: boolean
+}
+
+/** 旧任务包（无 grid_rows/grid_cols）兼容网格：竖版 2/3/4=rowsN；横版 2/3=colsN、4=2x2。 */
+export function legacyGrid(orientation: Orientation, perPage: number): { rows: number; cols: number } {
+  if (perPage <= 1) return { rows: 1, cols: 1 }
+  if (orientation === 'portrait') return { rows: perPage, cols: 1 }
+  if (perPage === 4) return { rows: 2, cols: 2 }
+  return { rows: 1, cols: perPage }
+}
+
+/** D61 新 UI 默认：N/2 x 2（N=1 特例 1x1）。 */
+export function defaultGrid(perPage: number): { rows: number; cols: number } {
+  if (perPage <= 1) return { rows: 1, cols: 1 }
+  return { rows: Math.max(1, Math.ceil(perPage / 2)), cols: 2 }
+}
+
+/** 均匀方阵：因子对里选最接近平方的一对；质数回退 1xN。 */
+export function autoSquareGrid(perPage: number): { rows: number; cols: number } {
+  if (perPage <= 1) return { rows: 1, cols: 1 }
+  let best = { rows: 1, cols: perPage }
+  let bestDelta = Math.abs(1 - perPage)
+  for (let r = 2; r <= Math.floor(Math.sqrt(perPage)); r++) {
+    if (perPage % r) continue
+    const c = perPage / r
+    const delta = Math.abs(r - c)
+    if (delta < bestDelta || (delta === bestDelta && r < best.rows)) {
+      best = { rows: r, cols: c }; bestDelta = delta
+    }
+  }
+  return best
+}
+
+function positiveDim(v: unknown): number | undefined {
+  const n = Number(v)
+  return Number.isInteger(n) && n >= 1 && n <= MAX_GRID_DIM ? n : undefined
+}
+
+/** 解析实际网格：显式 rows×cols 合法且容量>=perPage 时使用；否则回退旧兼容网格。 */
+export function resolveGrid(layout: Pick<TaskpadLayout, 'orientation' | 'per_page' | 'grid_rows' | 'grid_cols'>): ResolvedGrid {
+  const perPage = normalizePerPage(layout.per_page, layout.orientation)
+  const rows = positiveDim(layout.grid_rows)
+  const cols = positiveDim(layout.grid_cols)
+  let legacy = false
+  let r = rows
+  let c = cols
+  if (!r || !c || r * c < perPage) {
+    legacy = true
+    const g = legacyGrid(layout.orientation, perPage)
+    r = g.rows; c = g.cols
+  }
+  return {
+    rows: r!, cols: c!, perPage,
+    order: layout.orientation === 'portrait' ? 'row' : 'col',
+    capacity: r! * c!,
+    empty: Math.max(0, r! * c! - perPage),
+    legacy,
+  }
+}
+
+/** 内部虚线：返回 {dir, style}（与 engine paper/grid.grid_line_styles 同口径）。 */
+export function gridLineStyles(rows: number, cols: number): Array<{ dir: 'v' | 'h'; style: string }> {
+  const out: Array<{ dir: 'v' | 'h'; style: string }> = []
+  for (let i = 1; i < cols; i++) {
+    out.push({ dir: 'v', style: `left:${Math.round(i * 10000 / cols) / 100}%` })
+  }
+  for (let j = 1; j < rows; j++) {
+    out.push({ dir: 'h', style: `top:${Math.round(j * 10000 / rows) / 100}%` })
+  }
+  return out
+}
+
+/** HTML .sheet-body 内联 CSS Grid 样式（PWA/j2 同口径）。 */
+export function gridBodyStyle(rows: number, cols: number, order: 'row' | 'col'): string {
+  const flow = order === 'col' ? 'column' : 'row'
+  return `display:grid;grid-template-columns:repeat(${cols}, minmax(0, 1fr));grid-template-rows:repeat(${rows}, minmax(0, 1fr));grid-auto-flow:${flow};`
 }
 
 const POS_VALUES = new Set(['lt', 'mt', 'rt', 'lm', 'mm', 'rm', 'lb', 'mb', 'rb'])
@@ -232,6 +325,8 @@ export function parseTaskpad(raw: unknown): Taskpad {
     layout: {
       orientation,
       per_page: normalizePerPage(layout.per_page, orientation),
+      grid_rows: positiveDim(layout.grid_rows),
+      grid_cols: positiveDim(layout.grid_cols),
       header: (layout.header ?? {}) as TaskpadLayoutHeader,
       footer: (layout.footer ?? {}) as TaskpadLayoutFooter,
     },
