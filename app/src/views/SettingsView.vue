@@ -171,6 +171,57 @@ function getKbDirHandleSafe(): FileSystemDirectoryHandle | null {
 }
 const katexStatus = ref('尚未检查（预览一般无需检查；资源已随应用打包）')
 
+/* ---------- D58：TinyTeX 可选依赖（设置中心专用栏：检测 + 网络安装） ---------- */
+const tinytexChecking = ref(false)
+const tinytexInstalling = ref(false)
+const tinytexStatus = ref('尚未检测（可选依赖；缺失时 LaTeX 样题自动降级，不影响 HTML/PDF 主通道）')
+const tinytexCheck = computed(() => settings.checks.find((c) => c.key === 'tex'))
+
+async function checkTinyTex() {
+  tinytexChecking.value = true
+  try {
+    await settings.pingEngine()
+    if (!settings.engineOnline) {
+      tinytexStatus.value = '⚠ 引擎未在线——无法检测本机 TeX。请先启动 assist serve，或用 CLI：assist tex status'
+      return
+    }
+    await settings.runDoctor()
+    const c = tinytexCheck.value
+    if (!c) {
+      tinytexStatus.value = '⚠ 体检未返回 TeX 项（引擎版本可能较旧）'
+      return
+    }
+    tinytexStatus.value = `${statusGlyph(c.status)} ${c.note || '未返回详情'}`
+  } catch (e) {
+    tinytexStatus.value = `⚠ 检测失败：${(e as Error).message}`
+  } finally {
+    tinytexChecking.value = false
+  }
+}
+
+async function installTinyTex() {
+  tinytexInstalling.value = true
+  try {
+    await settings.pingEngine()
+    if (!settings.engineOnline) {
+      tinytexStatus.value = '⚠ 需要引擎在线（assist serve）才能写盘安装；也可在终端运行：assist tex install'
+      return
+    }
+    tinytexStatus.value = '⏳ 正在从网络下载 TinyTeX 并解压到 <workspace>/.runtime/tex（体积较大，请耐心等待）…'
+    const ok = await settings.runInstall('tinytex')
+    const c = tinytexCheck.value
+    if (ok && c?.status === 'ok') {
+      tinytexStatus.value = `✅ ${c.note || 'xelatex 已可用'}`
+    } else {
+      tinytexStatus.value = `⚠ 未检测到可用 xelatex；安装输出末尾：${settings.installLog.slice(-240) || '（空）'}`
+    }
+  } catch (e) {
+    tinytexStatus.value = `⚠ 安装失败：${(e as Error).message}`
+  } finally {
+    tinytexInstalling.value = false
+  }
+}
+
 async function checkKatex() {
   katexChecking.value = true
   try {
@@ -410,6 +461,30 @@ onMounted(() => {
         「安装到 workspace」= 引擎通道离线化：装完后 <code>assist sheet html --katex local</code>（或本 PWA「下载 HTML」自包含文件，无需此步）
         生成的 sheets/*.html 引用 ../katex/ 相对路径即可断网渲染公式。未连接 workspace 目录时自动降级为下载 katex-offline.zip（解压到 &lt;workspace&gt;/sheets/ 下）。
       </p>
+    </div>
+
+    <!-- ============ D58：TinyTeX 可选依赖（专用检测/安装栏，不入仓库） ============ -->
+    <div class="card">
+      <h2>TinyTeX（LaTeX 渲染，可选） <small style="font-weight:400;color:var(--c-muted)">网络下载安装 · 仓库不含安装包 · workspace 内卸载</small></h2>
+      <p class="hint">
+        TinyTeX 只用于 LaTeX 样题渲染/精细排版，<b>不是主依赖</b>；缺失时样题自动降级，HTML 主通道与
+        reportlab PDF 不受影响。安装包不会放进远程仓库，本卡只负责检测与从
+        <code>tinytex-releases</code> 官方 Release <b>联网下载</b>，解压到
+        <code>&lt;workspace&gt;/.runtime/tex</code>（删除 workspace 即整体卸载，无需系统 PATH）。
+      </p>
+      <p class="hint">
+        引擎未在线时无法写盘检测/安装；CLI 备份入口：<code>assist tex status</code> /
+        <code>assist tex install</code>。
+      </p>
+      <p>
+        <button class="btn" :disabled="tinytexChecking" @click="checkTinyTex">{{ tinytexChecking ? '检测中…' : '检测 TeX / xelatex' }}</button>
+        <button class="btn primary" style="margin-left:8px" :disabled="tinytexInstalling" @click="installTinyTex"
+          title="从 tinytex-releases 官方 Release 网络下载并解压到 workspace/.runtime/tex；不入仓库；重复点击可修复/重装">📦 {{ tinytexInstalling ? '安装中…' : '联网安装 TinyTeX' }}</button>
+        <span class="hint" style="margin-left:8px">{{ tinytexStatus }}</span>
+      </p>
+      <p class="hint" v-if="tinytexCheck"><b>当前体检项：</b>{{ tinytexCheck.note || '—' }}</p>
+      <p class="hint" v-if="tinytexInstalling && settings.installLog"><code>安装输出（末尾）</code></p>
+      <pre v-if="tinytexInstalling && settings.installLog" style="max-height:180px; overflow:auto; white-space:pre-wrap">{{ settings.installLog.slice(-1200) }}</pre>
     </div>
   </section>
 </template>

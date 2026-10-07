@@ -318,3 +318,23 @@ button.wizard-step-pill.as-btn:disabled { opacity: 0.5; cursor: not-allowed; }
 .table-scroll.h360 { max-height: 360px; }
 /* 滚动区内表头吸顶（宽表左侧 sticky 列同时保留 left:0，两者可叠加） */
 .table-scroll thead th, .score-wide-table thead th, .preview-table thead th { position: sticky; top: 0; z-index: 2; background: var(--c-primary-soft, #eef2fb); }
+
+/* ===== D58：全局「返回页面头部」按钮（所有选项卡共用） ===== */
+.back-top {
+  position: fixed;
+  right: 20px;
+  bottom: 26px;
+  z-index: 70;
+  padding: 8px 14px;
+  border-radius: 999px;
+  border: 1px solid var(--c-primary);
+  background: var(--c-card, #fff);
+  color: var(--c-primary);
+  font-size: 13px;
+  font-family: inherit;
+  cursor: pointer;
+  box-shadow: 0 6px 18px rgba(15, 23, 42, 0.18);
+  transition: transform 0.12s ease, background 0.12s ease, color 0.12s ease;
+}
+.back-top:hover { background: var(--c-primary); color: #fff; transform: translateY(-2px); }
+.back-top:focus-visible { outline: 3px solid var(--c-primary-soft, #eef2fb); outline-offset: 2px; }

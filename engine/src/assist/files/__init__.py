@@ -1,6 +1,6 @@
 from .roster import read_roster
 from .kb_io import (COLUMNS, read_kb, read_translation, read_xlsx, snapshot,
-                    write_json, write_xlsx)
+                    write_chapters_preserving, write_json, write_xlsx)
 
 __all__ = ["COLUMNS", "read_kb", "read_translation", "read_xlsx", "snapshot",
-           "write_json", "write_xlsx"]
+           "write_chapters_preserving", "write_json", "write_xlsx"]

@@ -142,6 +142,58 @@ def _cell(entry: dict, col: str):
     return v
 
 
+def write_chapters_preserving(xlsx_path: Path, chapters: dict[str, list[dict]],
+                              columns: list[str] | None = None) -> Path:
+    """把 {sheet: [条目,...]} 写回现有 xlsx，**保留单元格样式**（B4）。
+
+    PWA 端 SheetJS 写回会丢失字体/边框/列宽等样式；当引擎在线或教师用
+    ``assist kb write`` 时走本函数：
+    1. openpyxl 加载原工作簿（不存在则新建）；
+    2. 按现有表头映射列，仅改 cell.value（不重建 Cell 对象，样式/列宽/批注保留）；
+    3. 删除新增数据行之后的旧行，并移除本次未提供的旧 sheet。
+    """
+    columns = columns or COLUMNS
+    if xlsx_path.exists():
+        wb = load_workbook(xlsx_path)
+    else:
+        wb = Workbook()
+        wb.remove(wb.active)
+
+    for sheet, entries in chapters.items():
+        ws = wb[sheet] if sheet in wb.sheetnames else wb.create_sheet(title=sheet)
+
+        # 确保表头含全部标准列：已有标准列名保留原单元格（连带样式），缺失列追加。
+        col_idx: dict[str, int] = {}
+        for ci in range(1, ws.max_column + 1):
+            h = str(ws.cell(1, ci).value or "").strip()
+            if h in columns and h not in col_idx:
+                col_idx[h] = ci
+        for col in columns:
+            if col not in col_idx:
+                ci = ws.max_column + 1
+                ws.cell(1, ci, value=col)
+                col_idx[col] = ci
+
+        for ri, entry in enumerate(entries, start=2):
+            for col in columns:
+                cell = ws.cell(ri, col_idx[col])
+                val = _cell(entry, col)
+                if cell.value != val:
+                    cell.value = val  # 只改值，不重建 Cell，样式保留
+
+        last_wanted = len(entries) + 1
+        if ws.max_row > last_wanted:
+            ws.delete_rows(last_wanted + 1, ws.max_row - last_wanted)
+
+    for name in list(wb.sheetnames):
+        if name not in chapters:
+            del wb[name]
+    if not wb.sheetnames:
+        wb.create_sheet("Sheet1")
+    wb.save(xlsx_path)
+    return xlsx_path
+
+
 def write_json(kb_dir: Path, kb: dict[str, dict[str, list[dict]]]) -> Path:
     """导出 JSON 副本（交换/AI 阅读/diff 基准，05-D3），写 kB/export/*.json。"""
     out_dir = kb_dir / "export"

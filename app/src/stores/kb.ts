@@ -175,9 +175,30 @@ export const useKbStore = defineStore('kb', {
       downloadData(bin, `${kind}${suffix}.xlsx`,
         'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet')
     },
-    /** 写回：已连接本地目录（Chrome/Edge）→ 写到 <目录>/kb/<kind>.xlsx；
-     *  否则下载文件（D11 降级）。 */
+    /** 写回顺序（B4）：
+     *  ① 引擎在线 → POST /kb/write，openpyxl 原位改值保留样式 + .history 快照；
+     *  ② 否则回退 File System Access 原地写（SheetJS 纯数据，会丢样式）；
+     *  ③ 再不行下载文件（D11 降级）。
+     *  translation 是中文例外表，PWA 读到的是合成后的通用 KbBook，暂不走样式写回。 */
     async saveKind(kind: KbKind): Promise<string> {
+      let engineNote = ''
+      if (kind !== 'translation') {
+        try {
+          const { useSettingsStore } = await import('./settings')
+          const settings = useSettingsStore()
+          if (settings.engineOnline) {
+            const { writeKbViaEngine } = await import('../lib/engineClient')
+            const path = await writeKbViaEngine(
+              settings.engineUrl, settings.engineToken, kind, this.books[kind].chapters,
+            )
+            this.savedAt = new Date().toLocaleTimeString()
+            this.dirty = false
+            return `已通过引擎样式保留写回 ${path}（写前自动 .history 快照）`
+          }
+        } catch (e) {
+          engineNote = `；引擎样式写回失败：${(e as Error).message}`
+        }
+      }
       const bin = writeKbXlsx(this.books[kind])
       const dirHandle = getKbDirHandle()
       if (dirHandle) {
@@ -185,10 +206,10 @@ export const useKbStore = defineStore('kb', {
         this.savedAt = new Date().toLocaleTimeString()
         // TODO(阶段1 engine 已具备)：真实快照由 engine `assist kb snapshot` 负责
         this.dirty = false
-        return `已写回 ${this.fsDirName}/kb/${kind}.xlsx`
+        return `已写回 ${this.fsDirName}/kb/${kind}.xlsx${engineNote}`
       }
       this.downloadKind(kind)
-      return `当前浏览器不支持原地写回，已导出 ${kind}.xlsx（可用其替换本地文件；或改用 Chrome/Edge 获得直接写回）`
+      return `当前浏览器不支持原地写回，已导出 ${kind}.xlsx（可用其替换本地文件；或改用 Chrome/Edge 获得直接写回）${engineNote}`
     },
     persist() {
       const data: PersistedKb = { books: this.allBooks, savedAt: new Date().toISOString() }

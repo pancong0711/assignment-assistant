@@ -64,7 +64,7 @@ def doctor(obj, workspace, verbose):
     checks.append(("uv", uv_ok))
     try:
         from .paper.latex import check_xelatex
-        checks.append(("xelatex(可选)", "green" if check_xelatex() else "yellow"))
+        checks.append(("xelatex(可选)", "green" if check_xelatex(ws_path) else "yellow"))
     except ImportError:
         checks.append(("xelatex(可选)", "red"))
     cfg = load_workspace_settings(ws_path)
@@ -75,6 +75,40 @@ def doctor(obj, workspace, verbose):
     bad = [n for n, s in checks if s == "red"]
     if bad:
         click.echo(f"缺失：{bad}。安装：assist bootstrap")
+
+
+@cli.group(help="TeX/TinyTeX 可选依赖（网络安装，仓库不含安装包，D58）")
+def tex():
+    pass
+
+
+@tex.command("status")
+@click.option("--workspace", "-w", default=None)
+@click.option("--verbose", "-v", is_flag=True)
+@click.pass_obj
+def tex_status(obj, workspace, verbose):
+    """检查 xelatex；优先系统 PATH，其次 workspace/.runtime/tex（TinyTeX）。"""
+    from .paper.tinytex import find_xelatex
+    ws = _setup(verbose or obj.get("verbose"), workspace)
+    x = find_xelatex(ws)
+    if x:
+        click.echo(f"xelatex: {x}")
+    else:
+        click.echo("xelatex: 未安装（可选依赖）")
+        click.echo(f"安装 TinyTeX（网络下载到 {ws / '.runtime' / 'tex'}）：assist tex install --workspace {ws}")
+
+
+@tex.command("install")
+@click.option("--workspace", "-w", default=None)
+@click.option("--verbose", "-v", is_flag=True)
+@click.pass_context
+def tex_install(ctx, workspace, verbose):
+    """下载并安装 TinyTeX 到 workspace/.runtime/tex（不把安装包放进仓库）。"""
+    from .paper.tinytex import install_tinytex
+    ws = _setup(verbose or ctx.obj.get("verbose"), workspace)
+    rc = install_tinytex(ws, click.echo)
+    if rc != 0:
+        ctx.exit(rc)
 
 
 @cli.group(help="题库管理（kb xlsx 为主数据，JSON 为导出副本，05-D3）")
@@ -123,6 +157,39 @@ def kb_export(obj, fmt, workspace, verbose):
     ws = _setup(verbose or obj.get("verbose"))
     out = write_json(ws / "kb", read_kb(ws / "kb"))
     click.echo(f"已导出 → {out}")
+
+
+@kb.command("write")
+@click.option("--input", "input_path", required=True, type=click.Path(exists=True, dir_okay=False),
+              help="JSON 文件：--kind 时={chap:[条目]}；缺省时={kind:{chap:[条目]}}（同 kb export）")
+@click.option("--kind", default=None, help="只写一个 kind（problems/copy/...），JSON 顶层直接为 chapters")
+@click.option("--workspace", "-w", default=None)
+@click.option("--verbose", "-v", is_flag=True)
+@click.pass_obj
+def kb_write(obj, input_path, kind, workspace, verbose):
+    """样式保留写回 xlsx（B4）：openpyxl 只改 cell.value，保留字体/边框/列宽；写前自动快照。"""
+    import re
+    from .files import snapshot as snap
+    from .files import write_chapters_preserving
+    ws = _setup(verbose or obj.get("verbose"), workspace)
+    payload = json.loads(Path(input_path).read_text(encoding="utf-8"))
+    if not isinstance(payload, dict):
+        raise click.ClickException("JSON 顶层必须是对象")
+    if kind:
+        targets = {kind: payload}
+    else:
+        targets = {k: v for k, v in payload.items() if isinstance(v, dict)}
+    if not targets:
+        raise click.ClickException("没有可写入的 kind 数据")
+    kb_dir = _kb_dir(ws)
+    for k, chapters in targets.items():
+        if not re.fullmatch(r"[A-Za-z0-9_-]{1,64}", str(k)):
+            raise click.ClickException(f"非法 kind：{k}")
+        if not all(isinstance(v, list) for v in chapters.values()):
+            raise click.ClickException(f"{k} 的 chapters 值必须是条目数组")
+        snap(kb_dir, [str(k)])
+        out = write_chapters_preserving(kb_dir / f"{k}.xlsx", chapters)
+        click.echo(str(out))
 
 
 @kb.command("snapshot")

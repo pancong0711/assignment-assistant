@@ -63,6 +63,8 @@ const filter = ref('')
 const status = ref('')
 
 onMounted(() => {
+  // B4：提前探测引擎在线状态，保证第一次「保存」就有机会走样式保留写回。
+  void settings.pingEngine()
   if (kb.restorePersisted()) {
     pickChapter(true)
   }
@@ -139,7 +141,7 @@ function addChapter() {
       <h2>题库编辑器 <small style="font-weight:400;color:var(--c-muted)">xlsx = source of truth（docs/05-D3）：浏览器内直接读写，kind 多 sheet=章</small></h2>
       <p class="hint">
         列结构与 engine <code>assist kb</code> 兼容：id / content / img_path / page / related / type / solution / note。
-        教师既有 xlsx 可直接读入编辑；写回优先用 File System Access API 原地保存（Chrome/Edge），否则导出文件替换。
+        教师既有 xlsx 可直接读入编辑；写回优先由引擎 <code>POST /kb/write</code> 做样式保留写回（openpyxl 只改 cell.value + 自动快照），引擎离线时回退 File System Access API 原地保存或导出文件替换。
       </p>
       <p>
         <label class="btn as-label btn-file" for="kb-file">载入教师 xlsx…</label>

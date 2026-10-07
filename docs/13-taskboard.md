@@ -959,3 +959,43 @@ applyManualTranslation/setTranslationRatio 中 setTranslationRatio 保留——�
 | D57-2 batch zip HTML 开关 | ✅ | variantBatch：`setBatchHtmlIncludeSolution`（默认 false）+ provider 传 `includeSolution`；SheetContentView 变体卡加 `☑内嵌 HTML 含参考答案`；生成提示标注口径；zip README 语义由开关决定 |
 | D57-3 三通道口径对照 | ✅ | docs/14 新增对照表（模板/整班/zip/CLI html/CLI PDF/KaTeX local） |
 | D57-4 回归 | ✅ | selfcheck 新增 F 组：`includeSolution=false 无「参考答案」`、`=true 含答案`、水印图层/页码关断断言 → ALL PASS |
+
+---
+
+## D58 · TinyTeX 专用栏 + 全局返回顶部 + CLI 备份原则（2026-10-07 · 实施记录）
+
+> 来源：用户对"先做 1（交付前收尾）"的追加要求：TinyTeX 像 KaTeX 一样在设置中心做检测/安装，
+> 安装包不入远程仓库；所有选项卡加返回顶部按钮；CLI 要全面覆盖 PWA 作为 AI agent 备份。
+
+| 项 | 状态 | 落点 |
+|---|---|---|
+| TinyTeX 设置中心专用栏 | ✅ | `SettingsView.vue`：检测 `xelatex` + 联网安装；engine `/doctor` + `/install/tinytex` |
+| TinyTeX 零仓库资产 | ✅ | `engine/src/assist/paper/tinytex.py`：下载 `rstudio/tinytex-releases` daily 资产，解压 `<workspace>/.runtime/tex` |
+| CLI 备份 | ✅ | `assist tex status` / `assist tex install`；`assist doctor` 识别 workspace TinyTeX |
+| 全 tab 返回顶部 | ✅ | `App.vue` 全局 `.back-top`（scroll > 360px 显示）+ `styles.css` |
+| D53-G2 reportlab 对齐 | ✅ | `engine/src/assist/paper/layout.py` 竖版 per_page=4 → rows4；新增 `test_pdf_grid.py` |
+| 回归 | ✅ | engine pytest 18/18；PWA build 0 err；selfcheck ALL PASS |
+
+**后续**：继续 B2（学号匹配回退）/B4（xlsx 样式写回）/B6（教师手册）与真实环境验收；
+之后进入阶段6 学习通专项。
+
+---
+
+## D59 · B2 学号回退 + B4 样式保留写回（2026-10-07 · 实施记录）
+
+| 项 | 状态 | 落点 |
+|---|---|---|
+| B2 引擎 | ✅ | `roster/scores.py` 输出 number；`roster/grouping.py merge_scores` 姓名→学号回退 |
+| B2 PWA | ✅ | `ScoreSource.numberColumn/numbers`；`columnScoreOf`/`computeScoresFiltered`/总览宽表透传 number |
+| B4 引擎 | ✅ | `files.kb_io.write_chapters_preserving`（openpyxl 只改 cell.value 保留样式） |
+| B4 CLI | ✅ | `assist kb write --input <json> [--kind]`，写前自动 `.history` 快照 |
+| B4 serve/PWA | ✅ | `POST /kb/write` + CORS OPTIONS；`saveKind` 引擎优先 → FSA → 下载 |
+| 回归 | ✅ | engine pytest 22/22；PWA build 0 err；selfcheck ALL PASS（含 B2 number fallback） |
+
+## D60 · 作业纸网格布局讨论（2026-10-07 · 未实施）
+
+- 用户想法：`rows×cols` 可选（4×1 行均分、2×2 十字），2/3 题也可横/纵；
+  增加「按行 / 按列 / 均匀分布（自动最接近方阵）」选项。
+- 结论：可行；建议保留 `layout.per_page`，新增可选 `grid_mode/grid_rows/grid_cols`，
+  旧任务包无需迁移；均匀分布按最接近方阵的因子对计算，不用 N² 个空位。
+- 待拍板：① 数据模型方案；② 质数/非完全平方数退化方向；③ UI 放版式卡还是预览卡。

@@ -30,8 +30,32 @@ def _rows_of(path: Path, sheet: int | str | None = None, header_row: int = 0):
     return out
 
 
+_NAME_TOKENS = ("姓名", "name", "学生姓名", "学生")
+_NUMBER_TOKENS = ("学号", "number", "id", "学籍号", "student id", "studentid")
+
+
+def _header_index(headers: list, tokens: tuple[str, ...]) -> int | None:
+    """在表头里定位首个命中 tokens 的列（大小写不敏感；先精确后包含）。"""
+    norm = [str(h).strip().lower() if h is not None else "" for h in headers]
+    for i, h in enumerate(norm):
+        if h in tokens:
+            return i
+    for i, h in enumerate(norm):
+        if h and any(tok in h for tok in tokens if len(tok) > 1):
+            return i
+    return None
+
+
+def _number_value(row: list, number_i: int | None) -> str:
+    """安全取某行的学号/编号。"""
+    if number_i is None or number_i >= len(row) or row[number_i] is None:
+        return ""
+    return str(row[number_i]).strip()
+
+
 def _col_score(rows: list, score_i: int, name_i: int, source: str,
-               weight: float, skip_zero: bool = False) -> list[dict]:
+               weight: float, skip_zero: bool = False,
+               number_i: int | None = None) -> list[dict]:
     out = []
     for r in rows:
         try:
@@ -43,7 +67,8 @@ def _col_score(rows: list, score_i: int, name_i: int, source: str,
         name = str(r[name_i]).strip() if r[name_i] is not None else ""
         if not name:
             continue
-        out.append({"name": name, "score": v, "weight": weight, "source": source})
+        out.append({"name": name, "number": _number_value(r, number_i),
+                    "score": v, "weight": weight, "source": source})
     return out
 
 
@@ -53,12 +78,13 @@ def read_exam(path: Path, col: str = "期末", weight: float = 1.0) -> list[dict
     if len(rows) < 2:
         return []
     headers = [str(h).strip() if h is not None else "" for h in rows[0]]
-    name_i = next((i for i, h in enumerate(headers) if h in ("姓名", "name")), 0)
+    name_i = _header_index(headers, _NAME_TOKENS) or 0
+    number_i = _header_index(headers, _NUMBER_TOKENS)
     score_i = next((i for i, h in enumerate(headers) if col and (col in h)), None)
     if score_i is None:
         logger.warning(f"{path} 未找到{col}列；回退数字列")
         return read_flex(path, cols=col, weight=weight)
-    return _col_scores(rows, score_i, name_i, f"exam:{col}", weight)
+    return _col_scores(rows, score_i, name_i, f"exam:{col}", weight, number_i=number_i)
 
 
 def read_xuexitong_assignment(path: Path, weight: float = 1.0,
@@ -81,19 +107,23 @@ def read_xuexitong_assignment(path: Path, weight: float = 1.0,
     name_i, num_i = 0, 1
     titles = rows[sr - 1] if sr > 0 else ["col"] * len(rows[0])
     per_stu: dict[str, list[float]] = {}
+    per_stu_num: dict[str, str] = {}
     for k in range(len(rows[0])):
         v = rows[sr][k]
         if isinstance(v, str) and "成绩" in v:
-            title = rows[sr - 1][k] if sr > 0 and k < len(rows[sr - 1]) else k
             for r in rows[sr + 1:]:
                 try:
                     sc = float(r[k])
                 except (TypeError, IndexError):
                     continue
-                name = str(r[name_i]).strip()
+                name = str(r[name_i]).strip() if name_i < len(r) and r[name_i] is not None else ""
                 if name:
                     per_stu.setdefault(name, []).append(sc)
-    return [{"name": nm, "score": sum(v) / len(v), "weight": weight,
+                    num = _number_value(r, num_i)
+                    if num:
+                        per_stu_num.setdefault(name, num)
+    return [{"name": nm, "number": per_stu_num.get(nm, ""),
+             "score": sum(v) / len(v), "weight": weight,
              "source": f"{Path(path).name}#作业统计均值({len(v)})"} for nm, v in per_stu.items()]
 
 
@@ -106,14 +136,17 @@ def read_xuexitong_stat(path: Path, sheet_keyword: str = "章节测验",
         return []
     heads = rows[3]
     cols = [j for j, v in enumerate(heads) if isinstance(v, str) and "成绩" in v]
-    name_i = 0
+    name_i = _header_index(heads, _NAME_TOKENS) or 0
+    number_i = _header_index(heads, _NUMBER_TOKENS)
     per_stu: dict[str, list] = {}
+    per_stu_num: dict[str, str] = {}
     for r in rows[4:]:
         if not r or r[name_i] is None:
             continue
         name = str(r[name_i]).strip()
         if not name:
             continue
+        num = _number_value(r, number_i)
         for j in cols:
             try:
                 v = float(r[j])
@@ -122,7 +155,10 @@ def read_xuexitong_stat(path: Path, sheet_keyword: str = "章节测验",
             if v == 0:  # 迁移语义：非 0 才计入
                 continue
             per_stu.setdefault(name, []).append(v)
-    return [{"name": k, "score": sum(v) / len(v), "weight": weight,
+            if num:
+                per_stu_num.setdefault(name, num)
+    return [{"name": k, "number": per_stu_num.get(k, ""),
+             "score": sum(v) / len(v), "weight": weight,
              "source": f"{Path(path).name}#{sheet_keyword}"} for k, v in per_stu.items()]
 
 
@@ -150,7 +186,8 @@ def read_rainclass(path: Path, weight: float = 1.0) -> list[dict]:
             except (TypeError, ValueError, IndexError):
                 continue
         if per_scores:
-            out.append({"name": name, "score": sum(per_scores) / len(per_scores),
+            out.append({"name": name, "number": _number_value(r, 0),
+                        "score": sum(per_scores) / len(per_scores),
                         "weight": weight, "source": f"{Path(path).name}#雨课堂{n_courses}课均"})
     return out
 
@@ -163,16 +200,20 @@ def read_flex(path: Path, cols: list[str] | str | None = None, weight: float = 1
     if len(rows) < 2:
         return []
     headers = [str(h).strip() if h is not None else "" for h in rows[0]]
-    name_i = next((i for i, h in enumerate(headers) if h in ("姓名", "name")), 0)
+    name_i = _header_index(headers, _NAME_TOKENS) or 0
+    number_i = _header_index(headers, _NUMBER_TOKENS)
     if cols:
         idxs = [i for i, h in enumerate(headers) if h in (cols or [])]
     else:
         idxs = None
     if not idxs:
-        return read_flex_auto(headers, rows[1:], path, weight, name_i)
+        return read_flex_auto(headers, rows[1:], path, weight, name_i, number_i)
     out = []
     for r in rows[1:]:
         if not r or r[name_i] is None:
+            continue
+        name = str(r[name_i]).strip()
+        if not name:
             continue
         vals = []
         for i in idxs:
@@ -181,13 +222,13 @@ def read_flex(path: Path, cols: list[str] | str | None = None, weight: float = 1
             except (TypeError, ValueError):
                 pass
         if vals:
-            out.append({"name": str(r[name_i]).strip(), "score": sum(vals) / len(vals),
-                        "weight": weight,
+            out.append({"name": name, "number": _number_value(r, number_i),
+                        "score": sum(vals) / len(vals), "weight": weight,
                         "source": f"{Path(path).name}#{'|'.join(cols)})"})
     return out
 
 
-def read_flex_auto(headers, body, path, weight, name_i):
+def read_flex_auto(headers, body, path, weight, name_i, number_i=None):
     best = (0, None)
     for i, h in enumerate(headers):
         if i == name_i or not h:
@@ -205,7 +246,8 @@ def read_flex_auto(headers, body, path, weight, name_i):
         v = _try_float(r[score_i])
         if v is not None:
             hd = headers[score_i] if score_i < len(headers) else f"col{score_i}"
-            out.append({"name": str(r[name_i]).strip(), "score": v, "weight": weight,
+            out.append({"name": str(r[name_i]).strip(), "number": _number_value(r, number_i),
+                        "score": v, "weight": weight,
                         "source": f"{Path(path).name}#{hd}"})
     return out
 
@@ -217,16 +259,19 @@ def _try_float(v):
         return None
 
 
-def _col_scores(rows, score_i, name_i, source, weight):
+def _col_scores(rows, score_i, name_i, source, weight, number_i=None):
     out = []
     for r in rows[1:]:
         if not r or r[name_i] is None:
+            continue
+        name = str(r[name_i]).strip()
+        if not name:
             continue
         try:
             v = float(r[score_i])
         except (TypeError, ValueError, IndexError):
             continue
-        out.append({"name": str(r[name_i]).strip(), "score": v,
+        out.append({"name": name, "number": _number_value(r, number_i), "score": v,
                     "weight": weight, "source": source})
     return out
 

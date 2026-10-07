@@ -3,7 +3,8 @@
 端点：
 - GET  /doctor            体检 JSON（A3 id 定版；fix: install=deps/fonts 等）
 - GET  /status            引擎版本 / workspace
-- POST /install/<item>    发起安装任务（deps/playwright/fonts/tex_guide/python_guide/uv/kb_init）
+- POST /kb/write          B4：openpyxl 样式保留写回（PWA 在线保存）
+- POST /install/<item>    发起安装任务（deps/playwright/fonts/katex/tinytex/tex_guide/python_guide/uv/kb_init）
                           返回 {ok, job_id}；item 不支持的安装给 guide 文本作业输出
 - GET  /jobs/<id>          任务状态 + 最近输出
 - GET  /jobs/<id>/stream   SSE 逐行输出（text/event-stream；__DONE__<rc> 结束）
@@ -30,7 +31,7 @@ from loguru import logger
 from . import __version__
 
 CHECK_IDS = ("python_env", "uv", "deps", "playwright", "xelatex", "fonts", "settings", "kb")
-INSTALL_ITEMS = ("deps", "playwright", "fonts", "tex_guide", "python_guide", "uv", "kb_init", "katex")
+INSTALL_ITEMS = ("deps", "playwright", "fonts", "tex_guide", "python_guide", "uv", "kb_init", "katex", "tinytex")
 
 KATEX_VERSION = "0.16.4"
 
@@ -120,6 +121,8 @@ def installer_for(item: str) -> tuple[list[str] | None, str | None]:
         return None, [f"未安装 uv：Windows 运行 tools/install.ps1，或 bash：curl -LsSf https://astral.sh/uv/install.sh | sh"]
     if item == "kb_init":
         return None, ["假题库示例：请从 PWA 题库编辑器「载入示例数据」后导出 zip，解压至 workspace/kb/"]
+    if item == "tinytex":
+        return None, ["TinyTeX 请使用设置中心专用栏或 CLI `assist tex install`（/install/tinytex 为服务端直装通道）"]
     raise ValueError(f"unknown install item {item}")
 
 
@@ -151,9 +154,10 @@ def _doctor_checks(ws: Path) -> list[dict]:
     checks.append(_check("playwright", "green" if pw == "已安装" else "yellow", "Playwright（阶段6）", pw, {}))
     try:
         from .paper.latex import check_xelatex
-        x = check_xelatex()
+        x = check_xelatex(ws)
         checks.append(_check("xelatex", "green" if x else "yellow", "TeX (xelatex，样题可选)",
-                             x or "未安装；可选依赖", {} if x else {}))
+                             x or "未安装；可选依赖（设置中心/assist tex install 可装 TinyTeX）",
+                             {} if x else {"type": "install", "install": "tinytex"}))
     except ImportError:
         checks.append(_check("xelatex", "red", "TeX (xelatex, 样题可选)", "", {}))
     assets_fonts = _ENGINE_ROOT / "assets" / "fonts"
@@ -220,15 +224,21 @@ class Handler(BaseHTTPRequestHandler):
         return (not Handler.token) or qs.get("token", [""])[0] == Handler.token
 
     def _start_job(self, job_id: str, item: str):
-        if item == "katex":
-            # D55/H1：workspace 直装（服务端写盘，零解压；LAN/无 FSA 场景主通道）
+        if item in ("katex", "tinytex"):
+            # D55/H1/D58：特殊安装项（服务端写盘 / 网络下载解压），不走通用 shell installer。
             q: "queue.Queue[str]" = queue.Queue()
             out: list[str] = []
             with _JOBS_LOCK:
                 _JOBS[job_id] = {"item": item, "queue": q, "lines": out, "status": "running", "returncode": None}
-            def kworker():
+
+            def special_worker():
                 try:
-                    rc = install_katex(_ws(), lambda line: (q.put(line), out.append(line)))
+                    emit = lambda line: (q.put(line), out.append(line))
+                    if item == "katex":
+                        rc = install_katex(_ws(), emit)
+                    else:
+                        from .paper.tinytex import install_tinytex
+                        rc = install_tinytex(_ws(), emit)
                     _JOBS[job_id]["status"] = "ok" if rc == 0 else "fail"
                     _JOBS[job_id]["returncode"] = rc
                     q.put(f"__DONE__{rc}__")
@@ -236,7 +246,8 @@ class Handler(BaseHTTPRequestHandler):
                     q.put(f"异常：{e}"); out.append(str(e))
                     _JOBS[job_id]["status"] = "fail"; _JOBS[job_id]["returncode"] = 1
                     q.put("__DONE__1__")
-            threading.Thread(target=kworker, daemon=True).start()
+
+            threading.Thread(target=special_worker, daemon=True).start()
             return
         cmd, guide = installer_for(item) if item != "kb_init" else (None, None)
         if item in ("kb_init",):
@@ -277,11 +288,45 @@ class Handler(BaseHTTPRequestHandler):
                 q.put("__DONE__-1__")
         threading.Thread(target=worker, daemon=True).start()
 
+    def do_OPTIONS(self):
+        """CORS 预检：PWA 跨源 POST JSON（如 /kb/write）需要。"""
+        self.send_response(204)
+        if self.cors:
+            self.send_header("Access-Control-Allow-Origin", "*")
+            self.send_header("Access-Control-Allow-Methods", "GET,POST,OPTIONS")
+            self.send_header("Access-Control-Allow-Headers", "Content-Type")
+            self.send_header("Access-Control-Max-Age", "600")
+        self.end_headers()
+
     def do_POST(self):
         u = urllib.parse.urlparse(self.path)
         qs = urllib.parse.parse_qs(u.query)
         if not self._ok_token(qs):
             self._json({"ok": False, "error": "token required"}, 401)
+            return
+        if u.path == "/kb/write":
+            # B4：PWA 把内存 KbBook（kind + chapters）交给引擎，openpyxl 原位改值保留样式。
+            from .files import snapshot, write_chapters_preserving
+            try:
+                length = int(self.headers.get("Content-Length") or 0)
+                payload = json.loads(self.rfile.read(length).decode("utf-8"))
+            except Exception as exc:  # noqa: BLE001
+                self._json({"ok": False, "error": f"bad json: {exc}"}, 400)
+                return
+            kind = str((payload or {}).get("kind") or "")
+            chapters = (payload or {}).get("chapters")
+            if not re.fullmatch(r"[A-Za-z0-9_-]{1,64}", kind) or not isinstance(chapters, dict):
+                self._json({"ok": False, "error": "kind/chapters required"}, 400)
+                return
+            try:
+                kb_dir = Path(self.ws).resolve() / "kb"
+                kb_dir.mkdir(parents=True, exist_ok=True)
+                snapshot(kb_dir, [kind])
+                out = write_chapters_preserving(kb_dir / f"{kind}.xlsx", chapters)
+            except Exception as exc:  # noqa: BLE001
+                self._json({"ok": False, "error": str(exc)}, 500)
+                return
+            self._json({"ok": True, "path": str(out), "kind": kind})
             return
         m = re.fullmatch(r"/install/([a-z_]+)", u.path)
         if not m:

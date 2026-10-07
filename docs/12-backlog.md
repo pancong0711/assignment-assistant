@@ -503,3 +503,30 @@ C1 登录/课程/作业浏览/下载（迁 2601 xuexitong 模块）；C2 上传=
   口径澄清：引擎 `assist sheet batch` 走 reportlab PDF，**天然不含答案**，无需 --no-solution；`sheet html --no-solution` 已有；
 - ✅ D57-4：selfcheck 新增 F 组（答案关/开、水印图层关、页码关断言）→ ALL PASS；
 - build 0 err；脱敏通过。
+
+---
+
+# 2026-10-07 · D58 实施（TinyTeX 设置中心专用栏 + 全 tab 返回顶部 + CLI 备份原则）
+- ✅ **TinyTeX 可选依赖**：设置中心新增专用卡（检测/联网安装）；安装包不入仓库，下载
+  `rstudio/tinytex-releases` 官方 daily 资产并解压到 `<workspace>/.runtime/tex`；
+  引擎 `/doctor` 识别 workspace TinyTeX 并给 `fix.install=tinytex`；`/install/tinytex`
+  服务端通道；CLI `assist tex status/install`。文档见 docs/05-D58。
+- ✅ **全局返回顶部**：App.vue 全 8 个选项卡共用悬浮按钮（scroll > 360px 显示）。
+- ✅ **D53-G2 补收口**：reportlab `layout.py` 竖版 per_page=4 从 2×2 cross 改为 rows4
+  （三横虚线 25/50/75%），与 HTML/PWA 对齐；新增 `engine/tests/test_pdf_grid.py`。
+- ✅ **CLI 备份原则**：D58 定稿——后续新增 PWA 功能必须同步提供/登记 CLI 等价命令，
+  让 AI agent 可在 PWA 不可用时通过 CLI 完成设计/发布/批阅。
+- 验证：engine pytest 18/18；`npm run build` 0 err；`selfcheck:roster-fig` ALL PASS。
+
+---
+
+# 2026-10-07 · D59 B2/B4 实施 + D60 网格布局讨论
+- ✅ **B2 学号匹配回退**：引擎 adapter 透传 number、`merge_scores` 姓名→学号回退；
+  PWA `ScoreSource.numberColumn/numbers`、`columnScoreOf` 回退、总览/重算传 `student.number`；
+  selfcheck 增 B2 块。回归 engine 22/22。
+- ✅ **B4 样式保留写回**：`write_chapters_preserving`（openpyxl 原位改值）；
+  CLI `assist kb write --input <json> [--kind]`；serve `POST /kb/write` + CORS OPTIONS；
+  PWA `saveKind` 引擎优先、FSA/下载降级；translation 例外表暂不走该通道。
+- 💬 **D60 网格布局讨论**：用户提出 `rows×cols` 灵活选项（如 4×1、2×2）与
+  行优先/列优先/均匀分布；结论可行，建议保留 `per_page` + 新增 `grid_mode/grid_rows/grid_cols`
+  向后兼容，待拍板数据模型/均匀分布退化策略/UI 位置；本轮不改布局代码。

@@ -1,6 +1,6 @@
 # 15 — 使用说明（教师手册 · 方案 A：app 内嵌"使用说明"选项卡 + docs 同源）
 
-> **只是讨论，未动代码 —— 选择上下文是在 app 内嵌"使用说明"选项卡，还是分散到每个选项卡，另一个独立文档？**
+> 当前状态：独立「使用说明」选项卡已上线；本文件保留方案记录与快速上手，详细图文手册仍需继续补全（B6）。
 
 ## R2 方案确认 —— 使用说明全新的独立"帮助"选项卡
 
@@ -25,3 +25,48 @@
 - 硬编码审计：orientation/per_page/页眉页脚 D30 范内的"硬编码"收敛点（taskpad.ts/JSON 为准，动态 aspectivity，docs/05-D30）；
 - 版本兼容：引擎 bat v9/v10 (PYTHON-FIRST) 与 PWA HTML 主通道**互链完成**
   （start 脚本自动启动引擎 + PWA；教师零解耦、零 ENGINE 干预）。
+
+---
+
+# 2026-10-07 · 快速上手与 CLI 备份（随 D58 更新）
+
+## 1. 一键启动
+
+1. 从设置中心或 Pages 下载 `start.bat`（Windows）/ `start.sh`（macOS/Linux）；
+2. 放到你希望作为 workspace 的资料目录，双击（macOS/Linux 用 `bash start.sh`）；
+3. 脚本会自动创建 `.runtime/`、安装依赖、启动 `assist serve` 并打开
+   `http://127.0.0.1:8601/`。删除 workspace 目录即整体卸载。
+
+## 2. 常规网页流程
+
+1. **题库编辑器**：导入/编辑 `problems.xlsx`、`copy.xlsx`、`translation.xlsx`；
+2. **作业纸设计**：①版式 → ②内容 → ③预览/清单 → ④输出与交付；
+   可打印浏览器版、下载整班 HTML、导出 JSON/zip；
+3. **班级与标签**：导入点名册/成绩源 → 多列勾选与权重 → 重算 → 打 tag →
+   整班分层预览（参考答案/水印/页码开关）；
+4. **批阅**：准备学生图片目录 → 用 CLI 或后续 serve 触发 → 产出转录/评阅/报告；
+5. 任意选项卡页内下滑后，右下角「↑ 顶部」可一键回到页首。
+
+## 3. 可选依赖
+
+- **KaTeX**：已随 PWA 打包，网页预览/打印无需安装；CLI 离线化时在设置中心
+  「安装到 workspace」，并用 `assist sheet html --katex local`；
+- **TinyTeX**：设置中心「TinyTeX（LaTeX 渲染，可选）」卡检测/联网安装；
+  安装包不入仓库，装到 `<workspace>/.runtime/tex`；CLI 备份：
+  `assist tex status` / `assist tex install`。
+
+## 4. CLI 备份命令速查（AI agent 友好）
+
+| 目标 | 网页入口 | CLI 备份 |
+|---|---|---|
+| 环境体检 | 设置中心 | `assist doctor` |
+| 题库统计/导出/快照/样式写回 | 题库编辑器 | `assist kb stats/export/snapshot/write --input <json>` |
+| 单份作业纸 HTML/PDF | 作业纸设计输出 | `assist sheet html --task …` / `assist sheet make --task …` |
+| 按 tag 批量作业纸 | 变体编排 | `assist sheet batch --roster … --pads … --map …` |
+| 成绩打 tag | 班级与标签 | `assist roster tag --roster … --score … --out …` |
+| 雨课堂签到 | 班级与标签（导入源） | `assist roster rain --files … --out …` |
+| 本地图片批阅 | 批阅页 | `assist grade --task … --images …` |
+| TinyTeX | 设置中心 | `assist tex status/install` |
+
+> 约定（D58）：后续 PWA 新功能必须同步提供/登记 CLI 等价命令；CLI 是 PWA
+> 不可用时的稳定备份与 AI agent 接口，优先保持文本/JSON 可解析输出。

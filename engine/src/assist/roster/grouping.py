@@ -34,6 +34,27 @@ def norm_tag(tag: str) -> str:
 
 # ---------------- 成绩源读取 ----------------
 
+_NAME_HINTS = ("姓名", "name", "学生姓名", "学生")
+_NUMBER_HINTS = ("学号", "number", "id", "学籍号", "student id", "studentid")
+
+
+def _find_col(headers: list[str], hints: tuple[str, ...]) -> int | None:
+    norm = [h.strip().lower() for h in headers]
+    for i, h in enumerate(norm):
+        if h in hints:
+            return i
+    for i, h in enumerate(norm):
+        if h and any(token in h for token in hints if len(token) > 1):
+            return i
+    return None
+
+
+def _s(row, i: int | None) -> str:
+    if i is None or i >= len(row) or row[i] is None:
+        return ""
+    return str(row[i]).strip()
+
+
 def read_score_xlsx(path: Path, col: str = "", weight: float = 1.0,
                     name_col_hint: str = "姓名") -> list[dict]:
     """从一张 xlsx 抽 {name, score, source, weight}：
@@ -48,12 +69,10 @@ def read_score_xlsx(path: Path, col: str = "", weight: float = 1.0,
         logger.warning(f"成绩表为空，跳过：{path}")
         return []
     headers = [str(h).strip() if h is not None else "" for h in rows[0]]
-    name_i = 0
-    for i, h in enumerate(headers):
-        low = h.lower()
-        if h.startswith(name_col_hint[:2]) or low in ("name",):
-            name_i = i
-            break
+    name_i = _find_col(headers, _NAME_HINTS)
+    if name_i is None:
+        name_i = next((i for i, h in enumerate(headers) if h.startswith(name_col_hint[:2])), 0)
+    number_i = _find_col(headers, _NUMBER_HINTS)
     body = rows[1:]
     score_i = None
     if col:
@@ -93,19 +112,49 @@ def read_score_xlsx(path: Path, col: str = "", weight: float = 1.0,
             score = float(r[score_i])
         except (TypeError, ValueError):
             continue
-        out.append({"name": name, "score": score, "weight": float(weight),
+        out.append({"name": name, "number": _s(r, number_i), "score": score,
+                    "weight": float(weight),
                     "source": f"{path.name}:{col or headers[score_i]}"})
     logger.info(f"成绩源 {path.name} 读取 {len(out)} 条")
     return out
 
 
+def _norm_id(value) -> str:
+    """学号归一：去空格/常见分隔符、大小写不敏感（仅用于匹配回退）。"""
+    return "".join(str(value or "").split()).lower()
+
+
 def merge_scores(students: list[dict], score_rows: list[dict],
                  weight_normalize: bool = True) -> dict[str, dict]:
-    """多源加权合并为每生 mean（迁移 _sortByScore 的均值排序语义；加权可配）。"""
-    buckets: dict[str, list[list[float]]] = {s["name"]: [] for s in students}
+    """多源加权合并为每生 mean（迁移 _sortByScore 的均值排序语义；加权可配）。
+
+    B2：优先按姓名匹配；姓名匹配不到时，若成绩行带 ``number`` 且点名册有学号，
+    按学号回退匹配（返回结果仍 keyed by 点名册姓名，保持下游 tag_students 不变）。
+    """
+    by_name: dict[str, str] = {}
+    by_number: dict[str, str] = {}
+    for s in students:
+        name = str(s.get("name", "")).strip()
+        if not name:
+            continue
+        by_name[name] = name
+        num = _norm_id(s.get("number", ""))
+        if num:
+            by_number.setdefault(num, name)
+    buckets: dict[str, list[list[float]]] = {s["name"]: [] for s in students if s.get("name")}
+    unmatched = 0
     for row in score_rows:
-        if row["name"] in buckets:
-            buckets[row["name"]].append([row["weight"], row["score"]])
+        raw_name = str(row.get("name", "")).strip()
+        target = by_name.get(raw_name)
+        if target is None:
+            num = _norm_id(row.get("number", ""))
+            target = by_number.get(num) if num else None
+        if target is None:
+            unmatched += 1
+            continue
+        buckets[target].append([row["weight"], row["score"]])
+    if unmatched:
+        logger.info(f"成绩匹配：{unmatched} 条未匹配到点名册（姓名/学号均未命中）")
     out: dict[str, dict] = {}
     for name, pairs in buckets.items():
         if not pairs:

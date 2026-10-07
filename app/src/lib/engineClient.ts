@@ -36,6 +36,29 @@ export async function startInstall(engineAddr: string, item: string,
   return o.job_id
 }
 
+/** B4：把 PWA 内存 KbBook 交引擎 openpyxl 原位写回（保留样式），返回引擎写入路径。 */
+export async function writeKbViaEngine(
+  engineAddr: string, token: string | undefined, kind: string, chapters: unknown,
+): Promise<string> {
+  const base = normalizeEngineAddr(engineAddr)
+  const res = await fetch(engineUrlWithToken(base, '/kb/write', token), {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ kind, chapters }),
+  })
+  if (!res.ok) {
+    let detail = `HTTP ${res.status}`
+    try {
+      const o = (await res.json()) as { error?: string }
+      if (o?.error) detail = o.error
+    } catch { /* ignore */ }
+    throw new Error(`引擎写回失败：${detail}`)
+  }
+  const o = (await res.json()) as { ok?: boolean; path?: string }
+  if (!o?.ok) throw new Error(`引擎写回失败：${o?.path ?? 'unknown'}`)
+  return String(o.path ?? '')
+}
+
 /** 订阅安装进度（SSE），返回最后状态 rc（0=成功；负/非0=失败）。onLine 每次 stdout 行回调。 */
 export function streamInstall(engineAddr: string, jobId: string, token: string | undefined,
                               onLine: (line: string) => void, onDone: (rc: number) => void): () => void {

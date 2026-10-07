@@ -193,6 +193,15 @@ function locateHeader(matrix: string[][], scanLimit = 20): { headerI: number; na
   return null
 }
 
+/** B2：定位学号/编号列（显式列名或常见别名）。 */
+function findNumberIndex(headers: string[]): number {
+  return headers.findIndex((h) => {
+    const low = String(h ?? '').trim().toLowerCase()
+    return low === '学号' || low === 'number' || low === 'id' || low === '学籍号'
+      || low === 'student id' || low === 'studentid'
+  })
+}
+
 /** D47-5：枚举数据区数值列（≥50% 行可数值化）。 */
 /* D54/D55-H3 + D56-J9：非成绩列黑名单（整词匹配，避免"作业编号/专业题"等误伤）。
  * 规则：表头按 / 、 拆分逐段做"精确匹配"；ASCII 全等；id/no/index+数字后缀。 */
@@ -256,10 +265,39 @@ export function scoreColumnsOf(src: ScoreSource): Array<{ name: string; index: n
   return []
 }
 
-/** D55-H3：某源某列在某生上的原始分（index>=0 走 rows 原表；<0 走聚合 scores）。 */
-export function columnScoreOf(src: ScoreSource, col: { name: string; index: number }, name: string): number | null {
+/** B2：学号归一（仅用于匹配回退：去空格/分隔符、大小写不敏感）。 */
+function normId(v: unknown): string {
+  return String(v ?? '').replace(/[\s\-_:：·.]+/g, '').toLowerCase()
+}
+
+/** B2：推断/取得该源的学号列名（显式 numberColumn 优先；否则按常见表头名猜）。 */
+function numberColumnOf(src: ScoreSource): string | undefined {
+  if (src.numberColumn) return src.numberColumn
+  const first = src.rows[0]
+  if (!first) return undefined
+  return Object.keys(first).find((k) => {
+    const low = k.trim().toLowerCase()
+    return low === '学号' || low === 'number' || low === 'id' || low === '学籍号'
+      || low === 'student id' || low === 'studentid'
+  })
+}
+
+/** D55-H3/B2：某源某列在某生上的原始分（index>=0 走 rows 原表；<0 走聚合 scores）。
+ *  姓名匹配失败时用学号回退（成绩源通常带学号，点名册 B2 已有 number 列）。 */
+export function columnScoreOf(
+  src: ScoreSource, col: { name: string; index: number }, name: string, number = '',
+): number | null {
   if (col.index >= 0) {
-    const row = src.rows.find((r) => str(r[src.nameColumn]) === name)
+    let row = src.rows.find((r) => str(r[src.nameColumn]) === name)
+    if (!row && number) {
+      const nc = numberColumnOf(src)
+      if (nc) row = src.rows.find((r) => normId(r[nc]) === normId(number))
+    }
+    if (!row && number) {
+      // 未显式识别列名时，再宽松扫一遍所有列，命中与学号相等者即视为该生行
+      const want = normId(number)
+      row = src.rows.find((r) => Object.values(r).some((v) => normId(v) === want && want !== ''))
+    }
     if (row) {
       const v = row[col.name] ?? row[`列${col.index + 1}`] ?? ''
       const n = num(v)
@@ -268,7 +306,14 @@ export function columnScoreOf(src: ScoreSource, col: { name: string; index: numb
     return null
   }
   const v = src.scores?.[name]
-  return typeof v === 'number' && Number.isFinite(v) ? v : null
+  if (typeof v === 'number' && Number.isFinite(v)) return v
+  if (number && src.numbers) {
+    const want = normId(number)
+    const hit = Object.keys(src.numbers).find((k) => normId(k) === want)
+    const nv = hit ? src.numbers[hit] : undefined
+    if (typeof nv === 'number' && Number.isFinite(nv)) return nv
+  }
+  return null
 }
 
 /** D47-3：学习通 crostab 探测（"学生姓名"标题行 + 下一行"成绩"标记行）。 */
@@ -293,6 +338,7 @@ function buildCrostabSource(m: RawSheet, family: ScoreFamily, cr: { titleI: numb
   const title = (m.matrix[cr.titleI] ?? []).map((c) => String(c).trim())
   const mark = (m.matrix[cr.markI] ?? []).map((c) => String(c).trim())
   const ni = Math.max(0, title.findIndex((c) => /学生姓名|姓名|name/i.test(c)))
+  const numberI = findNumberIndex(title)
   const scoreCols: Array<{ name: string; index: number }> = []
   for (let k = 0; k < Math.max(title.length, mark.length); k++) {
     if (mark[k] === '成绩') scoreCols.push({ name: title[k] || `作业/测验${k}`, index: k })
@@ -304,6 +350,7 @@ function buildCrostabSource(m: RawSheet, family: ScoreFamily, cr: { titleI: numb
     return out
   })
   const perStu: Record<string, number> = {}
+  const numbers: Record<string, number> = {}
   for (const r of dataRows) {
     const nm = String(r[ni] ?? '').trim()
     if (!nm) continue
@@ -312,7 +359,12 @@ function buildCrostabSource(m: RawSheet, family: ScoreFamily, cr: { titleI: numb
       const v = num(r[c.index] ?? '')
       if (v !== null) vals.push(v)
     }
-    if (vals.length) perStu[nm] = vals.reduce((a, b) => a + b, 0) / vals.length
+    if (vals.length) {
+      const avg = vals.reduce((a, b) => a + b, 0) / vals.length
+      perStu[nm] = avg
+      const no = numberI >= 0 ? String(r[numberI] ?? '').trim() : ''
+      if (no) numbers[no] = avg
+    }
   }
   return normalizeSource({
     uid: newUid(),
@@ -325,7 +377,9 @@ function buildCrostabSource(m: RawSheet, family: ScoreFamily, cr: { titleI: numb
     allNumericColumns: scoreCols,
     includedColumns: scoreCols.map((c) => ({ ...c, weight: 1 })),
     scores: perStu,
+    numbers,
     nameColumn: title[ni] ?? '学生姓名',
+    numberColumn: numberI >= 0 ? (title[numberI] || `列${numberI + 1}`) : undefined,
     scoreColumn: `${scoreCols.length} 个作业/测验均分`,
   })
 }
@@ -334,11 +388,17 @@ function buildCrostabSource(m: RawSheet, family: ScoreFamily, cr: { titleI: numb
  *  前 3 列 = 学号/姓名/汇总，其后每课 2 列（方式+得分），取每课得分均值
  *  （engine read_rainclass：body=rows[2:] 后再 body[1:]，即数据行自索引 3 起——
  *  与 legacy 逐条迁移语义保持一致）。 */
-function parseRainclass(m: RawSheet): { scores: Record<string, number>; nameColumn: string; scoreColumn: string } {
+function parseRainclass(m: RawSheet): {
+  scores: Record<string, number>
+  numbers: Record<string, number>
+  nameColumn: string
+  scoreColumn: string
+} {
   const rows = m.matrix
-  if (rows.length < 3) return { scores: {}, nameColumn: '', scoreColumn: '（行数不足）' }
+  if (rows.length < 3) return { scores: {}, numbers: {}, nameColumn: '', scoreColumn: '（行数不足）' }
   const nCourses = Math.max(0, Math.floor(((rows[1]?.length ?? 0) - 3) / 2))
   const scores: Record<string, number> = {}
+  const numbers: Record<string, number> = {}
   for (const r of rows.slice(3)) {
     const name = (r[1] ?? '').trim()
     if (!name) continue
@@ -347,9 +407,14 @@ function parseRainclass(m: RawSheet): { scores: Record<string, number>; nameColu
       const v = num(r[3 + 2 * c + 1] ?? '')
       if (v !== null) list.push(v)
     }
-    if (list.length) scores[name] = list.reduce((a, b) => a + b, 0) / list.length
+    if (list.length) {
+      const avg = list.reduce((a, b) => a + b, 0) / list.length
+      scores[name] = avg
+      const no = (r[0] ?? '').trim()
+      if (no) numbers[no] = avg
+    }
   }
-  return { scores, nameColumn: '（第2列·雨课堂无表头）', scoreColumn: `每课得分列均值（${nCourses} 课）` }
+  return { scores, numbers, nameColumn: '（第2列·雨课堂无表头）', scoreColumn: `每课得分列均值（${nCourses} 课）` }
 }
 
 /** 读成绩源 xlsx → ScoreSource（D47 大修骨架；原 parse* fn 全部废弃为三段式统一实现）。 */
@@ -385,6 +450,7 @@ export async function readScoreSourceXlsx(
   const headerI = loc?.headerI ?? 0
   const headers = (m.matrix[headerI] ?? []).map((c) => String(c).trim())
   const nameI = loc?.nameI ?? Math.max(0, headers.findIndex((h) => HEADER_MAP[h] === 'name'))
+  const numberI = findNumberIndex(headers)
   const dataRows = m.matrix.slice(headerI + 1).filter((r) => r.some((c) => String(c).trim() !== ''))
   const base = {
     uid: newUid(),
@@ -399,6 +465,8 @@ export async function readScoreSourceXlsx(
       return out
     }),
     scores: {} as Record<string, number>,
+    numbers: {} as Record<string, number>,
+    numberColumn: numberI >= 0 ? (headers[numberI] || `列${numberI + 1}`) : undefined,
   }
   // D47-5：全部数值列（exam/custom 默认全勾、随教师取消）——**排除姓名列本身**
   const numericCols = dataNumericColumns(m.matrix, headerI).filter((c) => c.index !== nameI)
@@ -416,13 +484,17 @@ export async function readScoreSourceXlsx(
     const hit = headers.findIndex((h, j) => j !== nameI && /期末|成绩|得分|总分|score/i.test(h))
     const scoreI = hit >= 0 ? hit : (numericCols.length ? numericCols[numericCols.length - 1].index : headers.length - 1)
     const perStu: Record<string, number> = {}
+    const numbers: Record<string, number> = {}
     for (const r of dataRows) {
       const nm = String(r[nameI] ?? '').trim()
       const v = num(r[scoreI] ?? '')
-      if (nm && v !== null) perStu[nm] = v
+      if (!nm || v === null) continue
+      perStu[nm] = v
+      const no = numberI >= 0 ? String(r[numberI] ?? '').trim() : ''
+      if (no) numbers[no] = v
     }
     return normalizeSource({
-      ...base, scores: perStu,
+      ...base, scores: perStu, numbers,
       nameColumn: headers[nameI] ?? '姓名',
       scoreColumn: headers[scoreI] ?? '',
     })
@@ -450,12 +522,16 @@ export async function readScoreSourceXlsx(
   if (scoreI < 0) scoreI = headers.length - 1
   const guessScore = headers[scoreI] ?? ''
   const scores: Record<string, number> = {}
+  const numbers: Record<string, number> = {}
   for (const r of dataRows) {
     const nm = String(r[nameI] ?? '').trim()
     const v = num(r[scoreI] ?? '')
-    if (nm && v !== null) scores[nm] = v
+    if (!nm || v === null) continue
+    scores[nm] = v
+    const no = numberI >= 0 ? String(r[numberI] ?? '').trim() : ''
+    if (no) numbers[no] = v
   }
-  return normalizeSource({ ...base, scoreColumn: guessScore, nameColumn: headers[nameI] ?? '姓名', scores })
+  return normalizeSource({ ...base, scoreColumn: guessScore, nameColumn: headers[nameI] ?? '姓名', scores, numbers })
 }
 
 /* ---------- VC-4 / VC-6 导入预览（docs/14 §VC-4/6：表头 + 前 3 行 + 列映射说明） ---------- */

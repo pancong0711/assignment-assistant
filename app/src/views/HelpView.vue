@@ -15,13 +15,15 @@ const TAB_GUIDES: { tab: string; items: string[] }[] = [
     'source_used 下载源说明（tuna/ghfast/npmmirror）',
   ]},
   { tab: '题库编辑器', items: [
-    'xlsx 读入 / 编辑 / 写回（File System Access 优先，不可用降级下载导出）',
+    'xlsx 读入 / 编辑 / 写回（引擎在线时 /kb/write 样式保留；否则 FSA / 下载降级）',
     '列结构兼容 docs/05-D3（id/content/img_path/page/related/type/solution/note）',
   ]},
   { tab: '作业纸版式', items: [
     '竖/横 A4、页眉页脚、水印 items、作业纸导出/清单',
     '🖨 打印浏览器版（window.print）/ ⬇ 下载整班 HTML（D30 主通道）',
-    'per_page 1-4：4 = 十字 2×2、横版 2/3 = 左右栏、竖版 2/3 = 上下行',
+    'per_page 1-4：横版 4 = 十字 2×2、横版 2/3 = 左右栏、竖版 2/3/4 = 纵向分行（D53-G2）',
+    '设置中心提供「TinyTeX（可选）」专用栏：检测/联网安装，安装包不入仓库；CLI 备份 assist tex status/install',
+    '所有选项卡右下角有「返回顶部」按钮（D58）',
   ]},
   { tab: '作业纸内容', items: [
     '跨 kind/tag 选题篮（含题图预览）',
@@ -30,6 +32,7 @@ const TAB_GUIDES: { tab: string; items: string[] }[] = [
   ]},
   { tab: '班级与标签', items: [
     '名单 / 成绩导入预览（表头 + 前 3 行 + 列映射核对）',
+    '成绩源姓名未命中时可自动按学号回退匹配（B2）',
     '成绩源宽表（行=学生，列=各源；默认全勾 = 分层依据，可取消某列排除）',
     '重算综合得分 / 按此列切分；特殊标签 / 批量打 tag / punish',
   ]},

@@ -51,6 +51,8 @@ export interface ScoreSource {
   scoreColumn: string
   /** 学生姓名列（xlsx 原始表头名；custom 用，固定四类自动定位） */
   nameColumn: string
+  /** B2：学号列（xlsx 原始表头名；姓名匹配失败时按学号回退） */
+  numberColumn?: string
   /** 权重（任意正数，最终按权重总和归一） */
   weight: number
   /** 该源各行的数据（key: 姓名, value: { [列名]: 值 }），供切源/换列时复用 */
@@ -58,6 +60,8 @@ export interface ScoreSource {
   /** 每生解析出的分数（固定四类由 family 语义解析；custom 按所选列）。
    *  key: 姓名。供 computeScores 直接取用。 */
   scores: Record<string, number>
+  /** B2：聚合分数按学号索引的副本（姓名未命中时的回退；index<0 数据源使用）。 */
+  numbers?: Record<string, number>
   /** VC-5 勾选（docs/14 §VC-5）：该源是否参与综合得分（默认 true；
    *  教师取消勾选 = score excluding，该源被排除出加权聚合）。
    *  不写进作业纸 JSON 的权重口径（导出时仅提示"已排除"，见 buildTaskPackage）。 */
@@ -141,7 +145,7 @@ export function computeScoresFiltered(
       for (const col of scoreColumnsOf(src)) {
         const w = Number(col.weight ?? 1)
         if (!(w > 0)) continue
-        const raw = columnScoreOf(src, col, stu.name)
+        const raw = columnScoreOf(src, col, stu.name, stu.number)
         if (raw === null) continue
         acc += raw * w
         wsum += w
@@ -267,9 +271,11 @@ export function normalizeSource(s: Partial<ScoreSource>): ScoreSource {
     family,
     scoreColumn: String(s.scoreColumn ?? ''),
     nameColumn: String(s.nameColumn ?? ''),
+    numberColumn: s.numberColumn ? String(s.numberColumn) : undefined,
     weight: Number(s.weight ?? 1) || 1,
     rows: Array.isArray(s.rows) ? s.rows : [],
     scores: (s.scores && typeof s.scores === 'object' ? s.scores : {}) as Record<string, number>,
+    numbers: (s.numbers && typeof s.numbers === 'object' ? s.numbers : undefined) as Record<string, number> | undefined,
     includeInAggregation: s.includeInAggregation === undefined ? true : Boolean(s.includeInAggregation),
   }
 }

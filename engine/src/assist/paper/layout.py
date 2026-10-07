@@ -44,7 +44,7 @@ def _fitted_image(img_path: str, max_w: float, max_h: float) -> Image:
 def grid_frames(orientation: str, per_page: int = 1):
     """内容 frame 网格（D21 统一语义，用户反馈 2026-09-21）：
 
-    portrait:  1=单格；2/3=上下行；4=十字(2x2)
+    portrait:  1=单格；2/3/4=上下行（D53-G2 竖版 4=rows4 四行均分）
     landscape: 1=单格；2/3=左右栏；4=十字(2x2)
     返回 (frames, 网格描述 rows x cols)；flow 顺序 = frames 顺序（阅读顺序）。
     """
@@ -55,8 +55,10 @@ def grid_frames(orientation: str, per_page: int = 1):
     bottom = 0.055 * ph
     gap = 0.02 * pw
 
-    if per_page == 4:
-        rows, cols = 2, 2            # 十字交叉
+    if orientation == "portrait" and per_page == 4:
+        rows, cols = 4, 1            # D53-G2：竖版四题=纵向四行均分（与 HTML/PWA 一致）
+    elif per_page == 4:
+        rows, cols = 2, 2            # 横版四题=十字交叉
     elif orientation == "portrait":
         rows, cols = per_page, 1     # 上下行
     else:
@@ -93,8 +95,13 @@ def grid_lines(orientation: str, per_page: int):
                     (x1, bottom + 2 * third_h, x1 + width, bottom + 2 * third_h)]
         return [(x1 + third_w, bottom, x1 + third_w, top),
                 (x1 + 2 * third_w, bottom, x1 + 2 * third_w, top)]
-    if per_page == 4:  # 十字
-        return [(cx, bottom, cx, top), (x1, cy, x1 + width, cy)]
+    if per_page == 4:
+        if orientation == "portrait":  # D53-G2：rows4 三横虚线（25/50/75%）
+            quarter_h = (top - bottom) / 4
+            return [(x1, bottom + quarter_h, x1 + width, bottom + quarter_h),
+                    (x1, bottom + 2 * quarter_h, x1 + width, bottom + 2 * quarter_h),
+                    (x1, bottom + 3 * quarter_h, x1 + width, bottom + 3 * quarter_h)]
+        return [(cx, bottom, cx, top), (x1, cy, x1 + width, cy)]  # 横版十字
     return []
 
 # 兼容旧名（landscape_frames/portrait_frames 供旧调用）

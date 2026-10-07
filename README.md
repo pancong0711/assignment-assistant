@@ -6,7 +6,8 @@
   与 2601playwright（学习通 AI 批阅，试行 1 学期）。
 - 目标形态：**Python CLI 引擎 + PWA 网页前端**，数据全部保存在教师本地；
   仓库（MIT）仅含代码与合成示例，不含题库/学生数据/任何密钥。
-- 讨论与设计文档见 `docs/01-architecture.md` 起的系列（开发尚在讨论阶段）。
+- 讨论与设计文档见 `docs/01-architecture.md` 起的系列；当前主体功能已上线，
+  正在进行阶段5/6 产品化收尾（学习通接入最后做）。
 
 > 作业纸不是筛选工具，而是沟通的桥梁。分层不是给学生贴标签，
 > 而是让每个学生都能在适合自己的难度上获得练习与反馈。
@@ -24,14 +25,16 @@
 - `docs/02-pwa-feasibility.md` — PWA 可行性结论与风险
 - `docs/03-module-migration.md` — 旧项目 → 新项目迁移映射
 - `docs/04-data-model-and-privacy.md` — 数据契约、脱敏红线、协议声明
-- `docs/05-decisions.md` — 决策记录（D1–D13；与其他文档冲突时以 05 为准）
+- `docs/05-decisions.md` — 决策记录（D1–D58；与其他文档冲突时以 05 为准）
 - `docs/06-roadmap.md` — 六阶段路线图（0–5，含验收标准）
 - `docs/07-incremental-vs-rewrite.md` — 增量迁移 vs 重写的开发思路判定
 - `docs/11-deployment.md` — GitHub Pages 部署（阶段4b）
-- `docs/13-taskboard.md` — **任务需求单**（R1–R4，D25–D27 反馈批次化实施）
+- `docs/13-taskboard.md` — **任务需求单 / 近轮实施记录**（D43–D58）
 - `_legacy/` — 原始两项目解档（仅本地参考，已被 gitignore，永不推送）
 
 ## 里程碑
 
-见 `docs/06-roadmap.md`（六阶段）；阶段 0 讨论奠基已完成，
-下一步进入阶段 1（engine 内核：kb 读写 + 竖/横版版式）。
+见 `docs/06-roadmap.md`（六阶段）。当前：阶段 0/1/2/3/3.5 已完成，
+阶段 4a 主体完成；作业纸 HTML/PDF 主通道、班级分层、批量批阅 CLI、TinyTeX/KaTeX
+可选依赖与 Pages 部署均已上线。剩余重点为阶段5 产品化收尾与阶段6 学习通接入；
+CLI 保持超集，便于 AI agent 在 PWA 不可用时作为备份完成全流程。

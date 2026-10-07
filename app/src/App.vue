@@ -50,6 +50,10 @@ function readHash(): string {
 activeKey.value = readHash()
 const onHash = () => { activeKey.value = readHash() }
 onMounted(() => window.addEventListener('hashchange', onHash))
+onMounted(() => {
+  onScroll()
+  window.addEventListener('scroll', onScroll, { passive: true })
+})
 // D55/H1：启动时恢复 workspace 目录句柄（IndexedDB 持久化 + 权限恢复）
 onMounted(async () => {
   try {
@@ -57,13 +61,25 @@ onMounted(async () => {
     await restoreKbDir()
   } catch { /* noop */ }
 })
-onUnmounted(() => window.removeEventListener('hashchange', onHash))
+onUnmounted(() => {
+  window.removeEventListener('hashchange', onHash)
+  window.removeEventListener('scroll', onScroll)
+})
 
 function go(key: string) {
   window.location.hash = `/${key}`
 }
 
 const activeTab = computed(() => TABS.find((t) => t.key === activeKey.value) ?? TABS[0])
+
+/** D58：所有选项卡共用的「返回顶部」按钮（滚动超过一屏后出现）。 */
+const showBackTop = ref(false)
+function onScroll() {
+  showBackTop.value = window.scrollY > 360
+}
+function scrollToTop() {
+  window.scrollTo({ top: 0, behavior: 'smooth' })
+}
 
 /** 各视图可触发页面级横幅（如"上传到学习通需引擎 online"，docs/05-D13） */
 const bannerText = ref('')
@@ -109,6 +125,15 @@ function showEngineBanner(msg: string) {
   <main class="app-main">
     <component :is="activeTab.component" @engine-banner="showEngineBanner" />
   </main>
+
+  <button
+    v-if="showBackTop"
+    class="back-top"
+    type="button"
+    aria-label="返回页面顶部"
+    title="返回页面顶部"
+    @click="scrollToTop"
+  >↑ 顶部</button>
 
   <footer class="app-footer">
     assignment-assistant app · 纯静态 PWA（Vue3 + Vite + TS + Pinia）· 数据仅存教师本地浏览器 / 本地目录，不入库不上传

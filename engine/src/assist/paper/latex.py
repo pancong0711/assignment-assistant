@@ -4,13 +4,14 @@
 latexHead/latexOneProblem 系列）；xelatex 缺失时给出可操作的提示，不硬崩。
 """
 
-import shutil
+import os
 import subprocess
 from pathlib import Path
 
 from loguru import logger
 
 from .. import ASSETS_DIR
+from .tinytex import find_xelatex
 
 _COPYRIGHT_NOTE = "迁移自 2603paperDesign latextools.py：LaTeX 样题页（可选依赖 xelatex）"
 
@@ -26,17 +27,22 @@ _EXPORT_HEADER = r"""\documentclass[12pt]{article}
 _EXPORT_FOOTER = "\n\\end{document}\n"
 
 
-def check_xelatex() -> str | None:
-    """返回 xelatex 路径；未安装时 None（doctor 黄灯，供体检页展示）。"""
-    return shutil.which("xelatex")
+def check_xelatex(workspace: Path | str | None = None) -> str | None:
+    """返回 xelatex 路径；优先系统 PATH，其次 workspace/.runtime/tex。
+
+    TinyTeX 可选、不入仓库：设置中心/`assist tex install` 安装后，这里即可
+    被 doctor / render_sample 复用（无需教师配置系统 PATH）。
+    """
+    return find_xelatex(workspace)
 
 
-def render_sample(items: list[dict], out_dir: Path, fn_base: str = "paperProblems") -> Path | None:
+def render_sample(items: list[dict], out_dir: Path, fn_base: str = "paperProblems",
+                  workspace: Path | str | None = None) -> Path | None:
     """items: [{content, img_path}] → LaTeX → PDF → PNG（1页样题图）。
 
     返回 PNG 路径；xelatex 缺失或编译失败返回 None 并给出提示。
     """
-    exe = check_xelatex()
+    exe = check_xelatex(workspace)
     if exe is None:
         logger.warning("未检测到 xelatex，跳过 LaTeX 样题渲染。"
                        "安装 TeX 后重试（体检页页脚有指引）。")
@@ -56,8 +62,10 @@ def render_sample(items: list[dict], out_dir: Path, fn_base: str = "paperProblem
     tex.append(_EXPORT_FOOTER)
     tex_fn = out_dir / f"{fn_base}.tex"
     tex_fn.write_text("".join(tex), encoding="utf-8")
+    env = os.environ.copy()
+    env["PATH"] = f"{Path(exe).parent}{os.pathsep}{env.get('PATH', '')}"
     rc = subprocess.call([exe, "-interaction=nonstopmode", tex_fn.name],
-                         cwd=out_dir, stdout=subprocess.DEVNULL,
+                         cwd=out_dir, env=env, stdout=subprocess.DEVNULL,
                          stderr=subprocess.STDOUT)
     pdf_fn = out_dir / f"{fn_base}.pdf"
     if rc != 0 or not pdf_fn.exists():

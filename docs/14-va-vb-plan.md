@@ -122,12 +122,13 @@
 | **PWA 全功能在线**（HTML 主通道打印/三类预览/班级宽表勾选/变体编排/学习通占位/导入导出/一键 batch zip） | ✅ |
 | **Engine CLI**（sheet make/html/batch、roster tag/rain、grade、serve、doctor、install） | ✅（CLI 超集覆盖）|
 | **Windows start.bat v10.3** | ✅（工程链路 hexflight）——等待用户 Windows 端对 v10（第 5 轮）复测的全部通过反馈 |
-| **TinyTeX 可选安装按钮**（体检页 + render 三档探测） | ⏳（S3 一格；非阻塞） |
+| **TinyTeX 可选安装按钮**（设置中心专用栏 + 网络安装 + CLI/服务端通道） | ✅ D58（仓库零安装包；`assist tex status/install`） |
 | `include_in_aggregation` 引擎侧 batch 自动省略 | 审计结论：非 gap（CLI 端 `--score` 显式列名已承重；batch.json 不需消费该字段——D37/D37.b） |
 | **KaTeX 离线打包** | ✅（npm 依赖+构建期注入 dist，0.16.4，docs/05-D44；CLI/j2 仍 CDN）|
 | **report.py TEMPLATE_HINT → j2 模板引用接管**（VB-7） | ⏳（S3 完成时其一收口） |
 | **PyPI `assist-engine` 发版** | ⏳（PyPI outage 后，恢复可走 Trusted Publisher 流程；不阻塞主线） |
 | **学习通 C 组** | ⏳（最终目标，与账号窗口联调） |
+| **全局返回顶部** | ✅ D58（App.vue 全 tab 共用） |
 
 ## 预览能力总速览（三类，文档 docs/14 §VC 全整合）
 - **作业纸模板**（SheetLayoutView 的 windowsprint 版式预览/CSS 预览）；

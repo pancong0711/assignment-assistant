@@ -287,7 +287,7 @@ const wideRows = computed<WideRow[]>(() => {
     number: stu.number,
     cells: headers.map((h) => {
       if (!h.col || h.excluded) return ''
-      const v = columnScoreOf(scoreSources.value[h.si], h.col, stu.name)
+      const v = columnScoreOf(scoreSources.value[h.si], h.col, stu.name, stu.number)
       return typeof v === 'number' && Number.isFinite(v) ? String(v) : ''
     }),
     composite: (() => {
@@ -307,7 +307,7 @@ const checkedSummary = computed(() => {
 })
 /** 多列加权语义提示（宽表下方的操作说明） */
 const wideHint = computed(() =>
-  `多列加权口径：综合得分 = Σ(勾选源归一化分数 × 源权重 / 勾选源权重和) × 100（源内按该源最大值归一）。`)
+  `多列加权口径：综合得分 = Σ(原始分 × 列权重) / Σ列权重（D55-H3；不再做班内最高分归一）。`)
 
 /** 单列切分按钮（一列即排） */
 function tagBySingleColumn(si: number, colName?: string) {

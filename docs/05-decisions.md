@@ -486,3 +486,83 @@ orientation/per_page/水印/页眉页脚），教师操作路径被拆散、体�
 4. 职责边界：工具栏（新建/克隆/导入/仅保存）留①；"导出 JSON/导出全部 zip" 归④（输出动作）；
    清单归③（清单+预览合卡既定语义，D43-4）；
 5. 域分层与单一预览/整班预览唯一入口不变（D43-3/6）；schema 不动。
+
+## D58 · TinyTeX 设置中心专用栏 + 全局返回顶部 + CLI 备份原则（2026-10-07 用户拍板/实施）
+
+**背景**：阶段5/交付前收尾中，用户点名两项：
+1. TinyTeX 应与 KaTeX 一样在设置中心有独立检测/安装栏；安装包不进入远程仓库，
+   下载安装直接走网络资源，保证仓库功能齐全的前提下尽量小；
+2. 所有选项卡都需要「返回页面头部」按钮，解决页内下滑后换 tab 需长距离滚轮的问题。
+并强调：**CLI 必须全面覆盖 PWA 功能**，作为 PWA 不可用时的备份，让 AI agent 可直接
+通过 CLI 完成作业纸设计、发布、批阅等工作，不必从头开发。
+
+**D58 决策/实施**：
+- **TinyTeX**：
+  - 新增设置中心「TinyTeX（LaTeX 渲染，可选）」专用卡：检测 `xelatex` + 联网安装；
+  - 安装源为 `rstudio/tinytex-releases` 官方 Release 资产（网络资源，不入仓库），
+    解压到 `<workspace>/.runtime/tex`，重复安装可修复/重装；
+  - 引擎 `/doctor` 的 `xelatex` 项同时识别系统 PATH 与 workspace TinyTeX，并给出
+    `fix.install=tinytex`；`serve` 增 `/install/tinytex` 服务端通道；
+  - CLI 备份：`assist tex status` / `assist tex install`；`assist doctor` 同步检测
+    workspace TinyTeX；
+  - Linux/macOS/Windows 分别选择官方 daily 资产；下载走官方 + ghfast/ghproxy 反代降级，
+    不调用 yihui 安装脚本，避免在用户家目录创建 PATH/软链（Windows 亦不写 APPDATA）。
+- **返回顶部**：App.vue 全局挂载 `.back-top` 悬浮按钮（滚动 > 360px 显示），
+  所有 8 个选项卡共用，无需逐页重复实现。
+- **CLI 备份原则**：后续每新增 PWA 功能，必须同时提供/登记等价 CLI 命令或参数；
+  CLI 作为 AI agent 的稳定接口与离线备份，优先保持 JSON/文本可解析输出。
+- **顺带修复**：D53-G2 的竖版 `per_page=4` 在 HTML/PWA 已为 `rows4`，但 reportlab
+  `layout.py` 仍按 2×2 cross 处理，导致 CLI PDF 与网页预览不一致；本轮统一为
+  竖版四行均分（三横虚线 25/50/75%），横版仍为 2×2 十字。
+
+**验收**：`vue-tsc+vite` 0 err；engine pytest 18/18；TinyTeX 离线单测通过；
+设置中心可检测/安装；所有 tab 可见返回顶部按钮；CLI `assist tex status` 可识别
+workspace 安装结果。
+
+## D59 · B2 学号匹配回退 + B4 样式保留写回（2026-10-07 实施）
+
+**背景**：用户继续阶段5 交付前收尾（B2/B4），要求完成后统一推送部署；
+并再次确认 CLI 是 PWA 的备份与 AI agent 接口。
+
+**B2 · 名单↔成绩学号匹配回退**：
+- 引擎：`scores.py` 各 adapter 输出带 `number`；`grouping.merge_scores` 先按姓名匹配，
+  未命中再按归一化学号匹配，返回仍以点名册姓名为 key（下游 tag_students 不变）；
+  `grouping.read_score_xlsx` 一并透传学号。
+- PWA：`ScoreSource` 增 `numberColumn` / `numbers`；`columnScoreOf` 支持原始行学号回退
+  与聚合 scores 的学号回退；`computeScoresFiltered` / 总览宽表都传 `student.number`；
+  各 family adapter 自动识别学号列并生成 `numbers`。
+- 回归：engine `test_roster_number_match.py`（3 用例）；PWA selfcheck G 组（原始行 + 聚合口径）。
+
+**B4 · xlsx 样式保留写回**：
+- 引擎新增 `files.kb_io.write_chapters_preserving`：openpyxl 加载原工作簿后只改
+  `cell.value`，保留字体/边框/列宽/批注等样式；写前由调用方 `snapshot` 生成快照。
+- CLI 新增 `assist kb write --input <json> [--kind <kind>]`（AI agent 可读 JSON 备份写回）。
+- serve 新增 `POST /kb/write`：PWA 在线时把内存 KbBook 交引擎原位写回；
+  `do_OPTIONS` 支持 CORS 预检。
+- PWA `saveKind` 写回顺序：引擎 `/kb/write`（样式保留）→ File System Access（纯数据）→ 下载文件；
+  `translation` 中文例外表暂不走样式写回（避免结构被通用列覆盖）。
+
+**验证**：engine pytest 22/22；PWA `npm run build` 0 err；selfcheck ALL PASS（含 B2 number fallback）；
+lint-bat / secrets 全绿。
+
+## D60 · 作业纸网格布局：行优先/列优先/均匀分布（2026-10-07 讨论，未实施）
+
+**用户新想法**：
+1. `4(行)×1(列)` = 纵向四行均分；`2(行)×2(列)` = 十字分布；
+2. `per_page=2` 可为 `2×1` 或 `1×2`；`per_page=3` 同样可横/纵；
+3. 增加选项栏：按行分布、按列分布、均匀分布（自动按最接近平方的 `rows×cols` 计算）。
+
+**结论：可行，建议保持向后兼容后分步实施。**
+- 数据模型建议：保留 `layout.per_page` 作为“每页题数”，新增可选
+  `layout.grid_mode: "auto"|"rows"|"cols"|"custom"` + `layout.grid_rows/grid_cols`；
+  缺省值按现有语义映射（竖版 2/3/4=rowsN；横版 2/3=colsN；横版 4=cross 2×2）。
+  这样旧任务包 JSON 无需迁移，新 UI 才写新字段。
+- 均匀分布算法建议：令 `rows=floor(sqrt(N))`，`cols=ceil(N/rows)`，再在 `rows×cols`
+  与 `(rows+1)×(rows+1)` 附近的因子对中选最接近方阵的一对（质数退化为 `1×N`/`N×1`）。
+  不建议用 `N²` 求行列数（会变成 N×N 个空位，不符合“每页 N 题”）。
+- 三端同步成本：`app/src/lib/sheetHtml.ts` + `engine/templates/assignment.html.j2` +
+  `engine/src/assist/paper/layout.py`（reportlab）+ selfcheck/parity 哨兵；中等工程量。
+- 待用户拍板：① 数据模型用“保留 per_page + 新 grid_mode”还是“完全换成 rows/cols”；
+  ② 均匀分布对质数/非完全平方数的默认退化方向；③ 选项 UI 放版式卡还是预览卡。
+
+> 本轮只讨论记录，未改布局代码；当前 D58-G2 的默认语义保持不变。

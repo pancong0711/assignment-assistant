@@ -130,6 +130,31 @@ const sh = await import('./sheetHtml.bundle.mjs')
   console.log('   D55-H3 multi-column/weighted-average/blacklist: PASS')
 }
 
+/* ---------- G) B2 学号匹配回退 ---------- */
+{
+  const { computeScoresFiltered, normalizeSource } = await import('./roster.bundle.mjs')
+  const wb = XLSX.utils.book_new()
+  XLSX.utils.book_append_sheet(wb, XLSX.utils.aoa_to_sheet([
+    ['学号', '姓名', '数学'],
+    ['2025001', '张三', 80],
+    ['2025002', '李四', 90],
+  ]), 'S')
+  const buf = XLSX.write(wb, { bookType: 'xlsx', type: 'buffer' })
+  const src = await rx.readScoreSourceXlsx(buf, 'custom.xlsx', 'custom')
+  // 姓名对不上（多空格），学号能对上 → 原始行回退
+  assert.equal(rx.columnScoreOf(src, { name: '数学', index: 2 }, '张 三', '2025001'), 80, 'B2: 原始行列按学号回退')
+  // 聚合分数（index<0）也支持 numbers 回退
+  const agg = normalizeSource({
+    name: '聚合源', family: 'custom', nameColumn: '姓名', numberColumn: '学号',
+    scoreColumn: '均分', scores: { '张三': 80 }, numbers: { '2025001': 80 },
+    includedColumns: [{ name: '均分', index: -1, weight: 1 }], rows: [],
+  })
+  const students = [{ name: '张 三', number: '2025001', class: '', tag: '', score: null, manualTag: false, punish: false }]
+  computeScoresFiltered(students, [agg])
+  assert.equal(students[0].score, 80, 'B2: 聚合 scores 按学号回退')
+  console.log('   B2 number fallback: PASS')
+}
+
 /* ---------- F) D57 整班/模板输出内容开关（includeSolution） ---------- */
 {
   const pad = { id: 't', class_dir: '', course: '', class: 'c', term: '',
@@ -151,4 +176,4 @@ const sh = await import('./sheetHtml.bundle.mjs')
   console.log('   D57 output switches (solution/watermark/pagetext): PASS')
 }
 
-console.log('selfcheck-roster-fig: ALL PASS (A×4 · B×4 · C×3 · D47-legacy* · D57-switches)')
+console.log('selfcheck-roster-fig: ALL PASS (A×4 · B×4 · C×3 · D47-legacy* · D57-switches · B2-number)')
