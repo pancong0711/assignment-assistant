@@ -1077,3 +1077,48 @@ applyManualTranslation/setTranslationRatio 中 setTranslationRatio 保留——�
 - 解析层问题 → 扩 locateHeader/HEADER_MAP（文件驱动精校）+ `test_roster_parse.py` 加 fixture；
 - 工作区混淆 → UI 优化：导入动作**强制绑定当前班级名**（导入按钮旁常显"将导入到：<当前班级>"；
   切换班级标签更显眼）；`loadRosterFile` 成功/失败提示补"已写入班级 <名字>"。
+
+---
+
+## D62 · 原因核查收口：化工24/环境24 "0 人"=提取流水线导航缺陷（2026-10-07 晚 · 三轮探针)
+
+### 结论先行
+- **D62 原登记两候选（解析漂移 / 多班级工作区混淆）均不成立**；真因在**只读提取器自身**，
+  班级、作业、名单数据在学习通侧**全部在场**（words: 服务端直出）；
+- 点名册原文件**仍值得要**，但用途改为"名单解耦"路线（见残留问题 #3），不再是本次故障的核查条件。
+
+### 登录态（新流程已建立）
+- 新增 `.scratch/xxt_session_check.py`：加载 storage → goto i.chaoxing.com/base →
+  判定（跳 passport/出现密码框 = dead）→ **存活则 storage_state 回写续期**（补齐 legacy
+  xuexitong/browser.py 有而现行缺的"回写"步）。今夜 verdict=**alive**，已回写 3 次；
+
+### 三轮探针与归因修正史（教训：失败路径必须落盘存档）
+1. probe1（22:45）三目标 `wait_for_selector` 全超时 → 误判"登录过期"（被体检否）→ 次判
+   "URL 形态敏感"（被 probe2 否）；
+2. probe2 改"成败均存 HTML"：存档内 **9 作业 + 27 班节点 + activeClass=目标班** 全在场
+   → 失败在等待断言本身；
+3. probe3 弃 selector 断言、evaluate 直读渲染树 → **全通**：
+   - 环境24级（128430077）：作业 9 份；首个作业（49331881，15-量子-作业纸2）批阅名单 **40 人**；
+   - 化工24级（128430068）：作业 9 份；首个作业（49301435）批阅名单 **59 人**。
+
+### 最终因果链
+| # | 缺陷 | 首轮表现 | 状态 |
+|---|---|---|---|
+| 1 | 单 page 导航，进 mark 后 li.classli 归零，后续班静默 False → 记 0 | 每门课首个有作业班之后全 0 断崖；化工24/环境24 排位 7/8 必中 | 坐实（腿一） |
+| 2 | selectClass AJAX + 固定 sleep 竞态 | 列表页上的前序班可能漏读 | 修正：直达 clazzid URL 为**服务端直出**，竞态不存在 |
+| 3 | 名单唯一来源=第一个作业批阅页 | 无作业班结构性 0；名单=提交者非花名册 | 坐实（40≠43、59≠67） |
+| 4 | 探针自身用 visible 断言撞 display:none 侧栏 | probe1/2 误判失败 | 教训：不可见容器节点用 evaluate/state=attached |
+
+### 数字锚点（次轮验收）
+- 化工24 ≈ 67 人；环境24 ≈ 43 人（通知已读分母，多通知一致）；
+- 批阅名单 59/40 vs 分母差 8/3 = 未交最新作业者（待教师以成绩册核对）。
+
+### 残留问题（进次轮需求）
+1. 完整花名册（满员 67/43）：候选=a) 批阅页 status 参数取样辨语义后拼全员；b) 学习通成员接口；c) 点名册文件兜底（legacy 表头精校线，D62 原登记路径仍可用）；
+2. 化工251/2 / 环境251/2 合班容器班"作业 0"待辨真伪（序位在腿一失败点之前，少数可能真 0 的班）；教师若不需要容器班名单则此题搁置；
+3. 次轮提取是否扩大到全部 26 班 / 或先三类对照（化工24/环境24/机器人中本24）。
+
+### 落盘清单（.scratch/，gitignored）
+- 脚本：xxt_probe1_navrepro.py / xxt_probe2_visiblefail.py / xxt_probe3_evalread.py / xxt_session_check.py（+既有 login_capture/readonly_extract/notice_extract）;
+- 数据：xxt-session-check.json / xxt-probe-hj24-round2.json / xxt-probe2-hj24.json / xxt-probe3-quarantine.json / xxt-readonly-*.json|md / 22 份 HTML 存档（xxt-pages/）;
+- ⚠ **隐私**：probe3 JSON 与 HTML 含真实学生姓名，只留 .scratch/，不入库；首次提交确认单即含学生名，后续对外工件应脱敏（docs/04 口径）。
