@@ -502,3 +502,43 @@ P3 写操作（远期，本阶段不动）
 3. run JSON workspace 归属（部署切 XXT_HOME env）；
 4. ~~playwright 一键安装/检测模块~~（本次完成）；
 5. 教师机真装一遍 playwright（P0-b 后任一时点，约 40+150MB 镜像流量）。
+
+## 23. 公告发布 · 网页预研与 PWA 可视化方案（T10 前置文档 · 2026-10-08 · 写操作仍冻结）
+
+> 本节=纯文档；实现动工前置=用户解除 T10 冻结。侦察仅 GET（发布表单页已存档、零提交）。
+
+### 23.1 页面结构（侦察存档：.scratch/xxt-pages/recon-notice-*.html）
+| 要素 | 侦察结果 |
+|---|---|
+| 入口 | `myNoticeList` 页 A[href=CourseNotice.openDetail(this, CourseNotice.getCreateNoticeUrl())]（文案=**新建通知**）|
+| 发布页 URL | `https://notice.chaoxing.com/pc/course/notice/richtextNotice?courseId=<cid>`（GET）|
+| 标题 | `input.title`，maxlength=128（placeholder 请输入标题（限128字））|
+| 正文 | **UEditor 富文本**（edui* 工具条；"附件/上传图片"按钮走 **webuploader** 多片上传通道）|
+| 接收人 | `noticePersonList` 模板（头像列表+搜索筛选；按班级/成员勾选）|
+| 发送 | 底部 `.sendNotice.submitBtn`「发送」div；**定时发送** switch `.scheduledSend`；提醒设置=四渠道(message/phone/学习通/wechat) receiver+sender 时间 inputs |
+| 协议 | 发送即接受用户协议（本地化字符串表内含"请勿发布色情，反动等违法内容"）|
+
+### 23.2 操作链（实现 textbook，T10 解冻后照方抓药）
+```
+1) GET myNoticeList?courseid&clazzid   → CourseNotice.getCreateNoticeUrl()
+2) GET richtextNotice?courseId=…       → 表单锚点就绪（input.title / UEditor 实例索引）
+3) setPlainText/richText 编辑器注入    → 标题、正文（UEditor setContent）
+4) 附件：UEditor「附件」按钮 webuploader 队列（POST 到 upload CDN——**写会话专用**，
+   route 白名单仅放行 notice.chaoxing.com 与上传 CDN 域；strip 其余）
+5) 接收人：按已提取 run 的接收人名单勾选（领域知名=教师确认过的测试班/班次）
+6) （可选）定时 switch + 提醒渠道缺省=关闭
+7) 发送前**截图+快照**（pre-send archive 归档）→ 教师双确认 → 点 .sendNotice.submitBtn
+8) 发送回执/已读分母写回 run JSON（与 19.1 records 联动，支持后续"申请补交/已读"核对）
+```
+- legacy 无公告通道（2601=批阅流；2603=作业纸生成）→ **自建**，但**沿用 legacy submit_v2/v3
+  多步重试/降级框架**（版本适配口径延续，§7）；
+- **两大硬约束**（延续 D62 决议）：a) 双确认 = 预览确认 + 二次确认按钮；b) 默认仅测试班级可选。
+
+### 23.3 PWA 可视化（方便操作的三段式）
+1. **发公告向导卡**（学习通 tab 内）：班级（多选，来自最新 run 已提取班级）→ 标题/正文 →
+   附件选择器（默认列出「输出与交付」已生成的作业纸 PDF）→ 定时/提醒（缺省关）→ 预览卡
+   → 二次确认（等 20.2 的头像/身份卡同区展示发送账号）；
+2. **过程展示框**（已实装）承担执行观察：标题/正文/附件/接收人每一步截图实时入流的即视感，
+   发送前一步必然出现"预览确认"截图卡；
+3. **回执层**：发送后 run 记录发送时间/接收人数/公告 URL；通知列表与"已读 n/n"Kickoff 对齐
+   （15.3 口径：含发布人 +1）。
