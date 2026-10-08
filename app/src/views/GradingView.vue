@@ -1,6 +1,8 @@
 <script setup lang="ts">
 import { computed, onMounted, ref } from 'vue'
 import { useSettingsStore } from '../stores/settings'
+import { fetchXxtRun, fetchXxtStatus, fetchXxtRuns } from '../lib/engineClient'
+import ProcessStreamView from '../components/ProcessStreamView.vue'
 import { parseTaskpad, type Taskpad } from '../lib/taskpad'
 
 /** 批阅工作台（阶段4a 静态可用版，docs/05-D2/D13）。
@@ -12,6 +14,38 @@ import { parseTaskpad, type Taskpad } from '../lib/taskpad'
 
 const settings = useSettingsStore()
 const status = ref('')
+
+/* ---------- D64-a：登录前置提示（N1）+ 批阅过程框（N3，同学习通 tab 套壳件） ---------- */
+const xxtVerdict = ref<string>('unknown')
+const xxtHint = ref('')
+const runId = ref<string>('')
+const steps = ref<{ action: string; detail?: string; title?: string; url?: string; ts?: string; shot?: string }[]>([])
+
+async function refreshXxtBridge() {
+  try {
+    const r = await fetchXxtStatus(settings.engineUrl, settings.engineToken)
+    xxtVerdict.value = r.verdict
+    if (r.verdict === 'alive') {
+      xxtHint.value = `学习通会话正常（体检 ${r.info?.checked_at || ''}；已续期）——下载/批阅上传通行。`
+    } else if (r.verdict === 'dead') {
+      xxtHint.value = `学习通未登录或已失效${(r.info?.reasons || []).join('、')}——请先到「学习通」选项卡扫码。`
+    } else {
+      xxtHint.value = '引擎未在线或缺 playwright——体检不可知；下载/批阅上传需引擎在线。'
+    }
+  } catch {
+    xxtVerdict.value = 'unknown'
+    xxtHint.value = '引擎未在线（设置中心可改 engine 地址）；下载/批阅上传依赖引擎真会话。'
+  }
+  // N3: 最近 run 的过程流（只读，会话无关也可看上次提取过程）
+  try {
+    const runs = await fetchXxtRuns(settings.engineUrl, settings.engineToken)
+    if (runs.length) {
+      const raw = (await fetchXxtRun(settings.engineUrl, settings.engineToken, runs[0].run_id)) as unknown
+      runId.value = String((raw as Record<string, unknown>)['run_id'] || runs[0].run_id)
+      steps.value = (((raw as Record<string, unknown>)['steps'] as unknown[]) || []) as typeof steps.value
+    }
+  } catch { /* 引擎离线时静默降级 */ }
+}
 
 /* ---------- 作业纸选择 ---------- */
 const parsed = ref<Taskpad | null>(null)
@@ -37,6 +71,11 @@ async function onPadFile(e: Event) {
 /* ---------- 学生图片（本地多选，仅列出，不上传） ---------- */
 interface ImgEntry { name: string; size: number; student: string }
 const images = ref<ImgEntry[]>([])
+
+function goXxt(): void {
+  // 同页内 tab 切换（App.vue 以 hash 直达 tab）
+  location.hash = '#/xxetong'
+}
 
 function guessStudent(name: string): string {
   // 约定（engine grade 同口径）：文件名=学生名 或 学号-题号 → 取前缀作为学生分组键
@@ -89,13 +128,27 @@ function copyGradeCmd() {
   })
 }
 
-onMounted(() => { void settings.pingEngine() })
+onMounted(() => { void settings.pingEngine(); void refreshXxtBridge() })
 </script>
 
 <template>
   <section>
     <div class="card">
       <h2>批阅工作台 <small style="font-weight:400;color:var(--c-muted)">作业纸 + 学生图片 → 转录 / 评阅 / 报告（阶段4a 静态版）</small></h2>
+
+      <!-- D64-a N1：登录前置提示 -->
+      <div class="card" :style="xxtVerdict==='alive' ? 'border-color:#7ab06a' : 'border-color:#c9a227'">
+        <b>{{ xxtVerdict==='alive' ? '✅ 学习通通道就绪' : (xxtVerdict==='dead' ? '🔒 学习通未登录' : '⚠ 学习通状态未知') }}</b>
+        <span class="hint" style="margin-left:8px">{{ xxtHint }}</span>
+        <button v-if="xxtVerdict!=='alive'" class="btn small" style="margin-left:12px" @click="goXxt">去「学习通」扫码登录</button>
+        <button class="btn small" style="margin-left:8px" @click="refreshXxtBridge">⟳ 复查</button>
+      </div>
+
+      <!-- D64-b N3：批阅过程框（与学习通 tab 同源组件） -->
+      <div class="card" v-if="steps.length">
+        <h3>过程预览 <small style="font-weight:400;color:var(--c-muted)">最近 run 的页面导航流（引擎真会话每跳截图，§25.1-N3）</small></h3>
+        <ProcessStreamView :run-id="runId" :steps="steps" :engine-addr="settings.engineUrl" :token="settings.engineToken" />
+      </div>
       <p class="hint">
         三步：① 选作业纸 JSON（作业纸设计页导出的 .taskpad.json）→ ② 选本地学生作业图片（可多选）
         → ③ 按学生分组查看 转录/评阅/报告 占位。本页<b>只列出本地文件，不做任何上传</b>；
@@ -159,6 +212,24 @@ onMounted(() => { void settings.pingEngine() })
 
     <div class="card">
       <h2>③ 转录 / 评阅 / 报告（按学生分组占位）</h2>
+
+      <!-- D64-d N4：批阅报告版式预览（§25.2 定案：竖=逐题行/横=左右半；示例数据） -->
+      <div class="card" style="border-color:#9db8e8">
+        <h3>作业纸式批阅报告 —— 版式预览 <small style="font-weight:400;color:var(--c-muted)">（示例数据；真数据=引擎批阅产物按同管线回填）</small></h3>
+        <p class="hint">
+          竖版=逐题占满一行顺次评阅；横版=左右两半分栏，每半仍逐题纵向——均不做 2×2 十字花
+          （评阅内容多，四格不宜）。打印=A4 同版式（@page CSS）。
+        </p>
+        <p>
+          <button class="btn primary" @click="previewReport('portrait')">📄 预览竖版报告（逐题行）</button>
+          <button class="btn" style="margin-left:8px" @click="previewReport('landscape')">📃 预览横版报告（左右半）</button>
+          <span class="hint" style="margin-left:8px; color:var(--c-muted)">新开窗口呈现；可直接 Ctrl+P 打印</span>
+        </p>
+        <p class="hint" style="color:var(--c-muted)">
+          数据接入预告：引擎「转录→评阅→报告」三步产物（原图=R1/转录/评语/得分）将按同版式回填；
+          本预览件仅验证版式与打印语义（§25.4 D64-d）。
+        </p>
+      </div>
       <p class="hint" v-if="!groups.length">选择作业纸与图片后，这里按学生分组显示三步产物占位；阶段4a API 联调（serve 触发）后逐步点亮。</p>
       <table class="grid" v-else style="max-width:860px">
         <thead>

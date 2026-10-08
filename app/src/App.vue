@@ -19,13 +19,13 @@ const TABS = [
   { key: 'kb', label: '题库编辑器', component: KbEditorView },
   { key: 'design', label: '作业纸设计', component: SheetDesignView },
   { key: 'roster', label: '班级与标签', component: RosterView },
-  { key: 'grading', label: '批阅', component: GradingView },
   { key: 'xxetong', label: '学习通', component: XxetongView },
+  { key: 'grading', label: '批阅', component: GradingView },
   { key: 'transfer', label: '导入导出', component: TransferView },
   { key: 'help', label: '使用说明', component: HelpView },
 ] as const
 
-/** hash 兼容（R2.4 / D43-5 修订）：#/designer #/layout #/sheet → #/design；
+/** hash 兼容（R2.4 / D43-5 修订）：#/designer #/layout #/sheet → #/design； D64-N2=D63 tab 后置 xxetong→grading（key 不变，无 hash 迁移）；
  *  「批阅」自 D43-5 起为真选项卡（#/grading 直达，不再并入学习通）。 */
 const HASH_ALIASES: Record<string, string> = {
   designer: 'design',

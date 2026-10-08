@@ -4,6 +4,7 @@ import {
   fetchXxtRun, fetchXxtRuns, fetchXxtStatus, startXxtLogin,
 } from '../lib/engineClient'
 import { useSettingsStore } from '../stores/settings'
+import ProcessStreamView from '../components/ProcessStreamView.vue'
 
 /* 学习通 tab（D63 T7/T8 实装，docs/16 §20）：
  * - 登录卡：QR 框（/xxt/qr）↔ 头像（verdict=alive 时 data-URL）；
@@ -100,12 +101,6 @@ const noticeRows = computed(() => {
   }
   return rows
 })
-const shotUrl = (shot?: string): string => {
-  if (!shot) { return '' }
-  const fname = shot.split('/').pop() || ''
-  const tokArg = tok.value ? `?token=${encodeURIComponent(tok.value)}` : ''
-  return `${engUrl.value.replace(/\/+$/, '')}/xxt/shot/${curRun.value || ''}/${fname}${tokArg}`
-}
 
 /* 列表项可见性（T8） */
 const pinned = ref<string[]>(JSON.parse(localStorage.getItem('xxt-pinned') || '[]') as string[])
@@ -285,21 +280,10 @@ onMounted(() => { refreshStatus(); refreshRuns() })
       </p>
     </div>
 
-    <!-- 导航过程展示框（§20.3 方案 A；数据=run steps/shots；页宽横向滚动缩略卡流） -->
+    <!-- 导航过程展示框（§20.3 方案 A 抽共享组件 D64-b） -->
     <div class="card" v-if="loadSteps.length">
       <h3>提取过程 <small style="font-weight:400;color:var(--c-muted)">最新 run 的页面导航流（每跳一张缩略图；引擎真会话所拍）</small></h3>
-      <div style="display:flex; gap:10px; overflow-x:auto; padding-bottom:6px">
-        <div v-for="(st, i) in loadSteps" :key="i"
-             style="min-width:190px; border:1px solid var(--c-border); border-radius:8px; overflow:hidden; background:var(--c-surface,#fff)">
-          <img v-if="st.shot" :src="shotUrl(st.shot)" :alt="st.action" style="width:190px; height:107px; object-fit:cover; display:block" />
-          <div style="padding:6px 8px">
-            <div style="font-size:12px"><b>{{ i+1 }}. {{ st.action }}</b></div>
-            <div class="hint" style="font-size:11px; color:var(--c-muted); word-break:break-all">
-              {{ st.detail || '' }} · {{ st.title || (st.url || '').slice(0, 46) }}<br /><span style="opacity:.7">{{ st.ts }}</span>
-            </div>
-          </div>
-        </div>
-      </div>
+      <ProcessStreamView :run-id="curRun || ''" :steps="loadSteps" :engine-addr="engUrl" :token="tok" />
     </div>
 
     <!-- 列表卡 -->
