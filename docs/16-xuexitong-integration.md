@@ -639,3 +639,38 @@ D64-f 批阅回写（写操作）：学习通侧填分/评语——**另行解�
 - 数据影响：run JSON 行多 240 字内 review 字段；**D64-d 报告版式（reports.ts）的 submission[]
   数据源确认为：名单行(name/status/review_path) + 逐学生批阅页(原图 R1) + grade 流转录/评阅产物**；
 - 写侧（R2 按钮/post 端点）**全部未点击未侦察动作**——留 T10'（批阅回写）解冻后第一侦察点。
+
+
+## 26. D64 §26 引擎运维三角：体检 / 安装 / 重启 + start.bat-first 引导（事故复盘与决议 · 2026-10-08 晚）
+
+### 26.1 本轮四起事故 → 根因 → 修复（commit 对照）
+
+| # | 症状（用户侧） | 根因 | 修复 commit | 验证 |
+|---|---|---|---|---|
+| 1 | 「联网安装 Playwright」按钮闪一下即回落，安装输出区始终保持空白 | 引擎 SSE 写帧体把真换行写成**字面反斜杠+n**（`b"\\n\\n"`）：EventSource 解析不出任何 message/done 事件；`es.onerror` 静默 resolve(-1) 把错误吞没 | `1e8ba3a`（serve.py 540/543 行帧尾真换行 + runInstall 离线/中断/非零 rc 均落提示） | curl SSE `data:…$ $` / `event: done\ndata: 0` 逐帧可见；回归测试 `engine/tests/test_sse_framing.py` |
+| 2 | 终端窗口一关/会话被清 → 引擎"神秘失踪"，Pages 显示离线 | 引擎进程生命周期与其启动终端绑定（开发期临时 `nohup`/前台进程），无常驻保障 | 用户侧行为约定：**双击 start.bat**（工作区收纳引擎）。新增 `/restart` 端点（回环哨兵 + os.execv 同端口再生）供已装用户免终端重启 | 实测 8767/8601 两端口 execv 再生成功；PWA「🔄 重启引擎」按钮闭环（受理→轮询 /status→自动重跑体检） |
+| 3 | fetchDoctor 把引擎检查项的 **id 与 fix 字段映射时丢弃** → 🔧修复按钮永不出现、store id 定版失效回落名字启发式 | engineClient.ts 映射函数序列化不全 | `9a23eed`（id/fix 透传 + 体检键永远可点、离线提示含目标地址与具体失败原因） | build 全绿；bundle 含 restartEngine |
+| 4 | Pages(公网 https PWA) → 本机引擎 全线失联（体检/安装离线） | Chrome **Private Network Access**：公共上下文访问本机私有地址需预检回 `Access-Control-Allow-Private-Network: true`，引擎一直未回该头 | `3034b7c`（do_OPTIONS 补头） | curl 伪造 Chrome PNA 预检 204 + 四 ACA 头齐 |
+
+> 教训：SSE/安装这类"进程↔浏览器"链路必须有字面字节级验证（cat -A）；跨公网页面触达本机引擎必须把 PNA 头纳入端点验收清单。
+
+### 26.2 决议：不做「协议启动键」，start.bat-first（2026-10-08 用户拍板）
+
+- 曾讨论 `assist://` 自定义协议句柄方案（install.sh/ps1 注册、网页拉起进程）：**否决**——浏览器拉进程永远跨一道 OS 注册坎，收益低复杂度高；
+- 采纳现实路径：体检离线态文案改为 **"双击工作区文件夹里的 start.bat"** 优先（`081464f`），`assist serve`/`uv run assist serve` 降为终端备选；CLI 已装用户的日常重启用 PWA「🔄 重启引擎」键；
+- 超集保障不变：LAN 全功能方式 = `assist serve --lan`（强制随机 token，URL 样式 `http://<ip>:8602/?token=…`）。
+
+### 26.3 start.bat 幂等口径（教师 FAQ 预写，下一步上 HelpView）
+
+- 反复双击**不会重复下载**：Miniconda（仅无系统 python 时首装）、venv、引擎 zip、playwright 内核全部命中 `workspace/.runtime/` 既有缓存，二次启动 3–5 秒直达 `[6/6]`；
+- **端口漂移特性**：8601 被占用时自动扫描 8601..8649 取第一个空闲口，浏览器地址栏端口以实际为准（曾因此误判"没打开 8601"）；
+- 引擎退出/失败看 `start.log`（与 start.bat 同目录）尾部几行即可定位；窗口全英文提示为设计取舍（cmd 对 UTF-8 中文注释解析歧义，docs/05-D25/D27）。
+
+### 26.4 本地同源页 vs Pages（教师何时用哪个）
+
+| 入口 | 前端新鲜度 | 跨源关卡 | 建议用途 |
+|---|---|---|---|
+| start.bat 自开页 `http://127.0.0.1:<port>/` | 永远最新（引擎托管 dist-lan） | 无（同源） | **安装/修复类 SSE 进度流**（首次装 playwright 等）；离线兜底 |
+| GitHub Pages | 按 main CI 滞后数分钟 | PNA（`3034b7c` 后引擎侧已豁免） | 日常编辑/预览/导出；体检/批阅（需本机已起引擎） |
+
+后面待办：HelpView 顶部引导卡与设置中心 "?" 帮助卡按 §26.3/§26.4 口径更新文案（用户指示"先记文档、后上网页"）。

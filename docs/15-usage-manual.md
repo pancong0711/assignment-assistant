@@ -82,3 +82,17 @@
   - 「按 N 重置默认」= 回到 `ceil(N/2)×2`；「均匀方阵」= 自动选最接近方阵的因子对；
 - 旧任务包无 `grid_rows/grid_cols` 时继续按旧语义渲染，不强制迁移；
 - 三端同口径：PWA 预览 / `assist sheet html` / `assist sheet make|batch` PDF。
+
+
+# 2026-10-08 晚 · 引擎启动口径更新（D64 §26 start.bat-first，随 §26.2 决议）
+
+## 一键启动（修订）
+
+- 首推：**双击 start.bat**（Windows）/ `bash start.sh`——反复双击不重复下载，
+  二次启动 3–5 秒（缓存详 docs/16 §26.3）；端口若跳到 8601..8649 以地址栏为准；
+- CLI 已装引擎：**不用回终端**——设置中心体检卡旁「🔄 重启引擎」
+  （受理后引擎同端口以新代码再生，<1 秒瞬断，自动回在线+重跑体检）；
+- Pages 使用前提：本机引擎已由上二者任一方式起着；Chrome 的
+  Private Network Access 拦截已由引擎预检头部豁免（docs/16 §26.1 #4）；
+- 安装类操作（如 playwright 联网安装、TinyTeX）建议在 start.bat 自开的
+  本地同源页做——进度流（SSE）不经任何跨源关卡。
