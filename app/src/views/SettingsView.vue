@@ -89,9 +89,13 @@ async function runDoctorNow() {
   checking.value = true
   try {
     const online = await settings.runHealthCheck()
-    statusHint.value = online
-      ? `体检完成（assist-engine ${settings.engineVersion || ''}，workspace=${settings.doctorWorkspace || '未定位'}）。`
-      : '引擎未在线——在本机运行 assist serve 后重试。'
+    if (online) {
+      statusHint.value = `体检完成（assist-engine ${settings.engineVersion || ''}，workspace=${settings.doctorWorkspace || '未定位'}）${settings.checkRunAt ? ' @' + settings.checkRunAt : ''}。`
+    } else {
+      // D64 §22.1：体检键永远可点，且离线必须给出"目标地址+具体失败原因"，不再只有一句话
+      const err = settings.lastDoctorError || settings.engineStatusError || 'fetch failed'
+      statusHint.value = `引擎未在线（目标 ${settings.engineUrl}：${err}）。 firefox/chrome 已记录引擎地址=${settings.engineUrl}；可改地址后重试，或在本机运行 assist serve。`
+    }
   } finally {
     checking.value = false
   }

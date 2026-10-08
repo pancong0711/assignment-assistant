@@ -193,6 +193,10 @@ export async function fetchDoctor(engineAddr: string, token?: string): Promise<D
           name: String(it.name ?? '检查项'),
           status: (s === 'green' || s === 'red' ? s : 'yellow') as DoctorStatus,
           detail: it.detail === undefined || it.detail === null ? undefined : String(it.detail),
+          // D64 §22.1 修复：id/fix 透传——此前被映射函数丢弃，
+          // 导致 store 按 id 定版失效 + 每行 🔧修复 按钮永不出现
+          ...(it.id !== undefined && it.id !== null ? { id: String(it.id) } : {}),
+          ...(it.fix && typeof it.fix === 'object' ? { fix: it.fix as DoctorCheck['fix'] } : {}),
         }
       }),
     }
