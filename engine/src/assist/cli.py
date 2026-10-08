@@ -480,6 +480,14 @@ def grade(obj, task_path, images_dir, rerun, workspace, verbose):
     click.echo(f"完成 run_id={rec['run_id']} steps={rec['steps_done']}\n产物目录={rec['bucket']}")
 
 
+@cli.group(help="学习通对接（D63 T1；登录/体检为可选依赖 playwright）")
+def xxt():
+    """学习通会话与只读提取。"""
+
+from .xxt.cli import register as _register_xxt  # noqa: E402
+_register_xxt(xxt)
+
+
 def main():
     cli(obj={})
 
