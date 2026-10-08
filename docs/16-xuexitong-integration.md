@@ -622,3 +622,20 @@ D64-f 批阅回写（写操作）：学习通侧填分/评语——**另行解�
 ### 25.5 边界重申
 - 本节全部未动代码；学习通侧零写改删；R1—R5 全为 GET 侦察；
 - 写回通道（D64-f）与公告发布同属 T10 族，解冻窗口/流程对齐 §23.2。
+
+### 25.6 D64-c 只读调研结果（R1/R2 ✅ 2026-10-08 晚 · run xxt-20261008-184915 验证）
+| 调研点 | 结果 |
+|---|---|
+| **R1 原图直链** | 学生批阅页 `/mooc2-ans/work/library/review-work?courseid&clazzid&workId&workAnswerId`；
+| | 作答图 `img.ans-ued-img`；原图 `data-original`（`p.ananas.chaoxing.com/star3/750_1024/*.jpg`，实测 750×1000，直链可存） |
+| | legacy mooc1 `reviewTheContentNew` 老版为回落路径（保留） |
+| **R2 回写控件** | per-题分数 `input#score<题id>`（placeholder 0-100）+ 总分 hidden `#score/#fullScore`； |
+| | per-学生评语 `textarea#comment<workAnswerId>`；打回理由 `textarea#textCon[name=reason]`； |
+| | 提交三态按钮：`markAction(1)`=提交 / `markAction(0)`=提交并下一份 / `confirmPiyueWork()`；全部=写操作（未点击） |
+| **R3 多图懒加载** | 本样例单页单图；多图/分页形态留待真数据批次观察（学生详情页可能有 tab） |
+| **R5 下载白名单** | 下载域=**p.ananas.chaoxing.com** 加入"引擎取字节"域清单（与照片域 403 教训同族：Referer=来源页指纹） |
+- **extractor 升级并复跑验证**：`submitted_names[]` 行新增 `review_path`（=列表页 `a.cz_py` data 属性自带的
+  学生批阅 URL，含 workAnswerId）→ **报告管线从提取一步直通**（无需二次侦察跳）；
+- 数据影响：run JSON 行多 240 字内 review 字段；**D64-d 报告版式（reports.ts）的 submission[]
+  数据源确认为：名单行(name/status/review_path) + 逐学生批阅页(原图 R1) + grade 流转录/评阅产物**；
+- 写侧（R2 按钮/post 端点）**全部未点击未侦察动作**——留 T10'（批阅回写）解冻后第一侦察点。

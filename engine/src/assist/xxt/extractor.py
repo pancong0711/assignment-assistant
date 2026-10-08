@@ -54,7 +54,9 @@ JS_REVIEW = """() => {
     if(!ne||!pb) return; let st='';
     ul.querySelectorAll('li').forEach(li=>{const t=li.textContent.trim();
       if(t.includes('待批阅')||t.includes('已批阅')||t.includes('补交')) st=t;});
-    out.push({name: ne.textContent.trim(), status: st});
+    out.push({name: ne.textContent.trim(), status: st,
+              // D64-c R1/R2：data 属性自带学生批阅页 URL（workAnswerId 在内）→ 报告管线直连通道
+              review_path: (pb.getAttribute('data')||'').slice(0,240)});
   }); return out;
 }"""
 
@@ -84,7 +86,25 @@ class ReadOnlyExtractor:
 
     def __init__(self, ctx, page, archive_dir: "Path | None" = None):
         self.ctx, self.page, self.archive_dir = ctx, page, archive_dir
+        self.steps: list[dict] = []   # D63 批次三：导航过程事件（20.3 方案 A 数据源）
+        self.run_id = ''
         self._install_readonly_route()
+
+    def _step(self, action: str, detail: str = "", title: str = "") -> None:
+        """每次 goto 后记一步（URL/标题/动作/时间戳）+ 低频截图文件（截图缩略交前端）。"""
+        try:
+            shot = ''
+            if self.archive_dir and self.run_id:
+                d = Path(self.archive_dir) / 'shots'
+                d.mkdir(parents=True, exist_ok=True)
+                name = f"{self.run_id}-step{len(self.steps)+1:02d}"
+                self.page.screenshot(path=str(d / f"{name}.png"), full_page=False)
+                shot = f"shots/{name}.png"
+        except Exception:
+            shot = ''
+        self.steps.append({"action": action, "detail": detail[:120],
+                           "title": title[:60], "url": (self.page.url or "")[:200],
+                           "ts": time.strftime('%H:%M:%S'), "shot": shot})
 
     def _install_readonly_route(self):
         def route_handler(route, request):
@@ -106,6 +126,7 @@ class ReadOnlyExtractor:
                        wait_until="domcontentloaded", timeout=60000)
         self.page.wait_for_timeout(4000)
         info = self.page.evaluate(JS_READ)
+        self._step("goto课程工作台", f"courseid={course_id}", self.page.title())
         return info
 
     def extract_class(self, course_id: str, class_id: str, cpi: str = "0",
@@ -117,6 +138,7 @@ class ReadOnlyExtractor:
         self.page.wait_for_timeout(settle_ms)
         self.archive(f"v2-list-{class_id}")
         info = self.page.evaluate(JS_READ)
+        self._step("课程班级列表读取", f"class={class_id}", self.page.title())
         rec["cpi"] = info.get("cpi") or cpi
         rec["activeClass"] = info.get("activeClass", "")
         works = info.get("works", [])
@@ -143,6 +165,7 @@ class ReadOnlyExtractor:
             self.page.wait_for_timeout(4000)
             self.archive(f"v2-review-{class_id}-{w['workId']}")
             rows = self.page.evaluate(JS_REVIEW)
+            self._step("作业批阅页读取", f"{w['name'][:30]}", self.page.title())
             rec["works"].append({**w, "source": "list_wid15",
                                  "submitted_names": rows})
         return rec
@@ -152,6 +175,7 @@ class ReadOnlyExtractor:
                        wait_until="domcontentloaded", timeout=60000)
         self.page.wait_for_timeout(settle_ms)
         self.archive(f"v2-notice-{class_id}")
+        self._step("班级通知读取", f"class={class_id}", self.page.title())
         return self.page.evaluate(JS_NOTICES)
 
 
