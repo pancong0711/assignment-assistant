@@ -581,3 +581,10 @@ C1 登录/课程/作业浏览/下载（迁 2601 xuexitong 模块）；C2 上传=
 - T3 extract v2 schema（docs/16 §19）：三分类 status（extracted/empty_confirmed/not_extracted）；
 - T4 三类对照实况：22 份 work 名单数==已交数全等；未交名单按 master差集落名；环24 roster_delta=5 灰注（口径性）；
 - 待办：**T5 教师审核**（审核 .scratch/xxt-20261008-113601-v2.json 摘要）→ 通过后 T6 放量 26 班 ∥ T7 PWA。
+
+# 2026-10-08 · D63 批次二落地（T6-T9；docs/16 §21）
+- T6 放量：30班/5课 全量提取（25 extracted + 5 empty_confirmed, 106 作业, failures=0）；已结课班/断崖后置班/容器班全部正确——容器班真伪定案=有真实作业（非空班）；
+- T9：engine `run_extract` + CLI `assist xxt extract`（体检前置+ROSTER 差集+脱敏摘要）；
+- T7/T8：serve xxt 端点组（status/qr/runs/run + login-start job）+ PWA XxetongView 实装（QR↔登录卡；课程分组滚动列表；置顶 10 可调/移出/从学习通恢复=回放最近 run 零网络）；
+- 事故记录：CI 脱敏红线误触（已清洗回绿）+ serve patch 静默 no-op 两枚（冒烟抓出修复）；头像 selector 待办顺延（缺省「已登录」卡兜底）；
+- 次步：T10 写操作维持冻结；剩 §22 待办三项。
