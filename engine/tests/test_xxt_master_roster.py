@@ -53,9 +53,9 @@ def test_parse_export_and_years(tmp_path):
 def test_parse_banner(tmp_path):
     wb = Workbook()
     ws = wb.active
-    ws.append(["课程：大学物理C1    班级：潘聪-化工24    任课教师：戈迪  导出时间：2025-06-21 16:50:46"])
+    ws.append(["课程：大学物理C1    班级：潘老师-化工24    任课教师：戈迪  导出时间：2025-06-21 16:50:46"])
     wb.save(path := tmp_path / "b.xlsx")
-    assert parse_export_banner(list(ws.iter_rows(values_only=True)))["class"] == "潘聪-化工24"
+    assert parse_export_banner(list(ws.iter_rows(values_only=True)))["class"] == "潘老师-化工24"
 
 
 def test_scores_and_cross_check(tmp_path):
@@ -69,10 +69,10 @@ def test_scores_and_cross_check(tmp_path):
 def test_build(tmp_path):
     e1 = _mk_export(tmp_path / "a.xlsx", [("张三", "2024438815101", "化工241"),
                                           ("王五", "2023438815999", "化工241")])
-    e2 = _mk_export(tmp_path / "b.xlsx", [("李四", "2024438905101", "环境241")])
+    e2 = _mk_export(tmp_path / "b.xlsx", [("李四", "2024438905101", "环241")])
     s1 = _mk_scores(tmp_path / "s.xlsx", ["张三"])
     out = tmp_path / ".out" / "master.xlsx"
-    summary = build({"化工24": e1, "环境24": e2},
+    summary = build({"化工24": e1, "环24": e2},
                     cross_sources={"化工24": (s1, "化工24-分析")}, out_xlsx=out)
     assert summary["total"] == 3
     assert summary["classes"]["化工24"]["cross"]["only_scores"] == []
