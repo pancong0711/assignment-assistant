@@ -364,12 +364,15 @@ class Handler(BaseHTTPRequestHandler):
 
 
     def do_OPTIONS(self):
-        """CORS 预检：PWA 跨源 POST JSON（如 /kb/write）需要。"""
+        """CORS 预检：PWA 跨源 POST JSON（如 /kb/write）需要。
+        D64 §22.1：Pages(公网https) → 本机引擎(http://127.0.0.1) 属 Chrome
+        Private Network Access，预检必须回 Allow-Private-Network，否则体检/安装全线哑火。"""
         self.send_response(204)
         if self.cors:
             self.send_header("Access-Control-Allow-Origin", "*")
             self.send_header("Access-Control-Allow-Methods", "GET,POST,OPTIONS")
             self.send_header("Access-Control-Allow-Headers", "Content-Type")
+            self.send_header("Access-Control-Allow-Private-Network", "true")
             self.send_header("Access-Control-Max-Age", "600")
         self.end_headers()
 
