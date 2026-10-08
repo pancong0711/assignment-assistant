@@ -382,3 +382,58 @@ P3 写操作（远期，本阶段不动）
 1. 点名册原件（化工24/环境24）：到档后升级 T2 验收（「两源交叉一致」→「与原件±0」）；
 2. T5 审核窗口（建议 1 个工作日内，避免批次一挂起过久）；
 3. 2023 级插班生（两班各 1 人）与"环境24 47>43"差值的处置口径（白名单/移出/保留）。
+
+## 19. D63 T3：extract v2 数据 schema 冻结（2026-10-08 · 依据 probe3/15.x 定案）
+
+### 19.1 顶层 RunRecord（一次只读提取=一个 run_id）
+```json
+{"run_id": "xxt-<UTC/local-时间戳>", "mode": "readonly", "ts_start": "...", "ts_end": "...",
+ "session": {"checked_at": "...", "verdict": "alive|dead", "storage": "<路径，不入库值>"},
+ "courses": [ { "name": "大学物理C2", "courseId": "236230440", "classes": [ ClassRecord ] } ],
+ "failures": [ FailureRecord ] }
+```
+- 会话体检失败（verdict=dead）→ 整个 run **直接失败退出**，不产出半成品数据；
+
+### 19.2 ClassRecord（班级粒度）
+```json
+{"name": "潘聪-化工24级", "classId": "128430068", "cpi": "168131489",
+ "works": [ WorkRecord ],
+ "roster": {"ref": "25C1-master-roster.xlsx", "total": 66,
+            "snake_note": "2023级插班 1 人；名称口径=学习通-25C1-0621 导出"},
+ "notices": [ {"text": "...", "href": "..."} ],
+ "status": "extracted", "notes": []}
+```
+- `status` 枚举（三分类语义，D62 收口定案）：
+  `extracted`（正常产出）、`empty_confirmed`（页面直出"暂无作业"且 0 行=确认为 0）、
+  `not_extracted`（导航/等待/会话失败——**不得记为 0**，同时进 failures）；
+
+### 19.3 WorkRecord（作业粒度=「作业基本信息」）
+```json
+{"workId": "49301435", "name": "15-量子-作业纸2",
+ "answer_window": "2025-12-23 15:59至 2025-12-28 19:59",
+ "pending": 0, "submitted": 59, "unsubmitted": 6, "source": "list_wid15",
+ "submitted_names": [{"name": "王冬梅", "status": "已完成（补交）"}],
+ "unsubmitted_names": ["范心怡"], "roster_missing": [], "status": "extracted"}
+```
+- `pending/submitted/unsubmitted` 来自列表 li `wid15` 区块（15.1 定案，零额外请求）；
+- `submitted_names` 来自 work/mark 批阅页（status=0&size=200；名单=提交者，15.3 口径）；
+- **未交名单口径（关键定案）**：
+  `unsubmitted_names = master花名册姓名 − 该作业 submitted_names`（学号优先、姓名回退）；
+  `roster_missing` = 记录"在花名册但不在通知参作集"的行——口径差异白名单，
+  **只提示不判错**（15.3 收编：含发布人、未入班、名单时间差）；
+- 数字与名单双侧一致性校验：`len(submitted_names) == submitted` 且
+  `|roster.total − (submitted+unsubmitted)| ≤ 2` 为绿，超出进 `notes`（灰注）；
+
+### 19.4 FailureRecord
+```json
+{"scope": "class|work|notice", "ref": "128430068/49301435", "kind": "not_extracted|empty_confirmed",
+ "detail": "...", "archive": "probe3-list-128430068.html"}
+```
+- kind 只有两种：`not_extracted`（失败）或 `empty_confirmed`（确认 0）；**禁止第三类"0"**；
+
+### 19.5 验收锚点（T4）
+1. 化工24 works=9、环境24 works=9，三态数字与 probe2/3 存档逐条一致；
+2. 化工24 roster.total=66、环境24=47（T2 产物）；
+3. `submitted` 数字与 `len(submitted_names)` 全等（抽 valley=最新作业必修对齐）；
+4. `unsubmitted_names` 每班最新作业给出具体姓名（用于教师核查未交）；
+5. 失败留痕：任何环节失败都必须在 failures 呈现 kind=not_extracted，**不得静默为空**。
