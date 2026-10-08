@@ -239,17 +239,27 @@ export const useSettingsStore = defineStore('settings', {
     },
     /** R1.4 修复按钮：POST /install/<item> + SSE 进度；完成后自动重跑体检。 */
     async runInstall(itemId: string): Promise<boolean> {
-      if (!this.engineOnline) return false
+      if (!this.engineOnline) {
+        // D64 §22.1 修复：不再静默返回——冒出一句，避免"闪一下无提示"
+        this.installLog = '⚠ 引擎未在线（installing 前置校验失败）；请先体检确认引擎地址。'
+        return false
+      }
       this.installLog = ''
       this.installing = itemId
       try {
         const jobId = await startInstall(this.engineUrl, itemId, this.engineToken)
+        let rc = -2
         await new Promise<number>((resolve) => {
           streamInstall(this.engineUrl, jobId, this.engineToken,
             (line) => { this.installLog = (this.installLog + '\n' + line).slice(-4000) },
-            (rc) => resolve(rc))
+            (rc0) => { rc = rc0; resolve(rc0) })
         })
         await this.runDoctor()
+        // rc 非零（尤其 -1 = SSE 中断且无日志）时补一句，不再让 UI 无声回落
+        if (!this.installLog)
+          this.installLog = `⚠ 安装任务提前中断（code ${rc})，未收到任何输出；请查看引擎服务端日志。`
+        else if (rc !== 0)
+          this.installLog += `\n⚠ 安装未成功（code ${rc}），上方为过程输出。`
         return this.doctorOk
       } catch (e) {
         this.installLog = String((e as Error).message)

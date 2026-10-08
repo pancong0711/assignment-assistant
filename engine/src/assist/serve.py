@@ -537,10 +537,10 @@ class Handler(BaseHTTPRequestHandler):
                             continue
                         if line.startswith("__DONE__"):
                             rc = line.replace("__DONE__", "").strip("_")
-                            self.wfile.write(b"event: done\ndata: " + str(rc).encode() + b"\\n\\n")
+                            self.wfile.write(b"event: done\ndata: " + str(rc).encode() + b"\n\n")
                             self.wfile.flush()
                             break
-                        self.wfile.write(b"data: " + line.encode("utf-8") + b"\\n\\n")
+                        self.wfile.write(b"data: " + line.encode("utf-8") + b"\n\n")
                         self.wfile.flush()
                 except Exception:
                     pass
