@@ -80,7 +80,7 @@ async function copyText(text: string, label: string) {
 
 const INSTALL_SH = 'bash install.sh        # Linux / macOS（或 curl -fsSL ... | bash，阶段5 Releases）'
 const INSTALL_PS1 = 'powershell -ExecutionPolicy Bypass -File install.ps1   # Windows（含国内镜像源，docs/05-D10）'
-const SERVE_CMD = 'uv run assist serve      # 引擎在线后本页自动识别（默认 http://127.0.0.1:8601）'
+const SERVE_CMD = '双击 start.bat（所在目录即 workspace）→ 自动装 venv→起引擎→开 http://127.0.0.1:8601/    # 或终端 assist serve'
 
 /* ---------- 体检真接入（阶段4a） ---------- */
 const checking = ref(false)
@@ -94,7 +94,7 @@ async function runDoctorNow() {
     } else {
       // D64 §22.1：体检键永远可点，且离线必须给出"目标地址+具体失败原因"，不再只有一句话
       const err = settings.lastDoctorError || settings.engineStatusError || 'fetch failed'
-      statusHint.value = `引擎未在线（目标 ${settings.engineUrl}：${err}）。 firefox/chrome 已记录引擎地址=${settings.engineUrl}；可改地址后重试，或在本机运行 assist serve。`
+      statusHint.value = `引擎未在线（目标 ${settings.engineUrl}：${err}）。最省事：双击工作区文件夹里的 start.bat（自动起引擎+开页，端口若跳到 8601..8649 以页面地址栏为准）；或终端跑 assist serve。已装引擎变更代码后用 🔄 重启引擎 即可。`
     }
   } finally {
     checking.value = false
