@@ -131,3 +131,81 @@ classes/<class>/
 ### 登录态文件约定
 - `xxt-storage.json`（Playwright storage_state，cookies+localStorage）**明文敏感**：
   仅存 .scratch/（gitignored），域外不复制、不入日志；每次成功提取/体检后回写一次。
+
+## 11. 登录态运维 · 会期 2026-10-07→08 经验沉淀
+
+### 11.1 昨日登录态确认过程（含一次波折）
+- 存储形态：Playwright `storage_state` JSON（cookies+localStorage，明文敏感，仅 .scratch/）；
+- 有效信号（最终判定依据）：goto `i.chaoxing.com/base` 后
+  **a) 无 passport/login 重定向；b) 无密码输入框；c) 教师工作台文案正常渲染**（如"嘉兴大学(老师)·<姓名>"）；
+- **波折记录（误判教训）**：probe1（22:45）三目标页面 selector 全超时，先被误归因为
+  "会话 3 小时过期"，再被误归因为"URL 形态敏感"——两次都被后续证据推翻
+  （体检 verdict=alive；probe2 存档 HTML 数据完整）。根因是**等待断言写错**
+  （详见 §10.4），而非登录问题。教训：**下游页面 selector 超时 ≠ 会话失效；判活必须用专用体检**。
+
+### 11.2 现在（2026-10-08 09:50 复检）
+- verdict=**alive**（同 10-07 22:52 判定标准），storage 已回写续期；
+- 经验：判定标准三信号 + 成功即回写，两步覆盖"判活/续期"闭环；
+  登录死亡时才触发重新扫码（沿用 xxt_login_capture 流程）。
+
+### 11.3 待写成约定的运维条目
+- [ ] 每轮提取/上传前强制跑一次会话体检；体检失败 → 二维码重扫描（不得带死会话继续跑批）；
+- [ ] 每轮成功结束时回写 storage_state（心跳刷新）；
+- [ ] storage/log 一律脱敏：不入 git、不打 cookie 明文、HP 域外不复制；
+- [ ] 体检判定不得使用下游功能性页面的 selector 结果（避免 §11.1 波折重演）。
+
+## 12. 班级作业提取方法定案（探针复盘 → 可复用方法）
+
+### 12.1 候选机制对照（probe1/2/3 三轮淘汰）
+| 方案 | 做法 | 结果 |
+|---|---|---|
+| A 首轮 | 每门课一次 goto 列表页 + 点击班级 + 固定 sleep3 + DOM 读取 | 五门课各自"首个有作业班之后全零"断崖（腿一） |
+| B probe1/2 | 直达 work/list?clazzid= + `wait_for_selector`（默认 visible） | 误报失败：节点存在但侧栏容器 display:none |
+| C probe3（**最终采用**） | 直达 classid URL + `evaluate` 直读 + 短 settle 等待 | 全通：环境24=9 作业+名单 40，化工24=9 作业+名单 59 |
+
+定案机理：`work/list?clazzid=...` 服务端**静态直出**（无 AJAX 依赖），
+evaluate 直读渲染树绕开可见性断言；逐班独立 goto 消除共享 page 状态踩踏。
+
+### 12.2 之前读取有误的部分（次轮整改范围）
+- 断崖班（各课首个有作业班之后全部班级，含化工24/环境24）——由方案 C 整改；
+- 列表页内前序班（化工251/2、环境251/2、机器人中本25级等）——固定 sleep 竞态嫌疑，
+  次轮用方案 C 重测判真伪；
+- probe 自身误报（probe1/2 失败、probe3 通过）——区分"站点数据问题"vs"读法问题"，
+  次轮验收锚点=67/43 满员 vs 59/40 批阅样本差值=缺交名单。
+
+## 13. 学生人数口径：点名册为本，批阅名单降级为样本
+- **canonical**：人数与花名册 = 点名册文件（legacy `student.py` 证明可行；化工24/环境24
+  文件仍缺，需教师提供结构不动的原件再接 locateHeader）；
+- **样本层**：批阅页名单（probe3 已证 67/67 匹配或 59/40 + 缺交差值可解释），
+  定位为"提交者样本/名字示例"，确认单上必须标注**"作业提交样例"而非"学生名单"**，
+  防止把缺交者误读为"不存在的学生"；
+- **借鉴 legacy 三条**：
+  1) 表头动态定位（扫前 8 行找"成绩"行）替代硬编码 `iloc[8:-3]`，兼容导出版本漂移；
+  2) merge 键用**学号**为主、姓名为辅（legacy 此处在 merge on name，旧代码已有注释警告但未启用）；
+  3) 人工可读检查项输出（run.py 的 检查项/状态/详情 三列风格）复用到探针/提取报告；
+- 边界：批阅样本姓名=PII，仅留 .scratch/；对外工件一律脱敏或只出计数。
+
+## 14. 检测/提取脚本 → CLI 集成方案（讨论稿，未实施）
+
+### 14.1 现状落点
+- CLI 位于 `engine/src/assist/cli.py`（click 体系，`sheet`/`roster` 组）；
+- roster 纯逻辑在 `engine/src/assist/files/roster.py`（读点名册 xlsx→students）；
+- legacy 对照：`_legacy/2601playwright/src/browser_helper.py`（login/run 三段式）证明
+  "CLI 包浏览器"形态可跑通。
+
+### 14.2 拟新增 `xxt` 命令组（CLI 统一入口）
+| 命令 | 来源脚本 | 边界 |
+|---|---|---|
+| `assist xxt login` | xxt_login_capture.py | 扫码→落 storage json（路径可配，默认 .scratch，gitignored）|
+| `assist xxt check` | xxt_session_check.py | 三信号判活 + 存活即 storage_state 回写续期 |
+| `assist xxt extract --course --class [--scope roster|homework|notice]` | xxt_readonly_extract.py v2 | 方案 C 直达导航 + evaluate 直读；失败留痕三分类（§12.2） |
+
+- probe1/2/3 **不进 CLI**，转为 repo 内只读回归证据文档（含失败复现的价值）；
+- 隔离策略：engine 主包保持零浏览器依赖，playwright 作 optional extra
+  （导入失败给出明确安装提示），浏览器适配层单独模块（如 `assist/xxt/browser.py`），
+  定位对标 legacy `browser_helper`/`subplaywright` 分层;
+- **只读硬保证**：route 层拦截 POST/PUT/DELETE（D62 探针已实践），
+  CLI 目录内不提供任何写命令，写沿用 legacy submit_v2/v3 多态上传策略（§7 版本适配口径）;
+- 时序约束：`xxt check`/`xxt login` 可先行落地（语义已稳定）；
+  `xxt extract` 待次轮名单口径/批阅 status 语义/点名册文件三案定案后再集成，避免固化腿三缺陷；
+- 验收锚点：67/43 满员对齐 + 与 web 页面一致性抽检（docs/16 §8.1 延续）。
