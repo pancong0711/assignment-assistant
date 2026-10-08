@@ -179,26 +179,30 @@ def fetch_avatar_b64(storage: "Path | str", timeout_ms: int = 25000) -> "dict | 
         page = ctx.new_page()
         page.goto(HOME_URL, wait_until="domcontentloaded", timeout=60000)
         page.wait_for_timeout(4000)
+        # photo.chaoxing.com 有 Referer 防外链（403）→ 引擎侧以完整浏览器指纹取字节：
         src = page.evaluate("""() => {
+            // D63 批次三实测 selector：img.head-img(50x50)/img.icon-head(30x30)
+            const el = document.querySelector('img.head-img') || document.querySelector('img.icon-head');
+            if (el && el.src && !/error|icon-link/.test(el.src)) return el.src;
             const imgs = [...document.querySelectorAll('img')];
-            const hit = imgs.find(i => /avatar|头像|sso/i.test(i.src))
-                      || imgs.find(i => /u_img|userimg|head/i.test(i.src));
+            const hit = imgs.find(i => i.src.indexOf('photo.chaoxing.com/p/') >= 0);
             return hit ? hit.src : null;
         }""")
-        out = None
-        if src:
-            try:
-                import urllib.request
-                req = urllib.request.Request(src)
-                cookie = "; ".join(f"{c['name']}={c['value']}"
-                                   for c in ctx.cookies() if c['domain'].lstrip('.') in src)
-                rq = urllib.request.Request(src, headers={"Cookie": cookie})
-                data = urllib.request.urlopen(rq, timeout=15).read()
-                out = {"ok": True,
-                       "dataurl": "data:image/" + ("png" if src.endswith('.png') else "jpeg")
-                                  + ";base64," + base64.b64encode(data).decode()}
-            except Exception:
-                out = {"ok": False}
+        if not src:
+            return None
+        import urllib.request
+        from urllib.parse import urlparse as _up
+        import base64 as _b64
+        ck = "; ".join(f"{c['name']}={c['value']}" for c in ctx.cookies()
+                       if 'chaoxing' in c['domain'])
+        req = urllib.request.Request(src, headers={
+            'Cookie': ck,
+            'User-Agent': page.evaluate("() => navigator.userAgent"),
+            'Referer': 'https://i.chaoxing.com/',
+            'Accept': 'image/avif,image/webp,image/apng,image/*,*/*;q=0.8'})
+        data = urllib.request.urlopen(req, timeout=20).read()
+        mime = 'image/png' if data[:4] == b'\x89PNG' else 'image/jpeg'
+        out = {"ok": True, "dataurl": f"data:{mime};base64," + _b64.b64encode(data).decode()}
         # 会话仍视为只读浏览；顺带回写续期
         ctx.storage_state(path=str(storage))
         browser.close()

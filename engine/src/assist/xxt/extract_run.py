@@ -25,6 +25,7 @@ def run_extract(targets: list[dict], storage: "Path | str",
     out_dir.mkdir(parents=True, exist_ok=True)
     roster_dir = Path(roster_dir) if roster_dir else None
     roster_labels = roster_labels or set()
+    run_id = f"xxt-{time.strftime('%Y%m%d-%H%M%S')}"
     chk = check_session(storage)
     rep: dict = {'run_id': None, 'mode': 'readonly',
                  'ts_start': time.strftime('%Y-%m-%d %H:%M:%S'),
@@ -43,6 +44,7 @@ def run_extract(targets: list[dict], storage: "Path | str",
                                   viewport={'width': 1440, 'height': 1000}, locale='zh-CN')
         page = ctx.new_page()
         ext = ReadOnlyExtractor(ctx, page, archive_dir)
+        ext.run_id = run_id
         for course in targets:
             cid = course['courseId']
             head = ext.goto_work_list(cid)
@@ -88,8 +90,8 @@ def run_extract(targets: list[dict], storage: "Path | str",
                 rec['classes'].append(cls_rec)
         browser.close()
     rep['ts_end'] = time.strftime('%Y-%m-%d %H:%M:%S')
-    run_id = f"xxt-{time.strftime('%Y%m%d-%H%M%S')}"
     rep['run_id'] = run_id
+    rep['steps'] = ext.steps          # D63 批次三 §23.1：导航过程事件（PWA 过程框数据源）
     fn = out_dir / f'{run_id}.json'
     fn.write_text(json.dumps(rep, ensure_ascii=False, indent=1), encoding='utf-8')
     rep['out'] = str(fn)  # 不入 PDF/远程，仅运行回执

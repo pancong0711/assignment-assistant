@@ -413,22 +413,7 @@ onMounted(() => {
         模式：本机打开 <code>http://127.0.0.1:8601/</code>（引擎与 PWA 同源，环境体检/修复按钮/批阅均可用）。
       </p>
 
-          <!-- D63 T7.1：Playwright（学习通只读提取依赖）联网安装卡（镜像优先，见 docs/16 §22.1） -->
-    <h3>Playwright（学习通提取 · 只读引导）</h3>
-    <p class="hint">
-      用途：assist xxt 会话体检/只读提取（学习通选项卡）需要本机安装 playwright 包与 chromium 内核。
-      接到引擎后可**一键联网安装**（未随仓库分发任何安装包）。
-    </p>
-    <p>
-      <button class="btn primary" @click="settings.runInstall('playwright')"
-              :disabled="settings.installing !== ''">
-        {{ settings.installing === 'playwright' ? '安装中…（pypi→tuna、内核→npmmirror）' : '⚡ 联网安装 Playwright（国内镜像）' }}
-      </button>
-      <span class="hint" style="margin-left:8px">
-        装完请点上方「体检」回看 playwright 项（绿=就绪）；已装本机 chrome 时可设 XXT_CHROME 免内核下载。
-      </span>
-    </p>
-    <hr />
+          <hr />
     <h3>环境体检（assist serve /doctor）</h3>
       <p>
         <button class="btn primary" :disabled="checking" @click="runDoctorNow">{{ checking ? '体检中…' : '体检' }}</button>
@@ -447,6 +432,23 @@ onMounted(() => {
       <p v-if="settings.installLog" class="hint"><code>安装输出</code>
         <pre style="max-height:160px; overflow:auto; white-space:pre-wrap">{{ settings.installLog }}</pre>
       </p>
+
+    <!-- D63 T7.1：Playwright（学习通只读提取依赖）联网安装卡（镜像优先，见 docs/16 §22.1） -->
+    <h3>Playwright（学习通提取 · 只读引导）</h3>
+    <p class="hint">
+      用途：assist xxt 会话体检/只读提取（学习通选项卡）需要本机安装 playwright 包与 chromium 内核。
+      接到引擎后可**一键联网安装**（未随仓库分发任何安装包）。
+    </p>
+    <p>
+      <button class="btn primary" @click="settings.runInstall('playwright')"
+              :disabled="settings.installing !== ''">
+        {{ settings.installing === 'playwright' ? '安装中…（pypi→tuna、内核→npmmirror）' : '⚡ 联网安装 Playwright（国内镜像）' }}
+      </button>
+      <span class="hint" style="margin-left:8px">
+        装完请点上方「体检」回看 playwright 项（绿=就绪）；已装本机 chrome 时可设 XXT_CHROME 免内核下载。
+      </span>
+    </p>
+
       <div class="notice" v-if="!settings.engineOnline">
         引擎未在线——在本机运行 <code>assist serve</code> 后重试。
         <button class="btn small clip-btn" @click="copyText(SERVE_CMD, 'assist serve 命令')">复制命令</button>

@@ -68,7 +68,7 @@ export function streamInstall(engineAddr: string, jobId: string, token: string |
     const rc = Number(String((ev as MessageEvent).data).replace(/[^0-9-]/g, '') || '0')
     onDone(rc); es.close()
   })
-  es.onerror = () => { es.close() }
+  es.onerror = () => { es.close(); onDone(-1) }   // D64 §22.1：SSE 中断也 resolve（-1），UI 不永悬"安装中"
   return () => es.close()
 }
 

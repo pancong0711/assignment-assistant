@@ -186,16 +186,27 @@ def _doctor_checks(ws: Path) -> list[dict]:
 
 
 def _playwright_state() -> str:
+    """三态检测升级（D64 §22.1 修复）：包在但**内核版本不匹配**（如包为 1200、缓存目录 1228）时
+    旧检测误报"已安装"——现用 `playwright install chromium --dry-run`（0.2s）把"期望安装位置"
+    与实际存在性对照，歧义即如实标缺。"""
     try:
         import importlib.util
         if importlib.util.find_spec("playwright") is None:
             return "未安装（阶段6 需要）"
-        for browsers in (Path(os.environ.get("PLAYWRIGHT_BROWSERS_PATH", "") or "~/.cache/ms-playwright").expanduser(),):
-            if browsers.exists() and any(browsers.iterdir()):
-                return "已安装"
-        return "包已装，内核未安装"
-    except Exception:
-        return "检测失败"
+        py = str(_venv_python() or sys.executable)
+        cp = subprocess.run([py, "-m", "playwright", "install", "chromium", "--dry-run"],
+                            capture_output=True, text=True, timeout=60)
+        if cp.returncode != 0:
+            return f"包已装但自检失败：{(cp.stderr or cp.stdout or '').strip().splitlines()[-1][:80] if (cp.stderr or cp.stdout) else '未知'}"
+        locs = re.findall(r"Install location:\s*(\S+)", cp.stdout or "")
+        missing = [l for l in locs if not Path(l).exists()]
+        if not locs:
+            return "包已装，内核未安装（dry-run 无输出）"
+        if missing:
+            return f"包已装，内核缺失/版本不匹配（需：{Path(missing[0]).name}）→ 一键修复"
+        return "已安装"
+    except Exception as e:
+        return f"检测失败：{e}"
 
 
 
@@ -468,6 +479,26 @@ class Handler(BaseHTTPRequestHandler):
                 except Exception:
                     continue
             self._json({"ok": True, "runs": runs[:20]})
+            return
+        elif u.path.startswith("/xxt/shot/"):
+            m3 = re.fullmatch(r"/xxt/shot/([A-Za-z0-9\-]+)/([A-Za-z0-9\-_.]+)", u.path)
+            if not m3:
+                self._json({"ok": False, "error": "bad path"}, 404)
+                return
+            run_id, fname = m3.group(1), m3.group(2)
+            if not re.fullmatch(r"xxt-[0-9A-Za-z\-]+", run_id):
+                self._json({"ok": False, "error": "bad run"}, 404)
+                return
+            f3 = _xxt_home() / "xxt-pages" / "shots" / f"{run_id}-step{fname}"
+            f3 = f3 if f3.name.endswith('.png') and f3.exists() else (
+                _xxt_home() / "xxt-pages" / "shots" / fname)
+            if not f3.exists() or not f3.name.endswith('.png') or not f3.is_file() or f3.parent.name != 'shots':
+                self._json({"ok": False, "error": "no shot"}, 404)
+                return
+            self.send_response(200)
+            self.send_header("Content-Type", "image/png")
+            self.end_headers()
+            self.wfile.write(f3.read_bytes())
             return
         elif (m2 := re.fullmatch(r"/xxt/run/([A-Za-z0-9\-]+)", u.path)):
             fr = _xxt_home() / f"{m2.group(1)}.json"
