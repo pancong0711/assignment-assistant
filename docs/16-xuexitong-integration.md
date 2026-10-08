@@ -387,19 +387,19 @@ P3 写操作（远期，本阶段不动）
 
 ### 19.1 顶层 RunRecord（一次只读提取=一个 run_id）
 ```json
-{"run_id": "xxt-<UTC/local-时间戳>", "mode": "readonly", "ts_start": "...", "ts_end": "...",
- "session": {"checked_at": "...", "verdict": "alive|dead", "storage": "<路径，不入库值>"},
- "courses": [ { "name": "大学物理C2", "courseId": "236230440", "classes": [ ClassRecord ] } ],
- "failures": [ FailureRecord ] }
+{"run_id": "xxt-20261008-115", "mode": "readonly", "ts_start": "...", "ts_end": "...",
+ "session": {"checked_at": "...", "verdict": "alive|dead", "storage": ".scratch/xxt-storage.json"},
+ "courses": [ { "name": "大学物理C2", "courseId": "236230440", "classes": [ { "$ref": "19.2 ClassRecord" } ] } ],
+ "failures": [ { "$ref": "19.4 FailureRecord" } ] }
 ```
 - 会话体检失败（verdict=dead）→ 整个 run **直接失败退出**，不产出半成品数据；
 
 ### 19.2 ClassRecord（班级粒度）
 ```json
 {"name": "潘聪-化工24级", "classId": "128430068", "cpi": "168131489",
- "works": [ WorkRecord ],
+ "works": [ { "$ref": "19.3 WorkRecord" } ],
  "roster": {"ref": "25C1-master-roster.xlsx", "total": 66,
-            "snake_note": "2023级插班 1 人；名称口径=学习通-25C1-0621 导出"},
+            "note": "2023级插班 1 人；名称口径=学习通-25C1-0621 导出"},
  "notices": [ {"text": "...", "href": "..."} ],
  "status": "extracted", "notes": []}
 ```
