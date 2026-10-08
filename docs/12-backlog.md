@@ -573,3 +573,11 @@ C1 登录/课程/作业浏览/下载（迁 2601 xuexitong 模块）；C2 上传=
 - 现有存档已全量核实化工24 9 份作业统计；口径警报：参作 64~65/42 ≠ 通知分母 67/43 ≠ 点名册（待教师对差值语义）；
 - PWA 需求（讨论稿）：登录仅扫码+体检显式分离；列表呈现基本信息；行置顶（头部/尾部浮钮，sticky 对齐 D56-I1）；列表滚动不撑页；
 - 名单默认仅示数字（PII 最小化），点开见详情；未决：置顶持久化层级/上限/触屏热区。
+
+# 2026-10-08 · T1–T4 落地（commits: T1 会话CLI / T2 master花名册 / T3 schema定稿 / T4 extract v2 实况）
+
+- T1 `assist xxt check/login`：三信号判活+回写（.scratch 探针逻辑入 engine，playwright optional）；
+- T2 25C1 master 花名册：化工24=66（2023级插班1）、环境24=47（47/47 全交叉）；按值形态分类破解超星双错位表头；
+- T3 extract v2 schema（docs/16 §19）：三分类 status（extracted/empty_confirmed/not_extracted）；
+- T4 三类对照实况：22 份 work 名单数==已交数全等；未交名单按 master差集落名；环境24 roster_delta=5 灰注（口径性）；
+- 待办：**T5 教师审核**（审核 .scratch/xxt-20261008-113601-v2.json 摘要）→ 通过后 T6 放量 26 班 ∥ T7 PWA。
