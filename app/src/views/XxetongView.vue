@@ -75,8 +75,37 @@ interface CourseRow { name: string; courseId: string; classes: ClassRow[] }
 const runs = ref<{ run_id: string; ts_end?: string; works?: number; failures?: number }[]>([])
 const curRun = ref<string | null>(null)
 const courses = ref<CourseRow[]>([])
+const loadSteps = ref<{ action: string; detail?: string; title?: string; url?: string; ts?: string; shot?: string }[]>([])
 const loadingRun = ref(false)
 const runMsg = ref('')
+const filterMode = ref<'all' | 'hasWorks' | 'empty' | 'fail'>('all')  // T8
+/* ---- §24 通知查看卡（只读；数据=最新 run 的 notices[]） ---- */
+interface NoticeItem { text: string; href: string }
+const noticeClsFilter = ref<string>('')
+function noticeOf(cl: ClassRow): NoticeItem[] { return (cl as unknown as { notices?: NoticeItem[] }).notices || [] }
+const noticeClasses = computed(() =>
+  courses.value.flatMap(c => c.classes).filter(cl => noticeOf(cl).length > 0))
+const noticeRows = computed(() => {
+  const pool = noticeClasses.value.filter(cl => !noticeClsFilter.value || cl.classId === noticeClsFilter.value)
+  const rows: { cls: string; title: string; when: string; read?: string; ratio?: number }[] = []
+  for (const cl of pool) {
+    for (const it of noticeOf(cl)) {
+      const t = it.text || ''
+      const wm = t.match(/(\d{2}-\d{2} \d{2}:\d{2}|\d{4}-\d{2}-\d{2})/)
+      const rm = t.match(/已读：(\d+)\/(\d+)/)
+      rows.push({ cls: cl.name, title: t.replace(/\s*\d{2}-\d{2} \d{2}:\d{2}.*$/, '').slice(0, 60),
+                  when: wm ? wm[1] : '', read: rm ? `${rm[1]}/${rm[2]}` : undefined,
+                  ratio: rm ? Number(rm[1]) / Math.max(1, Number(rm[2])) : undefined })
+    }
+  }
+  return rows
+})
+const shotUrl = (shot?: string): string => {
+  if (!shot) { return '' }
+  const fname = shot.split('/').pop() || ''
+  const tokArg = tok.value ? `?token=${encodeURIComponent(tok.value)}` : ''
+  return `${engUrl.value.replace(/\/+$/, '')}/xxt/shot/${curRun.value || ''}/${fname}${tokArg}`
+}
 
 /* 列表项可见性（T8） */
 const pinned = ref<string[]>(JSON.parse(localStorage.getItem('xxt-pinned') || '[]') as string[])
@@ -136,6 +165,7 @@ async function loadRun(id: string) {
     const raw = (await fetchXxtRun(engUrl.value, tok.value, id)) as Record<string, unknown>
     curRun.value = String(raw['run_id'] || id)
     courses.value = (raw['courses'] as CourseRow[]) || []
+    loadSteps.value = ((raw['steps'] as unknown[]) || []) as typeof loadSteps.value
     runMsg.value = `run ${curRun.value} 已载入（${courses.value.reduce((a, c) => a + c.classes.length, 0)} 班）`
   } catch (e) {
     runMsg.value = `载入失败：${String(e)}`
@@ -143,10 +173,18 @@ async function loadRun(id: string) {
 }
 
 const grouped = computed(() => courses.value.map(c => {
-  const visible = c.classes.filter(cl => !isRemoved(cl))
+  const pass = (cl: ClassRow): boolean => {
+    if (isRemoved(cl)) { return false }
+    if (filterMode.value === 'hasWorks') { return cl.works.length > 0 }
+    if (filterMode.value === 'empty') { return cl.status === 'empty_confirmed' }
+    if (filterMode.value === 'fail') { return cl.status === 'not_extracted' }
+    return true
+  }
+  const visible = c.classes.filter(pass)
+  if (filterMode.value === 'hasWorks') { visible.sort((a, b) => b.works.length - a.works.length) }
   const pinnedRows = visible.filter(cl => isPinned(cl))
   const normal = visible.filter(cl => !isPinned(cl))
-  return { course: c, pinnedRows, normal }
+  return { course: c, pinnedRows, normal, total: visible.length }
 }))
 
 
@@ -187,6 +225,83 @@ onMounted(() => { refreshStatus(); refreshRuns() })
       </div>
     </div>
 
+    <!-- §24 通知查看卡（只读；数据=最新 run notices[]） -->
+    <div class="card" v-if="noticeRows.length">
+      <h3>通知 <small style="font-weight:400;color:var(--c-muted)">最新 run 抓取的各班通知（只读；{{ noticeRows.length }} 条）</small></h3>
+      <p>
+        <label class="field">班级：
+          <select v-model="noticeClsFilter" style="width:200px">
+            <option value="">全部（{{ noticeClasses.length }} 班有通知）</option>
+            <option v-for="cl in noticeClasses" :key="cl.classId" :value="cl.classId">{{ cl.name }}</option>
+          </select>
+        </label>
+      </p>
+      <div style="max-height:320px; overflow-y:auto; border:1px solid var(--c-border); border-radius:8px">
+        <table style="width:100%; border-collapse:collapse">
+          <tbody>
+            <tr v-for="(r, i) in noticeRows" :key="i">
+              <td style="padding:5px 8px; width:150px">{{ r.cls }}</td>
+              <td style="padding:5px 8px">{{ r.title }}</td>
+              <td style="padding:5px 8px; width:110px; white-space:nowrap">{{ r.when }}</td>
+              <td style="padding:5px 8px; width:90px; white-space:nowrap">
+                <span v-if="r.read" :style="r.ratio !== undefined && r.ratio < 0.9 ? 'color:#7a5c00' : ''">已读 {{ r.read }}</span>
+                <span v-else class="hint" style="color:var(--c-muted)">—</span>
+              </td>
+            </tr>
+          </tbody>
+        </table>
+      </div>
+    </div>
+
+    <!-- §23.3 发公告向导卡（占位 disabled；T10 冻结——表单形态预览，无任何提交逻辑） -->
+    <div class="card">
+      <h3>发公告 <small style="font-weight:400;color:var(--c-muted)">占位（T10 冻结；表单按 §23.3 设计预置，解冻后接引擎写会话）</small>
+        <span class="tag" style="background:#fff3cd; color:#7a5c00; padding:2px 8px; border-radius:6px; font-size:12px">🔒 写操作冻结</span></h3>
+      <fieldset :disabled="true" style="border:none; opacity:.65">
+        <p>
+          <label class="field">发布班级（多选，来自已提取班）：
+            <select multiple disabled style="width:260px" size="3">
+              <option v-for="c in courses" :key="c.courseId" disabled>{{ c.name }}</option>
+            </select>
+          </label>
+        </p>
+        <p><label class="field">标题（≤128 字）：
+          <input type="text" maxlength="128" disabled placeholder="第X章作业说明（占位）" style="width:320px" />
+        </label></p>
+        <p><label class="field" style="vertical-align:top">正文：
+          <textarea rows="3" disabled placeholder="公告正文（占位；解冻后为富文本/纯文本）" style="width:min(480px,90%); vertical-align:middle"></textarea>
+        </label></p>
+        <p><label class="btn as-label btn-file" disabled title="占位：选择「输出与交付」生成的作业纸 PDF">附件（作业纸 PDF）选择器…</label>
+          <span class="hint" style="margin-left:8px">尚未选择（占位）</span></p>
+        <p class="hint">定时发送 / 提醒渠道：占位（缺省关闭，§23.1 侦察对应 .scheduledSend 与四渠道提醒）</p>
+        <p>
+          <button class="btn" disabled>👁 发送前预览（占位）</button>
+          <button class="btn primary" disabled style="margin-left:8px">📢 发布（占位·双确认后启用）</button>
+        </p>
+      </fieldset>
+      <p class="hint" style="color:var(--c-muted)">
+        解冻流程（docs/16 §23.2）：教师确认测试班 → 引擎写会话（route 白名单仅公告域+上传 CDN）→
+        发送前快照存档 → 二次确认 → 提交；本卡所有控件 disabled，不含任何提交逻辑。
+      </p>
+    </div>
+
+    <!-- 导航过程展示框（§20.3 方案 A；数据=run steps/shots；页宽横向滚动缩略卡流） -->
+    <div class="card" v-if="loadSteps.length">
+      <h3>提取过程 <small style="font-weight:400;color:var(--c-muted)">最新 run 的页面导航流（每跳一张缩略图；引擎真会话所拍）</small></h3>
+      <div style="display:flex; gap:10px; overflow-x:auto; padding-bottom:6px">
+        <div v-for="(st, i) in loadSteps" :key="i"
+             style="min-width:190px; border:1px solid var(--c-border); border-radius:8px; overflow:hidden; background:var(--c-surface,#fff)">
+          <img v-if="st.shot" :src="shotUrl(st.shot)" :alt="st.action" style="width:190px; height:107px; object-fit:cover; display:block" />
+          <div style="padding:6px 8px">
+            <div style="font-size:12px"><b>{{ i+1 }}. {{ st.action }}</b></div>
+            <div class="hint" style="font-size:11px; color:var(--c-muted); word-break:break-all">
+              {{ st.detail || '' }} · {{ st.title || (st.url || '').slice(0, 46) }}<br /><span style="opacity:.7">{{ st.ts }}</span>
+            </div>
+          </div>
+        </div>
+      </div>
+    </div>
+
     <!-- 列表卡 -->
     <div class="card">
       <h3>读提取结果 <small style="font-weight:400;color:var(--c-muted)">基于最近 run JSON（§19 schema）；点开行看名单</small></h3>
@@ -199,6 +314,14 @@ onMounted(() => { refreshStatus(); refreshRuns() })
           </select>
         </label>
         <button class="btn" style="margin-left:8px" @click="() => loadRun(curRun || '')" :disabled="!curRun">重载本 run</button>
+        <label class="field" style="margin-left:12px">筛选：
+          <select v-model="filterMode" style="width:150px">
+            <option value="all">全部班级</option>
+            <option value="hasWorks">有作业（多→少）</option>
+            <option value="empty">确认为 0</option>
+            <option value="fail">未提取（失败）</option>
+          </select>
+        </label>
       </p>
       <p v-if="runMsg" class="hint">{{ runMsg }}</p>
       <p v-if="runs.length" class="hint" style="color:var(--c-muted)">
@@ -249,6 +372,18 @@ onMounted(() => { refreshStatus(); refreshRuns() })
                           </tr>
                         </tbody>
                       </table>
+                      <div style="margin-top:6px">
+                        <details>
+                          <summary class="hint">未交名单 / 白名单（仅本机教师端可见）</summary>
+                          <div v-for="w in cl.works" :key="'n'+w.workId" style="margin:4px 0; font-size:12px">
+                            <b>{{ w.name }}</b>：
+                            <span>未交（{{ (w.unsubmitted_names || []).length }}）：</span>
+                            <span style="word-break:break-all">{{ (w.unsubmitted_names || []).join('、') || '（无差集或本班无名册基准）' }}</span>
+                            <span v-if="(w.sub_not_in_roster || []).length "> ｜ 提交但不在名册（白名单）：</span>
+                            <span v-if="(w.sub_not_in_roster || []).length" style="word-break:break-all">{{ (w.sub_not_in_roster || []).join('、') }}</span>
+                          </div>
+                        </details>
+                      </div>
                     </details>
                   </td>
                   <td style="padding:6px 8px; text-align:center">
