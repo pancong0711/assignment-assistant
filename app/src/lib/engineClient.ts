@@ -36,6 +36,16 @@ export async function startInstall(engineAddr: string, item: string,
   return o.job_id
 }
 
+/** D64 §22.1：POST /restart —— 引擎进程自愈重启（旧进程 execv 新代码）。
+ *  返回 true=重启请求已受理；随后引擎会有 <1s 的断流，调用方应轮询 /status 等回线。 */
+export async function restartEngine(engineAddr: string, token?: string): Promise<boolean> {
+  const base = normalizeEngineAddr(engineAddr)
+  const res = await fetch(engineUrlWithToken(base, '/restart', token), { method: 'POST' })
+  if (!res.ok) throw new Error(`HTTP ${res.status}`)
+  const o = (await res.json()) as { ok?: boolean }
+  return Boolean(o?.ok)
+}
+
 /** B4：把 PWA 内存 KbBook 交引擎 openpyxl 原位写回（保留样式），返回引擎写入路径。 */
 export async function writeKbViaEngine(
   engineAddr: string, token: string | undefined, kind: string, chapters: unknown,

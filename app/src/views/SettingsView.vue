@@ -3,7 +3,7 @@ import { computed, onMounted, ref } from 'vue'
 import { useSettingsStore } from '../stores/settings'
 import { pickDirectory, detectCapabilities, fsWriteHint, downloadData } from '../lib/fsAccess'
 import { getKbDirHandle } from '../stores/kb'
-import { statusGlyph } from '../lib/engineClient'
+import { statusGlyph, restartEngine } from '../lib/engineClient'
 
 const settings = useSettingsStore()
 const caps = detectCapabilities()
@@ -104,6 +104,33 @@ const katexChecking = ref(false)
 const katexInstalling = ref(false)
 const dirHandleConnected = ref(false)
 const dirName = ref('')
+
+/** D64 §22.1：重启引擎（安装新代码后 PWA 一键生效）。受理后轮询 /status 至回在线，再自动重跑体检。 */
+const engineRestarting = ref(false)
+async function restartEngineNow() {
+  if (engineRestarting.value) return
+  if (!confirm('重启本地引擎进程？约 1–2 秒（期间批阅/体检不可用），重启后自动回在线并重跑体检。')) return
+  engineRestarting.value = true
+  try {
+    await restartEngine(settings.engineUrl, settings.engineToken)
+  } catch (e) {
+    engineRestarting.value = false
+    alert('重启请求失败：' + (e as Error).message + '（引擎未在线？请从终端 Ctrl+C 后重跑 assist serve）')
+    return
+  }
+  // 轮询等回在线（最多 12s；起不来就提示走终端重启）
+  for (let i = 0; i < 24; i++) {
+    await new Promise(r => setTimeout(r, 500))
+    const online = await settings.pingEngine()
+    if (online) {
+      engineRestarting.value = false
+      await runDoctorNow()
+      return
+    }
+  }
+  engineRestarting.value = false
+  alert('引擎 12s 内未回在线——请到引擎终端窗口查看报错或手动重跑。')
+}
 
 /** D56-J5：刷新 workspace 句柄状态（会话内 + IndexedDB 恢复）。 */
 async function refreshWorkspaceState() {
@@ -417,6 +444,9 @@ onMounted(() => {
     <h3>环境体检（assist serve /doctor）</h3>
       <p>
         <button class="btn primary" :disabled="checking" @click="runDoctorNow">{{ checking ? '体检中…' : '体检' }}</button>
+        <button class="btn" style="margin-left:8px" :disabled="engineRestarting || checking"
+                title="使引擎侧代码/配置改动生效（进程重启，约1–2s）"
+                @click="restartEngineNow">{{ engineRestarting ? '重启中…' : '🔄 重启引擎' }}</button>
         <span class="hint" style="margin-left:8px">{{ statusHint }}</span>
       </p>
       <ul class="check-list">

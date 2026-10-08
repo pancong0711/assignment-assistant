@@ -80,6 +80,9 @@ def install_katex(ws: Path, emit) -> int:
     return 0
 
 _JOBS: dict[str, dict] = {}
+_RESTART_ARGS: tuple = (  # ('serve', --workspace …)：python -c 入口的 click argv
+    'serve',
+)  # serve() 收到的启动参数（/restart 用 os.execv 原样再生进程）
 _JOBS_LOCK: threading.Lock = threading.Lock()
 _ENGINE_ROOT = Path(__file__).resolve().parents[2]
 
@@ -430,6 +433,25 @@ class Handler(BaseHTTPRequestHandler):
             threading.Thread(target=_xxt_login_worker, daemon=True).start()
             self._json({"ok": True, "job_id": job_id, "qr_url": "/xxt/qr"})
             return
+        if u.path == "/restart":
+            # D64 §22.1：引擎自愈式重启（安装了新代码/改了 env 后 PWA 一键生效）。
+            # 安全哨兵：非 lan 模式只接受回环来源；lan 模式已过 token 校验（do_POST 顶部）。
+            peer = self.client_address[0]
+            if not Handler.token and peer not in ("127.0.0.1", "::1"):
+                self._json({"ok": False, "error": "loopback only"}, 403)
+                return
+            if not _RESTART_ARGS:
+                self._json({"ok": False, "error": "restart args unknown (进程非 assist serve 启动？)"}, 409)
+                return
+            self._json({"ok": True, "restarting": True})
+            import time as _t2, threading as _th
+            def _reborn():
+                _t2.sleep(0.5)  # 让响应字节先落到 socket
+                os.execv(sys.executable,
+                         [sys.executable, "-c",
+                          "from assist.cli import main; main()", *_RESTART_ARGS])
+            _th.Thread(target=_reborn, daemon=True).start()
+            return
         m = re.fullmatch(r"/install/([a-z_]+)", u.path)
         if not m:
             self._json({"ok": False, "error": "not found"}, 404)
@@ -596,6 +618,8 @@ def serve(workspace: str | None, host: str = "127.0.0.1", port: int = 8601,
     else:
         logger.info(f"本机模式 http://127.0.0.1:{port}/（引擎与 PWA 同源）")
     logger.info(f"workspace={ws}")
+    global _RESTART_ARGS
+    _RESTART_ARGS = ("serve", "--workspace", str(ws), "--port", str(port)) + (("--lan",) if lan else ())
     httpd = ThreadingHTTPServer((host, port), Handler)
     Handler.token = token
     try:
