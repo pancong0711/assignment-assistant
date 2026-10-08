@@ -3,6 +3,7 @@ import { computed, onMounted, ref } from 'vue'
 import { useSettingsStore } from '../stores/settings'
 import { fetchXxtRun, fetchXxtStatus, fetchXxtRuns } from '../lib/engineClient'
 import ProcessStreamView from '../components/ProcessStreamView.vue'
+import { demoReport, stringifyReviewReportHtml, type ReviewReport } from '../lib/reports'
 import { parseTaskpad, type Taskpad } from '../lib/taskpad'
 
 /** 批阅工作台（阶段4a 静态可用版，docs/05-D2/D13）。
@@ -71,6 +72,22 @@ async function onPadFile(e: Event) {
 /* ---------- 学生图片（本地多选，仅列出，不上传） ---------- */
 interface ImgEntry { name: string; size: number; student: string }
 const images = ref<ImgEntry[]>([])
+
+/* ---------- D64-d：作业纸式批阅报告预览（N4：竖=逐题行/横=左右半）----------
+ * 当前仅 demo 数据（验收锚点 c/d 版式验证）；真数据=引擎批阅产物（R1 原图+转录+评阅），
+ * 接入端口=ditorial参数（版式层不动）。 */
+const reportHtml = ref('')
+const reportOri = ref<'portrait' | 'landscape'>('portrait')
+
+function previewReport(ori: 'portrait' | 'landscape'): void {
+  reportOri.value = ori
+  const r: ReviewReport = demoReport(ori)
+  r.student.name = groups.value[0]?.student ?? r.student.name
+  reportHtml.value = stringifyReviewReportHtml(r)
+  const w = window.open('', '_blank')
+  if (w) { w.document.write(reportHtml.value); w.document.close() }
+  status.value = `已生成${ori === 'portrait' ? '竖版' : '横版'}报告预览（示例数据；真数据待引擎批阅接入）`
+}
 
 function goXxt(): void {
   // 同页内 tab 切换（App.vue 以 hash 直达 tab）
