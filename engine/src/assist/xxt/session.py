@@ -162,3 +162,44 @@ def qr_login(storage: "Path | str | None" = None,
         _write(stage="timeout", url=page.url)
         browser.close()
     return {**state, "verdict": "timeout"}
+
+
+def fetch_avatar_b64(storage: "Path | str", timeout_ms: int = 25000) -> "dict | None":
+    """alive 会话内抓教师工作台头像 → {"ok":True,"dataurl":...}; 无头像 None（PWA 退二维码态）。"""
+    _require_playwright()
+    import base64
+    from playwright.sync_api import sync_playwright
+    storage = Path(storage)
+    if not storage.exists():
+        return None
+    with sync_playwright() as pw:
+        browser = _launch(pw, headless=True)
+        ctx = browser.new_context(storage_state=str(storage),
+                                  viewport={"width": 1440, "height": 1000}, locale="zh-CN")
+        page = ctx.new_page()
+        page.goto(HOME_URL, wait_until="domcontentloaded", timeout=60000)
+        page.wait_for_timeout(4000)
+        src = page.evaluate("""() => {
+            const imgs = [...document.querySelectorAll('img')];
+            const hit = imgs.find(i => /avatar|头像|sso/i.test(i.src))
+                      || imgs.find(i => /u_img|userimg|head/i.test(i.src));
+            return hit ? hit.src : null;
+        }""")
+        out = None
+        if src:
+            try:
+                import urllib.request
+                req = urllib.request.Request(src)
+                cookie = "; ".join(f"{c['name']}={c['value']}"
+                                   for c in ctx.cookies() if c['domain'].lstrip('.') in src)
+                rq = urllib.request.Request(src, headers={"Cookie": cookie})
+                data = urllib.request.urlopen(rq, timeout=15).read()
+                out = {"ok": True,
+                       "dataurl": "data:image/" + ("png" if src.endswith('.png') else "jpeg")
+                                  + ";base64," + base64.b64encode(data).decode()}
+            except Exception:
+                out = {"ok": False}
+        # 会话仍视为只读浏览；顺带回写续期
+        ctx.storage_state(path=str(storage))
+        browser.close()
+        return out

@@ -193,3 +193,69 @@ export async function fetchDoctor(engineAddr: string, token?: string): Promise<D
 
 /** 引擎未在线时的引导命令（D13：体检页逐项 + 复制命令按钮）。 */
 export const SERVE_HINT_CMD = 'uv run assist serve        # 引擎在线后本页自动识别（默认 http://127.0.0.1:8601）'
+
+/* ========== D63 T7/T8：学习通对接端点（engine serve xxt 组） ========== */
+
+export interface XxtSessionStatus {
+  verdict: 'alive' | 'dead' | 'unknown' | string
+  checked_at?: string
+  final_url?: string
+  reasons?: string[]
+  hint?: string
+  storage_exists?: boolean
+  storage_refreshed?: string
+}
+
+export interface XxtRunRow {
+  run_id: string
+  ts_start?: string
+  ts_end?: string
+  failures?: number
+  classes?: number
+  works?: number
+}
+
+/** GET /xxt/status：体检（engine 侧 TTL 缓存）+ 头像 data-URL（alive 时非空）。 */
+export async function fetchXxtStatus(engineAddr: string, token?: string)
+  : Promise<{ verdict: string; avatar_dataurl?: string | null; info?: XxtSessionStatus }> {
+  const base = normalizeEngineAddr(engineAddr)
+  const o = (await getJson2(engineUrlWithToken(base, '/xxt/status', token))) as
+    { ok: boolean; xxt?: XxtSessionStatus; avatar?: { ok?: boolean; dataurl?: string } }
+  const x = (o.xxt || {}) as XxtSessionStatus
+  return {
+    verdict: x.verdict || 'unknown',
+    avatar_dataurl: (o.avatar && o.avatar.ok && o.avatar.dataurl) ? o.avatar.dataurl : null,
+    info: x,
+  }
+}
+
+/** POST /xxt/login/start：后台扫码登录任务（job_id 起步，QR 由 /xxt/qr 轮询）。 */
+export async function startXxtLogin(engineAddr: string, token?: string): Promise<string> {
+  const base = normalizeEngineAddr(engineAddr)
+  const res = await fetch(engineUrlWithToken(base, '/xxt/login/start', token), { method: 'POST' })
+  if (!res.ok) throw new Error(`HTTP ${res.status}`)
+  const o = (await res.json()) as { job_id: string }
+  return o.job_id
+}
+
+/** GET /xxt/runs：只读提取 run 清单（engine 本仓/工件目录）。 */
+export async function fetchXxtRuns(engineAddr: string, token?: string): Promise<XxtRunRow[]>
+  {
+  const base = normalizeEngineAddr(engineAddr)
+  const o = (await getJson2(engineUrlWithToken(base, '/xxt/runs', token))) as
+    { ok: boolean; runs?: XxtRunRow[] }
+  return o.runs || []
+}
+
+/** GET /xxt/run/<id>：单 run 全量 JSON（同源教师端，含姓名=本机隐私域）。 */
+export async function fetchXxtRun(engineAddr: string, token: string | undefined, runId: string)
+  : Promise<unknown> {
+  const base = normalizeEngineAddr(engineAddr)
+  return (await getJson2(engineUrlWithToken(base, `/xxt/run/${encodeURIComponent(runId)}`, token)))
+}
+
+async function getJson2(url: string): Promise<unknown> {
+  const res = await fetch(url)
+  if (!res.ok) throw new Error(`HTTP ${res.status}`)
+  return res.json()
+}

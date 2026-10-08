@@ -32,6 +32,41 @@ def register(group: click.Group) -> None:
                               {"markers": rep.get("markers")}, ensure_ascii=False, indent=1))
         raise SystemExit(0 if rep.get("verdict") == "alive" else 2)
 
+    @group.command("extract")
+    @click.option("--targets", "targets", required=True, type=click.Path(exists=True, dir_okay=False),
+                  help="目标清单 JSON（round-1 schema: courses[].classes[]）")
+    @click.option("--storage", "storage", default=None, type=click.Path(dir_okay=False))
+    @click.option("--out-dir", "out_dir", default=None, type=click.Path(file_okay=False))
+    @click.option("--archive-dir", "archive_dir", default=None, type=click.Path(file_okay=False))
+    @click.option("--roster-dir", "roster_dir", default=None, type=click.Path(file_okay=False),
+                  help="与--roster-labels 配套：学习通-25C1-<班>-0621.xlsx 所在目录")
+    @click.option("--roster-label", "roster_labels", multiple=True,
+                  help="差集基准班级标签（可多次；命中班级名子串即启用名册差集）")
+    @click.option("--skip-notices", is_flag=True, default=False, help="跳过通知抓取")
+    def xxt_extract(targets, storage, out_dir, archive_dir, roster_dir, roster_labels, skip_notices):
+        """只读提取 run（T9）：体检前置→逐班直达导航+evaluate直读→JSON+存档；POST 全拦截。"""
+        import json as _json
+        from .extract_run import run_extract
+        from .session import check_session
+        spec = _json.loads(Path(targets).read_text(encoding='utf-8'))
+        base = default_storage(None).parent
+        roster_src = Path(roster_dir) if roster_dir else None
+        rep = run_extract(spec.get('courses', []),
+                          storage=storage or default_storage(None),
+                          out_dir=out_dir or base / 'runs',
+                          archive_dir=archive_dir or base / 'pages',
+                          roster_dir=roster_dir,
+                          roster_labels=set(roster_labels or []),
+                          skip_notices=skip_notices)
+        summary = {'run_id': rep.get('run_id'), 'ts_end': rep.get('ts_end'),
+                   'failures': rep.get('failures'),
+                   'classes': sum(len(c.get('classes', [])) for c in rep.get('courses', [])),
+                   'works': sum(len(c2.get('works', [])) for c in rep.get('courses', [])
+                                for c2 in c.get('classes', []))}
+        click.echo(_json.dumps(summary, ensure_ascii=False, indent=1))
+        click.echo(f"out={rep.get('out', '(failed)')}")
+        raise SystemExit(0 if not rep.get('failures') else 1)
+
     @group.command("login")
     @click.option("--storage", "storage", default=None, type=click.Path(dir_okay=False),
                   help="storage_state JSON 目标（覆盖旧值）")

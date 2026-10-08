@@ -197,6 +197,52 @@ def _playwright_state() -> str:
         return "检测失败"
 
 
+
+def _xxt_home() -> Path:
+    """xxt 工件根（storage/runs/pages）：env XXT_HOME > dev repo .scratch > workspace/.runtime/xxt。"""
+    env = os.environ.get("XXT_HOME")
+    if env:
+        return Path(env)
+    repo_root = Path(__file__).resolve().parents[3]
+    if (repo_root / ".scratch" / "xxt-storage.json").exists():
+        return repo_root / ".scratch"
+    return _ws() / ".runtime" / "xxt"
+
+
+def _xxt_session_check_cached(max_age=60):
+    """体检结果进程内缓存（TTL；fallback：playwright 未装时给明确 unknown）。"""
+    import time as _t
+    global _XXT_CHECK
+    now = _t.time()
+    if _XXT_CHECK and now - _XXT_CHECK[0] < max_age:
+        return _XXT_CHECK[1]
+    from .xxt.session import check_session
+    try:
+        rep = check_session(_xxt_home() / "xxt-storage.json")
+    except Exception as e:  # playwright missing 等
+        rep = {"verdict": "unknown", "reasons": [str(e)[:200]]}
+    _XXT_CHECK = (now, rep)
+    return rep
+
+
+def _xxt_avatar_cached(max_age=600):
+    """头像 data-URL（engine 同会话中转，base64；TTL 缓存）。"""
+    import time as _t
+    global _XXT_AVATAR
+    now = _t.time()
+    if _XXT_AVATAR and now - _XXT_AVATAR[0] < max_age:
+        return _XXT_AVATAR[1]
+    data = None
+    if _xxt_session_check_cached().get("verdict") == "alive":
+        try:
+            from .xxt.session import fetch_avatar_b64
+            data = fetch_avatar_b64(_xxt_home() / "xxt-storage.json")
+        except Exception:
+            data = None
+    _XXT_AVATAR = (now, data)
+    return data
+
+
 def _static_root() -> "Path | None":
     for cand in (_ENGINE_ROOT.parent / "app" / "dist-lan",
                  _ENGINE_ROOT.parent / "app" / "dist"):
@@ -204,11 +250,21 @@ def _static_root() -> "Path | None":
             return cand
     return None
 
+_XXT_CHECK = None  # (ts, report)
+_XXT_AVATAR = None  # (ts, dataurl|None)
+
 
 class Handler(BaseHTTPRequestHandler):
     ws: Path = None  # type: ignore
     token: str = ""
     cors: bool = True
+
+    def _raw(self, body: bytes, ctype: str, code: int = 200):
+        self.send_response(code)
+        self.send_header("Content-Type", ctype)
+        self.send_header("Access-Control-Allow-Origin", "*")
+        self.end_headers()
+        self.wfile.write(body)
 
     def _json(self, obj, code: int = 200):
         body = json.dumps(obj, ensure_ascii=False, indent=1).encode("utf-8")
@@ -288,6 +344,7 @@ class Handler(BaseHTTPRequestHandler):
                 q.put("__DONE__-1__")
         threading.Thread(target=worker, daemon=True).start()
 
+
     def do_OPTIONS(self):
         """CORS 预检：PWA 跨源 POST JSON（如 /kb/write）需要。"""
         self.send_response(204)
@@ -328,6 +385,36 @@ class Handler(BaseHTTPRequestHandler):
                 return
             self._json({"ok": True, "path": str(out), "kind": kind})
             return
+        if u.path == "/xxt/login/start":
+            job_id = secrets.token_urlsafe(6)
+            env = {"XXT_STORAGE": str(_xxt_home() / "xxt-storage.json"),
+                   **os.environ}
+            cmd = [_venv_python(), "-c",
+                   "import sys,json;"
+                   "from assist.xxt.session import qr_login;"
+                   "print(json.dumps(qr_login(), ensure_ascii=False))"]
+            import queue as _q
+            q_, out = _q.Queue(), []
+            with _JOBS_LOCK:
+                _JOBS[job_id] = {"item": "xxt_login", "queue": q_, "lines": out,
+                                 "status": "running", "returncode": None}
+            def _xxt_login_worker():
+                try:
+                    cp = subprocess.run(cmd, capture_output=True, text=True,
+                                        timeout=2300, env=env,
+                                        cwd=str(_ENGINE_ROOT.parent))
+                    for line in (cp.stdout or "").splitlines()+ (cp.stderr or "").splitlines():
+                        q_.put(line); out.append(line)
+                    _JOBS[job_id]["returncode"] = cp.returncode
+                    _JOBS[job_id]["status"] = "done" if cp.returncode == 0 else "failed"
+                    q_.put(f"__DONE__{cp.returncode}__")
+                except Exception as exc:
+                    q_.put(str(exc)); out.append(str(exc))
+                    _JOBS[job_id]["status"] = "failed"; _JOBS[job_id]["returncode"] = -1
+                    q_.put("__DONE__-1__")
+            threading.Thread(target=_xxt_login_worker, daemon=True).start()
+            self._json({"ok": True, "job_id": job_id, "qr_url": "/xxt/qr"})
+            return
         m = re.fullmatch(r"/install/([a-z_]+)", u.path)
         if not m:
             self._json({"ok": False, "error": "not found"}, 404)
@@ -345,6 +432,45 @@ class Handler(BaseHTTPRequestHandler):
         raw_qs = urllib.parse.parse_qs(u.query)
         if not self._ok_token(raw_qs):
             self._json({"ok": False, "error": "token required"}, 401)
+            return
+        if u.path == "/xxt/status":
+            self._json({"ok": True, "xxt": _xxt_session_check_cached(),
+                        "avatar": _xxt_avatar_cached()})
+            return
+        elif u.path == "/xxt/qr":
+            qr = _xxt_home() / "xxt-qr.png"
+            if not qr.exists():
+                self._json({"ok": False, "error": "no qr yet"}, 404)
+                return
+            self.send_response(200)
+            self.send_header("Content-Type", "image/png")
+            self.end_headers()
+            self.wfile.write(qr.read_bytes())
+            return
+        elif u.path == "/xxt/runs":
+            home = _xxt_home()
+            runs = []
+            for f2 in sorted(home.glob("xxt-*.json"), key=lambda p2: p2.stat().st_mtime, reverse=True):
+                if "login-state" in f2.name or f2.name in ("xxt-readonly.json", "xxt-notices.json", "xxt-session-check.json", "xxt-storage.json", "xxt-login-state.json"):
+                    continue
+                try:
+                    d = json.loads(f2.read_text(encoding="utf-8"))
+                    runs.append({"run_id": d.get("run_id") or f2.stem, "ts_start": d.get("ts_start"),
+                                 "ts_end": d.get("ts_end"),
+                                 "failures": len(d.get("failures") or []),
+                                 "classes": sum(len(c.get("classes", [])) for c in d.get("courses", [])),
+                                 "works": sum(len(c2.get("works", [])) for c in d.get("courses", [])
+                                              for c2 in c.get("classes", []))})
+                except Exception:
+                    continue
+            self._json({"ok": True, "runs": runs[:20]})
+            return
+        elif (m2 := re.fullmatch(r"/xxt/run/([A-Za-z0-9\-]+)", u.path)):
+            fr = _xxt_home() / f"{m2.group(1)}.json"
+            if not fr.exists() or not re.fullmatch(r"xxt-[0-9A-Za-z\-]+", m2.group(1)):
+                self._json({"ok": False, "error": "no such run"}, 404)
+                return
+            self._json(json.loads(fr.read_text(encoding="utf-8")))
             return
         if u.path == "/doctor":
             checks = _doctor_checks(Path(self.ws).resolve())
