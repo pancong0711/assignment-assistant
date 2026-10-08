@@ -31,7 +31,10 @@ async function refreshStatus() {
     } else if (r.verdict === 'dead') {
       loginHint.value = `会话失效${(r.info?.reasons || []).join('，')}——请扫码`
     } else {
-      loginHint.value = '引擎未记录会话（未安装 playwright 或未登录）'
+      const why = (r.info?.reasons || []).join('，')
+      loginHint.value = why.includes('playwright')
+        ? '引擎缺 playwright——请到「设置中心 → Playwright（学习通提取）」一键联网安装'
+        : '引擎未记录会话（未扫码登录），可点上方「扫码登录」'
     }
   } catch {
     verdict.value = 'unknown'

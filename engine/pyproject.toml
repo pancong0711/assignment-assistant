@@ -14,6 +14,10 @@ dependencies = [
     "jinja2>=3.0",
 ]
 
+# D63 T7：学习通只读提取的可选依赖（`uv pip install -e engine[playwright]`；不进主 deps）。
+[project.optional-dependencies]
+playwright = ["playwright>=1.40"]
+
 # VB-1 HTML 主通道模板（engine/templates/assignment.html.j2）随 wheel 打包：
 # 仓库形态从 engine/templates 读，安装形态落到包内 assist/templates。
 [tool.hatch.build.targets.wheel.force-include]

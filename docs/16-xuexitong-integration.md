@@ -478,3 +478,27 @@ P3 写操作（远期，本阶段不动）
   （X-Frame-Options/CSP + 域不共享 cookie → 第二登录，违背单一会话）；
 - HTML/JS 仅用于我们自己 UI（两框+列表视图），不对标学习通页面本身；
 - 数据契约顺延：提取事件/截图均为 engine 只读产物，进 19.1 run 记录的旁支（archives 字段）。
+
+### 22.1 playwright 联网安装链路（T7.1 · 2026-10-08 拍板落地：镜像优先）
+- **定案**：联网安装、零仓库分发安装包（用户口径）。engine 已有 `/doctor` 检查项
+  与 `/install/playwright` 通道 → 本次接完两处缺线：
+  1. `pyproject` 新增 `[project.optional-dependencies] playwright = ["playwright>=1.40"]`；
+  2. `/install/playwright` 升级两步特殊项（`xxt/installer.py::install_playwright`）：
+     ①Python 包走 `uv pip install --index-url`（缺省 **tuna**；教师 env 可覆）
+       / 无 uv 回落 `pip -i` 同源；
+     ②内核 `python -m playwright install chromium`（`PLAYWRIGHT_DOWNLOAD_HOST`
+       缺省 **npmmirror**；教师 env 覆盖尊重）；
+- **doctor fix 接线**：playwright 检查项补 `fix={type:"install", install:"playwright"}`
+  → 设置中心体检卡自动出现「🔧修复」按钮；另给常驻卡
+  「Playwright（学习通提取）」=一键联网安装 + 提示"装完需回体检"；
+- **XXT_CHROME 边界**：env 指本机现成 chrome/chromium 可跳过②（仅终端路径，非默认）；
+- 干跑实证：emit 输出+两步命令拼装正确（uv→tuna / chromium→npmmirror）；
+- 未决远延：包安装与 serve 同进程磁盘/venv 推断仍有空间（现取 `_venv_python`），
+  首次真实安装后若 vendored venv 缺 playwright 包路径不再报错即闭环。
+
+### 22.2 待办顺延表（D63 结余）
+1. 工作台头像 selector 首查（§21.5）；
+2. 班级排序/筛选（按 status/有无作业）；
+3. run JSON workspace 归属（部署切 XXT_HOME env）；
+4. ~~playwright 一键安装/检测模块~~（本次完成）；
+5. 教师机真装一遍 playwright（P0-b 后任一时点，约 40+150MB 镜像流量）。

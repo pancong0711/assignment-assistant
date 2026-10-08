@@ -151,7 +151,8 @@ def _doctor_checks(ws: Path) -> list[dict]:
                          ("缺: " + ", ".join(missing)) if missing else "openpyxl/reportlab/loguru/httpx/pillow",
                          {"type": "install", "install": "deps"} if missing else {}))
     pw = _playwright_state()
-    checks.append(_check("playwright", "green" if pw == "已安装" else "yellow", "Playwright（阶段6）", pw, {}))
+    checks.append(_check("playwright", "green" if pw == "已安装" else "yellow", "Playwright（阶段6）", pw,
+                         {"type": "install", "install": "playwright"}))
     try:
         from .paper.latex import check_xelatex
         x = check_xelatex(ws)
@@ -280,8 +281,8 @@ class Handler(BaseHTTPRequestHandler):
         return (not Handler.token) or qs.get("token", [""])[0] == Handler.token
 
     def _start_job(self, job_id: str, item: str):
-        if item in ("katex", "tinytex"):
-            # D55/H1/D58：特殊安装项（服务端写盘 / 网络下载解压），不走通用 shell installer。
+        if item in ("katex", "tinytex", "playwright"):
+            # D55/H1/D58 + D63/T7.1：特殊安装项（服务端写盘 / 联网下载解压；playwright=两步国内镜像联网）
             q: "queue.Queue[str]" = queue.Queue()
             out: list[str] = []
             with _JOBS_LOCK:
@@ -292,6 +293,9 @@ class Handler(BaseHTTPRequestHandler):
                     emit = lambda line: (q.put(line), out.append(line))
                     if item == "katex":
                         rc = install_katex(_ws(), emit)
+                    elif item == "playwright":
+                        from .xxt.installer import install_playwright
+                        rc = install_playwright(emit)
                     else:
                         from .paper.tinytex import install_tinytex
                         rc = install_tinytex(_ws(), emit)
