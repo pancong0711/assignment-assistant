@@ -1147,3 +1147,16 @@ applyManualTranslation/setTranslationRatio 中 setTranslationRatio 保留——�
   - D71-3 新增引擎适配层 `engine/run_engine.bat|sh`，外部 launcher 不再硬编码 `assist.cli serve`；
   - D71-5 PWA/terminal 全过程输出；
 - 验证：77 tests、lint_bat、start.sh syntax、npm build。
+
+---
+
+## D72 · PWA 一键提取账户信息 + 预览整合（2026-10-09）
+
+- 主需求单：`docs/23-D72-pwa-extract-preview.md`；
+- 目标：
+  - PWA 学习通页新增「📥 提取账户数据」按钮；
+  - engine 新增账户发现/全量提取能力，复用旧 `.scratch/xxt_readonly_extract.py` 只读方法；
+  - `POST /xxt/extract` job；
+  - 统一 run/pages/shots 路径契约；
+  - 提取后自动刷新列表；
+  - 过程预览/作业纸预览/批阅报告预览统一挂到本地 run 数据源。

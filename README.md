@@ -32,6 +32,7 @@
 - `docs/13-taskboard.md` — **任务需求单 / 近轮实施记录**（D43–D62）
 - `docs/15-usage-manual.md` — 教师使用说明（同源 HelpView）
 - `docs/22-D71-engine-launcher-two-phase-update.md` — **D71 扫码导航竞态 + engine 两阶段自更新 + launcher/engine 边界**
+- `docs/23-D72-pwa-extract-preview.md` — **D72 PWA 一键提取账户信息 + 作业纸/批阅报告/过程预览整合**
 - `docs/16-xuexitong-integration.md` — **阶段6 学习通整合任务需求单**（登录/读取/下载/上传/发布）
 - `_legacy/` — 原始两项目解档（仅本地参考，已被 gitignore，永不推送）
 
