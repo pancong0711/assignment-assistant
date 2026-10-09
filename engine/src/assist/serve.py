@@ -3,6 +3,7 @@
 端点：
 - GET  /doctor            体检 JSON（A3 id 定版；fix: install=deps/fonts 等）
 - GET  /status            引擎版本 / workspace
+- GET  /engine/version    本地/远端 engine 版本对比（D65-P4）
 - POST /kb/write          B4：openpyxl 样式保留写回（PWA 在线保存）
 - POST /install/<item>    发起安装任务（deps/playwright/fonts/katex/tinytex/tex_guide/python_guide/uv/kb_init）
                           返回 {ok, job_id}；item 不支持的安装给 guide 文本作业输出
@@ -31,7 +32,7 @@ from loguru import logger
 from . import __version__
 
 CHECK_IDS = ("python_env", "uv", "deps", "playwright", "xelatex", "fonts", "settings", "kb")
-INSTALL_ITEMS = ("deps", "playwright", "fonts", "tex_guide", "python_guide", "uv", "kb_init", "katex", "tinytex")
+INSTALL_ITEMS = ("deps", "playwright", "fonts", "tex_guide", "python_guide", "uv", "kb_init", "katex", "tinytex", "engine_update")
 
 KATEX_VERSION = "0.16.4"
 
@@ -189,26 +190,38 @@ def _doctor_checks(ws: Path) -> list[dict]:
 
 
 def _playwright_state() -> str:
-    """三态检测升级（D64 §22.1 修复）：包在但**内核版本不匹配**（如包为 1200、缓存目录 1228）时
-    旧检测误报"已安装"——现用 `playwright install chromium --dry-run`（0.2s）把"期望安装位置"
-    与实际存在性对照，歧义即如实标缺。"""
+    """D65-P0.1/P0.2：本机浏览器优先，且用 probe 验证可启动；否则查完整版内核。
+
+    旧检测只看包/目录存在，既会把 Playwright 的 headless_shell 误当完整内核，
+    也会把“本机有 Edge 文件但实际不可启动”误报为绿。本版：
+    - 先让 inventory(probe=True) 真正启动本机浏览器档位；
+    - 无本机浏览器时，用 installer 的 `--no-shell` dry-run 清单检查完整版；
+    - 不把 chromium-headless-shell 计入必需项。
+    """
     try:
-        import importlib.util
-        if importlib.util.find_spec("playwright") is None:
-            return "未安装（阶段6 需要）"
         py = str(_venv_python() or sys.executable)
-        cp = subprocess.run([py, "-m", "playwright", "install", "chromium", "--dry-run"],
-                            capture_output=True, text=True, timeout=60)
-        if cp.returncode != 0:
-            return f"包已装但自检失败：{(cp.stderr or cp.stdout or '').strip().splitlines()[-1][:80] if (cp.stderr or cp.stdout) else '未知'}"
-        locs = re.findall(r"Install location:\s*(\S+)", cp.stdout or "")
-        missing = [l for l in locs if not Path(l).exists()]
-        if not locs:
+        cp0 = subprocess.run([py, "-m", "playwright", "--version"],
+                            capture_output=True, text=True, timeout=30)
+        if cp0.returncode != 0:
+            return "未安装（阶段6 需要）"
+
+        from .xxt.browsers import inventory
+        inv = inventory(probe=True)
+        if inv.get("pick"):
+            return f"将使用：{inv['pick']['name']}（已验证可启动，零下载）"
+
+        from .xxt.installer import pkg_manifest
+        man = pkg_manifest()
+        if not man.get("ok"):
+            return f"包已装但自检失败：{man.get('reason') or '未知'}"
+        items = [it for it in man.get("items", []) if it.get("needed")]
+        if not items:
             return "包已装，内核未安装（dry-run 无输出）"
+        missing = [it for it in items if not it.get("installed")]
         if missing:
-            return f"包已装，内核缺失/版本不匹配（需：{Path(missing[0]).name}）→ 一键修复"
-        return "已安装"
-    except Exception as e:
+            return f"无本机 Edge/Chrome；自带完整版内核未下载（需：{missing[0]['name']}）→ 一键修复"
+        return "自带完整版内核就绪（不依赖 headless_shell）"
+    except Exception as e:  # noqa: BLE001
         return f"检测失败：{e}"
 
 
@@ -295,7 +308,7 @@ class Handler(BaseHTTPRequestHandler):
         return (not Handler.token) or qs.get("token", [""])[0] == Handler.token
 
     def _start_job(self, job_id: str, item: str):
-        if item in ("katex", "tinytex", "playwright"):
+        if item in ("katex", "tinytex", "playwright", "engine_update"):
             # D55/H1/D58 + D63/T7.1：特殊安装项（服务端写盘 / 联网下载解压；playwright=两步国内镜像联网）
             q: "queue.Queue[str]" = queue.Queue()
             out: list[str] = []
@@ -310,6 +323,9 @@ class Handler(BaseHTTPRequestHandler):
                     elif item == "playwright":
                         from .xxt.installer import install_playwright
                         rc = install_playwright(emit)
+                    elif item == "engine_update":
+                        from .engine_update import update_engine
+                        rc = update_engine(_ws(), emit)
                     else:
                         from .paper.tinytex import install_tinytex
                         rc = install_tinytex(_ws(), emit)
@@ -532,6 +548,10 @@ class Handler(BaseHTTPRequestHandler):
                 return
             self._json(json.loads(fr.read_text(encoding="utf-8")))
             return
+        if u.path == "/engine/version":
+            from .engine_update import check_engine_update
+            self._json(check_engine_update(Path(self.ws).resolve()))
+            return
         if u.path == "/doctor":
             checks = _doctor_checks(Path(self.ws).resolve())
             bad = [c["id"] for c in checks if c["status"] == "red"]
@@ -572,6 +592,10 @@ class Handler(BaseHTTPRequestHandler):
                 return
             self._json({"ok": True, "item": job["item"], "status": job["status"],
                         "returncode": job["returncode"], "lines": job["lines"][-200:]})
+        elif u.path == "/pw/pkgs":
+            # D65-P2：浏览器直下清单——实测镜像链接 + 收包路径 + 已装/在包状态
+            from .xxt.installer import pkg_manifest
+            self._json(pkg_manifest())
         elif u.path == "/kb/stats":
             from .files import read_kb
             kb = read_kb(Path(self.ws) / "kb")

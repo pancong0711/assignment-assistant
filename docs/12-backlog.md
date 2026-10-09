@@ -588,3 +588,16 @@ C1 登录/课程/作业浏览/下载（迁 2601 xuexitong 模块）；C2 上传=
 - T7/T8：serve xxt 端点组（status/qr/runs/run + login-start job）+ PWA XxetongView 实装（QR↔登录卡；课程分组滚动列表；置顶 10 可调/移出/从学习通恢复=回放最近 run 零网络）；
 - 事故记录：CI 脱敏红线误触（已清洗回绿）+ serve patch 静默 no-op 两枚（冒烟抓出修复）；头像 selector 待办顺延（缺省「已登录」卡兜底）；
 - 次步：T10 写操作维持冻结；剩 §22 待办三项。
+
+# 2026-10-09 · D65 立项：浏览器获取/安装优先级 + 代码审核
+
+- 用户重新明确：昨晚根因是旧 `engine/` 目录导致 start.bat 跳过在线更新；删除后恢复。随后 chromium 下载卡在 `chromium-headless-shell`。
+- 目标链：本机浏览器优先 → 无则下载 → 多镜像源备用 → 网页直下包并注明安装位置、由 PWA 启动安装。
+- 事实核查（R0 复验）：当前只读抽查 Playwright 1.57 默认 `install chromium` 涉及 headless shell；`--no-shell` 可跳过；默认 `headless=True` 未显式 channel/executable_path 时可能选 headless shell。
+- 前置：D65-R0 代码审核；当前工作区已有未提交改动引用不存在的 “D64 §26 A1/A2/A3”，待审，不得视为完成。
+- 主需求：`docs/16-xuexitong-integration.md §27`；任务板索引：`docs/13-taskboard.md D65`。
+- R0 结果（2026-10-09，只读）：不通过原样合入；确认幻觉编号、华为云伪源、`--no-shell`/去重缺失、start.bat 旧 `engine/` 遮蔽；详细见 docs/16 §27.8。
+- P0/P1 核心（2026-10-09）：start.bat 加 `ASSIST_ENGINE_LOCAL` 显式开关；浏览器优先级 + probe 验证；installer 改 `--no-shell`、去重、真实镜像、zip 校验；`/pw/pkgs` 前置数据就绪；PWA 直下 UI 仍待 P2。验证：46 tests + lint_bat + secrets 通过。
+- P2 备用方案（2026-10-09）：PWA 设置中心已接 `/pw/pkgs`，展示直下链接/收包路径/目标目录，并可触发“从收包目录安装”。验证：`npm run build` + `selfcheck:roster-fig` 通过。P3 教师引导已落地（HelpView + docs/15）。
+- start.bat 更新策略补充（2026-10-09）：远端 `engine-version.json` vs 本地 `_engine\engine-version.json` 先对比，相同复用、不同才下载；版本检测失败回退本地；更新后启动新引擎进程生效。CI 随 Pages 发布版本标记。
+- 决议修订（2026-10-09 用户拍板）：更新检测/更新引擎主入口改到 PWA「检测更新 / 更新引擎」按钮（D65-P4）；start.bat 保留快速缓存启动。start.bat 启动时版本对比视为过渡实现，P4 落地时简化/可选化。P4 已实施：/engine/version + /install/engine_update + PWA 更新卡 + CLI engine version/update；更新后自动 restart 轮询。验证：52 tests、npm build、selfcheck 通过；远端版本标记待 CI 首次发布。

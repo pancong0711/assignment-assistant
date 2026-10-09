@@ -1122,3 +1122,16 @@ applyManualTranslation/setTranslationRatio 中 setTranslationRatio 保留——�
 - 脚本：xxt_probe1_navrepro.py / xxt_probe2_visiblefail.py / xxt_probe3_evalread.py / xxt_session_check.py（+既有 login_capture/readonly_extract/notice_extract）;
 - 数据：xxt-session-check.json / xxt-probe-hj24-round2.json / xxt-probe2-hj24.json / xxt-probe3-quarantine.json / xxt-readonly-*.json|md / 22 份 HTML 存档（xxt-pages/）;
 - ⚠ **隐私**：probe3 JSON 与 HTML 含真实学生姓名，只留 .scratch/，不入库；首次提交确认单即含学生名，后续对外工件应脱敏（docs/04 口径）。
+
+---
+
+## D65 · 浏览器获取/安装优先级 + 代码审核（2026-10-09 用户重新明确）
+
+- 主需求/验收/审核清单：`docs/16-xuexitong-integration.md §27`（本页只索引，不双维护）。
+- 范围：start.bat 旧 `engine/` 遮蔽；本机浏览器优先；无则只装完整版 chromium；多镜像备用；网页直下包 + PWA 启动安装。
+- 门禁：先做 D65-R0 代码审核；未提交/未审核改动不得直接视为完成，也不得直接合入。
+- R0 结果（2026-10-09，只读）：不通过原样合入；确认幻觉编号、华为云伪源、`--no-shell`/去重缺失、start.bat 旧 `engine/` 遮蔽；详细见 docs/16 §27.8。
+- P0/P1 核心（2026-10-09）：start.bat 加 `ASSIST_ENGINE_LOCAL` 显式开关；浏览器优先级 + probe 验证；installer 改 `--no-shell`、去重、真实镜像、zip 校验；`/pw/pkgs` 前置数据就绪；PWA 直下 UI 仍待 P2。验证：46 tests + lint_bat + secrets 通过。
+- P2 备用方案（2026-10-09）：PWA 设置中心已接 `/pw/pkgs`，展示直下链接/收包路径/目标目录，并可触发“从收包目录安装”。验证：`npm run build` + `selfcheck:roster-fig` 通过。P3 教师引导已落地（HelpView + docs/15）。
+- start.bat 更新策略补充（2026-10-09）：远端 `engine-version.json` vs 本地 `_engine\engine-version.json` 先对比，相同复用、不同才下载；版本检测失败回退本地；更新后启动新引擎进程生效。CI 随 Pages 发布版本标记。
+- 决议修订（2026-10-09 用户拍板）：更新检测/更新引擎主入口改到 PWA「检测更新 / 更新引擎」按钮（D65-P4）；start.bat 保留快速缓存启动。start.bat 启动时版本对比视为过渡实现，P4 落地时简化/可选化。P4 已实施：/engine/version + /install/engine_update + PWA 更新卡 + CLI engine version/update；更新后自动 restart 轮询。验证：52 tests、npm build、selfcheck 通过；远端版本标记待 CI 首次发布。

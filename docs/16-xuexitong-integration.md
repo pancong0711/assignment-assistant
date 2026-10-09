@@ -373,6 +373,8 @@ P3 写操作（远期，本阶段不动）
 | T9 | CLI `xxt extract` 收线 + 秘密扫描 | T4/T6 | click 组；route 硬只读；check-secrets 白名单核对 | T5 | 待办(P2-b) |
 | T10 | 写操作（批阅回传/测试公告） | —— | **本阶段冻结，不排期** | D62 决议 | 冻结 |
 
+> **状态校正（2026-10-09）**：T1–T9 均已有提交落地（T1 `608e47d`、T2 `3d216b3`、T3 `a6324c8`、T4 `48280f2`、T5 `845e312`、T6–T9 `4ca0f9c`），T10 冻结不变。上表是需求启动时视图，状态已滞后；后续进度以提交、docs/12 与 §27 为准。
+
 ### 18.2 执行批次
 - **批次一（本周）**：T1 → T2 → T3 → T4 → T5（阶段点：教师审核）；
 - **批次二（审核后）**：T6 ∥ T7 → T8 → T9；
@@ -577,6 +579,8 @@ P3 写操作（远期，本阶段不动）
 | N3 | 批阅也做学习通网页过程预览（同学习通 tab 的导航过程框） | 复用 §20.3 套壳架构：engine 批阅工作的每跳 _step+截图 → run JSON steps[] → /xxt/shot 端点已备 → 批阅视图内嵌同款横向缩略流（组件级复用） | 待实施（复用现有件） |
 | N4 | 作业纸式批阅报告（预览作业→生成报告→预览报告→报告写在同样格式作业纸上） | 详见 25.2 版式定案 | 规划定版 |
 
+> **状态校正（2026-10-09）**：N1–N3 已由 `a7d4eed` 落地；N4 前端版式 demo 已由 `a7d4eed`/`e0cdc4e` 落地，但真实数据与引擎 `sheet_html report` 模式仍未接。上表状态已滞后，后续以提交与 §27.6 为准。
+
 ### 25.2 批阅报告版式（用户拍板 2026-10-08）
 - **竖版**：逐题评阅——**每道题占满一行**顺次排（题目转录→作答转录→评语/得分），
   题多则续页；**不做 2×2 十字花**（评阅内容多，四格塞不下）；
@@ -695,3 +699,345 @@ D64-f 批阅回写（写操作）：学习通侧填分/评语——**另行解�
   3. 机器本就装着 Chrome/chromium 时走**免下载通道**：系统级 `setx XXT_CHROME "C:\Program Files\Google\Chrome\Application\chrome.exe"`（路径以本机为准）→ PWA 🔄 重启引擎 使引擎进程读到新 env → 学习通只用本机 chrome，完全跳过 195MiB 内核下载（session.py L37/L39 已按此设计）；
   4. **不要改代码**（用户 2026-10-09 拍板）：本次为环境问题，"重试+多镜像/分片直连"等 afterwards 另提像 features 不阻塞。
 - **留档影响**：§26.1 事故共 5 案；"安装农家乐"三信道（在线镜像 / 人工解压 / XXT_CHROME）今后写入 HelpView 文案时按 (1)(2)(3) 顺序给教师分层次的关键口径。
+
+---
+
+## 27. D65 浏览器获取与安装优先级 + 代码审核（用户重新明确 · 2026-10-09）
+
+> 背景：昨晚首判为 start.bat/引擎下载问题；实际是工作区残留旧 `engine/` 目录，start.bat 命中 `ENGINE_LOCAL` 分支后跳过在线更新，继续使用旧 CLI；删除该目录后重新下载正常。随后阻塞点变为 Playwright chromium 下载卡在 `chromium-headless-shell`。
+>
+> 用户重新明确本任务：**本机浏览器优先 → 无则下载 → 多镜像源备用 → 网页直下包并注明安装位置、由 PWA 启动安装**；同时先做一轮代码审核，清理此前 AI 幻觉留下的未批准改动。
+>
+> 本节是重新立项后的正式实现需求，覆盖 §26.1-5 中“本次不改代码”的现场处置边界；§26.1-5 的事故结论仍保留。T10 / D64-f 写操作继续冻结。
+
+### 27.0 当前事实基线（进入 R0 审核前）
+
+- `start.bat` 当前确有旧目录遮蔽问题：
+  - 脚本先判断 `%WORKSPACE%\engine\pyproject.toml`、`%ROOT%\engine\pyproject.toml`，命中即 `goto ENGINE_LOCAL`；
+  - 只要工作区已有旧 `engine/`，就不会进入 `engine-main.zip` 下载链；
+  - 验收目标是教师**不需要手工删除 `engine/`**，也能得到最新 CLI。
+- Playwright 版本相关行为必须先审计再定版（当前只读抽查到 Playwright 1.57 的行为）：
+  - `python -m playwright install chromium` 默认同时涉及 `chromium` 与 `chromium-headless-shell`；
+  - `python -m playwright install chromium --no-shell` 可跳过 headless shell（版本兼容性、Windows 参数均需 R0 实测）；
+  - Playwright 默认 `headless=True` 且未显式传 `channel` / `executable_path` 时，可能选中 `chromium-headless-shell`；
+  - 显式使用本机浏览器 `channel=msedge|chrome`，或显式 `executable_path`，或完整版 `channel=chromium`，可不依赖 headless shell。
+- 初步结论（待 R0 证据化）：**本机有可用浏览器时，不必要下载 headless 包；无本机浏览器时也优先只下载完整版 chromium，并通过显式启动链避免 headless shell。**
+
+### 27.1 需求项与验收锚点
+
+| 编号 | 需求 | 验收锚点 |
+|---|---|---|
+| D65-P0.0 | start.bat 快速缓存启动，且不被旧 `engine/` 目录遮蔽 | 有 `_engine` 时直接复用快速启动（不默认下载）；无 `_engine` 时下载最新；旧 `engine/` 不参与；更新检测/更新动作移到 D65-P4 |
+| D65-P0.1 | 浏览器优先级链 | Ⅰ `XXT_CHROME` 显式路径 → Ⅱ 本机 Edge → Ⅲ 本机 Chrome → Ⅳ 其他受支持本机 Chromium → Ⅴ 才进入下载；每档真启动验证，前一档失败才降级 |
+| D65-P0.2 | headless 包按需、默认不下载 | 有本机浏览器：零内核下载，体检/启动用本机浏览器；无本机浏览器：只准备完整版 chromium，`--no-shell`（或等价）通过 R0；任何启动档都不去找旧 headless shell |
+| D65-P1 | 多镜像下载备用 | 以 Playwright `--dry-run` 给出的真实包名/URL 为基准；主源保留 npmmirror，另接华为云/官方等备用源；逐源重试、Content-Length 校验、失败可继续下一源，错误不得吞 |
+| D65-P2 | 网页直下包 + PWA 启动安装 | PWA 展示每个包的下载链接、原文件名、目标相对路径、解压结构；用户放入指定收包目录后，PWA 识别“包已就位”并可启动安装；无需命令行 |
+| D65-P3 | 教师可见引导与文档 | HelpView/docs/15 写清“本机浏览器优先、多镜像、人工直下、XXT_CHROME”的层次与各自适用场景 |
+| D65-P4 | PWA 侧「检测更新 / 更新引擎」按钮（用户拍板 2026-10-09） | start.bat 保持快速缓存启动；PWA 对比远端 `engine-version.json` 与本地 engine commit；有更新才下载并提示重启；CLI 提供等价 `assist engine version/update` |
+| D65-R0 | 代码审核前置门禁 | 先审后改：所有未提交/后续 AI 改动必须能映射到真实需求、真实文档或实测证据；未过审不得合入 |
+| D65-D | 文档状态校正 | 修正 §18/§25 等滞后状态；禁止让后续模型只读旧表得出“T1–T9/N1–N4 全未做”的结论 |
+
+### 27.2 浏览器优先级链（定版方向）
+
+建议链序：
+
+1. `XXT_CHROME` 环境变量显式路径（教师/运维手配，最高优先级）；
+2. 本机 Edge（Windows 自带率最高，`channel=msedge`）；
+3. 本机 Chrome（`channel=chrome`）；
+4. 本机 Chromium / 发行版浏览器（`channel=chromium` 或显式路径）；
+5. 以上全不可用：安装/使用 Playwright 完整版 chromium（不装 headless shell）。
+
+要求：
+
+- PWA/doctor 必须显示“当前实际会用的浏览器档位 + 路径 + 是否零下载”；
+- 上一档启动失败时记录失败原因，再尝试下一档；全部失败才提示下载；
+- 不修改系统默认浏览器、不要求管理员权限、不假设网络一定能直连官方源。
+
+### 27.3 下载与多镜像（D65-P1）
+
+1. 仅在“本机浏览器全不可用”时才下载内核；
+2. 下载对象必须是 Playwright 当前锁版要求的**完整版 chromium**，默认跳过 `chromium-headless-shell`；
+3. 安装命令优先使用 `python -m playwright install chromium --no-shell`；若当前 Playwright 版本不支持，必须写出等价过滤/只装完整版的兼容实现，并加回归测试；
+4. URL 不靠猜测：
+   - 首选从 `python -m playwright install chromium --dry-run` 输出中解析真实 `Download url` / `Install location`；
+   - 镜像只允许替换已知 URL 前缀，不允许模型自行拼接不存在域名；
+5. 源顺序（实现前 R0 可再定）：
+   - 主：npmmirror（延续 D63 §22.1 口径）；
+   - 备：华为云；
+   - 末：dry-run 给出的官方 URL；
+6. 每个源都必须：
+   - 带 Content-Length 校验；
+   - 支持重试；
+   - 失败清理 `.part.zip`；
+   - 输出可诊断日志（源、URL、已收字节、错误）。
+
+### 27.4 网页直下包 + PWA 启动安装（D65-P2）
+
+备用方案的完整闭环：
+
+1. PWA 展示：
+   - 包名（如 `chromium-<build>`）；
+   - 原文件名（必须来自 dry-run URL 最后一段）；
+   - 可复制/可点击的下载链接（多源）；
+   - 目标解压位置：`<workspace>/.runtime/browsers/<browser-dir>/`；
+   - 收包位置：`<workspace>/.runtime/browsers_pkgs/`（可再审核命名，但 UI 必须展示完整路径）；
+   - 解压后的目录结构要求与 `INSTALLATION_COMPLETE` 标记说明。
+2. 用户从浏览器下载 zip，放入收包目录；不要求自己解压到最终目录。
+3. PWA 检测到包已就位，显示“开始安装”按钮。
+4. 点击后由 PWA 调引擎执行：校验 zip 完整性 → 解压到 Playwright registry 目标目录 → 写 `INSTALLATION_COMPLETE` → 重跑 doctor → 状态变绿。
+5. 全程不要求用户执行命令行、不要求手工建标记文件；命令行路径只作为终端用户的兜底说明。
+
+### 27.5 代码审核门禁 D65-R0（本轮先做）
+
+审核对象：
+
+- 当前工作区未提交的 5 个 modified + 1 个 untracked（`serve.py`、`xxt/cli.py`、`xxt/extract_run.py`、`xxt/installer.py`、`xxt/session.py`、`xxt/browsers.py`）；
+- 其中大量注释引用 **“D64 §26 A1/A2/A3”**，但该编号在 docs/16 正式文档中不存在，属于疑似幻觉编号；
+- 审核这些改动与 D65 需求、§26.1-5 现场处置的关系，决定保留、重构、回滚或重写。
+
+审核项：
+
+| 编号 | 审核项 | 产出 |
+|---|---|---|
+| R0.1 | 工作区文物盘点：改动文件、时间、来源、是否引用不存在章节 | 清单 + “未批准改动”标记 |
+| R0.2 | Playwright 版本/行为实测：默认装什么、`--no-shell` 是否可用、headless 何时选 headless shell | 实测日志 + 结论 |
+| R0.3 | 启动链审核：本机浏览器探测、失败降级、是否可能回落到 headless shell | 每档证据 + 修复清单 |
+| R0.4 | 安装器审核：dry-run URL、镜像 URL 真实性、重试/校验/解压/标记文件 | 风险清单 + 逐源验证 |
+| R0.5 | start.bat 审核：旧 `engine/` 遮蔽、版本新鲜度、手动删除依赖 | 复现 + 定版修复方案 |
+| R0.6 | PWA/接口审核：doctor 显示、修复按钮、SSE 终态、直下包 UI 是否已有 | 缺口清单 |
+| R0.7 | 文档状态校正：D63/D64 旧表状态、D65 索引、HelpView 文案待办 | 更新记录 |
+| R0.8 | 回归测试设计：浏览器探测、URL 解析、镜像回退、包完整性、无网络 mock | 测试用例清单 |
+
+审核纪律：
+
+- 每条结论标注依据：`文档/提交/实测/推断`；
+- 只有 `文档/提交/实测` 支持的改动才可进入实现；
+- 凡引用不存在的需求编号，一律先更正编号，不得继续沿用；
+- 未过 R0，不进入 P0–P3 写代码。
+
+### 27.6 执行批次（R0 通过后）
+
+1. **P0**：start.bat 新鲜度 + 浏览器优先级链 + “不依赖 headless shell”闭环；
+2. **P1**：多镜像下载与校验；
+3. **P2**：人工直下包 + PWA 启动安装备用方案；
+4. **P3**：HelpView/docs/15 教师引导 + doctor 展示 + 验收；
+5. **P4**：PWA「检测更新 / 更新引擎」按钮 + CLI 等价命令；start.bat 保持快速缓存启动；
+6. 全批次期间：D64-f 回写 / T10 继续冻结；不碰学习通写操作。
+
+### 27.7 当前状态
+
+- 2026-10-09：需求已由用户重新明确，登记为 D65。
+- **R0 只读审核已完成，结论见 §27.8**；P0/P1 核心实施记录见 §27.9。
+- 本文档为 D65 主需求档；docs/13 只保留索引。
+
+### 27.8 D65-R0 审核结果（2026-10-09 · 只读）
+
+> 本轮只读取证与文档更新，未修改 `engine/` / `app/` 代码。被审对象 = 工作区已有未提交改动（5 modified + 1 untracked）。
+
+#### R0.1 文物盘点与幻觉编号
+
+- 被审文件：
+  - `engine/src/assist/serve.py`
+  - `engine/src/assist/xxt/cli.py`
+  - `engine/src/assist/xxt/extract_run.py`
+  - `engine/src/assist/xxt/installer.py`
+  - `engine/src/assist/xxt/session.py`
+  - `engine/src/assist/xxt/browsers.py`（untracked）
+- 文件时间戳均为 2026-10-09 11:12 左右，晚于 `d555095`（08:23）的“不要改代码”决议。
+- 代码中 6 处注释引用 **“D64 §26 A1/A2/A3”**；`git grep` 在 HEAD 提交、docs/16 正文中均不存在该编号。该编号属于未落文档的**幻觉编号**。
+- 结论：不能按“已拍板功能”直接接受；只能作为 D65 候选实现进行审核/重构/回滚。
+
+#### R0.2 Playwright 行为实测（本机 Playwright 1.57.0）
+
+- `python -m playwright install --help` 支持：
+  - `--dry-run`
+  - `--no-shell`（不装 headless shell）
+  - `--only-shell`
+- `python -m playwright install chromium --dry-run` 输出：
+  1. `chromium` 完整版（本机 Linux 样例 `chromium-1200`）；
+  2. `ffmpeg`；
+  3. `chromium-headless-shell`；
+  4. **再次输出 `ffmpeg`（重复项）**。
+- `python -m playwright install chromium --no-shell --dry-run` 输出只剩完整版 `chromium` + `ffmpeg`，可天然避开 headless shell 与重复解析。
+- 启动器源码审计：Playwright `getExecutableName(options)` 在：
+  - `options.channel` 存在时直接返回 channel；
+  - 否则 `headless=True` 返回 `chromium-headless-shell`；
+  - 否则返回 `chromium`。
+- 因此：
+  - 有本机 Edge/Chrome，或显式 `executable_path`，或显式 `channel="chromium"` → 不走 headless shell；
+  - 不显式指定 channel/executable_path 的 `headless=True` → 可能找 headless shell。
+- 结论：D65-P0.2 成立；应优先用 `--no-shell`，启动链必须显式化。
+
+#### R0.3 镜像可用性实测（HEAD 请求）
+
+| 源 | Linux / Windows 样例 | 结论 |
+|---|---|---|
+| `cdn.npmmirror.com/binaries/playwright/builds/...` | `200 application/zip` | **可用**（现有主源） |
+| `registry.npmmirror.com/-/binary/playwright/builds/...` | `302` 跳转至 cdn 后 `200 application/zip` | **可用，可作备用** |
+| dry-run 官方 URL `cdn.playwright.dev/dbazure/download/...` | `307` 跳转 Google 存储后 `200`，zip | **可用** |
+| `playwright.azureedge.net/builds/...` | `307` 跳转 Google 存储后 `200`，zip | **可用，可作备用** |
+| 代码中的 `mirrors.huaweicloud.com/playwright/...` | `200 text/html`（SPA 页面），不是 zip | **不可用/伪源**，必须移除或替换 |
+
+- 未提交代码中的 `MIRROR_PLAYWRIGHT_HW = https://mirrors.huaweicloud.com/playwright/` 会导致：
+  - 主源失败后把 HTML 当 zip 下载；
+  - 解压失败时不继续尝试官方源，直接失败。
+- 结论：多镜像实现必须先做 URL 真实性验证，禁止模型拼接域名。
+
+#### R0.4 未提交代码逐文件审核
+
+| 文件 | 与 D65 的关系 | 风险/缺陷 | 处置建议 |
+|---|---|---|---|
+| `xxt/browsers.py` | 实现本机浏览器探测/优先级，方向对 | 文档引用幻觉编号；`inventory()` 只查文件存在，不验证可启动；Windows 不盘 Chromium；未记录实际选档 | 保留思想，重构 + 正编号 + 启动 probe + 返回 pick 证据 |
+| `xxt/session.py` | `_launch` 逐档尝试，方向对 | 失败原因只存最后一个；无实际选档日志；测试缺失 | 保留重构，补日志/测试 |
+| `xxt/extract_run.py` | 改用 `_launch`，方向对 | 依赖尚未审核的 launch 链 | 保留，随 session 一起定版 |
+| `xxt/installer.py` | 本地包/多源/跳过 headless 方向对 | 用 `install chromium --dry-run` 解析出重复 `ffmpeg`；未去重；未用 `--no-shell`；华为云伪源；未校验 Content-Type/zip 魔数；`pkg_manifest` 用当前解释器 `find_spec` 而非目标 venv；loc/url 仅按位置 zip 配对 | **不可原样合入**；按 R0.2/R0.3 重写解析与源列表 |
+| `xxt/cli.py` | 新增 `assist xxt install`，符合 CLI 超集 | 依赖 installer 重写 | 保留，随 installer 定版 |
+| `serve.py` | doctor 本机浏览器优先 + `/pw/pkgs` 方向对 | `/pw/pkgs` 调用上述有缺陷的 manifest；doctor 可能因文件存在假绿；PWA 尚未消费 `/pw/pkgs` | 保留方向，随 P2 重构并补 PWA 消费 |
+| 文档引用 | 多处 `D64 §26 A1/A2/A3` | 无对应拍板 | 改为 D65-P0.1/P0.2/P1/P2 等真实编号 |
+
+#### R0.5 `start.bat` 旧 `engine/` 遮蔽
+
+- `start.bat` 当前判断顺序：
+  1. `%WORKSPACE%\engine\pyproject.toml` 存在 → `goto ENGINE_LOCAL`；
+  2. `%ROOT%\engine\pyproject.toml` 存在 → `goto ENGINE_LOCAL`；
+  3. 否则才走 `engine-main.zip` 下载链。
+- 工作区只要残留旧 `engine/`，就会绕过在线更新，继续使用旧 CLI。与用户现场完全一致。
+- 验收需要：无需手动删除 `engine/`；陈旧副本能自动识别并刷新，或给出明确一键更新路径。
+
+#### R0.6 测试与 PWA 现状
+
+- 现有 engine 回归：`40 passed`（本机 `.scratch/venv` + `PYTHONPATH=engine/src`），但**没有**新增代码的回归用例。
+- 新增代码缺测试：浏览器档位、URL 解析、镜像回退、`--no-shell`、zip 校验、inbox 认领、start.bat 分流。
+- PWA 现状：`SettingsView` 只有“联网安装 Playwright”按钮；无 `/pw/pkgs` 调用；无直下链接/收包路径/目标路径 UI；P2 完整未实现。
+- SSE/`/install/playwright` 已有链路可复用，但输出与终态需随 installer 重写回归。
+
+#### R0.7 门禁结论
+
+- 结论：**R0 审核不通过原样合入**。
+- 可保留的骨架：
+  - 浏览器优先级概念；
+  - `_launch` 逐档尝试；
+  - `/pw/pkgs` 清单端点概念；
+  - `.runtime/browsers_pkgs` 收包目录概念；
+  - `assist xxt install` CLI。
+- 必须先修正：
+  1. 删除/更正全部幻觉编号；
+  2. installer 改用 `--no-shell`、去重、真实镜像、Content-Type/zip 校验、目标 venv 检测；
+  3. 浏览器 inventory 改为可启动验证，doctor 不假绿；
+  4. start.bat 消除旧 `engine/` 遮蔽；
+  5. 补回归测试与 PWA 消费 UI。
+- 下一批次：按 §27.6 P0 开始；P0 完成后才能进入 P1/P2。
+
+### 27.9 D65-P0/P1 实施记录（2026-10-09）
+
+> 依据 §27.8 R0 结论实施；仍不触碰学习通写操作（T10 / D64-f 冻结）。
+
+已完成：
+
+- **P0.0 start.bat 旧 `engine/` 遮蔽 + 版本比较更新**
+  - `tools/start.bat`、`app/public/start.bat`：`workspace\engine` / `ROOT\engine` 仅在显式 `ASSIST_ENGINE_LOCAL=1` 时才作为开发态复用；否则走 `_engine`。
+  - 新增版本对比：远端 `dl/engine-version.json` vs 本地 `_engine\engine-version.json`；`FC /B` 相同则复用，不同才下载 `engine-main.zip`。
+  - 版本检测失败（如 Pages 不可达）时回退使用本地 `_engine`，不冒险更新；更新流程走完依赖安装后启动**新的引擎进程**，即需要重启才生效。
+  - CI `pages.yml` 新增发布**确定性** `engine-version.json`（只含 engine_version + commit；同一 commit 字节一致，避免 CI 重跑导致无意义更新）。
+  - `tools/lint_bat.py` 通过。
+- **P0.1 本机浏览器优先级**
+  - `xxt/browsers.py`：链序 `XXT_CHROME → Edge → Chrome → Chromium → Playwright 完整版`。
+  - `inventory(probe=True)` 会真正启动验证；doctor 不再仅按“文件存在”报绿。
+  - `xxt/session.py` 的 `_launch` 使用同一链，逐档失败降级并保留最后错误。
+- **P0.2 不依赖 headless shell**
+  - installer 优先执行 `playwright install chromium --no-shell --dry-run`；旧版本不支持时回退普通 dry-run 并过滤 `headless_shell`。
+  - 启动链始终显式 `channel` / `executable_path`，不落回默认 headless shell。
+- **P1 多镜像与包校验（核心）**
+  - 移除伪源 `mirrors.huaweicloud.com/playwright`。
+  - 真实源顺序：`cdn.npmmirror.com` → `playwright.azureedge.net` → `registry.npmmirror.com` → dry-run 官方 URL。
+  - 每个源校验 Content-Length、拒绝 HTML Content-Type、校验 zip 文件头；失败自动下一源。
+  - dry-run 结果按 `Install location` 去重，修复重复 `ffmpeg` 任务。
+  - 本地包目录 `.runtime/browsers_pkgs/` 认领优先于联网。
+- **P2 备用方案（已落地）**
+  - `/pw/pkgs` 返回每个包的直下链接、原文件名、收包目录、目标目录、安装/在包状态。
+  - PWA 设置中心 Playwright 卡新增「浏览器内核直下（备用方案）」：
+    - 「获取/刷新直下清单」；
+    - 展示包名、原文件名、目标目录、收包目录、安装/在包状态；
+    - 多镜像直下链接（npmmirror / azure / registry / official）；
+    - 「从收包目录安装 / 复查内核」按钮复用 PWA 安装流程，本地包优先认领。
+  - `engineClient.ts` 新增 `fetchPwPkgs()`；settings store 新增 `loadPwPkgs()`。
+
+验证：
+
+- `pytest engine/tests -q`：`46 passed`
+- `python tools/lint_bat.py`：通过
+- `bash tools/check-secrets.sh`：脱敏检查通过
+- 新增回归：`engine/tests/test_d65_install_priority.py`
+
+验证（P2 追加）：
+
+- `npm run build`：通过。
+- `npm run selfcheck:roster-fig`：ALL PASS。
+
+- **P3 教师引导（已落地）**
+  - `HelpView` 设置中心速查 + FAQ 已加入本机浏览器优先、直下备用、旧 `engine/` 更新说明。
+  - `docs/15-usage-manual.md` 新增「D65 浏览器获取/安装速查」。
+
+遗留：
+
+1. 新版本 Playwright（dry-run 官方 URL 已不含 `builds/`）的国内镜像适配需按目标锁版再做一次实测；当前实现会安全退回官方 URL，不会造假源。
+2. 仍待真机 Windows 验证：start.bat、Edge/Chrome 探测、人工直下包闭环。
+3. 未提交：本次 D65 代码/文档改动均在工作区，等待复核与提交。
+
+
+### 27.10 决议修订：更新检查改为 PWA 按钮触发（2026-10-09 用户拍板）
+
+> 用户拍板：**PWA 侧提供「检测更新 / 更新引擎」按钮的方案更好；start.bat 的快速缓存启动保留。**
+> 因此 D65-P0.0 的目标调整为“启动快、缓存优先、旧目录不遮蔽”，而“版本对比 + 是否更新”的主入口移到 D65-P4。
+
+#### 27.10.1 调整后的职责边界
+
+| 入口 | 职责 |
+|---|---|
+| `start.bat` | 有 `_engine` → 快速复用直接启动；无 `_engine` → 下载一次；旧 `engine/` / 仓库 `engine` 仅在 `ASSIST_ENGINE_LOCAL=1` 时用作开发态。默认启动路径不做大文件下载。 |
+| PWA 设置中心 | **D65-P4 主入口**：显示本地 engine 版本/commit、远端 `engine-version.json`；用户点「检测更新」；有更新才点「更新引擎」。 |
+| CLI | D1 超集等价：`assist engine version`、`assist engine update --check`、`assist engine update`（命令名实施时定版）。 |
+
+#### 27.10.2 D65-P4 实施清单
+
+- **P4.1 本地版本暴露**
+  - 本地元数据文件：`<workspace>\_engine\engine-version.json`（CI 随 Pages 发布）。
+  - 引擎读取本地元数据，并通过 `/status` 或新端点返回：
+    - `engine_version`；
+    - `commit`；
+    - 本地 `_engine` 路径/是否存在。
+- **P4.2 PWA 检测更新**
+  - PWA 拉取远端：
+    `https://pancong0711.github.io/assignment-assistant/dl/engine-version.json`
+  - 与本地 engine commit 对比；
+  - UI 三态：
+    - 已是最新；
+    - 有更新（显示远端 commit / 构建信息 / 「更新引擎」按钮）；
+    - 无法检测（远端不可达；不阻塞使用）。
+- **P4.3 PWA 触发更新**
+  - 仅在用户点击「更新引擎」后下载 `engine-main.zip`；
+  - 解压到 `_engine` 并重装 editable 依赖；
+  - 更新完成后必须重启：调用现有 `/restart`，或由 PWA 引导用户关闭旧引擎后重新双击 start.bat；
+  - 更新完成后 PWA 轮询 `/status`，确认 commit 已变为远端版本；
+  - 全程走 jobs/SSE，输出失败有终态，不静默。
+- **P4.4 start.bat 简化**
+  - 保留快速缓存启动；
+  - 27.9 中已实现的“启动时版本对比”视为**过渡实现**；P4 落地时按本次拍板决定移除或缩为可选 `--check-update`，避免每次双击都发版本请求。
+- **P4.5 验收锚点**
+  - 无更新：检测显示“已是最新”，不下载 zip；
+  - 有更新：只有点击「更新引擎」才下载；
+  - 更新后：重启成功、`/status` 的 commit 与远端一致；
+  - 远端不可达：快速缓存启动与静态功能不受影响；
+  - CLI 等价命令可完成 check/update。
+
+#### 27.10.3 当前实现状态（2026-10-09 更新）
+
+- 27.9 的 start.bat 版本对比已落地，作为过渡；
+- **D65-P4 已实施**：
+  - 引擎新增 `engine_update.py`，提供本地/远端版本对比与按需更新；
+  - `serve` 新增 `GET /engine/version`，并支持 `POST /install/engine_update` 走 jobs/SSE；
+  - PWA 设置中心新增「引擎更新」卡：检测更新、有更新才显示「更新引擎」、更新完成后自动 `/restart` + 轮询 + 重跑版本对比/体检；
+  - CLI 新增 `assist engine version`、`assist engine update --check`、`assist engine update`；
+  - UI 指引同步到 `HelpView` 与 `docs/15`。
+- 远端 `engine-version.json` 由 CI `pages.yml` 随 Pages 发布；首次部署后生效。
+- P4 验证：`pytest engine/tests -q` → `52 passed`；`npm run build` 通过；`selfcheck:roster-fig` ALL PASS；`/engine/version` 集成 curl 通过（远端标记部署前为 404，UI 如实显示“无法检测”，不阻塞本地使用）。

@@ -50,6 +50,12 @@ jobs:
             main engine/ tools/start.bat tools/start.sh README.md LICENSE
           test -s app/dist/dl/engine-main.zip
 
+      - name: Publish engine version marker (D65)
+        run: |
+          SHA=$(git rev-parse HEAD)
+          printf '{"engine_version":"0.1.0","commit":"%s"}\n' "$SHA" > app/dist/dl/engine-version.json
+          test -s app/dist/dl/engine-version.json
+
       - name: Upload artifact
         uses: actions/upload-pages-artifact@v3
         with:

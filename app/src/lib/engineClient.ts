@@ -208,6 +208,105 @@ export async function fetchDoctor(engineAddr: string, token?: string): Promise<D
 /** 引擎未在线时的引导命令（D13：体检页逐项 + 复制命令按钮）。 */
 export const SERVE_HINT_CMD = 'uv run assist serve        # 引擎在线后本页自动识别（默认 http://127.0.0.1:8601）'
 
+/* ========== D65-P4：引擎版本检测（engine /engine/version） ========== */
+
+export interface EngineVersionMeta {
+  engine_version?: string
+  commit?: string
+  _path?: string
+  _fallback?: boolean
+}
+
+export interface EngineUpdateInfo {
+  online: boolean
+  ok: boolean
+  update_available: boolean | null
+  local: EngineVersionMeta
+  remote?: EngineVersionMeta | null
+  remote_url?: string
+  error?: string
+}
+
+/** GET /engine/version —— PWA「检测更新」；引擎未在线时 online=false。 */
+export async function fetchEngineUpdate(engineAddr: string, token?: string): Promise<EngineUpdateInfo> {
+  const base = normalizeEngineAddr(engineAddr)
+  try {
+    const raw = (await getJson(engineUrlWithToken(base, '/engine/version', token), 15000)) as Record<string, unknown>
+    const local = (raw.local && typeof raw.local === 'object' ? raw.local : {}) as Record<string, unknown>
+    const remote = raw.remote && typeof raw.remote === 'object' ? raw.remote as Record<string, unknown> : null
+    const toMeta = (o: Record<string, unknown>): EngineVersionMeta => ({
+      engine_version: o.engine_version === undefined || o.engine_version === null ? undefined : String(o.engine_version),
+      commit: o.commit === undefined || o.commit === null ? undefined : String(o.commit),
+      _path: o._path === undefined || o._path === null ? undefined : String(o._path),
+      _fallback: o._fallback === undefined || o._fallback === null ? undefined : Boolean(o._fallback),
+    })
+    return {
+      online: true,
+      ok: Boolean(raw.ok),
+      update_available: raw.update_available === null || raw.update_available === undefined
+        ? null : Boolean(raw.update_available),
+      local: toMeta(local),
+      remote: remote ? toMeta(remote) : null,
+      remote_url: raw.remote_url === undefined || raw.remote_url === null ? undefined : String(raw.remote_url),
+      error: raw.error === undefined || raw.error === null ? undefined : String(raw.error),
+    }
+  } catch (e) {
+    return { online: false, ok: false, update_available: null, local: {}, error: (e as Error).message }
+  }
+}
+
+/* ========== D65-P2：浏览器内核直下清单（engine /pw/pkgs） ========== */
+
+export interface PwPkgItem {
+  name: string
+  dir: string
+  file: string
+  needed: boolean
+  installed: boolean
+  in_inbox: boolean
+  urls: Record<string, string>
+}
+
+export interface PwPkgsResult {
+  ok: boolean
+  online: boolean
+  inbox?: string
+  items: PwPkgItem[]
+  reason?: string
+  error?: string
+}
+
+/** GET /pw/pkgs —— PWA 展示直下链接、收包路径、目标目录与包状态。
+ *  引擎未在线时返回 online=false，调用方保留静态降级 UI。 */
+export async function fetchPwPkgs(engineAddr: string, token?: string): Promise<PwPkgsResult> {
+  const base = normalizeEngineAddr(engineAddr)
+  try {
+    const raw = (await getJson(engineUrlWithToken(base, '/pw/pkgs', token), 15000)) as Record<string, unknown>
+    const items = Array.isArray(raw.items) ? raw.items : []
+    return {
+      ok: Boolean(raw.ok),
+      online: true,
+      inbox: raw.inbox === undefined || raw.inbox === null ? undefined : String(raw.inbox),
+      reason: raw.reason === undefined || raw.reason === null ? undefined : String(raw.reason),
+      items: items.map((it) => {
+        const o = it as Record<string, unknown>
+        const urls = (o.urls && typeof o.urls === 'object' ? o.urls : {}) as Record<string, unknown>
+        return {
+          name: String(o.name ?? ''),
+          dir: String(o.dir ?? ''),
+          file: String(o.file ?? ''),
+          needed: Boolean(o.needed),
+          installed: Boolean(o.installed),
+          in_inbox: Boolean(o.in_inbox),
+          urls: Object.fromEntries(Object.entries(urls).map(([k, v]) => [k, String(v)])),
+        }
+      }),
+    }
+  } catch (e) {
+    return { ok: false, online: false, items: [], error: (e as Error).message }
+  }
+}
+
 /* ========== D63 T7/T8：学习通对接端点（engine serve xxt 组） ========== */
 
 export interface XxtSessionStatus {

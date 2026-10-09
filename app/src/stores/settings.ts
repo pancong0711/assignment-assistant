@@ -1,8 +1,8 @@
 import { defineStore } from 'pinia'
 import {
-  DEFAULT_ENGINE_ADDR, fetchDoctor, fetchEngineStatus, normalizeEngineAddr,
-  startInstall, streamInstall,
-  statusClass, type DoctorCheck,
+  DEFAULT_ENGINE_ADDR, fetchDoctor, fetchEngineStatus, fetchEngineUpdate, fetchPwPkgs,
+  normalizeEngineAddr, restartEngine, startInstall, streamInstall,
+  statusClass, type DoctorCheck, type EngineUpdateInfo, type PwPkgItem,
 } from '../lib/engineClient'
 
 /** 设置中心状态（docs/05-D13：设置中心 + 首次运行向导 + 条件式置灰）。
@@ -146,6 +146,15 @@ export const useSettingsStore = defineStore('settings', {
     lastDoctorError: '' as string,
     doctorOk: false as boolean,
     doctorWorkspace: '' as string,
+    /** D65-P2：Playwright 内核直下清单（/pw/pkgs） */
+    pwPkgs: [] as PwPkgItem[],
+    pwPkgsInbox: '' as string,
+    pwPkgsError: '' as string,
+    pwPkgsLoaded: false as boolean,
+    /** D65-P4：引擎更新检测/更新状态 */
+    engineUpdateInfo: null as EngineUpdateInfo | null,
+    engineUpdateChecking: false as boolean,
+    engineUpdating: false as boolean,
     /** 水印素材库（name → dataURL；作业纸仅引用文件路径 hint） */
     wmAssets: loadWmAssets() as Record<string, string>,
     /** B3/D46-5：题图库（basename → dataURL；仅本浏览器，导出 JSON 只写 img_path hint） */
@@ -266,6 +275,83 @@ export const useSettingsStore = defineStore('settings', {
         return false
       } finally {
         this.installing = ''
+      }
+    },
+
+    /** D65-P2：拉取浏览器内核直下清单（引擎 /pw/pkgs）。 */
+    async loadPwPkgs(): Promise<boolean> {
+      this.pwPkgsLoaded = true
+      const r = await fetchPwPkgs(this.engineUrl, this.engineToken)
+      if (!r.online) {
+        this.pwPkgsError = r.error ?? '引擎未在线'
+        this.pwPkgs = []
+        return false
+      }
+      if (!r.ok) {
+        this.pwPkgsError = r.reason ?? '引擎未返回直下清单'
+        this.pwPkgs = []
+        return false
+      }
+      this.pwPkgs = r.items
+      this.pwPkgsInbox = r.inbox ?? ''
+      this.pwPkgsError = ''
+      return true
+    },
+
+    /** D65-P4：检测引擎更新（GET /engine/version）。 */
+    async checkEngineUpdate(): Promise<EngineUpdateInfo | null> {
+      this.engineUpdateChecking = true
+      try {
+        this.engineUpdateInfo = await fetchEngineUpdate(this.engineUrl, this.engineToken)
+        return this.engineUpdateInfo
+      } finally {
+        this.engineUpdateChecking = false
+      }
+    },
+
+    /** D65-P4：用户确认后更新引擎；更新成功自动 /restart + 轮询 + 重跑版本/体检。 */
+    async runEngineUpdate(): Promise<boolean> {
+      if (!this.engineOnline) {
+        this.installLog = '⚠ 引擎未在线，无法执行在线更新。'
+        return false
+      }
+      this.installLog = ''
+      this.engineUpdating = true
+      try {
+        const jobId = await startInstall(this.engineUrl, 'engine_update', this.engineToken)
+        let rc = -2
+        await new Promise<number>((resolve) => {
+          streamInstall(this.engineUrl, jobId, this.engineToken,
+            (line) => { this.installLog = (this.installLog + '\n' + line).slice(-4000) },
+            (rc0) => { rc = rc0; resolve(rc0) })
+        })
+        if (rc !== 0) {
+          this.installLog += `\n⚠ 引擎更新失败（code ${rc}），上方为过程输出。`
+          return false
+        }
+        this.installLog += '\n♻ 更新完成，正在重启引擎……'
+        try {
+          await restartEngine(this.engineUrl, this.engineToken)
+        } catch (e) {
+          this.installLog += `\n⚠ 更新完成但自动重启请求失败：${(e as Error).message}；请手动重启引擎。`
+          return false
+        }
+        for (let i = 0; i < 30; i++) {
+          await new Promise((r) => setTimeout(r, 500))
+          if (await this.pingEngine()) {
+            await this.runDoctor()
+            await this.checkEngineUpdate()
+            this.installLog += '\n✓ 引擎已重启并回在线。'
+            return true
+          }
+        }
+        this.installLog += '\n⚠ 更新后 15s 内未回在线；请查看 start.log 或手动重启。'
+        return false
+      } catch (e) {
+        this.installLog = String((e as Error).message)
+        return false
+      } finally {
+        this.engineUpdating = false
       }
     },
 

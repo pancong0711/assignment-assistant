@@ -96,3 +96,30 @@
   Private Network Access 拦截已由引擎预检头部豁免（docs/16 §26.1 #4）；
 - 安装类操作（如 playwright 联网安装、TinyTeX）建议在 start.bat 自开的
   本地同源页做——进度流（SSE）不经任何跨源关卡。
+
+
+# 2026-10-09 · D65 浏览器获取/安装速查
+
+- 安装 Playwright 时，**本机浏览器优先**：
+  1. `XXT_CHROME` 指定路径；
+  2. 本机 Edge；
+  3. 本机 Chrome；
+  4. 本机 Chromium；
+  5. 以上都没有，才下载 Playwright 完整版 chromium。
+- 本机浏览器可用时：**不下载 chromium-headless-shell，也不装 195MB 级完整内核**。
+- 必须下载时：默认只准备**完整版 chromium**（`--no-shell`），不把 headless shell 当必需项。
+- 下载源按实测镜像降级：`cdn.npmmirror.com` → `playwright.azureedge.net` → `registry.npmmirror.com` → 官方 dry-run URL。
+- 全部镜像失败时的备用方案：设置中心 → Playwright 卡 → 「浏览器内核直下」：
+  1. 点「获取直下清单」；
+  2. 复制任意一个可用链接，浏览器下载 zip；
+  3. 把 zip 放入页面显示的「收包目录」；
+  4. 回到该卡点「从收包目录安装 / 复查内核」——由 PWA 触发安装，不需要手工解压或建标记文件。
+- 旧版 `engine/` 目录不会再让 start.bat 跳过更新；只有显式 `ASSIST_ENGINE_LOCAL=1` 才复用工作区/仓库本地引擎。
+- start.bat 采用**快速缓存启动**：本地 `_engine` 可用时直接启动，不重复下载。
+- 版本检测/引擎更新的主入口 = PWA 设置中心「检测更新 / 更新引擎」（D65-P4，已落地）：
+  1. 点「检测更新」→ 只拉取很小的 `engine-version.json`，对比本地 `_engine\engine-version.json`；
+  2. 相同 → 显示“已是最新”，不下载；
+  3. 不同 → 出现「更新引擎」按钮；点击后才下载 `engine-main.zip`、重装依赖；
+  4. 更新成功后 PWA 自动调用 `/restart` 并轮询回线，然后重跑版本对比与体检。
+- CLI 等价：`assist engine version` / `assist engine update --check` / `assist engine update`。
+- start.bat 保持快速缓存启动；过渡版启动时版本对比可按 P4 口径后续简化。

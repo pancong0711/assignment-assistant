@@ -17,6 +17,13 @@ def default_storage(ctx) -> Path:
 
 
 def register(group: click.Group) -> None:
+    @group.command("install")
+    def xxt_install():
+        """联网安装 playwright+完整版内核（本地包优先；下载源 npmmirror/azureedge/官方）。"""
+        from .installer import install_playwright
+        rc = install_playwright(lambda line: click.echo(line))
+        raise SystemExit(0 if rc == 0 else 1)
+
     @group.command("check")
     @click.option("--storage", "storage", default=None,
                   type=click.Path(dir_okay=False), help="storage_state JSON（默认 env XXT_STORAGE 或 workspace/.runtime）")

@@ -82,6 +82,21 @@ const INSTALL_SH = 'bash install.sh        # Linux / macOS（或 curl -fsSL ... 
 const INSTALL_PS1 = 'powershell -ExecutionPolicy Bypass -File install.ps1   # Windows（含国内镜像源，docs/05-D10）'
 const SERVE_CMD = '双击 start.bat（所在目录即 workspace）→ 自动装 venv→起引擎→开 http://127.0.0.1:8601/    # 或终端 assist serve'
 
+/** D65-P2：把引擎返回的镜像 key 转成短标签。 */
+function pwUrlLabel(k: string): string {
+  return ({
+    npmmirror_cdn: 'npmmirror',
+    azureedge: 'azure',
+    npmmirror_registry: 'registry',
+    official: 'official',
+  } as Record<string, string>)[k] || k
+}
+
+/** D65-P4：commit 短显示。 */
+function commitShort(c?: string): string {
+  return c ? c.slice(0, 12) : '—'
+}
+
 /* ---------- 体检真接入（阶段4a） ---------- */
 const checking = ref(false)
 
@@ -467,6 +482,47 @@ onMounted(() => {
         <pre style="max-height:160px; overflow:auto; white-space:pre-wrap">{{ settings.installLog }}</pre>
       </p>
 
+    <!-- D65-P4：引擎更新卡（检测更新 / 更新引擎） -->
+    <div style="border:1px solid var(--c-border); border-radius:8px; padding:10px; margin-top:14px">
+      <h3 style="margin-top:0">引擎更新（D65-P4）<small style="font-weight:400;color:var(--c-muted)">快速缓存启动；用户确认后才更新</small></h3>
+      <p class="hint">
+        先点「检测更新」：PWA 只拉取很小的 <code>engine-version.json</code>，与本地 <code>_engine\engine-version.json</code> 对比；
+        只有版本不同才会出现「更新引擎」按钮。更新完成后需要重启引擎，PWA 会自动调用 <code>/restart</code> 并轮询回线。
+      </p>
+      <p>
+        <button class="btn" :disabled="!settings.engineOnline || settings.engineUpdateChecking || settings.engineUpdating"
+                @click="settings.checkEngineUpdate()">
+          {{ settings.engineUpdateChecking ? '检测中…' : '🔍 检测更新' }}
+        </button>
+        <button v-if="settings.engineUpdateInfo?.update_available" class="btn primary" style="margin-left:8px"
+                :disabled="settings.engineUpdating"
+                @click="settings.runEngineUpdate()">
+          {{ settings.engineUpdating ? '更新中…' : '⬆ 更新引擎' }}
+        </button>
+        <span class="hint" style="margin-left:8px" v-if="settings.engineUpdateInfo">
+          <template v-if="!settings.engineUpdateInfo.online">引擎未在线</template>
+          <template v-else-if="!settings.engineUpdateInfo.ok">无法检测更新：{{ settings.engineUpdateInfo.error || '远端不可达' }}</template>
+          <template v-else-if="settings.engineUpdateInfo.update_available">发现新版本，可更新</template>
+          <template v-else>已是最新</template>
+        </span>
+      </p>
+      <table class="grid" v-if="settings.engineUpdateInfo" style="max-width:760px">
+        <thead><tr><th>侧</th><th>engine_version</th><th>commit</th><th>路径 / 来源</th></tr></thead>
+        <tbody>
+          <tr><th>本地</th>
+            <td>{{ settings.engineUpdateInfo.local.engine_version || '—' }}</td>
+            <td><code>{{ commitShort(settings.engineUpdateInfo.local.commit) }}</code></td>
+            <td style="word-break:break-all">{{ settings.engineUpdateInfo.local._path || '—' }}</td>
+          </tr>
+          <tr v-if="settings.engineUpdateInfo.remote"><th>远端</th>
+            <td>{{ settings.engineUpdateInfo.remote.engine_version || '—' }}</td>
+            <td><code>{{ commitShort(settings.engineUpdateInfo.remote.commit) }}</code></td>
+            <td style="word-break:break-all">{{ settings.engineUpdateInfo.remote_url || '—' }}</td>
+          </tr>
+        </tbody>
+      </table>
+    </div>
+
     <!-- D63 T7.1：Playwright（学习通只读提取依赖）联网安装卡（镜像优先，见 docs/16 §22.1） -->
     <h3>Playwright（学习通提取 · 只读引导）</h3>
     <p class="hint">
@@ -476,12 +532,52 @@ onMounted(() => {
     <p>
       <button class="btn primary" @click="settings.runInstall('playwright')"
               :disabled="settings.installing !== ''">
-        {{ settings.installing === 'playwright' ? '安装中…（pypi→tuna、内核→npmmirror）' : '⚡ 联网安装 Playwright（国内镜像）' }}
+        {{ settings.installing === 'playwright' ? '安装中…（pypi→tuna、完整版内核→多镜像）' : '⚡ 联网安装 Playwright（完整版内核，不装 headless shell）' }}
       </button>
       <span class="hint" style="margin-left:8px">
         装完请点上方「体检」回看 playwright 项（绿=就绪）；已装本机 chrome 时可设 XXT_CHROME 免内核下载。
       </span>
     </p>
+
+    <div style="border:1px solid var(--c-border); border-radius:8px; padding:10px; margin-top:10px">
+      <h4 style="margin-top:0">浏览器内核直下（备用方案 · D65-P2）</h4>
+      <p class="hint">
+        没有可用本机 Edge/Chrome 时，可从这里取得 Playwright 完整版 chromium 直下链接。
+        <b>无需自己解压</b>：把 zip 放入下方「收包目录」后回到本卡点安装，安装动作仍由 PWA 触发。<br />
+        包名/文件名/目标目录均按引擎 dry-run 实时生成，不猜 URL。
+      </p>
+      <p>
+        <button class="btn" :disabled="settings.installing !== '' || !settings.engineOnline"
+                @click="settings.loadPwPkgs()">{{ settings.pwPkgsLoaded ? '⟳ 刷新直下清单' : '📥 获取直下清单' }}</button>
+        <span class="hint" style="margin-left:8px" v-if="settings.pwPkgsError">{{ settings.pwPkgsError }}</span>
+        <span class="hint" style="margin-left:8px" v-else-if="settings.pwPkgsLoaded">收包目录：<code>{{ settings.pwPkgsInbox || '（引擎未返回）' }}</code></span>
+      </p>
+      <table class="grid" v-if="settings.pwPkgs.length" style="max-width:100%">
+        <thead>
+          <tr><th>包</th><th>原文件名</th><th>目标目录</th><th>状态</th><th>直下链接</th></tr>
+        </thead>
+        <tbody>
+          <tr v-for="it in settings.pwPkgs" :key="it.name">
+            <td>{{ it.name }}</td>
+            <td><code>{{ it.file }}</code></td>
+            <td style="max-width:260px; word-break:break-all"><code>{{ it.dir }}</code></td>
+            <td>{{ it.installed ? '✅ 已安装' : (it.in_inbox ? '📦 包已就位，待安装' : '未下载') }}</td>
+            <td style="min-width:210px">
+              <a v-for="(u, k) in it.urls" :key="k" class="btn small" style="margin:2px"
+                 :href="u" target="_blank" rel="noopener">{{ pwUrlLabel(String(k)) }}</a>
+            </td>
+          </tr>
+        </tbody>
+      </table>
+      <p class="hint" v-if="settings.pwPkgsLoaded && !settings.pwPkgs.length && !settings.pwPkgsError">
+        引擎未返回可直下的完整版内核任务（可能已就绪，或 Playwright 包尚未安装）。
+      </p>
+      <p v-if="settings.pwPkgs.length">
+        <button class="btn primary" :disabled="settings.installing !== ''"
+                @click="settings.runInstall('playwright')">📂 从收包目录安装 / 复查内核</button>
+        <span class="hint" style="margin-left:8px">按钮同上方联网安装，只是本地包会被优先认领。</span>
+      </p>
+    </div>
 
       <div class="notice" v-if="!settings.engineOnline">
         引擎未在线——在本机运行 <code>assist serve</code> 后重试。

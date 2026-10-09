@@ -52,9 +52,33 @@ IF ERRORLEVEL 1 (
 :HAVE_VENV
 set "VPIP=%WORKSPACE%\.runtime\venv\Scripts\pip.exe"
 echo [5/6] install engine dependencies (TUNA pip index)
-IF EXIST "%WORKSPACE%\engine\pyproject.toml" goto ENGINE_LOCAL
-IF EXIST "%ROOT%\engine\pyproject.toml" goto ENGINE_LOCAL
-IF EXIST "%WORKSPACE%\_engine\engine\pyproject.toml" (set "ENGINE_DIR=%WORKSPACE%\_engine\engine" & goto ENGINE_LOCAL)
+set "ENGINE_DIR=%WORKSPACE%\_engine\engine"
+set "VERSION_LOCAL=%WORKSPACE%\_engine\engine-version.json"
+set "VERSION_TMP=%WORKSPACE%\engine-version.remote.json"
+set "VERSION_URL=https://pancong0711.github.io/assignment-assistant/dl/engine-version.json"
+
+REM D65-P0.0: stale local engine must not shadow bootstrapped engine.
+REM Developer opt-in: set ASSIST_ENGINE_LOCAL=1 to reuse workspace or repo engine.
+IF /I "%ASSIST_ENGINE_LOCAL%"=="1" IF EXIST "%WORKSPACE%\engine\pyproject.toml" goto ENGINE_LOCAL
+IF /I "%ASSIST_ENGINE_LOCAL%"=="1" IF EXIST "%ROOT%\engine\pyproject.toml" goto ENGINE_LOCAL
+
+IF NOT EXIST "%ENGINE_DIR%\pyproject.toml" goto ENGINE_DOWNLOAD
+
+echo [5/6] check engine version
+curl -fsSL --connect-timeout 8 --max-time 15 -o "%VERSION_TMP%" "%VERSION_URL%"
+IF ERRORLEVEL 1 (
+  echo [5/6] version check unavailable - reuse local engine
+  goto ENGINE_LOCAL
+)
+IF NOT EXIST "%VERSION_LOCAL%" goto ENGINE_DOWNLOAD
+FC /B "%VERSION_LOCAL%" "%VERSION_TMP%" >nul
+IF ERRORLEVEL 1 goto ENGINE_DOWNLOAD
+echo [5/6] engine up to date - reuse local copy
+goto ENGINE_LOCAL
+
+:ENGINE_DOWNLOAD
+echo [5/6] engine update required - downloading latest
+curl -fsSL --connect-timeout 8 --max-time 15 -o "%VERSION_TMP%" "%VERSION_URL%"
 
 echo [5/6a] engine source: PRIMARY mirror = github.io Pages dl (5 attempts x retry-delay)
 set "DELURL=https://pancong0711.github.io/assignment-assistant/dl/engine-main.zip"
@@ -84,6 +108,7 @@ goto ENGINE_CHECK
 :EXTRACT_ENGINE
 powershell -NoProfile -ExecutionPolicy Bypass -Command "Expand-Archive -Force %WORKSPACE%\engine-main.zip %WORKSPACE%\_engine" >> "%LOG%" 2>&1
 set "ENGINE_DIR=%WORKSPACE%\_engine\engine"
+IF EXIST "%VERSION_TMP%" copy /Y "%VERSION_TMP%" "%VERSION_LOCAL%" >nul
 
 :ENGINE_CHECK
 IF NOT EXIST "%ENGINE_DIR%\pyproject.toml" (

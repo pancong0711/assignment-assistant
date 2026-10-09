@@ -7,7 +7,6 @@
 from __future__ import annotations
 
 import json
-import os
 import time
 from pathlib import Path
 
@@ -37,9 +36,8 @@ def run_extract(targets: list[dict], storage: "Path | str",
                                 'hint': chk.get('hint', '请先 assist xxt login')})
         return rep
     with sync_playwright() as pw:
-        browser = pw.chromium.launch(headless=True,
-                                     executable_path=os.environ.get('XXT_CHROME') or None,
-                                     args=['--no-sandbox', '--disable-dev-shm-usage'])
+        from .session import _launch
+        browser = _launch(pw, headless=True)
         ctx = browser.new_context(storage_state=str(storage),
                                   viewport={'width': 1440, 'height': 1000}, locale='zh-CN')
         page = ctx.new_page()

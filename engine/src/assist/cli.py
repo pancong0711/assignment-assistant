@@ -77,6 +77,47 @@ def doctor(obj, workspace, verbose):
         click.echo(f"缺失：{bad}。安装：assist bootstrap")
 
 
+@cli.group(help="引擎版本检测/在线更新（D65-P4；更新后需重启引擎）")
+def engine():
+    pass
+
+
+@engine.command("version")
+@click.option("--workspace", "-w", default=None, help="workspace 路径（默认自动查找）")
+@click.option("--json", "as_json", is_flag=True, help="输出 JSON（默认人类可读）")
+def engine_version(workspace, as_json):
+    """对比本地 engine 与 Pages 上发布的最新版本。"""
+    ws = _setup(False, workspace)
+    from .engine_update import check_engine_update
+    info = check_engine_update(ws)
+    if as_json:
+        click.echo(json.dumps(info, ensure_ascii=False, indent=2))
+        return
+    local, remote = info.get("local") or {}, info.get("remote") or {}
+    click.echo(f"本地：{local.get('engine_version', '?')} commit={str(local.get('commit') or '')[:12]} path={local.get('_path', '')}")
+    if info.get("ok"):
+        click.echo(f"远端：{remote.get('engine_version', '?')} commit={str(remote.get('commit') or '')[:12]} source={info.get('remote_url')}")
+        click.echo("更新：有可用更新" if info.get("update_available") else "更新：已是最新")
+    else:
+        click.echo(f"远端不可达：{info.get('error') or '未知错误'}")
+        raise SystemExit(1)
+
+
+@engine.command("update")
+@click.option("--workspace", "-w", default=None, help="workspace 路径（默认自动查找）")
+@click.option("--check", is_flag=True, help="只检测、不下载")
+def engine_update_cmd(workspace, check):
+    """检测并按需更新 engine；完成需重启引擎生效。"""
+    ws = _setup(False, workspace)
+    from .engine_update import check_engine_update, update_engine
+    if check:
+        info = check_engine_update(ws)
+        click.echo(json.dumps(info, ensure_ascii=False, indent=2))
+        raise SystemExit(0 if info.get("ok") else 1)
+    rc = update_engine(ws, lambda line: click.echo(line))
+    raise SystemExit(0 if rc == 0 else 1)
+
+
 @cli.group(help="TeX/TinyTeX 可选依赖（网络安装，仓库不含安装包，D58）")
 def tex():
     pass

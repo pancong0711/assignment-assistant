@@ -33,16 +33,25 @@ def evaluate_verdict(final_url: str, login_pwd_input: bool) -> tuple[str, list[s
     return ("dead" if reasons else "alive"), reasons
 
 
-def chromium_executable() -> "str | None":
-    """环境变量 XXT_CHROME 指定本机 chrome/chromium 路径；未设则用 playwright 自带内核。"""
-    import os
-    v = os.environ.get("XXT_CHROME")
-    return v or None
-
-
 def _launch(pw, headless: bool):
-    return pw.chromium.launch(headless=headless, executable_path=chromium_executable(),
-                              args=["--no-sandbox", "--disable-dev-shm-usage"])
+    """D65-P0.1：本机浏览器优先的启动链。
+
+    链序：XXT_CHROME → msedge → chrome → 本机 chromium → Playwright 完整版。
+    每档真启动；前档失败才降级。最后一档 channel="chromium" 不会去找
+    chromium-headless-shell。
+    """
+    from .browsers import ARGS, launch_attempts
+
+    last = None
+    for kwargs in launch_attempts():
+        try:
+            return pw.chromium.launch(headless=headless, args=ARGS, **kwargs)
+        except Exception as e:  # noqa: BLE001 —— 该档不可用，继续下一档
+            last = e
+    raise RuntimeError(
+        "未找到可用的本机浏览器（Edge/Chrome/Chromium），自带完整版内核也未就绪。"
+        "请到设置中心体检 → 修复（只下载完整版内核），或设 XXT_CHROME 指向本机浏览器"
+    ) from last
 
 
 def _is_logged_in(page) -> bool:
