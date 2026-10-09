@@ -8,12 +8,9 @@ import click
 
 
 def default_storage(ctx) -> Path:
-    import os
-    v = os.environ.get("XXT_STORAGE")
-    if v:
-        return Path(v).expanduser()
-    from ..workspace import DEFAULT_WORKSPACE
-    return DEFAULT_WORKSPACE / ".runtime" / "xxt-storage.json"
+    """沿用 session.resolve_storage_path，保证 CLI / serve 路径契约一致。"""
+    from .session import resolve_storage_path
+    return resolve_storage_path(None)
 
 
 def register(group: click.Group) -> None:
@@ -26,7 +23,7 @@ def register(group: click.Group) -> None:
 
     @group.command("check")
     @click.option("--storage", "storage", default=None,
-                  type=click.Path(dir_okay=False), help="storage_state JSON（默认 env XXT_STORAGE 或 workspace/.runtime）")
+                  type=click.Path(dir_okay=False), help="storage_state JSON（默认 env XXT_STORAGE 或 xxt_home()/xxt-storage.json）")
     @click.option("--json-out", "json_out", default=None, type=click.Path(dir_okay=False),
                   help="体检报告落盘路径（可选）")
     @click.option("--html-out", "html_out", default=None, type=click.Path(dir_okay=False),

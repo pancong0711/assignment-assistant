@@ -1,7 +1,7 @@
 <script setup lang="ts">
-import { computed, onMounted, ref } from 'vue'
+import { computed, onMounted, onUnmounted, ref } from 'vue'
 import {
-  fetchXxtRun, fetchXxtRuns, fetchXxtStatus, startXxtLogin,
+  fetchXxtLoginJob, fetchXxtRun, fetchXxtRuns, fetchXxtStatus, startXxtLogin,
 } from '../lib/engineClient'
 import { useSettingsStore } from '../stores/settings'
 import ProcessStreamView from '../components/ProcessStreamView.vue'
@@ -20,7 +20,21 @@ const tok = computed(() => settings.engineToken)
 const verdict = ref<'alive' | 'dead' | 'unknown' | string>('unknown')
 const avatar = ref<string | null>(null)
 const qrcode = ref<string>('')
+const qrLoading = ref(false)
 const loginHint = ref('')
+
+let loginTimer: number | undefined
+let loginSeq = 0
+let loginJobId = ''
+let qrReady = false
+let qrStartedAt = 0
+
+function stopLoginPolling() {
+  if (loginTimer !== undefined) {
+    window.clearTimeout(loginTimer)
+    loginTimer = undefined
+  }
+}
 
 async function refreshStatus() {
   try {
@@ -43,24 +57,82 @@ async function refreshStatus() {
   }
 }
 
+function buildQrUrl(): string {
+  const base = engUrl.value.replace(/\/+$/, '') || ''
+  const u = new URL('/xxt/qr', base + '/')
+  if (tok.value) u.searchParams.set('token', tok.value)
+  u.searchParams.set('t', String(Date.now()))
+  return u.toString()
+}
+
+/** 预加载探针：只有 engine 真正返回可解码的 QR 才把 URL 交给 <img>，避免破图。 */
+function probeQr(url: string): Promise<boolean> {
+  return new Promise((resolve) => {
+    const im = new Image()
+    im.onload = () => resolve(true)
+    im.onerror = () => resolve(false)
+    im.src = url
+  })
+}
+
 async function startScan() {
-  loginHint.value = '已发起扫码任务：输入学习通手机 App 扫描下方二维码…'
+  const run = ++loginSeq
+  stopLoginPolling()
+  qrcode.value = ''
+  qrReady = false
+  qrLoading.value = true
+  qrStartedAt = Date.now()
+  loginHint.value = '已发起扫码任务：正在生成二维码……'
   try {
-    await startXxtLogin(engUrl.value, tok.value)
-    pollQr()
+    loginJobId = await startXxtLogin(engUrl.value, tok.value)
+    void startQrPolling(run)
   } catch (e) {
+    qrLoading.value = false
     loginHint.value = `启动失败：${String(e)}（检查引擎在线/playwright 安装项）`
   }
 }
 
-function pollQr() {
-  const base = engUrl.value.replace(/\/+$/, '') || ''
-  const tokArg = tok.value ? `?token=${encodeURIComponent(tok.value)}` : ''
-  qrcode.value = `${base}/xxt/qr${tokArg}` // <img> 直取；生成后每 3s 重载一次直至 alive
-  const timer = setInterval(async () => {
+async function startQrPolling(run: number) {
+  const tick = async () => {
+    if (run !== loginSeq) return
     await refreshStatus()
-    if (verdict.value === 'alive') { clearInterval(timer) }
-  }, 3000)
+    if (run !== loginSeq) return
+    if (verdict.value === 'alive') {
+      qrcode.value = ''
+      qrLoading.value = false
+      stopLoginPolling()
+      return
+    }
+    if (!qrReady) {
+      const url = buildQrUrl()
+      if (await probeQr(url)) {
+        if (run !== loginSeq) return
+        qrcode.value = url
+        qrReady = true
+        qrLoading.value = false
+        loginHint.value = '二维码已就绪，请用学习通 App 扫描'
+      } else if (loginJobId && Date.now() - qrStartedAt > 12000) {
+        try {
+          const job = await fetchXxtLoginJob(engUrl.value, tok.value, loginJobId)
+          if (job.status !== 'running') {
+            const line = (job.lines || []).slice(-1)[0] || `任务状态：${job.status}`
+            qrLoading.value = false
+            loginHint.value = `二维码生成失败：${line}`
+            stopLoginPolling()
+            return
+          }
+        } catch { /* 任务状态查询失败时继续重试 QR */ }
+      } else {
+        loginHint.value = '二维码生成中，请稍候……'
+      }
+    } else {
+      loginHint.value = '二维码已就绪，请用学习通 App 扫描'
+    }
+    if (run === loginSeq) {
+      loginTimer = window.setTimeout(tick, qrReady ? 3000 : 1500)
+    }
+  }
+  await tick()
 }
 
 /* ---------- 列表（最新 run） ---------- */
@@ -184,6 +256,7 @@ const grouped = computed(() => courses.value.map(c => {
 
 
 onMounted(() => { refreshStatus(); refreshRuns() })
+onUnmounted(() => { loginSeq += 1; stopLoginPolling() })
 </script>
 
 <template>
@@ -202,6 +275,7 @@ onMounted(() => { refreshStatus(); refreshRuns() })
               <span style="font-size:44px">🎓</span><small>已登录</small>
             </div>
             <img v-else-if="qrcode" :src="qrcode" alt="登录二维码" style="width:150px" />
+            <span v-else-if="qrLoading" class="hint" style="color:var(--c-muted)">二维码生成中…</span>
             <span v-else class="hint" style="color:var(--c-muted)">待扫码</span>
           </div>
           <div style="margin-top:6px">{{ verdict==='alive' ? `● 已登录${verdict?'':''}` : '○ 未登录/失效' }}</div>

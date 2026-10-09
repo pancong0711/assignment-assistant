@@ -227,14 +227,9 @@ def _playwright_state() -> str:
 
 
 def _xxt_home() -> Path:
-    """xxt 工件根（storage/runs/pages）：env XXT_HOME > dev repo .scratch > workspace/.runtime/xxt。"""
-    env = os.environ.get("XXT_HOME")
-    if env:
-        return Path(env)
-    repo_root = Path(__file__).resolve().parents[3]
-    if (repo_root / ".scratch" / "xxt-storage.json").exists():
-        return repo_root / ".scratch"
-    return _ws() / ".runtime" / "xxt"
+    """xxt 工件根（storage/runs/pages）：与 xxt.session.xxt_home 共用同一口径。"""
+    from .xxt.session import xxt_home
+    return xxt_home()
 
 
 def _xxt_session_check_cached(max_age=60):
@@ -424,8 +419,17 @@ class Handler(BaseHTTPRequestHandler):
             return
         if u.path == "/xxt/login/start":
             job_id = secrets.token_urlsafe(6)
-            env = {"XXT_STORAGE": str(_xxt_home() / "xxt-storage.json"),
-                   **os.environ}
+            home = _xxt_home()
+            # D66：同步清掉旧二维码，避免后台任务刚启动时又让前端拿到过去的登录票据。
+            try:
+                (home / "xxt-qr.png").unlink()
+            except FileNotFoundError:
+                pass
+            # 顺序很重要：本引擎解析出的 xxt 根必须覆盖外部环境里的旧 XXT_STORAGE/XXT_HOME；
+            # 这样 qr_login 写出的 QR 与 GET /xxt/qr 读取的路径才是同一处。
+            env = {**os.environ,
+                   "XXT_HOME": str(home),
+                   "XXT_STORAGE": str(home / "xxt-storage.json")}
             cmd = [_venv_python(), "-c",
                    "import sys,json;"
                    "from assist.xxt.session import qr_login;"
@@ -496,12 +500,22 @@ class Handler(BaseHTTPRequestHandler):
         elif u.path == "/xxt/qr":
             qr = _xxt_home() / "xxt-qr.png"
             if not qr.exists():
-                self._json({"ok": False, "error": "no qr yet"}, 404)
+                body = json.dumps({"ok": False, "error": "no qr yet"},
+                                  ensure_ascii=False).encode("utf-8")
+                self.send_response(404)
+                self.send_header("Content-Type", "application/json; charset=utf-8")
+                self.send_header("Cache-Control", "no-store, no-cache, must-revalidate")
+                self.send_header("Content-Length", str(len(body)))
+                self.end_headers()
+                self.wfile.write(body)
                 return
+            body = qr.read_bytes()
             self.send_response(200)
             self.send_header("Content-Type", "image/png")
+            self.send_header("Cache-Control", "no-store, no-cache, must-revalidate")
+            self.send_header("Content-Length", str(len(body)))
             self.end_headers()
-            self.wfile.write(qr.read_bytes())
+            self.wfile.write(body)
             return
         elif u.path == "/xxt/runs":
             home = _xxt_home()

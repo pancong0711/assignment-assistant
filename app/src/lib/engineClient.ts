@@ -351,6 +351,28 @@ export async function startXxtLogin(engineAddr: string, token?: string): Promise
   return o.job_id
 }
 
+/** GET /jobs/<id>：D66 扫码登录任务状态（生成失败时给前端明确原因，而不是破图）。 */
+export interface XxtLoginJobStatus {
+  status: string
+  returncode?: number | null
+  lines?: string[]
+}
+
+export async function fetchXxtLoginJob(
+  engineAddr: string, token: string | undefined, jobId: string,
+): Promise<XxtLoginJobStatus> {
+  const base = normalizeEngineAddr(engineAddr)
+  const o = (await getJson2(engineUrlWithToken(
+    base, `/jobs/${encodeURIComponent(jobId)}`, token))) as {
+      status?: string; returncode?: number | null; lines?: string[]
+    }
+  return {
+    status: String(o.status ?? 'unknown'),
+    returncode: o.returncode ?? null,
+    lines: Array.isArray(o.lines) ? o.lines.map(String) : [],
+  }
+}
+
 /** GET /xxt/runs：只读提取 run 清单（engine 本仓/工件目录）。 */
 export async function fetchXxtRuns(engineAddr: string, token?: string): Promise<XxtRunRow[]>
   {
