@@ -41,7 +41,15 @@ export async function startInstall(engineAddr: string, item: string,
 export async function restartEngine(engineAddr: string, token?: string): Promise<boolean> {
   const base = normalizeEngineAddr(engineAddr)
   const res = await fetch(engineUrlWithToken(base, '/restart', token), { method: 'POST' })
-  if (!res.ok) throw new Error(`HTTP ${res.status}`)
+  if (!res.ok) {
+    let detail = `HTTP ${res.status}`
+    try {
+      const o = (await res.json()) as { error?: string; hint?: string }
+      if (o?.error) detail = o.error
+      if (o?.hint) detail += `（${o.hint}）`
+    } catch { /* 保留 HTTP 状态 */ }
+    throw new Error(detail)
+  }
   const o = (await res.json()) as { ok?: boolean }
   return Boolean(o?.ok)
 }
@@ -92,6 +100,12 @@ export interface EngineStatus {
   name: string
   version: string
   workspace: boolean
+  /** D67：同一进程的实例身份；PWA 重启后必须看到它变化。 */
+  pid?: number
+  instance_id?: string
+  started_at?: string
+  supervised?: boolean
+  port?: number
 }
 
 export interface StatusResult {
@@ -158,6 +172,13 @@ export async function fetchEngineStatus(engineAddr: string, token?: string): Pro
         name: String(o.name ?? ''),
         version: String(o.version ?? ''),
         workspace: Boolean(o.workspace),
+        pid: typeof o.pid === 'number' ? o.pid : undefined,
+        instance_id: o.instance_id === undefined || o.instance_id === null
+          ? undefined : String(o.instance_id),
+        started_at: o.started_at === undefined || o.started_at === null
+          ? undefined : String(o.started_at),
+        supervised: typeof o.supervised === 'boolean' ? o.supervised : undefined,
+        port: typeof o.port === 'number' ? o.port : undefined,
       },
     }
   } catch (e) {

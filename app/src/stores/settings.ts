@@ -140,6 +140,11 @@ export const useSettingsStore = defineStore('settings', {
     engineOnline: false as boolean,
     engineVersion: '' as string,
     engineStatusError: '' as string,
+    /** D67：重启前后实例身份（/status 返回） */
+    engineInstanceId: '' as string,
+    enginePid: 0 as number,
+    engineSupervised: false as boolean,
+    enginePort: 0 as number,
     /** 引擎未在线时的体检降级态标记（true=上次体检走的是占位/降级路径）。 */
     doctorDegraded: false as boolean,
     /** 最近一次 /doctor 结果（含未在线降级信息） */
@@ -200,8 +205,36 @@ export const useSettingsStore = defineStore('settings', {
       const r = await fetchEngineStatus(this.engineUrl, this.engineToken)
       this.engineOnline = r.online
       this.engineVersion = r.status?.version ?? ''
+      this.engineInstanceId = r.status?.instance_id ?? ''
+      this.enginePid = r.status?.pid ?? 0
+      this.engineSupervised = Boolean(r.status?.supervised)
+      this.enginePort = r.status?.port ?? 0
       this.engineStatusError = r.online ? '' : (r.error ?? 'offline')
       return r.online
+    },
+
+    /** D67：调用 /restart 并等待“新实例”回在线；旧进程未退出时不得误报成功。 */
+    async restartEngineAndWait(timeoutMs = 15000): Promise<{ ok: boolean; reason: string }> {
+      await this.pingEngine()
+      const beforeId = this.engineInstanceId
+      try {
+        await restartEngine(this.engineUrl, this.engineToken)
+      } catch (e) {
+        return { ok: false, reason: (e as Error).message }
+      }
+      const deadline = Date.now() + timeoutMs
+      let everOnline = false
+      while (Date.now() < deadline) {
+        await new Promise((r) => setTimeout(r, 500))
+        if (!(await this.pingEngine())) continue
+        everOnline = true
+        const afterId = this.engineInstanceId
+        if (afterId && afterId !== beforeId) return { ok: true, reason: '' }
+      }
+      if (everOnline) {
+        return { ok: false, reason: '旧引擎仍在在线（instance_id 未变化），可能没有真正退出' }
+      }
+      return { ok: false, reason: '引擎在时限内未重回在线' }
     },
     /** 环境体检真接入：GET {engineAddr}/doctor 逐项绿黄红。
      *  引擎未在线 → 黄色占位 + lastDoctorError（调用方显示引导文案）。 */
@@ -330,23 +363,15 @@ export const useSettingsStore = defineStore('settings', {
           return false
         }
         this.installLog += '\n♻ 更新完成，正在重启引擎……'
-        try {
-          await restartEngine(this.engineUrl, this.engineToken)
-        } catch (e) {
-          this.installLog += `\n⚠ 更新完成但自动重启请求失败：${(e as Error).message}；请手动重启引擎。`
+        const rr = await this.restartEngineAndWait(15000)
+        if (!rr.ok) {
+          this.installLog += `\n⚠ 更新完成但自动重启失败：${rr.reason}；请查看 start.log 或手动重启。`
           return false
         }
-        for (let i = 0; i < 30; i++) {
-          await new Promise((r) => setTimeout(r, 500))
-          if (await this.pingEngine()) {
-            await this.runDoctor()
-            await this.checkEngineUpdate()
-            this.installLog += '\n✓ 引擎已重启并回在线。'
-            return true
-          }
-        }
-        this.installLog += '\n⚠ 更新后 15s 内未回在线；请查看 start.log 或手动重启。'
-        return false
+        await this.runDoctor()
+        await this.checkEngineUpdate()
+        this.installLog += '\n✓ 引擎已重启并回在线。'
+        return true
       } catch (e) {
         this.installLog = String((e as Error).message)
         return false

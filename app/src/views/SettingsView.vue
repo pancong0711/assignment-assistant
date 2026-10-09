@@ -3,7 +3,7 @@ import { computed, onMounted, ref } from 'vue'
 import { useSettingsStore } from '../stores/settings'
 import { pickDirectory, detectCapabilities, fsWriteHint, downloadData } from '../lib/fsAccess'
 import { getKbDirHandle } from '../stores/kb'
-import { statusGlyph, restartEngine } from '../lib/engineClient'
+import { statusGlyph } from '../lib/engineClient'
 
 const settings = useSettingsStore()
 const caps = detectCapabilities()
@@ -130,25 +130,14 @@ async function restartEngineNow() {
   if (engineRestarting.value) return
   if (!confirm('重启本地引擎进程？约 1–2 秒（期间批阅/体检不可用），重启后自动回在线并重跑体检。')) return
   engineRestarting.value = true
-  try {
-    await restartEngine(settings.engineUrl, settings.engineToken)
-  } catch (e) {
-    engineRestarting.value = false
-    alert('重启请求失败：' + (e as Error).message + '（引擎未在线？请从终端 Ctrl+C 后重跑 assist serve）')
+  // D67：必须等 instance_id 变化才算重启成功，避免旧进程未退出时误报。
+  const rr = await settings.restartEngineAndWait(15000)
+  engineRestarting.value = false
+  if (!rr.ok) {
+    alert(`重启未完成：${rr.reason}。\n请查看引擎终端/start.log；若为 Windows 且非 start.bat 启动，请关闭终端后双击 start.bat。`)
     return
   }
-  // 轮询等回在线（最多 12s；起不来就提示走终端重启）
-  for (let i = 0; i < 24; i++) {
-    await new Promise(r => setTimeout(r, 500))
-    const online = await settings.pingEngine()
-    if (online) {
-      engineRestarting.value = false
-      await runDoctorNow()
-      return
-    }
-  }
-  engineRestarting.value = false
-  alert('引擎 12s 内未回在线——请到引擎终端窗口查看报错或手动重跑。')
+  await runDoctorNow()
 }
 
 /** D56-J5：刷新 workspace 句柄状态（会话内 + IndexedDB 恢复）。 */

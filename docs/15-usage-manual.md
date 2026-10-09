@@ -90,8 +90,9 @@
 
 - 首推：**双击 start.bat**（Windows）/ `bash start.sh`——反复双击不重复下载，
   二次启动 3–5 秒（缓存详 docs/16 §26.3）；端口若跳到 8601..8649 以地址栏为准；
-- CLI 已装引擎：**不用回终端**——设置中心体检卡旁「🔄 重启引擎」
-  （受理后引擎同端口以新代码再生，<1 秒瞬断，自动回在线+重跑体检）；
+- PWA 已装引擎：**不用回终端**——设置中心体检卡旁「🔄 重启引擎」
+  （D67：Windows 下请用 start.bat 启动，由它托管 supervisor loop，同端口自动重启；
+  若手动从终端跑 `assist serve`，PWA 会明确提示关闭终端后双击 start.bat，不再误报成功）；
 - Pages 使用前提：本机引擎已由上二者任一方式起着；Chrome 的
   Private Network Access 拦截已由引擎预检头部豁免（docs/16 §26.1 #4）；
 - 安装类操作（如 playwright 联网安装、TinyTeX）建议在 start.bat 自开的

@@ -23,6 +23,7 @@ import shutil
 import subprocess
 import sys
 import threading
+import time
 import urllib.parse
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
@@ -276,6 +277,23 @@ def _static_root() -> "Path | None":
 _XXT_CHECK = None  # (ts, report)
 _XXT_AVATAR = None  # (ts, dataurl|None)
 
+# D67：进程实例身份与重启监督协议
+_INSTANCE_ID = ""      # 每次 serve() 启动生成；/status 用于判断是否换了新进程
+_STARTED_AT = ""       # 人类可读启动时间
+_SERVER_PORT = 0       # 当前监听端口（/status 回显，便于验收固定端口）
+
+
+def restart_plan(platform_name: str, supervised: bool) -> str:
+    """D67：返回重启执行模式。
+
+    - POSIX 保持 execv（原地替换，行为已由 D64 验证）；
+    - Windows + start.bat 托管：exit75（start.bat supervisor loop 接管重启）；
+    - Windows 非托管：manual（返回 409，前端提示手动重启，绝不误报成功）。
+    """
+    if platform_name == "nt":
+        return "exit75" if supervised else "manual"
+    return "execv"
+
 
 class Handler(BaseHTTPRequestHandler):
     ws: Path = None  # type: ignore
@@ -457,7 +475,7 @@ class Handler(BaseHTTPRequestHandler):
             self._json({"ok": True, "job_id": job_id, "qr_url": "/xxt/qr"})
             return
         if u.path == "/restart":
-            # D64 §22.1：引擎自愈式重启（安装了新代码/改了 env 后 PWA 一键生效）。
+            # D64 §22.1 + D67：引擎自愈式重启（安装了新代码/改了 env 后 PWA 一键生效）。
             # 安全哨兵：非 lan 模式只接受回环来源；lan 模式已过 token 校验（do_POST 顶部）。
             peer = self.client_address[0]
             if not Handler.token and peer not in ("127.0.0.1", "::1"):
@@ -466,10 +484,26 @@ class Handler(BaseHTTPRequestHandler):
             if not _RESTART_ARGS:
                 self._json({"ok": False, "error": "restart args unknown (进程非 assist serve 启动？)"}, 409)
                 return
-            self._json({"ok": True, "restarting": True})
+            supervised = os.environ.get("ASSIST_SUPERVISED") == "1"
+            mode = restart_plan(os.name, supervised)
+            if mode == "manual":
+                self._json({
+                    "ok": False,
+                    "error": "engine is not supervised by start.bat",
+                    "hint": "Windows 下请关闭当前引擎终端，再双击 start.bat；不要依赖 execv 原地重启",
+                }, 409)
+                return
+            self._json({"ok": True, "restarting": True, "mode": mode})
+            try:
+                self.wfile.flush()  # 确保 PWA 先收到受理响应；随后进程会退出
+            except Exception:
+                pass
             import time as _t2, threading as _th
             def _reborn():
                 _t2.sleep(0.5)  # 让响应字节先落到 socket
+                if mode == "exit75":
+                    # start.bat 的 :ENGINE_LOOP 收到 75 后自动同端口重启，不进入 pause。
+                    os._exit(75)
                 os.execv(sys.executable,
                          [sys.executable, "-c",
                           "from assist.cli import main; main()", *_RESTART_ARGS])
@@ -575,8 +609,18 @@ class Handler(BaseHTTPRequestHandler):
                                           "python_dl": os.environ.get('UV_PYTHON_INSTALL_MIRROR') or 'official',
                                           "official": os.environ.get('CN_OFFICIAL') == 'official'}})
         elif u.path == "/status":
-            self._json({"name": "assist-engine", "version": __version__,
-                        "workspace": True, "ws": str(self.ws)})
+            self._json({
+                "name": "assist-engine",
+                "version": __version__,
+                "workspace": True,
+                "ws": str(self.ws),
+                # D67：重启前后实例身份；PWA 必须等 instance_id 变化才算重启成功。
+                "pid": os.getpid(),
+                "instance_id": _INSTANCE_ID,
+                "started_at": _STARTED_AT,
+                "supervised": os.environ.get("ASSIST_SUPERVISED") == "1",
+                "port": _SERVER_PORT,
+            })
         elif (m := re.fullmatch(r"/jobs/([A-Za-z0-9_\\-]+)(/stream)?", u.path)):
             job = _JOBS.get(m.group(1))
             if job is None:
@@ -659,8 +703,11 @@ def serve(workspace: str | None, host: str = "127.0.0.1", port: int = 8601,
     else:
         logger.info(f"本机模式 http://127.0.0.1:{port}/（引擎与 PWA 同源）")
     logger.info(f"workspace={ws}")
-    global _RESTART_ARGS
+    global _RESTART_ARGS, _INSTANCE_ID, _STARTED_AT, _SERVER_PORT
     _RESTART_ARGS = ("serve", "--workspace", str(ws), "--port", str(port)) + (("--lan",) if lan else ())
+    _INSTANCE_ID = secrets.token_urlsafe(6)
+    _STARTED_AT = time.strftime("%Y-%m-%d %H:%M:%S")
+    _SERVER_PORT = port
     httpd = ThreadingHTTPServer((host, port), Handler)
     Handler.token = token
     try:

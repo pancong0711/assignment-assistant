@@ -20,6 +20,7 @@ set "UV_DEFAULT_INDEX=%UV_DEFAULT_INDEX%"
 IF NOT DEFINED UV_DEFAULT_INDEX set "UV_DEFAULT_INDEX=https://pypi.tuna.tsinghua.edu.cn/simple"
 IF NOT DEFINED PLAYWRIGHT_DOWNLOAD_HOST set "PLAYWRIGHT_DOWNLOAD_HOST=https://npmmirror.com/mirrors/playwright/"
 set "ASSIST_WORKSPACE=%WORKSPACE%"
+set "ASSIST_SUPERVISED=1"
 echo [1/6] workspace = %WORKSPACE%
 echo [2/6] detect python (system first; miniconda fallback from TUNA)
 set PY=
@@ -141,7 +142,17 @@ IF NOT DEFINED PORT (
 )
 echo engine http://127.0.0.1:%PORT%/ (log: %LOG%)
 start "" http://127.0.0.1:%PORT%/
+
+:ENGINE_LOOP
 "%WORKSPACE%\.runtime\venv\Scripts\assist.exe" serve --port %PORT% >> "%LOG%" 2>&1
+
+set "RC=%ERRORLEVEL%"
+if "%RC%"=="75" (
+  echo [restart] engine restart requested; restarting...
+  timeout /t 1 /nobreak >nul 2>nul
+  goto ENGINE_LOOP
+)
+
 echo engine exited. see %LOG%
 pause
 endlocal
