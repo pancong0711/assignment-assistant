@@ -334,8 +334,12 @@ def restart_plan(platform_name: str, supervised: bool) -> str:
     - Windows + start.bat 托管：exit75（start.bat supervisor loop 接管重启）；
     - Windows 非托管：manual（返回 409，前端提示手动重启，绝不误报成功）。
     """
+    if supervised:
+        # D71：只要有 start.bat/start.sh supervisor，就统一走 exit75，
+        # 让 launcher 在 engine 停止后执行 pending 安装，再启动新 engine。
+        return "exit75"
     if platform_name == "nt":
-        return "exit75" if supervised else "manual"
+        return "manual"
     return "execv"
 
 

@@ -4,7 +4,7 @@ from click.testing import CliRunner
 
 from assist.cli import cli
 from assist.xxt.session import (
-    _is_logged_in, default_qr_path, evaluate_verdict, resolve_storage_path, xxt_home,
+    _is_logged_in, _page_alive, default_qr_path, evaluate_verdict, resolve_storage_path, xxt_home,
 )
 
 
@@ -119,3 +119,39 @@ def test_cli_login_post_check_dead_exits_2(tmp_path, monkeypatch):
     monkeypatch.setattr(sess, "check_session", lambda *a, **k: {"verdict": "dead"})
     r = CliRunner().invoke(cli, ["xxt", "login", "--storage", str(tmp_path / "s.json")])
     assert r.exit_code == 2, r.output
+
+class _AliveBrowser:
+    def is_connected(self):
+        return True
+
+
+class _NavPage:
+    def is_closed(self):
+        return False
+
+    def evaluate(self, _expr):
+        raise RuntimeError(
+            "Execution context was destroyed, most likely because of a navigation")
+
+
+class _DeadBrowser:
+    def is_connected(self):
+        return False
+
+
+class _OpenPage:
+    def is_closed(self):
+        return False
+
+    def evaluate(self, _expr):
+        return 1
+
+
+def test_page_alive_navigation_context_is_not_death():
+    ok, err = _page_alive(_AliveBrowser(), _NavPage())
+    assert ok is True and err == ""
+
+
+def test_page_alive_browser_disconnected_is_death():
+    ok, err = _page_alive(_DeadBrowser(), _OpenPage())
+    assert ok is False and "disconnected" in err

@@ -3,7 +3,8 @@
 设计边界：
 - 更新检测只拉取很小的 `engine-version.json`（不含大 zip）；
 - 只有远端 commit / engine_version 与本地不同，才允许下载 engine-main.zip；
-- 更新流程写完文件后必须重启引擎才生效；
+- D71 起更新只负责下载/解压到 `_engine/staging` 并写 `update.pending`；
+  真正安装由外部 launcher 在旧 engine 停止后执行，避免 Windows 下自锁；
 - 下载源只使用 Pages `dl/` 同目录资源，避免 GitHub release 可能滞后导致的“版本标记新、内容旧”。
 """
 
@@ -189,7 +190,11 @@ def _download_zip(url: str, dest: Path, emit) -> None:
 
 
 def update_engine(ws: Path, emit) -> int:
-    """执行一次引擎更新；返回 0=成功（仍需重启），1=失败。"""
+    """D71 两阶段更新：只下载/解压到 staging 并写 pending；不碰运行中的 venv。
+
+    真正的 editable 安装由外部 launcher（start.bat/start.sh）在旧 engine
+    退出后执行；这样 Windows 下不会出现 assist.exe 自锁。
+    """
     ws = Path(ws)
     info = check_engine_update(ws)
     if not info.get("ok"):
@@ -204,34 +209,43 @@ def update_engine(ws: Path, emit) -> int:
     emit(f"检测到新版本：{_engine_version(remote) or __version__}"
          + (f"（commit {rc[:12]}）" if rc else ""))
 
-    target = ws / "_engine"
-    target.mkdir(parents=True, exist_ok=True)
-    tmp = target / "engine-main.part.zip"
-    emit(f"下载 engine-main.zip ← {ZIP_URL}")
+    engine_root = ws / "_engine"
+    stage = engine_root / "staging"
+    pending = engine_root / "update.pending"
     try:
-        _download_zip(ZIP_URL, tmp, emit)
+        if stage.exists():
+            shutil.rmtree(stage, ignore_errors=True)
+        stage.mkdir(parents=True, exist_ok=True)
     except Exception as e:  # noqa: BLE001
-        tmp.unlink(missing_ok=True)
+        emit(f"✗ 无法创建 staging 目录：{e}")
+        return 1
+
+    tmp_zip = stage / "engine-main.part.zip"
+    emit(f"下载 engine-main.zip → staging（不覆盖当前 engine）")
+    try:
+        _download_zip(ZIP_URL, tmp_zip, emit)
+    except Exception as e:  # noqa: BLE001
+        tmp_zip.unlink(missing_ok=True)
         emit(f"✗ 下载失败：{e}")
         return 1
 
     try:
-        with zipfile.ZipFile(tmp) as z:
+        with zipfile.ZipFile(tmp_zip) as z:
             names = z.namelist()
             if "engine/pyproject.toml" not in names:
                 raise RuntimeError("zip 内缺少 engine/pyproject.toml（非预期包结构）")
-            z.extractall(target)
-        _meta_file(ws).write_text(
+            z.extractall(stage)
+        (stage / "engine-version.json").write_text(
             json.dumps(remote, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
+        pending.write_text(
+            json.dumps({"commit": rc, "remote": remote}, ensure_ascii=False, indent=2) + "\n",
+            encoding="utf-8")
     except Exception as e:  # noqa: BLE001
-        tmp.unlink(missing_ok=True)
-        emit(f"✗ 解压/写版本标记失败：{e}")
+        emit(f"✗ 解压/写 pending 失败：{e}")
         return 1
     finally:
-        tmp.unlink(missing_ok=True)
+        tmp_zip.unlink(missing_ok=True)
 
-    engine_dir = target / "engine"
-    if _install_engine_editable(ws, engine_dir, emit) != 0:
-        return 1
-    emit("✓ 引擎文件已更新；需要重启引擎后生效（PWA 将自动触发 /restart）。")
+    emit("✓ 新引擎已暂存到 _engine\\staging；等待 launcher 在旧引擎停止后安装。")
+    emit("  PWA 将自动调用 /restart；若未回在线，请关闭终端后双击 start.bat。")
     return 0

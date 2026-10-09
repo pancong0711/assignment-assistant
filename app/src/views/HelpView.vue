@@ -14,7 +14,7 @@ const TAB_GUIDES: { tab: string; items: string[] }[] = [
     '引擎地址 / token / workspace 相关设置与体检（含【🔧 修复】按钮，走 /install）',
     'source_used 下载源说明（tuna/ghfast/npmmirror）',
     'Playwright：本机 Edge/Chrome 优先（零内核下载）；无本机浏览器才下载完整版 chromium，不装 headless shell；失败可走「浏览器内核直下」备用（D65）',
-    '引擎更新：设置中心「检测更新 / 更新引擎」；只对比版本，有更新才下载；更新后自动重启（D65-P4；D67：Windows 由 start.bat 托管，手动终端启动会提示手动重启）',
+    '引擎更新：设置中心「检测更新 / 更新引擎」；只对比版本，有更新才下载；更新包先暂存，重启后由 start.bat/start.sh 在旧引擎停止时安装（D71；D67 Windows supervisor）',
   ]},
   { tab: '题库编辑器', items: [
     'xlsx 读入 / 编辑 / 写回（引擎在线时 /kb/write 样式保留；否则 FSA / 下载降级）',
@@ -73,7 +73,7 @@ const FAQ: { q: string; a: string }[] = [
   { q: '多台机器共用 workspace？', a: '每台独立 workspace（数据本地）；D9 LAN 第二屏可 token 共连' },
   { q: 'Playwright 卡在 chromium 下载？', a: '先看本机 Edge/Chrome 是否可用：体检显示“已验证可启动，零下载”即无需下载内核。仍要下载时会走多镜像；全部失败时在设置中心「浏览器内核直下」复制链接，把 zip 放入收包目录后再点安装（D65）。' },
   { q: '旧 engine 目录导致 start.bat 没更新？', a: 'D65 后 start.bat 不再默认复用 workspace\\engine；只有显式设置 ASSIST_ENGINE_LOCAL=1 才把它当开发态本地引擎。普通教师直接双击即可更新。' },
-  { q: '引擎更新会不会每次下载大包？', a: '不会。PWA 先拉取很小的 engine-version.json 对比本地 commit；相同就显示“已是最新”，只有你点「更新引擎」且有新版本时才下载 engine-main.zip，更新后自动重启（D65-P4）。Windows 请从 start.bat 启动，否则 PWA 会提示关闭终端后双击 start.bat（D67）。' },
+  { q: '引擎更新会不会每次下载大包？', a: '不会。PWA 先拉取很小的 engine-version.json 对比本地 commit；相同就显示“已是最新”，只有你点「更新引擎」且有新版本时才下载 engine-main.zip。D71 起更新包先暂存，重启后由 start.bat/start.sh 在旧引擎停止时安装并启动新引擎；Windows 请保持 start.bat 窗口开启。' },
   { q: '整班 100+ 学生 HTML 会太大？', a: '纯文本 + base64 题图（kb/fig 挂钩时数百 KB 页块）；建议 Chrome 打印（保存 PDF），兼容性最稳' },
   { q: 'GitHub 总是超时？', a: 'v10 已接多条下载链（Pages primary → github release → ghfast → 全仓 fallback），详见 D34' },
 ]

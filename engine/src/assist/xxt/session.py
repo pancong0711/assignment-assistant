@@ -103,13 +103,30 @@ def _launch(pw, headless: bool):
     return _launch_labeled(pw, headless)[0]
 
 
-def _page_alive(page) -> tuple[bool, str]:
-    """D70：真实发一次协议调用，判断 page/browser 是否还活着。"""
+def _page_alive(browser, page) -> tuple[bool, str]:
+    """D70/D71：判断 browser/page 是否还活着。
+
+    D71 修正：页面导航会销毁 execution context，`Page.evaluate` 会报
+    “Execution context was destroyed”；这是正常登录跳转，不是浏览器死亡。
+    真死亡只看 browser disconnected / page closed；evaluate 异常仅在明确
+    是连接类错误时才判死。
+    """
+    try:
+        if not browser.is_connected():
+            return False, "browser disconnected"
+        if page.is_closed():
+            return False, "page closed"
+    except Exception as e:  # noqa: BLE001
+        return False, f"browser/page state unavailable: {str(e)[:160]}"
     try:
         page.evaluate("() => 1")
         return True, ""
     except Exception as e:  # noqa: BLE001
-        return False, str(e)[:200]
+        msg = str(e)
+        low = msg.lower()
+        if "execution context was destroyed" in low or "navigation" in low:
+            return True, ""  # 登录成功后的正常跳转
+        return False, msg[:200]
 
 
 def _cookie_names(page) -> list[str]:
@@ -261,15 +278,8 @@ def qr_login(storage: "Path | str | None" = None,
             deadline = time.time() + timeout
             while time.time() < deadline:
                 time.sleep(2)
-                alive, alive_err = _page_alive(page)
-                if not alive:
-                    _write(stage="failed", url=getattr(page, "url", ""),
-                           browser=browser_label,
-                           browser_connected=browser.is_connected(),
-                           page_closed=page.is_closed(),
-                           cookies=_cookie_names(page),
-                           error=f"browser/page closed before scan: {alive_err}")
-                    return {**state, "verdict": "failed"}
+                # D71：先判登录（cookie-first），再做存活检查；导航中的 evaluate
+                # 异常不再提前误杀扫码任务。
                 if _is_logged_in(page):
                     time.sleep(3)
                     try:
@@ -287,6 +297,15 @@ def qr_login(storage: "Path | str | None" = None,
                            page_closed=page.is_closed(),
                            cookies=_cookie_names(page))
                     return {**state, "verdict": "logged_in"}
+                alive, alive_err = _page_alive(browser, page)
+                if not alive:
+                    _write(stage="failed", url=getattr(page, "url", ""),
+                           browser=browser_label,
+                           browser_connected=browser.is_connected(),
+                           page_closed=page.is_closed(),
+                           cookies=_cookie_names(page),
+                           error=f"browser/page closed before scan: {alive_err}")
+                    return {**state, "verdict": "failed"}
                 if time.time() - state.get("_last_diag", 0) > 15:
                     state["_last_diag"] = time.time()
                     _write(stage="waiting_scan", url=page.url,

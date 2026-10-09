@@ -5,9 +5,13 @@ from pathlib import Path
 from assist.serve import restart_plan
 
 
-def test_posix_restart_keeps_execv():
+def test_posix_restart_keeps_execv_when_unsupervised():
     assert restart_plan("posix", supervised=False) == "execv"
-    assert restart_plan("posix", supervised=True) == "execv"
+
+
+def test_supervised_restart_uses_exit75_on_all_platforms():
+    assert restart_plan("posix", supervised=True) == "exit75"
+    assert restart_plan("nt", supervised=True) == "exit75"
 
 
 def test_windows_supervised_uses_exit75():

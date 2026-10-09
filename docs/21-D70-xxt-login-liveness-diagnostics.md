@@ -1,6 +1,7 @@
 # D70 实施记录：学习通扫码等待期浏览器存活检查 + 过程输出
 
-> 状态：**代码已实施（2026-10-09），待真机复测**。
+> 状态：**已被 D71-1 修正（2026-10-09）**。D70 的 `_page_alive` 把导航异常误判为死亡；
+> D71 已改为导航类 exception 视为存活/重试。
 > 关联：`docs/19-D68-xxt-scan-login-state.md`、`docs/17-D66-xxt-qr-image-task.md`。
 > 现场：D68 后 `xxt-login-state.json` 长期停在 `waiting_scan`，`url` 始终是 passport；
 > terminal / PWA 都看不到实时过程信息。

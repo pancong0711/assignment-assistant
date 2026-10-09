@@ -1,6 +1,7 @@
 # D69 需求/实施记录：引擎更新依赖安装 rc=2 与 uv/pip 回退
 
-> 状态：**代码已实施（2026-10-09），待 Windows 真机复测**。
+> 状态：**已被 D71 取代（2026-10-09）**。D69 的 uv→pip 回退仅保留给 /install/deps；
+> PWA 引擎自更新已改为 D71 两阶段 staging + pending + supervisor 安装。
 > 关联：`docs/16-xuexitong-integration.md` §27（D65-P4 引擎更新/一键安装）、
 > `docs/14-va-vb-plan.md` VA-1，以及 D65 的 start.bat 依赖安装路径。
 > 现场输出关键句：

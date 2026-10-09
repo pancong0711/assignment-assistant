@@ -13,7 +13,7 @@ import re
 import sys
 from pathlib import Path
 
-TARGETS = [Path("tools/start.bat"), Path("tools/start.sh")]
+TARGETS = [Path("tools/start.bat"), Path("tools/start.sh"), Path("engine/run_engine.bat")]
 
 
 def main() -> int:

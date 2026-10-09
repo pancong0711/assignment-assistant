@@ -21,6 +21,8 @@ IF NOT DEFINED UV_DEFAULT_INDEX set "UV_DEFAULT_INDEX=https://pypi.tuna.tsinghua
 IF NOT DEFINED PLAYWRIGHT_DOWNLOAD_HOST set "PLAYWRIGHT_DOWNLOAD_HOST=https://npmmirror.com/mirrors/playwright/"
 set "ASSIST_WORKSPACE=%WORKSPACE%"
 set "ASSIST_SUPERVISED=1"
+set "STAGE=%WORKSPACE%\_engine\staging"
+set "PENDING=%WORKSPACE%\_engine\update.pending"
 echo [1/6] workspace = %WORKSPACE%
 echo [2/6] detect python (system first; miniconda fallback from TUNA)
 set PY=
@@ -128,6 +130,11 @@ IF ERRORLEVEL 1 (
   exit /b 1
 )
 :AFTER_DEPS
+if exist "%PENDING%" (
+  echo [update] pending staging detected; applying before start...
+  call :APPLY_UPDATE
+  if errorlevel 1 goto UPDATE_APPLY_FAILED
+)
 echo [6/6] start engine (auto port scan 8601..8649)
 set "PORT="
 FOR /L %%p IN (8601,1,8649) DO (
@@ -144,7 +151,17 @@ echo engine http://127.0.0.1:%PORT%/ (log: %LOG%)
 start "" http://127.0.0.1:%PORT%/
 
 :ENGINE_LOOP
-"%WORKSPACE%\.runtime\venv\Scripts\assist.exe" serve --port %PORT% >> "%LOG%" 2>&1
+if exist "%PENDING%" (
+  echo [update] applying staged engine before restart...
+  call :APPLY_UPDATE
+  if errorlevel 1 goto UPDATE_APPLY_FAILED
+)
+if exist "%ENGINE_DIR%\run_engine.bat" (
+  call "%ENGINE_DIR%\run_engine.bat" "%WORKSPACE%\.runtime\venv\Scripts\python.exe" "%WORKSPACE%" "%PORT%" >> "%LOG%" 2>&1
+) else (
+  REM migration fallback for pre-D71 engine
+  "%WORKSPACE%\.runtime\venv\Scripts\python.exe" -m assist.cli serve --workspace "%WORKSPACE%" --port "%PORT%" >> "%LOG%" 2>&1
+)
 
 set "RC=%ERRORLEVEL%"
 if "%RC%"=="75" (
@@ -155,4 +172,57 @@ if "%RC%"=="75" (
 
 echo engine exited. see %LOG%
 pause
-endlocal
+exit /b 0
+
+:UPDATE_APPLY_FAILED
+echo [FAIL] engine update/install failed; see %LOG%
+notepad "%LOG%"
+pause
+exit /b 1
+
+:APPLY_UPDATE
+if not exist "%STAGE%\engine\pyproject.toml" (
+  echo [update] staging missing: %STAGE%\engine\pyproject.toml
+  exit /b 1
+)
+set "ENGINE_BAK=%ENGINE_DIR%.bak"
+if exist "%ENGINE_BAK%" rmdir /S /Q "%ENGINE_BAK%" >nul 2>nul
+if exist "%ENGINE_DIR%" move "%ENGINE_DIR%" "%ENGINE_BAK%" >nul 2>nul
+if not exist "%ENGINE_BAK%\pyproject.toml" (
+  echo [update] failed to move current engine to backup
+  exit /b 1
+)
+xcopy /E /I /Y "%STAGE%\engine" "%ENGINE_DIR%" >nul 2>nul
+if not exist "%ENGINE_DIR%\pyproject.toml" (
+  echo [update] failed to copy staging engine
+  call :RESTORE_ENGINE
+  exit /b 1
+)
+echo [update] installing dependencies from staged engine...
+"%VPIP%" install -e "%ENGINE_DIR%" --index-url "%UV_DEFAULT_INDEX%" >> "%LOG%" 2>&1
+if errorlevel 1 (
+  echo [update] pip install failed; rolling back...
+  call :RESTORE_ENGINE
+  exit /b 1
+)
+if exist "%STAGE%\engine-version.json" copy /Y "%STAGE%\engine-version.json" "%VERSION_LOCAL%" >nul
+if exist "%ENGINE_BAK%" rmdir /S /Q "%ENGINE_BAK%" >nul 2>nul
+if exist "%PENDING%" del "%PENDING%" >nul 2>nul
+if exist "%STAGE%" rmdir /S /Q "%STAGE%" >nul 2>nul
+echo [update] engine update applied successfully.
+exit /b 0
+
+:RESTORE_ENGINE
+if exist "%ENGINE_DIR%" rmdir /S /Q "%ENGINE_DIR%" >nul 2>nul
+if exist "%ENGINE_BAK%" move "%ENGINE_BAK%" "%ENGINE_DIR%" >nul 2>nul
+echo [update] reinstalling previous engine...
+"%VPIP%" install -e "%ENGINE_DIR%" --index-url "%UV_DEFAULT_INDEX%" >> "%LOG%" 2>&1
+if errorlevel 1 (
+  echo [update] rollback reinstall also failed; see %LOG%
+  exit /b 1
+)
+if exist "%PENDING%" (
+  if exist "%PENDING%.failed" del "%PENDING%.failed" >nul 2>nul
+  ren "%PENDING%" "update.failed" >nul 2>nul
+)
+exit /b 1

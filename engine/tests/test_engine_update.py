@@ -1,6 +1,8 @@
 """D65-P4：引擎版本检测纯逻辑回归（不触网）。"""
 
 import json
+import zipfile
+from pathlib import Path
 from types import SimpleNamespace
 
 from assist import engine_update as eu
@@ -93,3 +95,35 @@ def test_install_engine_editable_falls_back_pip(monkeypatch, tmp_path, ):
     assert eu._install_engine_editable(tmp_path, tmp_path / "engine", lines.append) == 0
     assert calls == [["uv", "fail"], ["pip", "ok"]]
     assert any("uv 安装失败，已用 venv pip 回退成功" in line for line in lines)
+
+def test_update_engine_stages_without_touching_active_engine(monkeypatch, tmp_path):
+    monkeypatch.setattr(eu, "check_engine_update", lambda ws: {
+        "ok": True, "update_available": True,
+        "remote": {"engine_version": "0.1.0", "commit": "abc123"},
+        "local": {}, "error": "",
+    })
+
+    def fake_download(url, dest, emit):
+        with zipfile.ZipFile(dest, "w") as z:
+            z.writestr("engine/pyproject.toml", "[project]\nname=\"x\"\n")
+            z.writestr("engine/run_engine.bat", "@echo off\n")
+
+    monkeypatch.setattr(eu, "_download_zip", fake_download)
+    lines: list[str] = []
+    assert eu.update_engine(tmp_path, lines.append) == 0
+    stage = tmp_path / "_engine" / "staging"
+    assert (stage / "engine" / "pyproject.toml").exists()
+    assert (stage / "engine-version.json").exists()
+    assert (tmp_path / "_engine" / "update.pending").exists()
+    assert not (tmp_path / "_engine" / "engine").exists()  # active engine untouched
+    assert any("暂存" in line for line in lines)
+
+
+def test_start_bat_d71_pending_contract():
+    root = Path(__file__).resolve().parents[2]
+    for name in ("tools/start.bat", "app/public/start.bat"):
+        raw = (root / name).read_bytes()
+        assert b"update.pending" in raw, name
+        assert b":APPLY_UPDATE" in raw, name
+        assert b"run_engine.bat" in raw, name
+        assert b"Scripts\assist.exe" not in raw, name  # 不再直接运行被替换的 exe

@@ -362,15 +362,16 @@ export const useSettingsStore = defineStore('settings', {
           this.installLog += `\n⚠ 引擎更新失败（code ${rc}），上方为过程输出。`
           return false
         }
-        this.installLog += '\n♻ 更新完成，正在重启引擎……'
-        const rr = await this.restartEngineAndWait(15000)
+        this.installLog += '\n♻ 更新包已暂存，正在请求重启并由 launcher 安装……'
+        // D71：更新包暂存后，start.bat/start.sh 需要先安装再启动，可能超过 15s。
+        const rr = await this.restartEngineAndWait(180000)
         if (!rr.ok) {
-          this.installLog += `\n⚠ 更新完成但自动重启失败：${rr.reason}；请查看 start.log 或手动重启。`
+          this.installLog += `\n⚠ 更新包已暂存，但自动重启/安装失败：${rr.reason}；请关闭终端后双击 start.bat。`
           return false
         }
         await this.runDoctor()
         await this.checkEngineUpdate()
-        this.installLog += '\n✓ 引擎已重启并回在线。'
+        this.installLog += '\n✓ 引擎已由 launcher 安装并重启回在线。'
         return true
       } catch (e) {
         this.installLog = String((e as Error).message)

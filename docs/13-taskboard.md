@@ -1135,3 +1135,15 @@ applyManualTranslation/setTranslationRatio 中 setTranslationRatio 保留——�
 - P2 备用方案（2026-10-09）：PWA 设置中心已接 `/pw/pkgs`，展示直下链接/收包路径/目标目录，并可触发“从收包目录安装”。验证：`npm run build` + `selfcheck:roster-fig` 通过。P3 教师引导已落地（HelpView + docs/15）。
 - start.bat 更新策略补充（2026-10-09）：远端 `engine-version.json` vs 本地 `_engine\engine-version.json` 先对比，相同复用、不同才下载；版本检测失败回退本地；更新后启动新引擎进程生效。CI 随 Pages 发布版本标记。
 - 决议修订（2026-10-09 用户拍板）：更新检测/更新引擎主入口改到 PWA「检测更新 / 更新引擎」按钮（D65-P4）；start.bat 保留快速缓存启动。start.bat 启动时版本对比视为过渡实现，P4 落地时简化/可选化。P4 已实施：/engine/version + /install/engine_update + PWA 更新卡 + CLI engine version/update；更新后自动 restart 轮询。验证：52 tests、npm build、selfcheck 通过；远端版本标记待 CI 首次发布。
+
+---
+
+## D71 · 扫码导航竞态 + 引擎两阶段自更新 + launcher/engine 边界（2026-10-09）
+
+- 主需求/实施记录：`docs/22-D71-engine-launcher-two-phase-update.md`；
+- 摘录：
+  - D71-1 修正 D70 `_page_alive()` 把“页面导航 execution context destroyed”误判成浏览器死亡；
+  - D71-2/4 引擎更新改为 staging + `update.pending`，旧 engine 停止后由 start.bat/start.sh 安装，失败回滚；
+  - D71-3 新增引擎适配层 `engine/run_engine.bat|sh`，外部 launcher 不再硬编码 `assist.cli serve`；
+  - D71-5 PWA/terminal 全过程输出；
+- 验证：77 tests、lint_bat、start.sh syntax、npm build。

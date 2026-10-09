@@ -121,6 +121,7 @@
   1. 点「检测更新」→ 只拉取很小的 `engine-version.json`，对比本地 `_engine\engine-version.json`；
   2. 相同 → 显示“已是最新”，不下载；
   3. 不同 → 出现「更新引擎」按钮；点击后才下载 `engine-main.zip`、重装依赖；
-  4. 更新成功后 PWA 自动调用 `/restart` 并轮询回线，然后重跑版本对比与体检。
+  4. 更新成功后 PWA 自动调用 `/restart`；start.bat/start.sh 在旧引擎停止后执行安装并启动新引擎；
+  5. 若更新/安装失败，终端会显示 `[FAIL]`，请查看 `start.log`；已安装版本会尽量回滚。
 - CLI 等价：`assist engine version` / `assist engine update --check` / `assist engine update`。
 - start.bat 保持快速缓存启动；过渡版启动时版本对比可按 P4 口径后续简化。
