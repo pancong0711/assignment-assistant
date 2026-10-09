@@ -75,8 +75,8 @@ def evaluate_verdict(final_url: str, login_pwd_input: bool) -> tuple[str, list[s
     return ("dead" if reasons else "alive"), reasons
 
 
-def _launch(pw, headless: bool):
-    """D65-P0.1：本机浏览器优先的启动链。
+def _launch_labeled(pw, headless: bool):
+    """D65-P0.1 + D70：返回 (browser, 档位标签)，用于过程诊断。
 
     链序：XXT_CHROME → msedge → chrome → 本机 chromium → Playwright 完整版。
     每档真启动；前档失败才降级。最后一档 channel="chromium" 不会去找
@@ -86,8 +86,10 @@ def _launch(pw, headless: bool):
 
     last = None
     for kwargs in launch_attempts():
+        label = str(kwargs.get("channel") or kwargs.get("executable_path") or "chromium")
         try:
-            return pw.chromium.launch(headless=headless, args=ARGS, **kwargs)
+            browser = pw.chromium.launch(headless=headless, args=ARGS, **kwargs)
+            return browser, label
         except Exception as e:  # noqa: BLE001 —— 该档不可用，继续下一档
             last = e
     raise RuntimeError(
@@ -96,12 +98,45 @@ def _launch(pw, headless: bool):
     ) from last
 
 
-def _is_logged_in(page) -> bool:
-    """扫码后轮询判定（严格对齐 .scratch/xxt_login_capture.py 的 v3 逻辑）。
+def _launch(pw, headless: bool):
+    """保留旧调用口径；需要浏览器档位时用 _launch_labeled。"""
+    return _launch_labeled(pw, headless)[0]
 
-    D68：之前 port 时漏掉了“已跳到 i.chaoxing.com/教学域”直接判真的分支；
-    仅看 cookie 时，某些 Windows/浏览器组合会因 cookie 可见时序不同而扫完码不动作。
+
+def _page_alive(page) -> tuple[bool, str]:
+    """D70：真实发一次协议调用，判断 page/browser 是否还活着。"""
+    try:
+        page.evaluate("() => 1")
+        return True, ""
+    except Exception as e:  # noqa: BLE001
+        return False, str(e)[:200]
+
+
+def _cookie_names(page) -> list[str]:
+    """只取 cookie 名（不取 value），用于脱敏状态诊断。"""
+    try:
+        names = {str(c.get("name", "")) for c in page.context.cookies() if c.get("name")}
+        return sorted(names)[:30]
+    except Exception:
+        return []
+
+
+def _is_logged_in(page) -> bool:
+    """扫码后轮询判定（D68 对齐旧 capture；D70 改为 cookie 先判、URL 后判）。
+
+    旧实现先做 passport/login URL 拦截，导致“cookie 已有 _uid、但页面 URL
+    没来得及跳转”的场景永远检测不到。新口径：
+      1) 先看 _uid/uid cookie；
+      2) 再看是否已到 i.chaoxing.com/教学域；
+      3) 最后才用 passport/login URL 兜底判 False。
+    真伪最终由 qr_login 中的 goto HOME_URL + CLI check_session 二次确认。
     """
+    try:
+        names = {c["name"].lower() for c in page.context.cookies()}
+    except Exception:
+        names = set()
+    if "_uid" in names or "uid" in names:
+        return True
     u = urlparse(page.url)
     host, path = u.netloc.lower(), u.path.lower()
     if "passport" in host or "login" in path:
@@ -109,11 +144,7 @@ def _is_logged_in(page) -> bool:
     if host == "i.chaoxing.com" or host.endswith(".chaoxing.com"):
         if host != "passport2.chaoxing.com" and "passport" not in host and "login" not in path:
             return True
-    try:
-        names = {c["name"].lower() for c in page.context.cookies()}
-        return "_uid" in names or "uid" in names
-    except Exception:
-        return False
+    return False
 
 
 def _require_playwright():
@@ -199,11 +230,14 @@ def qr_login(storage: "Path | str | None" = None,
 
     def _write(**kw):
         state.update(kw)
-        state_out.write_text(json.dumps(state, ensure_ascii=False, indent=1), encoding="utf-8")
+        payload = json.dumps(state, ensure_ascii=False, indent=1)
+        state_out.write_text(payload, encoding="utf-8")
+        # D70：同时输出到 CLI stdout，经 serve 子进程转发到 terminal/start.log 与 /jobs。
+        print(payload, flush=True)
 
     _write(stage="starting", storage=str(storage), qr=str(qr_out))
     with sync_playwright() as pw:
-        browser = _launch(pw, headless=True)
+        browser, browser_label = _launch_labeled(pw, headless=True)
         try:
             ctx = browser.new_context(viewport={"width": 1280, "height": 900}, locale="zh-CN")
             page = ctx.new_page()
@@ -217,12 +251,25 @@ def qr_login(storage: "Path | str | None" = None,
                     qr_tmp.unlink()
                 except FileNotFoundError:
                     pass
-                _write(stage="failed", url=getattr(page, "url", ""), error=str(e)[:500])
+                _write(stage="failed", url=getattr(page, "url", ""),
+                       browser=browser_label, browser_connected=browser.is_connected(),
+                       page_closed=page.is_closed(), error=str(e)[:500])
                 raise
-            _write(stage="waiting_scan", url=page.url, qr=str(qr_out))
+            _write(stage="waiting_scan", url=page.url, qr=str(qr_out),
+                   browser=browser_label, browser_connected=browser.is_connected(),
+                   page_closed=page.is_closed(), cookies=[])
             deadline = time.time() + timeout
             while time.time() < deadline:
                 time.sleep(2)
+                alive, alive_err = _page_alive(page)
+                if not alive:
+                    _write(stage="failed", url=getattr(page, "url", ""),
+                           browser=browser_label,
+                           browser_connected=browser.is_connected(),
+                           page_closed=page.is_closed(),
+                           cookies=_cookie_names(page),
+                           error=f"browser/page closed before scan: {alive_err}")
+                    return {**state, "verdict": "failed"}
                 if _is_logged_in(page):
                     time.sleep(3)
                     try:
@@ -234,14 +281,27 @@ def qr_login(storage: "Path | str | None" = None,
                     ctx.storage_state(path=str(storage))
                     html_out.write_text(page.content(), encoding="utf-8")
                     _write(stage="logged_in", url=page.url, title=page.title(),
-                           storage=str(storage), html=str(html_out))
+                           storage=str(storage), html=str(html_out),
+                           browser=browser_label,
+                           browser_connected=browser.is_connected(),
+                           page_closed=page.is_closed(),
+                           cookies=_cookie_names(page))
                     return {**state, "verdict": "logged_in"}
                 if time.time() - state.get("_last_diag", 0) > 15:
                     state["_last_diag"] = time.time()
-                    _write(stage="waiting_scan", url=page.url)
-            _write(stage="timeout", url=page.url)
+                    _write(stage="waiting_scan", url=page.url,
+                           browser=browser_label,
+                           browser_connected=browser.is_connected(),
+                           page_closed=page.is_closed(),
+                           cookies=_cookie_names(page))
+            _write(stage="timeout", url=page.url,
+                   browser=browser_label, browser_connected=browser.is_connected(),
+                   page_closed=page.is_closed(), cookies=_cookie_names(page))
         finally:
-            browser.close()
+            try:
+                browser.close()
+            except Exception:
+                pass
     return {**state, "verdict": "timeout"}
 
 

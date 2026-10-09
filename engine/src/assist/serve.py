@@ -507,15 +507,43 @@ class Handler(BaseHTTPRequestHandler):
                 _JOBS[job_id] = {"item": "xxt_login", "queue": q_, "lines": out,
                                  "status": "running", "returncode": None}
             def _xxt_login_worker():
+                # D70：不能用 subprocess.run 等结束才吐输出，否则扫码等待期间
+                # terminal / /jobs 始终空白。改为 Popen 逐行读取并实时转发。
                 try:
-                    cp = subprocess.run(cmd, capture_output=True, text=True,
-                                        timeout=2300, env=env,
-                                        cwd=str(_ENGINE_ROOT.parent))
-                    for line in (cp.stdout or "").splitlines()+ (cp.stderr or "").splitlines():
-                        q_.put(line); out.append(line)
-                    _JOBS[job_id]["returncode"] = cp.returncode
-                    _JOBS[job_id]["status"] = "done" if cp.returncode == 0 else "failed"
-                    q_.put(f"__DONE__{cp.returncode}__")
+                    proc = subprocess.Popen(
+                        cmd, stdout=subprocess.PIPE, stderr=subprocess.STDOUT,
+                        text=True, bufsize=1, env=env,
+                        cwd=str(_ENGINE_ROOT.parent))
+
+                    def _reader():
+                        try:
+                            for raw in proc.stdout:
+                                line = raw.rstrip("\r\n")
+                                q_.put(line); out.append(line)
+                                try:
+                                    print(f"[xxt-login] {line}", flush=True)
+                                except Exception:
+                                    pass
+                        except Exception as exc:  # noqa: BLE001
+                            q_.put(str(exc)); out.append(str(exc))
+
+                    reader = threading.Thread(target=_reader, daemon=True)
+                    reader.start()
+                    try:
+                        proc.wait(timeout=2300)
+                    except subprocess.TimeoutExpired:
+                        proc.kill()
+                        try:
+                            proc.wait(timeout=10)
+                        except Exception:
+                            pass
+                        msg = "扫码登录任务超时（超过 2300s），已强制终止"
+                        q_.put(msg); out.append(msg)
+                    reader.join(timeout=5)
+                    rc = proc.returncode if proc.returncode is not None else -1
+                    _JOBS[job_id]["returncode"] = rc
+                    _JOBS[job_id]["status"] = "done" if rc == 0 else "failed"
+                    q_.put(f"__DONE__{rc}__")
                 except Exception as exc:
                     q_.put(str(exc)); out.append(str(exc))
                     _JOBS[job_id]["status"] = "failed"; _JOBS[job_id]["returncode"] = -1

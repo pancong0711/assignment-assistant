@@ -87,10 +87,16 @@ def test_is_logged_in_chaoxing_host_even_without_cookie():
     assert _is_logged_in(_FakePage("https://i.chaoxing.com/base", [])) is True
 
 
-def test_is_logged_in_login_page_stays_false_even_with_uid():
+def test_is_logged_in_login_page_with_uid_is_true():
+    """D70：cookie 先判——URL 还在 passport 但 _uid 已出现时也要识别登录。"""
     assert _is_logged_in(
         _FakePage("https://passport2.chaoxing.com/login?fid=&newversion=true",
-                  [{"name": "_uid", "value": "x"}])) is False
+                  [{"name": "_uid", "value": "x"}])) is True
+
+
+def test_is_logged_in_login_page_without_uid_stays_false():
+    assert _is_logged_in(
+        _FakePage("https://passport2.chaoxing.com/login?fid=&newversion=true", [])) is False
 
 
 def test_is_logged_in_uid_cookie_fallback():
