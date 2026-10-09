@@ -31,6 +31,7 @@ from pathlib import Path
 from loguru import logger
 
 from . import __version__
+from .xxt import layout as xxt_layout
 
 CHECK_IDS = ("python_env", "uv", "deps", "playwright", "xelatex", "fonts", "settings", "kb")
 INSTALL_ITEMS = ("deps", "playwright", "fonts", "tex_guide", "python_guide", "uv", "kb_init", "katex", "tinytex", "engine_update")
@@ -368,6 +369,58 @@ class Handler(BaseHTTPRequestHandler):
     def _ok_token(self, qs: dict) -> bool:
         return (not Handler.token) or qs.get("token", [""])[0] == Handler.token
 
+    def _start_stream_job(self, job_id: str, cmd: list[str], env: dict,
+                          item: str, prefix: str):
+        """D72：通用 CLI job 流式转发（terminal/start.log + /jobs + SSE）。"""
+        q_, out = queue.Queue(), []
+        with _JOBS_LOCK:
+            _JOBS[job_id] = {"item": item, "queue": q_, "lines": out,
+                             "status": "running", "returncode": None}
+
+        def worker():
+            # D70/D72：Popen 逐行读取，避免长任务等待期间 terminal 空白。
+            try:
+                proc = subprocess.Popen(
+                    cmd, stdout=subprocess.PIPE, stderr=subprocess.STDOUT,
+                    text=True, bufsize=1, env=env,
+                    cwd=str(_ENGINE_ROOT.parent))
+
+                def reader():
+                    try:
+                        for raw in proc.stdout:
+                            line = raw.rstrip("\r\n")
+                            q_.put(line); out.append(line)
+                            try:
+                                print(f"[{prefix}] {line}", flush=True)
+                            except Exception:
+                                pass
+                    except Exception as exc:  # noqa: BLE001
+                        q_.put(str(exc)); out.append(str(exc))
+
+                rt = threading.Thread(target=reader, daemon=True)
+                rt.start()
+                try:
+                    proc.wait(timeout=2300)
+                except subprocess.TimeoutExpired:
+                    proc.kill()
+                    try:
+                        proc.wait(timeout=10)
+                    except Exception:
+                        pass
+                    msg = "任务超时（超过 2300s），已强制终止"
+                    q_.put(msg); out.append(msg)
+                rt.join(timeout=5)
+                rc = proc.returncode if proc.returncode is not None else -1
+                _JOBS[job_id]["returncode"] = rc
+                _JOBS[job_id]["status"] = "done" if rc == 0 else "failed"
+                q_.put(f"__DONE__{rc}__")
+            except Exception as exc:  # noqa: BLE001
+                q_.put(str(exc)); out.append(str(exc))
+                _JOBS[job_id]["status"] = "failed"; _JOBS[job_id]["returncode"] = -1
+                q_.put("__DONE__-1__")
+
+        threading.Thread(target=worker, daemon=True).start()
+
     def _start_job(self, job_id: str, item: str):
         if item in ("deps", "katex", "tinytex", "playwright", "engine_update"):
             # D55/H1/D58 + D63/T7.1：特殊安装项（服务端写盘 / 联网下载解压；playwright=两步国内镜像联网）
@@ -505,55 +558,37 @@ class Handler(BaseHTTPRequestHandler):
             # 而是走 `assist xxt login`：内部同样写 storage JSON，并在登录后跑
             # check_session() 做二次确认 + storage_state 回写续期。
             cmd = _xxt_login_cmd(home)
-            import queue as _q
-            q_, out = _q.Queue(), []
-            with _JOBS_LOCK:
-                _JOBS[job_id] = {"item": "xxt_login", "queue": q_, "lines": out,
-                                 "status": "running", "returncode": None}
-            def _xxt_login_worker():
-                # D70：不能用 subprocess.run 等结束才吐输出，否则扫码等待期间
-                # terminal / /jobs 始终空白。改为 Popen 逐行读取并实时转发。
-                try:
-                    proc = subprocess.Popen(
-                        cmd, stdout=subprocess.PIPE, stderr=subprocess.STDOUT,
-                        text=True, bufsize=1, env=env,
-                        cwd=str(_ENGINE_ROOT.parent))
-
-                    def _reader():
-                        try:
-                            for raw in proc.stdout:
-                                line = raw.rstrip("\r\n")
-                                q_.put(line); out.append(line)
-                                try:
-                                    print(f"[xxt-login] {line}", flush=True)
-                                except Exception:
-                                    pass
-                        except Exception as exc:  # noqa: BLE001
-                            q_.put(str(exc)); out.append(str(exc))
-
-                    reader = threading.Thread(target=_reader, daemon=True)
-                    reader.start()
-                    try:
-                        proc.wait(timeout=2300)
-                    except subprocess.TimeoutExpired:
-                        proc.kill()
-                        try:
-                            proc.wait(timeout=10)
-                        except Exception:
-                            pass
-                        msg = "扫码登录任务超时（超过 2300s），已强制终止"
-                        q_.put(msg); out.append(msg)
-                    reader.join(timeout=5)
-                    rc = proc.returncode if proc.returncode is not None else -1
-                    _JOBS[job_id]["returncode"] = rc
-                    _JOBS[job_id]["status"] = "done" if rc == 0 else "failed"
-                    q_.put(f"__DONE__{rc}__")
-                except Exception as exc:
-                    q_.put(str(exc)); out.append(str(exc))
-                    _JOBS[job_id]["status"] = "failed"; _JOBS[job_id]["returncode"] = -1
-                    q_.put("__DONE__-1__")
-            threading.Thread(target=_xxt_login_worker, daemon=True).start()
+            self._start_stream_job(job_id, cmd, env, "xxt_login", "xxt-login")
             self._json({"ok": True, "job_id": job_id, "qr_url": "/xxt/qr"})
+            return
+        if u.path == "/xxt/extract":
+            payload: dict = {}
+            try:
+                length = int(self.headers.get("Content-Length") or 0)
+                if length:
+                    payload = json.loads(self.rfile.read(length).decode("utf-8")) or {}
+            except Exception as exc:  # noqa: BLE001
+                self._json({"ok": False, "error": f"bad json: {exc}"}, 400)
+                return
+            mode = str(payload.get("mode") or "all")
+            if mode != "all":
+                self._json({
+                    "ok": False,
+                    "error": "unsupported mode",
+                    "hint": "D72 第一版仅支持 mode=all；targets 模式后续开放",
+                }, 400)
+                return
+            home = _xxt_home()
+            env = {**os.environ,
+                   "XXT_HOME": str(home),
+                   "XXT_STORAGE": str(home / "xxt-storage.json")}
+            cmd = [str(_venv_python()), "-m", "assist.cli", "xxt", "extract", "--all"]
+            if bool(payload.get("skip_notices", False)):
+                cmd.append("--skip-notices")
+            job_id = secrets.token_urlsafe(6)
+            self._start_stream_job(job_id, cmd, env, "xxt_extract", "xxt-extract")
+            self._json({"ok": True, "job_id": job_id, "mode": mode,
+                        "skip_notices": bool(payload.get("skip_notices", False))})
             return
         if u.path == "/restart":
             # D64 §22.1 + D67：引擎自愈式重启（安装了新代码/改了 env 后 PWA 一键生效）。
@@ -635,9 +670,7 @@ class Handler(BaseHTTPRequestHandler):
         elif u.path == "/xxt/runs":
             home = _xxt_home()
             runs = []
-            for f2 in sorted(home.glob("xxt-*.json"), key=lambda p2: p2.stat().st_mtime, reverse=True):
-                if "login-state" in f2.name or f2.name in ("xxt-readonly.json", "xxt-notices.json", "xxt-session-check.json", "xxt-storage.json", "xxt-login-state.json"):
-                    continue
+            for f2 in xxt_layout.run_json_files(home):
                 try:
                     d = json.loads(f2.read_text(encoding="utf-8"))
                     runs.append({"run_id": d.get("run_id") or f2.stem, "ts_start": d.get("ts_start"),
@@ -659,20 +692,20 @@ class Handler(BaseHTTPRequestHandler):
             if not re.fullmatch(r"xxt-[0-9A-Za-z\-]+", run_id):
                 self._json({"ok": False, "error": "bad run"}, 404)
                 return
-            f3 = _xxt_home() / "xxt-pages" / "shots" / f"{run_id}-step{fname}"
-            f3 = f3 if f3.name.endswith('.png') and f3.exists() else (
-                _xxt_home() / "xxt-pages" / "shots" / fname)
-            if not f3.exists() or not f3.name.endswith('.png') or not f3.is_file() or f3.parent.name != 'shots':
+            candidates = xxt_layout.shot_candidates(run_id, fname, _xxt_home())
+            if not candidates:
                 self._json({"ok": False, "error": "no shot"}, 404)
                 return
+            f3 = candidates[0]
             self.send_response(200)
             self.send_header("Content-Type", "image/png")
             self.end_headers()
             self.wfile.write(f3.read_bytes())
             return
         elif (m2 := re.fullmatch(r"/xxt/run/([A-Za-z0-9\-]+)", u.path)):
-            fr = _xxt_home() / f"{m2.group(1)}.json"
-            if not fr.exists() or not re.fullmatch(r"xxt-[0-9A-Za-z\-]+", m2.group(1)):
+            run_id = m2.group(1)
+            fr = xxt_layout.find_run_json(run_id, _xxt_home())
+            if fr is None or not re.fullmatch(r"xxt-[0-9A-Za-z\-]+", run_id):
                 self._json({"ok": False, "error": "no such run"}, 404)
                 return
             self._json(json.loads(fr.read_text(encoding="utf-8")))

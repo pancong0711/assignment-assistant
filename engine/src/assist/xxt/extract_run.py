@@ -11,11 +11,12 @@ import time
 from pathlib import Path
 
 
-def run_extract(targets: list[dict], storage: "Path | str",
+def run_extract(targets: "list[dict] | None", storage: "Path | str",
                 out_dir: "Path | str", archive_dir: "Path | str",
                 roster_dir: "Path | str | None" = None,
                 roster_labels: "set[str] | None" = None,
-                skip_notices: bool = True) -> dict:
+                skip_notices: bool = True,
+                discover_all: bool = False) -> dict:
     from playwright.sync_api import sync_playwright
     from .session import check_session
     from .extractor import ReadOnlyExtractor, anchor_check, unsubmitted_diff
@@ -43,7 +44,34 @@ def run_extract(targets: list[dict], storage: "Path | str",
         page = ctx.new_page()
         ext = ReadOnlyExtractor(ctx, page, archive_dir)
         ext.run_id = run_id
-        for course in targets:
+        # D72：--all 时先在真会话里发现课程/班级，再走同一套逐班提取逻辑。
+        if discover_all:
+            try:
+                discovered = []
+                for course in ext.discover_courses() or []:
+                    classes = ext.discover_classes(course["courseId"]) or []
+                    discovered.append({
+                        "name": course.get("name") or course["courseId"],
+                        "courseId": course["courseId"],
+                        "classes": classes,
+                    })
+                targets = discovered
+                rep['target_source'] = 'discover'
+                if not discovered:
+                    rep['failures'].append({
+                        'kind': 'not_extracted',
+                        'detail': 'discover found 0 courses/classes',
+                    })
+            except Exception as e:  # noqa: BLE001
+                targets = []
+                rep['target_source'] = 'discover'
+                rep['failures'].append({
+                    'kind': 'not_extracted',
+                    'detail': f'discover failed: {str(e)[:200]}',
+                })
+        else:
+            rep['target_source'] = 'provided'
+        for course in (targets or []):
             cid = course['courseId']
             head = ext.goto_work_list(cid)
             cpi = head.get('cpi') or '0'

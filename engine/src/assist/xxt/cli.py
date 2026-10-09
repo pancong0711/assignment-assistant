@@ -37,8 +37,10 @@ def register(group: click.Group) -> None:
         raise SystemExit(0 if rep.get("verdict") == "alive" else 2)
 
     @group.command("extract")
-    @click.option("--targets", "targets", required=True, type=click.Path(exists=True, dir_okay=False),
-                  help="目标清单 JSON（round-1 schema: courses[].classes[]）")
+    @click.option("--targets", "targets", default=None, type=click.Path(exists=True, dir_okay=False),
+                  help="目标清单 JSON（round-1 schema: courses[].classes[]）；与 --all 二选一")
+    @click.option("--all", "extract_all", is_flag=True, default=False,
+                  help="扫描当前账户全部课程/班级并提取（D72；无需 targets 文件）")
     @click.option("--storage", "storage", default=None, type=click.Path(dir_okay=False))
     @click.option("--out-dir", "out_dir", default=None, type=click.Path(file_okay=False))
     @click.option("--archive-dir", "archive_dir", default=None, type=click.Path(file_okay=False))
@@ -47,21 +49,27 @@ def register(group: click.Group) -> None:
     @click.option("--roster-label", "roster_labels", multiple=True,
                   help="差集基准班级标签（可多次；命中班级名子串即启用名册差集）")
     @click.option("--skip-notices", is_flag=True, default=False, help="跳过通知抓取")
-    def xxt_extract(targets, storage, out_dir, archive_dir, roster_dir, roster_labels, skip_notices):
-        """只读提取 run（T9）：体检前置→逐班直达导航+evaluate直读→JSON+存档；POST 全拦截。"""
+    def xxt_extract(targets, extract_all, storage, out_dir, archive_dir,
+                    roster_dir, roster_labels, skip_notices):
+        """只读提取 run（T9/D72）：体检前置→逐班直达导航+evaluate直读→JSON+存档；POST 全拦截。"""
         import json as _json
+        from . import layout
         from .extract_run import run_extract
-        from .session import check_session
-        spec = _json.loads(Path(targets).read_text(encoding='utf-8'))
-        base = default_storage(None).parent
-        roster_src = Path(roster_dir) if roster_dir else None
+        if not extract_all and not targets:
+            raise click.UsageError("必须提供 --targets，或使用 --all 扫描账户全部课程/班级")
+        if extract_all and targets:
+            raise click.UsageError("--all 与 --targets 不能同时使用")
+        spec = {"courses": []}
+        if targets:
+            spec = _json.loads(Path(targets).read_text(encoding='utf-8'))
         rep = run_extract(spec.get('courses', []),
                           storage=storage or default_storage(None),
-                          out_dir=out_dir or base / 'runs',
-                          archive_dir=archive_dir or base / 'pages',
+                          out_dir=out_dir or layout.runs_dir(),
+                          archive_dir=archive_dir or layout.pages_dir(),
                           roster_dir=roster_dir,
                           roster_labels=set(roster_labels or []),
-                          skip_notices=skip_notices)
+                          skip_notices=skip_notices,
+                          discover_all=extract_all)
         summary = {'run_id': rep.get('run_id'), 'ts_end': rep.get('ts_end'),
                    'failures': rep.get('failures'),
                    'classes': sum(len(c.get('classes', [])) for c in rep.get('courses', [])),

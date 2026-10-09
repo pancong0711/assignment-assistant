@@ -155,3 +155,31 @@ def test_page_alive_navigation_context_is_not_death():
 def test_page_alive_browser_disconnected_is_death():
     ok, err = _page_alive(_DeadBrowser(), _OpenPage())
     assert ok is False and "disconnected" in err
+
+
+def test_xxt_extract_cli_supports_all():
+    from assist.cli import cli
+    r = CliRunner().invoke(cli, ["xxt", "extract", "--help"])
+    assert r.exit_code == 0, r.output
+    assert "--all" in r.output
+    # 无 --targets/--all 时应给用法错误，而不是静默什么都不做
+    r2 = CliRunner().invoke(cli, ["xxt", "extract"])
+    assert r2.exit_code != 0
+
+
+def test_cli_extract_all_sets_discover(monkeypatch, tmp_path):
+    import assist.xxt.extract_run as er
+    called = {}
+
+    def fake_run_extract(targets, **kw):
+        called["targets"] = targets
+        called.update(kw)
+        return {"run_id": "xxt-test", "ts_end": "", "failures": [],
+                "courses": [], "out": str(tmp_path / "xxt-test.json")}
+
+    monkeypatch.setattr(er, "run_extract", fake_run_extract)
+    monkeypatch.setenv("XXT_HOME", str(tmp_path))
+    r = CliRunner().invoke(cli, ["xxt", "extract", "--all"])
+    assert r.exit_code == 0, r.output
+    assert called["targets"] == []
+    assert called["discover_all"] is True

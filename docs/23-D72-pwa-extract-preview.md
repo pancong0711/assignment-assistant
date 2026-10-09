@@ -1,6 +1,7 @@
 # D72 任务需求单：PWA 一键提取账户信息 + 预览整合（作业纸 / 批阅报告 / 过程页）
 
-> 状态：**需求定稿 / 待实施**。
+> 状态：**第一阶段已实施（D72-1..D72-4 + 过程预览打通），待真机账户提取复测；
+> D72-5 作业纸/批阅报告预览待继续接入真实数据**。
 > 关联：
 > - `docs/16-xuexitong-integration.md` §14/§17/§19/§20.3/§25
 > - `docs/22-D71-engine-launcher-two-phase-update.md`
@@ -280,3 +281,73 @@ body: { "mode": "all" | "targets", "targets": {...}, "skip_notices": true|false 
 - 本单不重写学习通前端；
 - 本单不让 PWA 直接访问 chaoxing 域；
 - 本单不改变 CLI 作为超集/应急通道的地位。
+
+---
+
+## 12. 实施记录（2026-10-09 · D72 第一阶段）
+
+### 12.1 D72-1 artifact 路径契约
+
+新增 `engine/src/assist/xxt/layout.py`：
+
+- `runs_dir(home)` → `<xxt_home>/runs`
+- `pages_dir(home)` → `<xxt_home>/pages`
+- `shots_dir(home)` → `<xxt_home>/pages/shots`
+- `run_json_files(home)`：优先扫 `runs/`，兼容旧根目录，排除 storage/login-state
+- `find_run_json(run_id, home)`：优先 `runs/<run_id>.json`，兼容旧根目录
+- `shot_candidates(run_id, fname, home)`：优先 `pages/shots/`，兼容 `xxt-pages/shots/`
+
+接线：
+
+- CLI `xxt extract` 默认 `out_dir=xxt_runs_dir()`、`archive_dir=xxt_pages_dir()`；
+- serve `/xxt/runs`、`/xxt/run/<id>`、`/xxt/shot/...` 全部改走 layout helper。
+
+### 12.2 D72-2 账户发现 + `extract --all`
+
+- `ReadOnlyExtractor` 新增：
+  - `discover_courses()`：从 `BASE/visit/interaction` 扫描课程；
+  - `discover_classes(course_id)`：从 `work/list?courseid=` 扫描 `li.classli`；
+  - 两处均写 `_step()` + HTML 存档，作为过程预览数据源。
+- `run_extract()` 新增 `discover_all` 参数：
+  - `--all` 时先发现课程/班级，再走原有逐班提取；
+  - 记录 `target_source=discover`；
+  - 发现为空/异常写 `failures[]`。
+- CLI `assist xxt extract --all` 可用；`--targets` 变为与 `--all` 二选一。
+
+### 12.3 D72-3 serve `POST /xxt/extract`
+
+- 新增 job 端点：
+  - `mode=all` → 后台执行 `assist xxt extract --all`；
+  - 返回 `job_id`；
+  - 复用统一流式 CLI job（terminal/start.log + `/jobs` + SSE）；
+- 通用流式 job helper `_start_stream_job()` 同时供登录与提取使用。
+
+### 12.4 D72-4 PWA 一键提取
+
+- engineClient 新增 `startXxtExtract()`；
+- `XxetongView.vue` 新增按钮：
+
+  ```text
+  📥 提取账户数据
+  ```
+
+- 点击后：
+  1. `POST /xxt/extract`；
+  2. 轮询 `/jobs/<id>` 显示进度；
+  3. 成功后自动 `refreshRuns()`；
+  4. 失败显示最后一条任务输出；
+- 原「刷新/更新列表」改为「刷新列表（读取已有 run）」，语义分清。
+
+### 12.5 D72-5 预览现状
+
+- 过程预览：路径契约打通后，`ProcessStreamView` 已可读取新 run 的 `steps[]` + `pages/shots`；
+- 作业纸预览：现有 `SheetPreviewSection` / `sheetHtml` 不变，D72 提供课程/班级/学生上下文；
+- 批阅报告预览：run JSON 已保留 `review_path` 等字段，供 D64-N4 后续接真实数据；
+- 报告式预览完整数据流水线仍按 D64-D 继续，不在本阶段强行伪造。
+
+### 12.6 验证
+
+- `pytest engine/tests -q` → **82 passed**；
+- `python tools/lint_bat.py` → 通过；
+- `bash -n tools/start.sh` → 通过；
+- `npm run build` → 通过。

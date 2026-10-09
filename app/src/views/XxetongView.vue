@@ -1,7 +1,8 @@
 <script setup lang="ts">
 import { computed, onMounted, onUnmounted, ref } from 'vue'
 import {
-  fetchXxtLoginJob, fetchXxtRun, fetchXxtRuns, fetchXxtStatus, startXxtLogin,
+  fetchXxtLoginJob, fetchXxtRun, fetchXxtRuns, fetchXxtStatus,
+  startXxtExtract, startXxtLogin,
 } from '../lib/engineClient'
 import { useSettingsStore } from '../stores/settings'
 import ProcessStreamView from '../components/ProcessStreamView.vue'
@@ -29,6 +30,7 @@ let loginJobId = ''
 let qrReady = false
 let qrStartedAt = 0
 let loginJobCheckedAt = 0
+let extractTimer: number | undefined
 
 function stopLoginPolling() {
   if (loginTimer !== undefined) {
@@ -164,6 +166,7 @@ interface WorkRow {
 interface ClassRow { name: string; classId: string; status: string; works: WorkRow[]; roster?: { total?: number | null } ; notes?: string[] }
 interface CourseRow { name: string; courseId: string; classes: ClassRow[] }
 const runs = ref<{ run_id: string; ts_end?: string; works?: number; failures?: number }[]>([])
+const extracting = ref(false)
 const curRun = ref<string | null>(null)
 const courses = ref<CourseRow[]>([])
 const loadSteps = ref<{ action: string; detail?: string; title?: string; url?: string; ts?: string; shot?: string }[]>([])
@@ -257,6 +260,49 @@ async function loadRun(id: string) {
   } finally { loadingRun.value = false }
 }
 
+function stopExtractPolling() {
+  if (extractTimer !== undefined) {
+    window.clearTimeout(extractTimer)
+    extractTimer = undefined
+  }
+}
+
+async function startExtract() {
+  if (extracting.value) return
+  stopExtractPolling()
+  extracting.value = true
+  runMsg.value = '已提交提取任务：扫描账户课程/班级并提取作业、通知等信息……'
+  try {
+    const jobId = await startXxtExtract(engUrl.value, tok.value, { skip_notices: false })
+    const tick = async () => {
+      try {
+        const job = await fetchXxtLoginJob(engUrl.value, tok.value, jobId)
+        if (job.status === 'running') {
+          const line = (job.lines || []).slice(-1)[0]
+          runMsg.value = line ? `提取中：${line.slice(-120)}` : '提取中……'
+          extractTimer = window.setTimeout(tick, 1500)
+          return
+        }
+        extracting.value = false
+        if (job.status === 'done' && (job.returncode ?? 0) === 0) {
+          runMsg.value = '提取完成，正在刷新列表……'
+          await refreshRuns()
+        } else {
+          const line = (job.lines || []).slice(-1)[0] || `任务状态：${job.status}`
+          runMsg.value = `提取失败：${line}`
+        }
+      } catch (e) {
+        extracting.value = false
+        runMsg.value = `提取任务状态查询失败：${String(e)}`
+      }
+    }
+    void tick()
+  } catch (e) {
+    extracting.value = false
+    runMsg.value = `提取启动失败：${String(e)}`
+  }
+}
+
 const grouped = computed(() => courses.value.map(c => {
   const pass = (cl: ClassRow): boolean => {
     if (isRemoved(cl)) { return false }
@@ -274,7 +320,7 @@ const grouped = computed(() => courses.value.map(c => {
 
 
 onMounted(() => { refreshStatus(); refreshRuns() })
-onUnmounted(() => { loginSeq += 1; stopLoginPolling() })
+onUnmounted(() => { loginSeq += 1; stopLoginPolling(); stopExtractPolling() })
 </script>
 
 <template>
@@ -382,7 +428,8 @@ onUnmounted(() => { loginSeq += 1; stopLoginPolling() })
     <div class="card">
       <h3>读提取结果 <small style="font-weight:400;color:var(--c-muted)">基于最近 run JSON（§19 schema）；点开行看名单</small></h3>
       <p>
-        <button class="btn primary" :disabled="loadingRun" @click="refreshRuns">⟳ 刷新/更新列表</button>
+        <button class="btn primary" :disabled="extracting || loadingRun" @click="startExtract">{{ extracting ? '提取中…' : '📥 提取账户数据' }}</button>
+        <button class="btn" style="margin-left:8px" :disabled="loadingRun" @click="refreshRuns">⟳ 刷新列表（读取已有 run）</button>
         <button class="btn" style="margin-left:8px" @click="restoreRemoved">♻ 从学习通恢复列表（回放最近 run）</button>
         <label class="field" style="margin-left:12px">置顶上限：
           <select v-model.number="pinCap" @change="persistLocal" style="width:80px">

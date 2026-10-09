@@ -394,6 +394,30 @@ export async function fetchXxtLoginJob(
   }
 }
 
+/** POST /xxt/extract：D72 PWA 一键提取账户数据（当前仅 mode=all）。 */
+export async function startXxtExtract(
+  engineAddr: string, token?: string, opts?: { skip_notices?: boolean },
+): Promise<string> {
+  const base = normalizeEngineAddr(engineAddr)
+  const res = await fetch(engineUrlWithToken(base, '/xxt/extract', token), {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ mode: 'all', skip_notices: opts?.skip_notices ?? false }),
+  })
+  if (!res.ok) {
+    let detail = `HTTP ${res.status}`
+    try {
+      const o = (await res.json()) as { error?: string; hint?: string }
+      if (o?.error) detail = o.error
+      if (o?.hint) detail += `（${o.hint}）`
+    } catch { /* keep status */ }
+    throw new Error(detail)
+  }
+  const o = (await res.json()) as { job_id?: string }
+  if (!o?.job_id) throw new Error('引擎未返回 job_id')
+  return o.job_id
+}
+
 /** GET /xxt/runs：只读提取 run 清单（engine 本仓/工件目录）。 */
 export async function fetchXxtRuns(engineAddr: string, token?: string): Promise<XxtRunRow[]>
   {

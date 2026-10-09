@@ -74,6 +74,32 @@ JS_NOTICES = """() => {
 }"""
 
 
+JS_COURSES = r"""() => {
+  const items=[];
+  document.querySelectorAll('a[href*="courseId="]').forEach(a=>{
+    const href=a.getAttribute('href')||'';
+    let text=(a.textContent||'').trim().replace(/\s+/g,' ');
+    const m=href.match(/courseId=(\d+)/);
+    if(m&&text&&text.length<80&&!items.some(x=>x.courseId===m[1])){
+      text=text.replace(/\s+(已结课|进行中|未开始)$/,'').trim();
+      items.push({name:text, courseId:m[1]});
+    }
+  });
+  return items;
+}"""
+
+JS_CLASSES = r"""() => {
+  const out=[];
+  document.querySelectorAll('li.classli').forEach(li=>{
+    const div=li.querySelector('div');
+    const name=div?div.textContent.trim():li.textContent.trim();
+    const id=li.getAttribute('data')||'';
+    if(name&&id&&id!=='0') out.push({name, classId:id});
+  });
+  return out;
+}"""
+
+
 def parse_count_token(li_html: str, label: str) -> "int | None":
     """纯函数（可测）：从 li HTML 片段中解析 'N 已交/未交/待批' 计数。"""
     text = re.sub(r"<[^>]+>", " ", li_html)
@@ -120,6 +146,23 @@ class ReadOnlyExtractor:
                     self.page.content(), encoding="utf-8")
             except Exception:
                 pass
+
+    def discover_courses(self) -> list:
+        """D72：从互动页扫描当前账户课程（借鉴 .scratch/xxt_readonly_extract.py）。"""
+        self.page.goto(f"{BASE}/visit/interaction",
+                       wait_until="domcontentloaded", timeout=60000)
+        self.page.wait_for_timeout(5000)
+        self.archive("discover-courses")
+        self._step("发现课程列表", "", self.page.title())
+        return self.page.evaluate(JS_COURSES)
+
+    def discover_classes(self, course_id: str) -> list:
+        """D72：从课程 work/list 扫描班级（借鉴 .scratch/xxt_readonly_extract.py）。"""
+        info = self.goto_work_list(course_id)
+        self.archive(f"discover-classes-{course_id}")
+        self._step("发现班级列表", f"courseid={course_id}",
+                   info.get("activeClass") or self.page.title())
+        return self.page.evaluate(JS_CLASSES)
 
     def goto_work_list(self, course_id: str) -> dict:
         self.page.goto(f"{BASE}/mooc2-ans/work/list?courseid={course_id}",

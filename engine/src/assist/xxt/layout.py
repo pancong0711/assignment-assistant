@@ -1,0 +1,77 @@
+"""D72：学习通 run/pages/shots 统一 artifact 路径契约。
+
+CLI `xxt extract` 与 serve `/xxt/*` 必须共用这里，避免再次出现
+“CLI 写到 runs/，PWA 只扫根目录”的漂移。
+"""
+from __future__ import annotations
+
+from pathlib import Path
+
+_EXCLUDE_NAMES = {
+    "xxt-readonly.json",
+    "xxt-notices.json",
+    "xxt-session-check.json",
+    "xxt-storage.json",
+    "xxt-login-state.json",
+}
+
+
+def _home(home: "Path | str | None" = None) -> Path:
+    if home is not None:
+        return Path(home)
+    from .session import xxt_home
+    return xxt_home()
+
+
+def runs_dir(home: "Path | str | None" = None) -> Path:
+    return _home(home) / "runs"
+
+
+def pages_dir(home: "Path | str | None" = None) -> Path:
+    return _home(home) / "pages"
+
+
+def shots_dir(home: "Path | str | None" = None) -> Path:
+    return pages_dir(home) / "shots"
+
+
+def _legacy_shots_dir(home: "Path | str | None" = None) -> Path:
+    return _home(home) / "xxt-pages" / "shots"
+
+
+def run_json_files(home: "Path | str | None" = None) -> list[Path]:
+    """返回 run JSON 列表（新 runs/ 优先；兼容旧 home 根目录）。"""
+    home = _home(home)
+    found: dict[str, Path] = {}
+    for d in (runs_dir(home), home):
+        if not d.is_dir():
+            continue
+        for f in d.glob("xxt-*.json"):
+            if f.name in _EXCLUDE_NAMES or "login-state" in f.name:
+                continue
+            # runs/ 优先；若已存在同名，不用 home 根目录覆盖
+            found.setdefault(f.name, f)
+    return sorted(found.values(), key=lambda p: p.stat().st_mtime, reverse=True)
+
+
+def find_run_json(run_id: str, home: "Path | str | None" = None) -> "Path | None":
+    home = _home(home)
+    for d in (runs_dir(home), home):
+        p = d / f"{run_id}.json"
+        if p.is_file():
+            return p
+    return None
+
+
+def shot_candidates(run_id: str, fname: str,
+                    home: "Path | str | None" = None) -> list[Path]:
+    """返回可能的截图路径；新 pages/shots 优先，兼容旧 xxt-pages/shots。"""
+    home = _home(home)
+    names = [f"{run_id}-step{fname}", fname]
+    out: list[Path] = []
+    for d in (shots_dir(home), _legacy_shots_dir(home)):
+        for name in names:
+            p = d / name
+            if p.is_file() and p.suffix.lower() == ".png":
+                out.append(p)
+    return out

@@ -1160,3 +1160,5 @@ applyManualTranslation/setTranslationRatio 中 setTranslationRatio 保留——�
   - 统一 run/pages/shots 路径契约；
   - 提取后自动刷新列表；
   - 过程预览/作业纸预览/批阅报告预览统一挂到本地 run 数据源。
+  - **第一阶段已落地**：layout 路径契约、`xxt extract --all`、`POST /xxt/extract`、PWA「📥 提取账户数据」、过程预览打通；
+    D72-5 作业纸/批阅报告真实数据预览待继续。
