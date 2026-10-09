@@ -107,6 +107,62 @@ def _venv_python(ws: Path) -> str:
     return sys.executable
 
 
+def _dep_install_commands(ws: Path, engine_dir: Path) -> list[list[str]]:
+    """D69：uv 优先、venv pip 回退；uv 不再显式传已弃用的 --index-url。
+
+    注意：两套命令安装的都是本地 `_engine/engine` editable 包；
+    `-i/--index-url` 只用于解析第三方依赖（click/reportlab/...），
+    不是从 PyPI 安装 assist-engine 自身。
+    """
+    py = _venv_python(ws)
+    idx = os.environ.get("UV_DEFAULT_INDEX") or PYPI_MIRROR
+    cache_dir = Path(ws) / ".runtime" / "cache" / "uv"
+    cmds: list[list[str]] = []
+    if shutil.which("uv"):
+        cmds.append(["uv", "pip", "install", "-e", str(engine_dir),
+                     "--python", py, "--cache-dir", str(cache_dir)])
+    cmds.append([py, "-m", "pip", "install", "-e", str(engine_dir),
+                 "-i", idx, "--disable-pip-version-check", "--no-input"])
+    return cmds
+
+
+def _install_engine_editable(ws: Path, engine_dir: Path, emit) -> int:
+    """执行 editable 安装；uv 先试，失败自动回退到 venv pip（与 start.bat 同口径）。
+
+    返回 0=成功，1=全部尝试失败。D69：用户现场 uv rc=2 且输出为空，
+    不能让它直接终结更新；pip 回退是 start.bat 已工程验证过的稳定路径。
+    """
+    idx = os.environ.get("UV_DEFAULT_INDEX") or PYPI_MIRROR
+    env = {
+        **os.environ,
+        "UV_CACHE_DIR": str(Path(ws) / ".runtime" / "cache" / "uv"),
+        "UV_PROJECT_ENVIRONMENT": str(Path(ws) / ".runtime" / "venv"),
+        # 兼容 uv 不同版本的 index 环境变量名。
+        "UV_DEFAULT_INDEX": idx,
+        "UV_INDEX_URL": idx,
+    }
+    last_rc: int | str = "?"
+    for i, cmd in enumerate(_dep_install_commands(ws, engine_dir)):
+        emit(f"$ {' '.join(cmd)}")
+        try:
+            cp = subprocess.run(cmd, capture_output=True, text=True,
+                                timeout=1200, env=env)
+        except Exception as e:  # noqa: BLE001
+            emit(f"✗ 安装命令执行异常：{e}")
+            last_rc = str(e)[:200]
+            continue
+        out = ((cp.stdout or "") + (cp.stderr or "")).splitlines()
+        for line in out[-40:]:
+            emit("  " + line)
+        if cp.returncode == 0:
+            if i > 0:
+                emit("⚠ uv 安装失败，已用 venv pip 回退成功")
+            return 0
+        last_rc = cp.returncode
+    emit(f"✗ 依赖重装失败（rc={last_rc}）")
+    return 1
+
+
 def _download_zip(url: str, dest: Path, emit) -> None:
     dest.parent.mkdir(parents=True, exist_ok=True)
     req = urllib.request.Request(url, headers={"User-Agent": "Mozilla/5.0"})
@@ -174,32 +230,8 @@ def update_engine(ws: Path, emit) -> int:
     finally:
         tmp.unlink(missing_ok=True)
 
-    py = _venv_python(ws)
     engine_dir = target / "engine"
-    idx = os.environ.get("UV_DEFAULT_INDEX") or PYPI_MIRROR
-    if shutil.which("uv"):
-        cmd = ["uv", "pip", "install", "-e", str(engine_dir),
-               "--python", py, "--index-url", idx]
-    else:
-        cmd = [py, "-m", "pip", "install", "-e", str(engine_dir), "-i", idx]
-    env = {
-        **os.environ,
-        "UV_CACHE_DIR": str(ws / ".runtime" / "cache" / "uv"),
-        "UV_PROJECT_ENVIRONMENT": str(ws / ".runtime" / "venv"),
-    }
-    emit(f"$ {' '.join(cmd)}")
-    try:
-        cp = subprocess.run(cmd, capture_output=True, text=True, timeout=1200, env=env)
-    except Exception as e:  # noqa: BLE001
-        emit(f"✗ 依赖重装失败：{e}")
+    if _install_engine_editable(ws, engine_dir, emit) != 0:
         return 1
-    for line in (cp.stdout or "").splitlines()[-20:]:
-        emit("  " + line)
-    for line in (cp.stderr or "").splitlines()[-20:]:
-        emit("  " + line)
-    if cp.returncode != 0:
-        emit(f"✗ 依赖重装失败（rc={cp.returncode}）")
-        return 1
-
     emit("✓ 引擎文件已更新；需要重启引擎后生效（PWA 将自动触发 /restart）。")
     return 0

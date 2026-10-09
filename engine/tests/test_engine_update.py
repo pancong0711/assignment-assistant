@@ -1,6 +1,7 @@
 """D65-P4：引擎版本检测纯逻辑回归（不触网）。"""
 
 import json
+from types import SimpleNamespace
 
 from assist import engine_update as eu
 
@@ -60,3 +61,35 @@ def test_engine_cli_group_registered():
     r = CliRunner().invoke(cli, ["engine", "--help"])
     assert r.exit_code == 0, r.output
     assert "version" in r.output and "update" in r.output
+
+
+def test_dep_install_commands_uv_uses_env_index_and_pip_fallback(monkeypatch, tmp_path):
+    monkeypatch.setattr(eu.shutil, "which", lambda name: "/usr/bin/uv")
+    monkeypatch.setattr(eu, "_venv_python", lambda ws: "/tmp/venv-python")
+    monkeypatch.setenv("UV_DEFAULT_INDEX", "https://mirror.example/simple")
+    cmds = eu._dep_install_commands(tmp_path, tmp_path / "_engine" / "engine")
+    assert len(cmds) == 2
+    assert cmds[0][:4] == ["uv", "pip", "install", "-e"]
+    assert "--cache-dir" in cmds[0]
+    assert "--index-url" not in cmds[0]          # 新版 uv 已弃用显式 --index-url
+    assert cmds[1][:4] == ["/tmp/venv-python", "-m", "pip", "install"]
+    assert "-i" in cmds[1] and "https://mirror.example/simple" in cmds[1]
+
+
+def test_install_engine_editable_falls_back_pip(monkeypatch, tmp_path, ):
+    monkeypatch.setattr(eu, "_dep_install_commands",
+                        lambda ws, engine_dir: [["uv", "fail"], ["pip", "ok"]])
+
+    calls = []
+
+    def fake_run(cmd, **kwargs):
+        calls.append(cmd)
+        if cmd == ["uv", "fail"]:
+            return SimpleNamespace(returncode=2, stdout="", stderr="")
+        return SimpleNamespace(returncode=0, stdout="installed", stderr="")
+
+    monkeypatch.setattr(eu.subprocess, "run", fake_run)
+    lines: list[str] = []
+    assert eu._install_engine_editable(tmp_path, tmp_path / "engine", lines.append) == 0
+    assert calls == [["uv", "fail"], ["pip", "ok"]]
+    assert any("uv 安装失败，已用 venv pip 回退成功" in line for line in lines)

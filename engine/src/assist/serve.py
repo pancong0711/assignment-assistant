@@ -365,7 +365,7 @@ class Handler(BaseHTTPRequestHandler):
         return (not Handler.token) or qs.get("token", [""])[0] == Handler.token
 
     def _start_job(self, job_id: str, item: str):
-        if item in ("katex", "tinytex", "playwright", "engine_update"):
+        if item in ("deps", "katex", "tinytex", "playwright", "engine_update"):
             # D55/H1/D58 + D63/T7.1：特殊安装项（服务端写盘 / 联网下载解压；playwright=两步国内镜像联网）
             q: "queue.Queue[str]" = queue.Queue()
             out: list[str] = []
@@ -375,7 +375,11 @@ class Handler(BaseHTTPRequestHandler):
             def special_worker():
                 try:
                     emit = lambda line: (q.put(line), out.append(line))
-                    if item == "katex":
+                    if item == "deps":
+                        # D69：一键修复与 PWA 引擎更新共用同一套 uv→venv pip 回退安装。
+                        from .engine_update import _install_engine_editable
+                        rc = _install_engine_editable(_ws(), _ENGINE_ROOT, emit)
+                    elif item == "katex":
                         rc = install_katex(_ws(), emit)
                     elif item == "playwright":
                         from .xxt.installer import install_playwright
