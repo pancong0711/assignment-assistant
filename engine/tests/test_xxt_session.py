@@ -3,7 +3,9 @@
 from click.testing import CliRunner
 
 from assist.cli import cli
-from assist.xxt.session import default_qr_path, evaluate_verdict, resolve_storage_path, xxt_home
+from assist.xxt.session import (
+    _is_logged_in, default_qr_path, evaluate_verdict, resolve_storage_path, xxt_home,
+)
 
 
 def test_verdict_alive_normal():
@@ -65,3 +67,49 @@ def test_serve_xxt_home_matches_session(tmp_path, monkeypatch):
     from assist.serve import _xxt_home
     monkeypatch.setenv("XXT_HOME", str(tmp_path))
     assert _xxt_home() == xxt_home() == tmp_path
+
+class _FakeContext:
+    def __init__(self, cookies):
+        self._cookies = cookies
+
+    def cookies(self):
+        return self._cookies
+
+
+class _FakePage:
+    def __init__(self, url, cookies):
+        self.url = url
+        self.context = _FakeContext(cookies)
+
+
+def test_is_logged_in_chaoxing_host_even_without_cookie():
+    """D68：扫码后跳到教学域即判真，避免 cookie 可见时序差异导致不动作。"""
+    assert _is_logged_in(_FakePage("https://i.chaoxing.com/base", [])) is True
+
+
+def test_is_logged_in_login_page_stays_false_even_with_uid():
+    assert _is_logged_in(
+        _FakePage("https://passport2.chaoxing.com/login?fid=&newversion=true",
+                  [{"name": "_uid", "value": "x"}])) is False
+
+
+def test_is_logged_in_uid_cookie_fallback():
+    assert _is_logged_in(
+        _FakePage("https://example.chaoxing.com/base", [{"name": "UID", "value": "x"}])) is True
+
+
+def test_cli_login_post_check_alive_exits_0(tmp_path, monkeypatch):
+    import assist.xxt.session as sess
+    monkeypatch.setattr(sess, "qr_login", lambda *a, **k: {"verdict": "logged_in"})
+    monkeypatch.setattr(sess, "check_session", lambda *a, **k: {"verdict": "alive"})
+    r = CliRunner().invoke(cli, ["xxt", "login", "--storage", str(tmp_path / "s.json")])
+    assert r.exit_code == 0, r.output
+
+
+def test_cli_login_post_check_dead_exits_2(tmp_path, monkeypatch):
+    """D68：CLI 套壳必须确认 storage JSON 可用，否则 PWA 会显示登录任务失败。"""
+    import assist.xxt.session as sess
+    monkeypatch.setattr(sess, "qr_login", lambda *a, **k: {"verdict": "logged_in"})
+    monkeypatch.setattr(sess, "check_session", lambda *a, **k: {"verdict": "dead"})
+    r = CliRunner().invoke(cli, ["xxt", "login", "--storage", str(tmp_path / "s.json")])
+    assert r.exit_code == 2, r.output

@@ -83,7 +83,11 @@ def register(group: click.Group) -> None:
         storage_path = storage or default_storage(None)
         rep = qr_login(storage_path, qr, timeout=timeout, )
         click.echo(json.dumps(rep, ensure_ascii=False, indent=1))
-        if rep.get("verdict") == "logged_in":
+        ok = rep.get("verdict") == "logged_in"
+        if ok:
+            # D68：PWA 通过 CLI 套壳调用时，必须确认 storage JSON 真的可用；
+            # 二次体检 dead 则返回 2，让 PWA 作业状态显示失败而不是假装登录成功。
             rep2 = check_session(storage_path)
             click.echo(json.dumps({"post_login_check": rep2}, ensure_ascii=False, indent=1))
-        raise SystemExit(0 if rep.get("verdict") == "logged_in" else 2)
+            ok = rep2.get("verdict") == "alive"
+        raise SystemExit(0 if ok else 2)

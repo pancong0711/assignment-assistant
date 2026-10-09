@@ -28,6 +28,7 @@ let loginSeq = 0
 let loginJobId = ''
 let qrReady = false
 let qrStartedAt = 0
+let loginJobCheckedAt = 0
 
 function stopLoginPolling() {
   if (loginTimer !== undefined) {
@@ -82,6 +83,7 @@ async function startScan() {
   qrReady = false
   qrLoading.value = true
   qrStartedAt = Date.now()
+  loginJobCheckedAt = 0
   loginHint.value = '已发起扫码任务：正在生成二维码……'
   try {
     loginJobId = await startXxtLogin(engUrl.value, tok.value)
@@ -102,6 +104,22 @@ async function startQrPolling(run: number) {
       qrLoading.value = false
       stopLoginPolling()
       return
+    }
+    // D68：二维码已显示后，若 CLI 登录任务已失败（如超时/检测异常），也要收掉破图态并给出原因。
+    if (loginJobId && Date.now() - loginJobCheckedAt > 5000) {
+      loginJobCheckedAt = Date.now()
+      try {
+        const job = await fetchXxtLoginJob(engUrl.value, tok.value, loginJobId)
+        if (job.status === 'failed') {
+          const line = (job.lines || []).slice(-1)[0] || `任务状态：${job.status}`
+          qrcode.value = ''
+          qrReady = false
+          qrLoading.value = false
+          loginHint.value = `扫码登录失败：${line}`
+          stopLoginPolling()
+          return
+        }
+      } catch { /* 任务状态查询失败时继续等 QR/体检 */ }
     }
     if (!qrReady) {
       const url = buildQrUrl()

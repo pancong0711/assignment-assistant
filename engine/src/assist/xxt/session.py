@@ -97,11 +97,18 @@ def _launch(pw, headless: bool):
 
 
 def _is_logged_in(page) -> bool:
-    """扫码后轮询判定（port 自 login_capture.is_logged_in）。"""
+    """扫码后轮询判定（严格对齐 .scratch/xxt_login_capture.py 的 v3 逻辑）。
+
+    D68：之前 port 时漏掉了“已跳到 i.chaoxing.com/教学域”直接判真的分支；
+    仅看 cookie 时，某些 Windows/浏览器组合会因 cookie 可见时序不同而扫完码不动作。
+    """
     u = urlparse(page.url)
     host, path = u.netloc.lower(), u.path.lower()
     if "passport" in host or "login" in path:
         return False
+    if host == "i.chaoxing.com" or host.endswith(".chaoxing.com"):
+        if host != "passport2.chaoxing.com" and "passport" not in host and "login" not in path:
+            return True
     try:
         names = {c["name"].lower() for c in page.context.cookies()}
         return "_uid" in names or "uid" in names

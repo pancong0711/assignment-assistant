@@ -103,6 +103,19 @@ def _venv_python() -> Path:
     return Path(sys.executable)
 
 
+def _xxt_login_cmd(home: Path) -> list[str]:
+    """D68：PWA 扫码登录走 CLI 套壳，而非直接绕过 click 调 qr_login()。
+
+    CLI 的 `xxt login` 内部仍写同一份 `xxt-storage.json`，并在登录成功后执行
+    check_session() 做二次确认 + storage_state 回写续期，与终端路径完全一致。
+    """
+    home = Path(home)
+    return [str(_venv_python()), "-m", "assist.cli", "xxt", "login",
+            "--storage", str(home / "xxt-storage.json"),
+            "--qr", str(home / "xxt-qr.png"),
+            "--timeout", "1800"]
+
+
 def installer_for(item: str) -> tuple[list[str] | None, str | None]:
     """item → (cmd, guide)；guide 非 None 表示逐行文本引导（无法静默装的系统级依赖）。"""
     py = str(_venv_python() or sys.executable)
@@ -233,29 +246,55 @@ def _xxt_home() -> Path:
     return xxt_home()
 
 
+def _xxt_storage_newer_than(ts: float) -> bool:
+    """D68：登录 CLI 刚写完 storage 时，不能被 60s 的旧 dead 缓存挡住。"""
+    try:
+        storage = _xxt_home() / "xxt-storage.json"
+        return storage.exists() and storage.stat().st_mtime > ts
+    except Exception:
+        return False
+
+
 def _xxt_session_check_cached(max_age=60):
-    """体检结果进程内缓存（TTL；fallback：playwright 未装时给明确 unknown）。"""
+    """体检结果进程内缓存（TTL；fallback：playwright 未装时给明确 unknown）。
+
+    D68：storage 文件 mtime 比缓存时间新（例如 QR 登录刚成功、CLI 刚回写续期）
+    时立即失效缓存并重跑体检，避免 PWA 扫码后最长 60s 像“没反应”。
+    """
     import time as _t
     global _XXT_CHECK
     now = _t.time()
     if _XXT_CHECK and now - _XXT_CHECK[0] < max_age:
-        return _XXT_CHECK[1]
+        if not _xxt_storage_newer_than(_XXT_CHECK[0]):
+            return _XXT_CHECK[1]
     from .xxt.session import check_session
     try:
         rep = check_session(_xxt_home() / "xxt-storage.json")
     except Exception as e:  # playwright missing 等
         rep = {"verdict": "unknown", "reasons": [str(e)[:200]]}
-    _XXT_CHECK = (now, rep)
+    # 缓存时间取“体检结束时间”和 storage mtime 的较大者；否则 check_session
+    # 自己回写 storage 会被下一次请求误判为“登录态刚更新”，导致反复起浏览器。
+    cache_ts = _t.time()
+    if _xxt_storage_newer_than(cache_ts):
+        try:
+            cache_ts = max(cache_ts, (_xxt_home() / "xxt-storage.json").stat().st_mtime)
+        except Exception:
+            pass
+    _XXT_CHECK = (cache_ts, rep)
     return rep
 
 
 def _xxt_avatar_cached(max_age=600):
-    """头像 data-URL（engine 同会话中转，base64；TTL 缓存）。"""
+    """头像 data-URL（engine 同会话中转，base64；TTL 缓存）。
+
+    D68：storage 在扫码后刚被 CLI 回写时，旧的头像 None 缓存也要失效。
+    """
     import time as _t
     global _XXT_AVATAR
     now = _t.time()
     if _XXT_AVATAR and now - _XXT_AVATAR[0] < max_age:
-        return _XXT_AVATAR[1]
+        if not _xxt_storage_newer_than(_XXT_AVATAR[0]):
+            return _XXT_AVATAR[1]
     data = None
     if _xxt_session_check_cached().get("verdict") == "alive":
         try:
@@ -263,7 +302,12 @@ def _xxt_avatar_cached(max_age=600):
             data = fetch_avatar_b64(_xxt_home() / "xxt-storage.json")
         except Exception:
             data = None
-    _XXT_AVATAR = (now, data)
+    cache_ts = _t.time()
+    try:
+        cache_ts = max(cache_ts, (_xxt_home() / "xxt-storage.json").stat().st_mtime)
+    except Exception:
+        pass
+    _XXT_AVATAR = (cache_ts, data)
     return data
 
 
@@ -445,13 +489,14 @@ class Handler(BaseHTTPRequestHandler):
                 pass
             # 顺序很重要：本引擎解析出的 xxt 根必须覆盖外部环境里的旧 XXT_STORAGE/XXT_HOME；
             # 这样 qr_login 写出的 QR 与 GET /xxt/qr 读取的路径才是同一处。
+            storage_path = home / "xxt-storage.json"
             env = {**os.environ,
                    "XXT_HOME": str(home),
-                   "XXT_STORAGE": str(home / "xxt-storage.json")}
-            cmd = [_venv_python(), "-c",
-                   "import sys,json;"
-                   "from assist.xxt.session import qr_login;"
-                   "print(json.dumps(qr_login(), ensure_ascii=False))"]
+                   "XXT_STORAGE": str(storage_path)}
+            # D68：与 docs/16 §20.3 “CLI 套壳”决议对齐——PWA 不直接调 qr_login()，
+            # 而是走 `assist xxt login`：内部同样写 storage JSON，并在登录后跑
+            # check_session() 做二次确认 + storage_state 回写续期。
+            cmd = _xxt_login_cmd(home)
             import queue as _q
             q_, out = _q.Queue(), []
             with _JOBS_LOCK:
