@@ -131,7 +131,7 @@ async function restartEngineNow() {
   if (!confirm('重启本地引擎进程？约 1–2 秒（期间批阅/体检不可用），重启后自动回在线并重跑体检。')) return
   engineRestarting.value = true
   // D67：必须等 instance_id 变化才算重启成功，避免旧进程未退出时误报。
-  const rr = await settings.restartEngineAndWait(15000)
+  const rr = await settings.restartEngineAndWait(60000)
   engineRestarting.value = false
   if (!rr.ok) {
     alert(`重启未完成：${rr.reason}。\n请查看引擎终端/start.log；若为 Windows 且非 start.bat 启动，请关闭终端后双击 start.bat。`)
