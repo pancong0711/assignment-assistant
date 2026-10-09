@@ -674,3 +674,24 @@ D64-f 批阅回写（写操作）：学习通侧填分/评语——**另行解�
 | GitHub Pages | 按 main CI 滞后数分钟 | PNA（`3034b7c` 后引擎侧已豁免） | 日常编辑/预览/导出；体检/批阅（需本机已起引擎） |
 
 后面待办：HelpView 顶部引导卡与设置中心 "?" 帮助卡按 §26.3/§26.4 口径更新文案（用户指示"先记文档、后上网页"）。
+
+#### 26.1-5 内核下载中断 · SSL DECRYPTION_FAILED_OR_BAD_RECORD_MAC（2026-10-09 晨 · 环境 TLS 面问题）
+
+- **现场**：_engine 陈旧副本清除→start.bat 重拉新引擎→修复安装流水线全部走通（镜像 pip ✓ 包→dry-run ✓ 4 任务→cdn.npmmirror ✓ 195MiB 开始），
+  但 chromium-1243(zip 205,123,748B≈195.6MiB) 下载至 8/195MiB @3s 时 urllib 抛
+  `SSL: DECRYPTION_FAILED_OR_BAD_RECORD_MAC`（OpenSSL 记录完整性校验失败）。
+- **归因（证据链）**：
+  1. 源侧健康：引擎日志属性齐全（server: Tengine / x-oss-request-id: 6AC8330A01F8FB391A40183 / content-length 205123748 / accept-ranges: bytes），沙箱侧另实测 TLSv1.3 直读 3MiB 无损——**非 CDN/对端问题**；
+  2. pip 装 playwright Python 包同 TLS 栈已成功 → **排除 Python/TLS 配置**；
+  3. 错误形态（传输中坏记录 MAC）是典型 **客户端环境 TLS 中间层干扰/链路抖动**：人群侧常见为网络加速器 / TUN 类代理（Clash 等）/ 校园网或运营商 DPI / 安全软件 TLS 优化 / 网卡 offload 兼容（Windows + 大范围分包）；
+  4. 与 workspace 位于 `D:\BaiduSyncdisk`（百度网盘同步目录）**无关**（路径不涉网络）。
+- **处置**（无代码改动）：
+  1. 直接**再点一次 🔧修复**（每次写新 .part.zip，无残留/半截状态），瞬时抖动场景 1~3 次内多可成功；
+  2. 连续失败走**浏览器直下人工解压**：浏览器（自带下载栈+断点续传）下载
+     `https://cdn.npmmirror.com/binaries/playwright/builds/<build>/win64/chrome-win64.zip`
+     （build 号=修复输出里"需 chromium-<N>"，示例 1243；历史 cft/153.0.8010.12），
+     解压到 `<workspace>\.runtime\browsers\chromium-<N>\`（zip 内 chrome-win64/ 平铺即正确布局），
+     并在 `chromium-<N>` 内新建空文件 `INSTALLATION_COMPLETE`（防 playwright 误判缺装；自带 DEPENDENCIES_VALIDATED 可省）；
+  3. 机器本就装着 Chrome/chromium 时走**免下载通道**：系统级 `setx XXT_CHROME "C:\Program Files\Google\Chrome\Application\chrome.exe"`（路径以本机为准）→ PWA 🔄 重启引擎 使引擎进程读到新 env → 学习通只用本机 chrome，完全跳过 195MiB 内核下载（session.py L37/L39 已按此设计）；
+  4. **不要改代码**（用户 2026-10-09 拍板）：本次为环境问题，"重试+多镜像/分片直连"等 afterwards 另提像 features 不阻塞。
+- **留档影响**：§26.1 事故共 5 案；"安装农家乐"三信道（在线镜像 / 人工解压 / XXT_CHROME）今后写入 HelpView 文案时按 (1)(2)(3) 顺序给教师分层次的关键口径。
