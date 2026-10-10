@@ -518,6 +518,22 @@ export async function fetchXxtTargets(engineAddr: string, token?: string): Promi
   return (await res.json()) as XxtTargets
 }
 
+export interface XxtFreshness {
+  ok?: boolean
+  age_seconds?: number | null
+  level?: 'ok' | 'warn' | 'danger' | 'unknown' | string
+  stale?: boolean
+  hint?: string
+}
+
+/** GET /xxt/freshness：D74-8 发现快照新鲜度，供操作前预判。 */
+export async function fetchXxtFreshness(
+  engineAddr: string, token?: string,
+): Promise<XxtFreshness> {
+  const base = normalizeEngineAddr(engineAddr)
+  return (await getJson2(engineUrlWithToken(base, '/xxt/freshness', token))) as XxtFreshness
+}
+
 /** POST /xxt/targets/history/clear：D74-3 清理发现结果历史快照（保留当前快照）。 */
 export async function clearXxtTargetsHistory(
   engineAddr: string, token?: string,
@@ -671,4 +687,28 @@ export async function clearJournal(engineAddr: string, token?: string): Promise<
   if (!res.ok) throw new Error(`HTTP ${res.status}`)
   const o = (await res.json()) as { removed?: string[] }
   return Array.isArray(o.removed) ? o.removed.length : 0
+}
+
+/* ========== D74-9/T：run 工件容量控制 ========== */
+
+export interface XxtStorageStats {
+  count?: number
+  bytes?: number
+  max_bytes?: number
+  max_count?: number
+}
+
+export async function fetchXxtStorage(engineAddr: string, token?: string): Promise<XxtStorageStats> {
+  const base = normalizeEngineAddr(engineAddr)
+  const o = (await getJson2(engineUrlWithToken(base, '/xxt/storage', token))) as XxtStorageStats
+  return o || {}
+}
+
+export async function pruneXxtRuns(
+  engineAddr: string, token?: string,
+): Promise<{ removed_count?: number; stats?: XxtStorageStats }> {
+  const base = normalizeEngineAddr(engineAddr)
+  const res = await fetch(engineUrlWithToken(base, '/xxt/runs/prune', token), { method: 'POST' })
+  if (!res.ok) throw new Error(`HTTP ${res.status}`)
+  return (await res.json()) as { removed_count?: number; stats?: XxtStorageStats }
 }

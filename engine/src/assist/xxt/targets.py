@@ -229,3 +229,25 @@ def targets_view(home=None, keep: int = 5) -> dict:
         "history_count": len(files),
         "keep": keep,
     }
+
+
+# ============ D74-8：操作前置新鲜度预判 ============
+
+def freshness(home=None, warn_seconds: int = 86400, danger_seconds: int = 7 * 86400) -> dict:
+    """发现快照新鲜度：ok / warn / danger / unknown。
+
+    仅做提示，不阻塞；写操作/提取前由调用方决定是否二次确认。
+    """
+    cur = load_current(home)
+    age = age_seconds(cur)
+    if age is None:
+        return {"ok": False, "age_seconds": None, "level": "unknown", "stale": True,
+                "hint": "尚未发现课程/班级，请先点「发现课程/班级」"}
+    if age >= danger_seconds:
+        level, hint = "danger", f"发现结果已 {age // 86400} 天未刷新，平台可能有变化，建议先刷新"
+    elif age >= warn_seconds:
+        level, hint = "warn", f"发现结果已 {age // 3600} 小时未刷新，建议先刷新"
+    else:
+        level, hint = "ok", "发现结果较新"
+    return {"ok": True, "age_seconds": age, "level": level,
+            "stale": level in ("warn", "danger"), "hint": hint}

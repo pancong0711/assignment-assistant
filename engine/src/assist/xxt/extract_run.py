@@ -230,4 +230,10 @@ def run_extract(targets: "list[dict] | None", storage: "Path | str",
     fn = out_dir / f'{run_id}.json'
     fn.write_text(json.dumps(rep, ensure_ascii=False, indent=1), encoding='utf-8')
     rep['out'] = str(fn)  # 不入 PDF/远程，仅运行回执
+    # D74-9/T：run 工件容量控制（50MB / 1000 条，先到先删最旧）
+    try:
+        from .layout import prune_runs
+        rep['pruned'] = prune_runs(out_dir.parent)
+    except Exception:  # noqa: BLE001
+        rep['pruned'] = None
     return rep

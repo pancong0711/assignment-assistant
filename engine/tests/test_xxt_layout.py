@@ -98,3 +98,40 @@ def test_run_json_files_excludes_targets_spec_and_bad_json(tmp_path):
     assert names == ["xxt-good.json"]
     assert layout.find_run_json("xxt-extract-targets", tmp_path) is None
     assert layout.find_run_json("xxt-broken", tmp_path) is None
+
+
+def test_run_artifacts_stats_and_prune_by_count(tmp_path):
+    runs = layout.runs_dir(tmp_path); runs.mkdir(parents=True)
+    shots = layout.shots_dir(tmp_path); shots.mkdir(parents=True)
+    for i in range(3):
+        rid = f"xxt-r{i}"
+        (runs / f"{rid}.json").write_text(_run(rid), encoding="utf-8")
+        (shots / f"{rid}-step01.png").write_bytes(b"x" * 100)
+        rp = layout.run_pages_dir(rid, tmp_path); rp.mkdir(parents=True, exist_ok=True)
+        (rp / "v2-list.html").write_text("x" * 50, encoding="utf-8")
+    stats = layout.run_artifacts_stats(tmp_path)
+    assert stats["count"] == 3 and stats["bytes"] > 0
+    res = layout.prune_runs(tmp_path, max_bytes=10**9, max_count=2)
+    assert res["removed_count"] == 1
+    left = [p.stem for p in layout.run_json_files(tmp_path, validate=False)]
+    assert len(left) == 2
+    assert layout.run_artifacts_stats(tmp_path)["count"] == 2
+
+
+def test_prune_runs_by_bytes_first(tmp_path):
+    runs = layout.runs_dir(tmp_path); runs.mkdir(parents=True)
+    for i in range(3):
+        rid = f"xxt-s{i}"
+        (runs / f"{rid}.json").write_text(_run(rid), encoding="utf-8")
+    # 每条 JSON 很小；把 max_bytes 设为 1，强制全部按大小清掉
+    res = layout.prune_runs(tmp_path, max_bytes=1, max_count=1000)
+    assert res["removed_count"] == 3
+    assert layout.run_artifacts_stats(tmp_path)["count"] == 0
+
+
+def test_prune_keeps_sessions(tmp_path):
+    runs = layout.runs_dir(tmp_path); runs.mkdir(parents=True)
+    (runs / "xxt-r0.json").write_text(_run("xxt-r0"), encoding="utf-8")
+    (tmp_path / "xxt-storage.json").write_text("{}", encoding="utf-8")
+    layout.prune_runs(tmp_path, max_bytes=1, max_count=1000)
+    assert (tmp_path / "xxt-storage.json").exists()

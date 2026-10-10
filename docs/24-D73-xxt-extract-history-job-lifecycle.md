@@ -1004,3 +1004,74 @@ REM 4) 重新双击 start.bat（重新下载 engine-main.zip 并安装）
   仅剩 Pages 主源 + ghfast/全仓兜底；后续可移除死源或补一个真实备用包。
 - 若再次出现“安装树混杂”，优先怀疑 BaiduSync 同步/文件占用导致复制不完整；
   可考虑把 `_engine` 放到非同步目录（该项需教师拍板）。
+
+---
+
+## 15. D74 实施记录：发现缓存/差异 + 操作记录 + 网盘检测 + 作业级展开（2026-10-10）
+
+> 需求单：`docs/25-D74-xxt-discover-cache-and-ui.md`；本节为实现记录。
+
+### 15.1 D74-6 白屏修复（最高优先级）
+
+- 提取勾选清单改写到 `xxt_home()/targets/extract-spec.json`（非 run 扫描目录），
+  serve 同时清理旧 `xxt-extract-targets.json`；
+- `layout.is_run_shape()` + `run_json_files`/`find_run_json` 内容白名单：
+  顶层必须有 `courses` list 且 `run_id` 以 `xxt-` 开头，targets spec / 坏 JSON 不再入列；
+- PWA `loadRun` 防御性归一（`courses/classes/works` 缺省），坏数据只提示不白屏。
+
+### 15.2 D74-1/2/2b/11 文案与布局
+
+- 卡名「选择课程/班级提取」→「发现课程/班级」；
+- 页面底部顺序：发现课程/班级 → 发现作业 → 历史 run 管理 → Playwright 操作历史；
+- 去掉每课 420px 内滚动与 `<tr>` sticky，改为整页滚动（修 Edge 无滚动条）。
+
+### 15.3 D74-3 发现快照缓存/diff
+
+- `targets-history/` 归档当前快照，保留最近 5 份；`prune_history` 滚动删除；
+- `GET /xxt/targets` 返回 `diff`（新增/移除/改名）、`age_seconds`、`history_count`；
+- PWA：年龄配色（<24h 绿 / 1–7 天黄 / >7 天红）、陈旧提示、刷新按钮、
+  diff 摘要（一次性「知道了」）、新增/改名 badge、`POST /xxt/targets/history/clear` +
+  「🧹 清理发现快照」。
+
+### 15.4 D74-4 作业级惰性展开
+
+- `ReadOnlyExtractor.list_works()` 只读 `work/list`（不进 mark、不抓名单）；
+- `extract_class(work_ids=...)` 支持只提取选中 workId（选中清单已失效 → not_extracted + 提示）；
+- `discover_works()` + CLI `assist xxt discover-works` + `POST/GET /xxt/works`；
+- `sanitize_targets` 支持 `classes[].works[]`（缺省=全部作业）；
+- PWA「📚 发现所选班级的作业（只读）」→ 作业级勾选 → 提取只带选中 workId；
+  结果卡「读提取结果」改名「发现作业」。
+
+### 15.5 D74-7 云同步/网盘占用检测
+
+- 新增 `xxt/sync.py`：路径关键字（BaiduSyncdisk/OneDrive/Dropbox/坚果云/微云…）、
+  同步进程、`*.baiduyun.p.downloading` 残留三层检测；
+- `/doctor` 新增 `sync_root` 检查项（黄条 + 修复指引）；
+- `start.bat` 更新前 warn；完整性失败/自检失败提示「暂停同步 + 退出客户端 + 删除 _engine 重试」。
+
+### 15.6 D74-8 操作前置新鲜度预判
+
+- `xxt/targets.freshness()`：ok/warn/danger/unknown（24h/7 天阈值）；
+- `GET /xxt/freshness`；
+- PWA 提取前预判：danger 时二次确认（可继续，不强制刷新），warn 提示。
+
+### 15.7 D74-9 全局操作记录
+
+- 新增 `xxt/journal.py`：JSONL 按月分片、保留 6 个月滚动、失败也记、名单类参数只记数量；
+- serve：CLI job/install/import/delete/clear/prune/restart 全部落日志；
+  `GET /journal`（时间范围/类型/limit）+ `POST /journal/clear`；
+- PWA 新增顶层「操作记录」选项卡：时间范围 + 类型过滤、导出 JSON、清空。
+
+### 15.8 容量控制
+
+- `layout.run_artifacts_stats()` / `prune_runs()`：总数 ≤ 1000 且总大小 ≤ 50MB（先到先删最旧）；
+- 每次提取结束自动清理；`GET /xxt/storage` + `POST /xxt/runs/prune`；
+- PWA 历史卡显示「条数/上限 · 大小/上限」+「🧹 按容量清理」。
+
+### 15.9 验证与边界
+
+- 新增/更新纯函数测试：layout（12）、targets（12）、legacy（8）、extract_pure（6）、
+  journal（5）、sync（2），沙箱 harness 共 **45 项全绿**；
+- `lint_bat` 3 脚本通过；`vue-tsc` 0 err；`npm run build` 成功；
+- 预期完整 `pytest engine/tests -q` = **123 passed**（`grep "def test_"` 实测计数）；
+- 边界不变：只读；写操作仍冻结；journal/快照/runs 全部本机、不入库。

@@ -3,7 +3,7 @@
 > 来源：2026-10-10 会话讨论（用户四问）+ 上一轮 targets 勾选提取实测。
 > 关联：`docs/23-D72-pwa-extract-preview.md`（targets 第一版）、
 > `docs/24-D73-xxt-extract-history-job-lifecycle.md`（D73-9/D72/D73-11 实施记录）。
-> 性质：**需求单（先评审，不实施）**。
+> 性质：**需求单（2026-10-10 已实施，见 docs/24 §15）**。
 
 ---
 

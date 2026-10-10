@@ -43,7 +43,15 @@ const TAB_GUIDES: { tab: string; items: string[] }[] = [
     'grade 节状态说明（留空 = 仅出作业纸，批阅参数交引擎默认值）',
   ]},
   { tab: '学习通', items: [
-    '阶段 6 占位（当前公告/上传/登录 chip 均置灰 + 引导说明）',
+    '登录卡：扫码登录 + 体检（只读；写操作维持 D62 冻结）',
+    '发现课程/班级：只读发现「我教的课」，显示时间戳/年龄与新旧的增/删/改名差异，可清理发现快照',
+    '发现作业：按勾选班级惰性发现作业清单（只读，不进批阅页），可只提取选中的作业',
+    '历史 run 管理：时间/班级/作业/失败数，支持单删、清空、按容量清理（50MB / 1000 条）；Playwright 操作历史在页面最底部',
+    '提取账户数据：一键扫描「我教的课」全部班级的作业/通知（只读）',
+  ]},
+  { tab: '操作记录', items: [
+    '全局记录所有选项卡的操作（发现/提取/导入/删除/更新/重启等），成功与失败都记',
+    '可按时间范围/类型过滤、导出 JSON、清空；本机 JSONL，保留最近 6 个月',
   ]},
   { tab: '导入导出', items: [
     '题库 xlsx / 作业纸 JSON / 变体 batch zip 导出',
@@ -53,7 +61,7 @@ const TAB_GUIDES: { tab: string; items: string[] }[] = [
 
 const NAV_KEYS: Record<string, string> = {
   '设置中心': 'settings', '题库编辑器': 'kb', '作业纸版式': 'design',
-  '作业纸内容': 'design', '班级与标签': 'roster', '批阅': 'grading', '学习通': 'xxetong', '导入导出': 'transfer', '使用说明': 'help'
+  '作业纸内容': 'design', '班级与标签': 'roster', '批阅': 'grading', '学习通': 'xxetong', '操作记录': 'journal', '导入导出': 'transfer', '使用说明': 'help'
 }
 const openTab = (label: string) => {
   const k = NAV_KEYS[label]

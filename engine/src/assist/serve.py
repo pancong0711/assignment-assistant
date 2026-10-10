@@ -813,6 +813,16 @@ class Handler(BaseHTTPRequestHandler):
                 pass
             self._json({"ok": True, "imported": summary})
             return
+        if u.path == "/xxt/runs/prune":
+            res = xxt_layout.prune_runs(_xxt_home())
+            try:
+                from .xxt import journal as _journal
+                _journal.log_event("xxt_runs_prune", home=_xxt_home(), source="pwa",
+                                   params={"removed": res.get("removed_count")})
+            except Exception:  # noqa: BLE001
+                pass
+            self._json({"ok": True, **res})
+            return
         if u.path == "/xxt/targets/history/clear":
             from .xxt.targets import clear_history
             removed = clear_history(_xxt_home())
@@ -1017,6 +1027,13 @@ class Handler(BaseHTTPRequestHandler):
                 self._json({"ok": False, "error": "no such run"}, 404)
                 return
             self._json(json.loads(fr.read_text(encoding="utf-8")))
+            return
+        if u.path == "/xxt/storage":
+            self._json({"ok": True, **xxt_layout.run_artifacts_stats(_xxt_home())})
+            return
+        if u.path == "/xxt/freshness":
+            from .xxt.targets import freshness
+            self._json(freshness(_xxt_home()))
             return
         if u.path == "/journal":
             from .xxt import journal as _journal

@@ -188,3 +188,65 @@ def clear_runs(home: "Path | str | None" = None) -> dict:
     for rid in run_ids:
         removed.extend(delete_run_artifacts(rid, home))
     return {"runs": run_ids, "removed": removed}
+
+
+# ============ D74-9/T 容量控制：run 工件自动清理 ============
+
+MAX_RUN_BYTES = 50 * 1024 * 1024
+MAX_RUN_COUNT = 1000
+
+
+def _run_size(run_id: str, home: Path) -> int:
+    total = 0
+    for d in (runs_dir(home), home):
+        p = d / f"{run_id}.json"
+        if p.is_file():
+            try:
+                total += p.stat().st_size
+            except Exception:  # noqa: BLE001
+                pass
+    for d in (shots_dir(home), _legacy_shots_dir(home)):
+        if d.is_dir():
+            for p in d.glob(f"{run_id}-*"):
+                if p.is_file():
+                    try:
+                        total += p.stat().st_size
+                    except Exception:  # noqa: BLE001
+                        pass
+    rp = run_pages_dir(run_id, home)
+    if rp.is_dir():
+        for p in rp.rglob("*"):
+            if p.is_file():
+                try:
+                    total += p.stat().st_size
+                except Exception:  # noqa: BLE001
+                    pass
+    return total
+
+
+def run_artifacts_stats(home: "Path | str | None" = None) -> dict:
+    home = _home(home)
+    ids = [f.stem for f in run_json_files(home, validate=False)]
+    return {"count": len(ids), "bytes": sum(_run_size(r, home) for r in ids),
+            "max_bytes": MAX_RUN_BYTES, "max_count": MAX_RUN_COUNT}
+
+
+def prune_runs(home: "Path | str | None" = None,
+               max_bytes: int = MAX_RUN_BYTES,
+               max_count: int = MAX_RUN_COUNT) -> dict:
+    """按「条数 ≤ max_count 且总大小 ≤ max_bytes」清理最旧 run；先到先删。"""
+    home = _home(home)
+    files = run_json_files(home, validate=False)      # 新 -> 旧
+    ids = [f.stem for f in files]
+    removed: list[str] = list(ids[max_count:])
+    keep = ids[:max_count]
+    sizes = {rid: _run_size(rid, home) for rid in keep}
+    total = sum(sizes.values())
+    while keep and total > max_bytes:
+        rid = keep.pop()
+        total -= sizes.pop(rid, 0)
+        removed.append(rid)
+    for rid in removed:
+        delete_run_artifacts(rid, home)
+    return {"removed": removed, "removed_count": len(removed),
+            "stats": run_artifacts_stats(home)}

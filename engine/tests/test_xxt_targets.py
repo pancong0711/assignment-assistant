@@ -127,3 +127,22 @@ def test_sanitize_keeps_valid_works_ids():
 
     out2, err2 = sanitize_targets([{"courseId": "1", "classes": [{"classId": "2"}]}])
     assert err2 is None and "works" not in out2[0]["classes"][0]
+
+
+def test_freshness_levels(tmp_path):
+    import datetime as _dt
+    path = _t._targets_path(tmp_path); path.parent.mkdir(parents=True, exist_ok=True)
+    now = _dt.datetime.now()
+
+    def write(seconds_ago):
+        ts = (now - _dt.timedelta(seconds=seconds_ago)).strftime("%Y-%m-%d %H:%M:%S")
+        path.write_text(_json.dumps({"discovered_at": ts, "courses": []}), encoding="utf-8")
+
+    write(60)
+    assert _t.freshness(tmp_path)["level"] == "ok"
+    write(2 * 86400)
+    assert _t.freshness(tmp_path)["level"] == "warn"
+    write(8 * 86400)
+    assert _t.freshness(tmp_path)["level"] == "danger"
+    path.unlink()
+    assert _t.freshness(tmp_path)["level"] == "unknown"

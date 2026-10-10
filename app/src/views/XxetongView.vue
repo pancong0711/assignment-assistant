@@ -3,10 +3,11 @@ import { computed, onMounted, onUnmounted, ref } from 'vue'
 import type { XxtTargetsDiff, XxtWork, XxtWorksCourse } from '../lib/engineClient'
 import {
   clearXxtRuns, clearXxtTargetsHistory, deleteXxtRun, fetchXxtLoginJob, fetchXxtRun,
-  fetchXxtRuns, fetchXxtStatus, fetchXxtTargets, fetchXxtWorks, importXxtRun,
-  startXxtDiscover, startXxtDiscoverWorks, startXxtExtract, startXxtExtractTargets,
-  startXxtLogin,
+  fetchXxtFreshness, fetchXxtRuns, fetchXxtStatus, fetchXxtStorage, fetchXxtTargets,
+  fetchXxtWorks, importXxtRun, pruneXxtRuns, startXxtDiscover, startXxtDiscoverWorks,
+  startXxtExtract, startXxtExtractTargets, startXxtLogin,
 } from '../lib/engineClient'
+import type { XxtStorageStats } from '../lib/engineClient'
 import { useSettingsStore } from '../stores/settings'
 import { useXxtJobsStore } from '../stores/xxtJobs'
 import ProcessStreamView from '../components/ProcessStreamView.vue'
@@ -241,11 +242,35 @@ function restoreRemoved() {
   persistLocal()
 }
 
+const storageStats = ref<XxtStorageStats>({})
+const storageMsg = ref('')
+
+async function loadStorageStats() {
+  try { storageStats.value = await fetchXxtStorage(engUrl.value, tok.value) } catch { /* noop */ }
+}
+function fmtBytes(n?: number): string {
+  const b = n || 0
+  if (b < 1024) return `${b} B`
+  if (b < 1024 * 1024) return `${(b / 1024).toFixed(1)} KB`
+  return `${(b / 1024 / 1024).toFixed(1)} MB`
+}
+async function pruneRuns() {
+  const maxMb = ((storageStats.value.max_bytes || 0) / 1024 / 1024).toFixed(0)
+  if (!confirm(`按容量清理最旧的 run？规则：总数不超过 ${storageStats.value.max_count || 1000} 条，`
+    + `总大小不超过 ${maxMb || 50} MB（先到先删）。`)) return
+  try {
+    const r = await pruneXxtRuns(engUrl.value, tok.value)
+    storageMsg.value = `已清理 ${r.removed_count || 0} 条旧 run`
+    await refreshRuns()
+  } catch (e) { storageMsg.value = `清理失败：${String(e)}` }
+}
+
 async function refreshRuns() {
   loadingRun.value = true
   runMsg.value = ''
   try {
     runs.value = await fetchXxtRuns(engUrl.value, tok.value)
+    void loadStorageStats()
     if (!runs.value.length) { runMsg.value = '暂无 run（引擎侧 xxt extract run 未产出）'; return }
     await loadRun(runs.value[0].run_id)
   } catch (e) {
@@ -500,6 +525,20 @@ async function extractSelected() {
   const sel = extractionTargets()
   const n = sel.reduce((a, c) => a + c.classes.length, 0)
   if (!n) { targetMsg.value = '请先勾选至少一个班级/作业'; return }
+  // D74-8：操作前置新鲜度预判（超 7 天给二次确认；不会自动开浏览器）
+  try {
+    const fr = await fetchXxtFreshness(engUrl.value, tok.value)
+    if (fr.level === 'danger') {
+      if (!confirm(`发现结果已 ${fmtAge(fr.age_seconds ?? null)} 未刷新，平台可能有新增/删除的班级/作业。\n`
+        + `建议先点「刷新发现」；仍要按当前清单提取吗？`)) {
+        targetMsg.value = '已取消提取；建议先刷新发现再操作。'
+        return
+      }
+      targetMsg.value = `⚠ 使用 ${fmtAge(fr.age_seconds ?? null)} 前的发现结果提取（已确认继续）`
+    } else if (fr.level === 'warn') {
+      targetMsg.value = `提示：${fr.hint || '发现结果偏旧'}`
+    }
+  } catch { /* 引擎不可达时后续提交会报错 */ }
   stopExtractPolling()
   extractSubmitting.value = true
   targetMsg.value = `正在提取所选 ${n} 个班……`
@@ -1009,7 +1048,13 @@ onUnmounted(() => { loginSeq += 1; stopLoginPolling(); stopExtractPolling(); sto
       <h3>历史 run 管理
         <small style="font-weight:400;color:var(--c-muted)">时间 / 班级 / 作业 / 失败数；删除=JSON+截图+run 级 HTML 存档</small>
         <button class="btn" style="float:right" @click="clearAllRuns">🗑 清空全部历史（{{ runs.length }}）</button>
+        <button class="btn" style="float:right; margin-right:8px" @click="pruneRuns">🧹 按容量清理</button>
       </h3>
+      <p class="hint" style="color:var(--c-muted)">
+        run 工件：{{ storageStats.count ?? runs.length }} 条 / {{ storageStats.max_count ?? 1000 }} 条 ·
+        {{ fmtBytes(storageStats.bytes) }} / {{ fmtBytes(storageStats.max_bytes || 50 * 1024 * 1024) }}
+        <span v-if="storageMsg">｜{{ storageMsg }}</span>
+      </p>
       <div style="max-height:300px; overflow:auto; border:1px solid var(--c-border); border-radius:8px">
         <table style="width:100%; border-collapse:collapse">
           <thead>
