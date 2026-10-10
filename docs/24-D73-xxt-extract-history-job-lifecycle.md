@@ -339,7 +339,7 @@ Playwright 浏览器操作历史
 **现场输出（PWA）：**
 
 ```text
-检测到新版本：0.1.0（commit 7c4af0527059）
+检测到新版本：0.1.0（commit be5efb740ddc）
 下载 engine-main.zip → staging
 ✓ 新引擎已暂存...
 ♻ 更新包已暂存，正在请求重启并由 launcher 安装……
@@ -702,7 +702,7 @@ def readonly_route_decision(method, url) -> "continue"|"abort"
 ### 11.1 本轮新增结论
 
 1. **引擎更新已可正常使用（D73-7 降级）**
-   - 用户真机反馈：更新到 `07e9588` 后未再出现“引擎在时限内未重回在线”，terminal 也不再停在“按任意键继续”。
+   - 用户真机反馈：更新到 `6e2df05` 后未再出现“引擎在时限内未重回在线”，terminal 也不再停在“按任意键继续”。
    - 处置：D73-7 从“必修阻塞”降级为“健壮性增强/待观察”；`update.status.json` 阶段回执仍建议做，用于区分“安装中 / 启动失败 / 已成功”，但不再阻塞主线。
 2. **提取范围收敛：仅“我教的课”（D73-10，已实施）**
    - 决策：项目定位教师端（作业纸设计 + 批阅），`xxt extract --all` **默认只扫描 `courseType=0`（我教的课）**，不再默认扫描 `courseType=1`（我学的课）。
@@ -718,15 +718,15 @@ def readonly_route_decision(method, url) -> "continue"|"abort"
 
 | 编号 | 内容 | 提交 |
 |---|---|---|
-| D66 | 二维码不显示修复：统一 QR 路径、no-store、预加载重试 | `a3d6f73` |
-| D67 | Windows start.bat 托管式重启：退出码 75、`:ENGINE_LOOP`、`instance_id` 校验 | `ac3bc2e` |
-| D68 | 扫码后无反应：登录走 CLI、教学域登录态、status 缓存按 mtime 失效 | `a2a6002` |
-| D69 | 依赖安装 uv→venv pip 回退（后被 D71 取代，仅留 `/install/deps`） | `a1c92a7` |
-| D70 | 浏览器存活检查 / cookie 诊断 / CLI 输出实时转发 | `7a3bd5f` |
-| D71 | 两阶段自更新 + launcher/engine 解耦 + 导航竞态修复 | `9f7393c`、`c62d61a` |
-| D72 | PWA 一键提取第一阶段：路径契约、extract job、过程预览 | `cad52d1` |
-| D73-1~4 | 提取 job 跨 tab 恢复、解释器修复、Playwright 历史、删除 run | `7c4af05` |
-| D73-8 | 发现 0 课程修复：只读 POST 白名单 + `courseFolderId` BFS | `07e9588` |
+| D66 | 二维码不显示修复：统一 QR 路径、no-store、预加载重试 | `f5e3409` |
+| D67 | Windows start.bat 托管式重启：退出码 75、`:ENGINE_LOOP`、`instance_id` 校验 | `e13d56d` |
+| D68 | 扫码后无反应：登录走 CLI、教学域登录态、status 缓存按 mtime 失效 | `7b5d07f` |
+| D69 | 依赖安装 uv→venv pip 回退（后被 D71 取代，仅留 `/install/deps`） | `a4fbce9` |
+| D70 | 浏览器存活检查 / cookie 诊断 / CLI 输出实时转发 | `1562d57` |
+| D71 | 两阶段自更新 + launcher/engine 解耦 + 导航竞态修复 | `c10beae`、`12f9481` |
+| D72 | PWA 一键提取第一阶段：路径契约、extract job、过程预览 | `66a6504` |
+| D73-1~4 | 提取 job 跨 tab 恢复、解释器修复、Playwright 历史、删除 run | `be5efb7` |
+| D73-8 | 发现 0 课程修复：只读 POST 白名单 + `courseFolderId` BFS | `6e2df05` |
 | D73-10 | 提取范围收敛为“我教的课” | 本节随附 |
 
 ### 11.3 不变口径
@@ -768,18 +768,25 @@ cd app && npm run build
 bash tools/check-secrets.sh
 ```
 
-### 11.7 隐私事件记录：飞书收件箱照片误入库（2026-09-23）
+### 11.7 隐私事件记录：飞书收件箱照片误入库，已从历史移除
 
-- **事件**：提交 `43446dc`（start.bat v9 final）把 `.feishu4dsh/inbox/1790144067019-ccc144/image-919e05`
-  同时纳入版本控制。该文件为手机拍摄照片（HUAWEI Mate 60 Pro，EXIF 含 GPS 定位信息），仓库为公开仓库。
-- **发现**：2026-10-10 二次交接核对时，`git ls-files` 显示该文件仍在跟踪列表；当时 `.feishu4dsh/`
-  未被 `.gitignore` 覆盖。
-- **已做（非破坏性）**：`git rm --cached` 从 HEAD 移除（本地原文件保留），main 分支该路径 raw URL 失效；
-  `.gitignore` 已覆盖 `.feishu4dsh/`。
-- **未做（需人工确认后执行）**：该 blob 仍存在于 `43446dc` 及之后的历史提交中，旧 commit SHA 仍可访问。
-  - 彻底清除需用 `git filter-repo` / `filter-branch` 重写 `43446dc..HEAD` 后 force-push；代价是 134+ 提交
-    SHA 全变，文档中引用的短哈希（如 `07e9588`）会全部失效，需同步更新；
-  - GitHub 侧还需等待 GC 或联系支持回收不可达对象；彻底方案可考虑删除并重建仓库。
+- **事件（2026-09-23）**：旧提交 `43446dc`（start.bat v9 final）把
+  `.feishu4dsh/inbox/1790144067019-ccc144/image-919e05` 纳入版本控制。该文件为手机拍摄照片
+  （EXIF 含 GPS 定位信息），仓库为公开仓库。
+- **发现（2026-10-10）**：二次交接核对时 `git ls-files` 发现该文件仍在跟踪列表；
+  `.feishu4dsh/` 当时未被 `.gitignore` 覆盖。
+- **处置一（非破坏性）**：`git rm --cached` 从当时 HEAD 移除（本地原文件保留），
+  `.gitignore` 已覆盖 `.feishu4dsh/`，main 该路径 raw URL 失效。
+- **处置二（历史重写，2026-10-10 已执行）**：经确认后执行 `git filter-branch` 从全部历史移除该路径：
+  - 217 个提交中，自 `43446dc`（含）起共 **136 个提交 SHA 变化**；重写后本地 tip 为 `80259a6`；
+  - 已删除 `refs/original`、过期 reflog 并 `git gc --prune=now`，该照片 blob 在本地对象库已不可达；
+  - 旧历史完整备份为 gitignored 的 `.scratch/pii-rewrite-backup/pre-rewrite.bundle`（不入库），
+    照片本体另存本地；
+  - 文档中受影响的提交短哈希已按 old→new 映射批量更新；本节刻意保留旧哈希 `43446dc` 仅作历史指代。
+- **仍未解决（GitHub 侧）**：
+  - force-push 后 GitHub 服务器可能仍短期缓存旧对象/旧 SHA 页面，需等待 GC 或联系 GitHub Support 回收；
+  - 已被克隆 / fork / 第三方归档（GH Archive 等）的副本无法回收；
+  - 结论：**远端清洁只能保证“从现在起不再有”**，历史泄漏的完全回收存在客观上限。
 - **其余大体积入库图片**：`pwa-*.png`、`local-designer*.png` 经 OCR 抽查仅含界面/帮助文案，
   未发现真实名单；但同样属于“人工确认后才可入库”的范畴。
 - **纪律强化**：

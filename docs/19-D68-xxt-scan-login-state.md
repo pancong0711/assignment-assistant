@@ -2,7 +2,7 @@
 
 > 状态：**代码已实施（2026-10-09），待真机扫码复测**。
 > 关联：`docs/01-architecture.md`、`docs/16-xuexitong-integration.md` §20.3/§11、
-> `docs/17-D66-xxt-qr-image-task.md`、站点提交 `ac3bc2e` 之后。
+> `docs/17-D66-xxt-qr-image-task.md`、站点提交 `e13d56d` 之后。
 > 现场：D66 后二维码已能正常显示；手机扫码后 PWA 无状态变化。
 
 ---

@@ -373,7 +373,7 @@ P3 写操作（远期，本阶段不动）
 | T9 | CLI `xxt extract` 收线 + 秘密扫描 | T4/T6 | click 组；route 硬只读；check-secrets 白名单核对 | T5 | 待办(P2-b) |
 | T10 | 写操作（批阅回传/测试公告） | —— | **本阶段冻结，不排期** | D62 决议 | 冻结 |
 
-> **状态校正（2026-10-09）**：T1–T9 均已有提交落地（T1 `608e47d`、T2 `3d216b3`、T3 `a6324c8`、T4 `48280f2`、T5 `845e312`、T6–T9 `4ca0f9c`），T10 冻结不变。上表是需求启动时视图，状态已滞后；后续进度以提交、docs/12 与 §27 为准。
+> **状态校正（2026-10-09）**：T1–T9 均已有提交落地（T1 `af0b449`、T2 `a34c6e5`、T3 `dde1110`、T4 `1bb9b13`、T5 `d76c385`、T6–T9 `2c815dc`），T10 冻结不变。上表是需求启动时视图，状态已滞后；后续进度以提交、docs/12 与 §27 为准。
 
 ### 18.2 执行批次
 - **批次一（本周）**：T1 → T2 → T3 → T4 → T5（阶段点：教师审核）；
@@ -579,7 +579,7 @@ P3 写操作（远期，本阶段不动）
 | N3 | 批阅也做学习通网页过程预览（同学习通 tab 的导航过程框） | 复用 §20.3 套壳架构：engine 批阅工作的每跳 _step+截图 → run JSON steps[] → /xxt/shot 端点已备 → 批阅视图内嵌同款横向缩略流（组件级复用） | 待实施（复用现有件） |
 | N4 | 作业纸式批阅报告（预览作业→生成报告→预览报告→报告写在同样格式作业纸上） | 详见 25.2 版式定案 | 规划定版 |
 
-> **状态校正（2026-10-09）**：N1–N3 已由 `a7d4eed` 落地；N4 前端版式 demo 已由 `a7d4eed`/`e0cdc4e` 落地，但真实数据与引擎 `sheet_html report` 模式仍未接。上表状态已滞后，后续以提交与 §27.6 为准。
+> **状态校正（2026-10-09）**：N1–N3 已由 `c8c303c` 落地；N4 前端版式 demo 已由 `c8c303c`/`ba9648e` 落地，但真实数据与引擎 `sheet_html report` 模式仍未接。上表状态已滞后，后续以提交与 §27.6 为准。
 
 ### 25.2 批阅报告版式（用户拍板 2026-10-08）
 - **竖版**：逐题评阅——**每道题占满一行**顺次排（题目转录→作答转录→评语/得分），
@@ -651,17 +651,17 @@ D64-f 批阅回写（写操作）：学习通侧填分/评语——**另行解�
 
 | # | 症状（用户侧） | 根因 | 修复 commit | 验证 |
 |---|---|---|---|---|
-| 1 | 「联网安装 Playwright」按钮闪一下即回落，安装输出区始终保持空白 | 引擎 SSE 写帧体把真换行写成**字面反斜杠+n**（`b"\\n\\n"`）：EventSource 解析不出任何 message/done 事件；`es.onerror` 静默 resolve(-1) 把错误吞没 | `1e8ba3a`（serve.py 540/543 行帧尾真换行 + runInstall 离线/中断/非零 rc 均落提示） | curl SSE `data:…$ $` / `event: done\ndata: 0` 逐帧可见；回归测试 `engine/tests/test_sse_framing.py` |
+| 1 | 「联网安装 Playwright」按钮闪一下即回落，安装输出区始终保持空白 | 引擎 SSE 写帧体把真换行写成**字面反斜杠+n**（`b"\\n\\n"`）：EventSource 解析不出任何 message/done 事件；`es.onerror` 静默 resolve(-1) 把错误吞没 | `9409469`（serve.py 540/543 行帧尾真换行 + runInstall 离线/中断/非零 rc 均落提示） | curl SSE `data:…$ $` / `event: done\ndata: 0` 逐帧可见；回归测试 `engine/tests/test_sse_framing.py` |
 | 2 | 终端窗口一关/会话被清 → 引擎"神秘失踪"，Pages 显示离线 | 引擎进程生命周期与其启动终端绑定（开发期临时 `nohup`/前台进程），无常驻保障 | 用户侧行为约定：**双击 start.bat**（工作区收纳引擎）。新增 `/restart` 端点（回环哨兵 + os.execv 同端口再生）供已装用户免终端重启 | 实测 8767/8601 两端口 execv 再生成功；PWA「🔄 重启引擎」按钮闭环（受理→轮询 /status→自动重跑体检） |
-| 3 | fetchDoctor 把引擎检查项的 **id 与 fix 字段映射时丢弃** → 🔧修复按钮永不出现、store id 定版失效回落名字启发式 | engineClient.ts 映射函数序列化不全 | `9a23eed`（id/fix 透传 + 体检键永远可点、离线提示含目标地址与具体失败原因） | build 全绿；bundle 含 restartEngine |
-| 4 | Pages(公网 https PWA) → 本机引擎 全线失联（体检/安装离线） | Chrome **Private Network Access**：公共上下文访问本机私有地址需预检回 `Access-Control-Allow-Private-Network: true`，引擎一直未回该头 | `3034b7c`（do_OPTIONS 补头） | curl 伪造 Chrome PNA 预检 204 + 四 ACA 头齐 |
+| 3 | fetchDoctor 把引擎检查项的 **id 与 fix 字段映射时丢弃** → 🔧修复按钮永不出现、store id 定版失效回落名字启发式 | engineClient.ts 映射函数序列化不全 | `5951f03`（id/fix 透传 + 体检键永远可点、离线提示含目标地址与具体失败原因） | build 全绿；bundle 含 restartEngine |
+| 4 | Pages(公网 https PWA) → 本机引擎 全线失联（体检/安装离线） | Chrome **Private Network Access**：公共上下文访问本机私有地址需预检回 `Access-Control-Allow-Private-Network: true`，引擎一直未回该头 | `8e09b64`（do_OPTIONS 补头） | curl 伪造 Chrome PNA 预检 204 + 四 ACA 头齐 |
 
 > 教训：SSE/安装这类"进程↔浏览器"链路必须有字面字节级验证（cat -A）；跨公网页面触达本机引擎必须把 PNA 头纳入端点验收清单。
 
 ### 26.2 决议：不做「协议启动键」，start.bat-first（2026-10-08 用户拍板）
 
 - 曾讨论 `assist://` 自定义协议句柄方案（install.sh/ps1 注册、网页拉起进程）：**否决**——浏览器拉进程永远跨一道 OS 注册坎，收益低复杂度高；
-- 采纳现实路径：体检离线态文案改为 **"双击工作区文件夹里的 start.bat"** 优先（`081464f`），`assist serve`/`uv run assist serve` 降为终端备选；CLI 已装用户的日常重启用 PWA「🔄 重启引擎」键；
+- 采纳现实路径：体检离线态文案改为 **"双击工作区文件夹里的 start.bat"** 优先（`c77da46`），`assist serve`/`uv run assist serve` 降为终端备选；CLI 已装用户的日常重启用 PWA「🔄 重启引擎」键；
 - 超集保障不变：LAN 全功能方式 = `assist serve --lan`（强制随机 token，URL 样式 `http://<ip>:8602/?token=…`）。
 
 ### 26.3 start.bat 幂等口径（教师 FAQ 预写，下一步上 HelpView）
@@ -675,7 +675,7 @@ D64-f 批阅回写（写操作）：学习通侧填分/评语——**另行解�
 | 入口 | 前端新鲜度 | 跨源关卡 | 建议用途 |
 |---|---|---|---|
 | start.bat 自开页 `http://127.0.0.1:<port>/` | 永远最新（引擎托管 dist-lan） | 无（同源） | **安装/修复类 SSE 进度流**（首次装 playwright 等）；离线兜底 |
-| GitHub Pages | 按 main CI 滞后数分钟 | PNA（`3034b7c` 后引擎侧已豁免） | 日常编辑/预览/导出；体检/批阅（需本机已起引擎） |
+| GitHub Pages | 按 main CI 滞后数分钟 | PNA（`8e09b64` 后引擎侧已豁免） | 日常编辑/预览/导出；体检/批阅（需本机已起引擎） |
 
 后面待办：HelpView 顶部引导卡与设置中心 "?" 帮助卡按 §26.3/§26.4 口径更新文案（用户指示"先记文档、后上网页"）。
 
@@ -843,7 +843,7 @@ D64-f 批阅回写（写操作）：学习通侧填分/评语——**另行解�
   - `engine/src/assist/xxt/installer.py`
   - `engine/src/assist/xxt/session.py`
   - `engine/src/assist/xxt/browsers.py`（untracked）
-- 文件时间戳均为 2026-10-09 11:12 左右，晚于 `d555095`（08:23）的“不要改代码”决议。
+- 文件时间戳均为 2026-10-09 11:12 左右，晚于 `f024429`（08:23）的“不要改代码”决议。
 - 代码中 6 处注释引用 **“D64 §26 A1/A2/A3”**；`git grep` 在 HEAD 提交、docs/16 正文中均不存在该编号。该编号属于未落文档的**幻觉编号**。
 - 结论：不能按“已拍板功能”直接接受；只能作为 D65 候选实现进行审核/重构/回滚。
 

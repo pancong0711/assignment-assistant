@@ -1,7 +1,7 @@
 # 13 — 任务需求单（2026-09-29 重建 · 网页结构两轮反馈拍板）
 
 > 分工：docs/12-backlog.md = 总账（历史批次与实施日志）；**本文 = 当前活动需求单**。
-> 说明：上一版（R1–R4 系列）在 commit 5e3e092 被清空（当时 commit 信息称"D41 任务需求单"、
+> 说明：上一版（R1–R4 系列）在 commit 36aaa88 被清空（当时 commit 信息称"D41 任务需求单"、
 > 实际 diff 为 231 行全删；D41 系列实施记录实际落在 docs/12 的 2026-09-28 条目）。
 > 本文自本轮起恢复需求单职能；决策编号接全库 D 序列（D41/D42 已用，本单 = D43）。
 > 来源 = 2026-09-29 两轮"仅讨论"会话（用户拍板 + 新需求登记）。
@@ -49,7 +49,7 @@
 （历史 D21/D42 类"预览与打印对不齐"补丁不再需要）；性能可接受（防抖 ≤200ms）。
 
 **KaTeX 接线审计项（本批顺带）**：`app/public/katex/`（600KB 自托管副本：katex.min.css + katex.min.js +
-fonts，D38 随 083347d 入库）**已就位但两份模板都未接线**——`sheetHtml.ts` katexHead() 与
+fonts，D38 随 e25738c 入库）**已就位但两份模板都未接线**——`sheetHtml.ts` katexHead() 与
 `engine/templates/assignment.html.j2 :31-33` 仍写死 jsdelivr CDN。离线/内网时 iframe 预览与
 CLI 下发 HTML 的公式均按 $..$ 源码降级。本批决定接线策略：同源相对路径（engine serve/页内预览）
 vs base64 内联（下载/CLI 分发版内包含）vs 保留 CDN——衔接 docs/14 §VB-2 登记项；
@@ -868,7 +868,7 @@ applyManualTranslation/setTranslationRatio 中 setTranslationRatio 保留——�
 ## D56 · 第 20 轮代码审核任务单（班级与标签 UI 收敛 + 缺陷修复）
 
 > **状态：⏸ 待执行**（用户将重启 feishu4dsh 服务，重启后通知开工）
-> **基线**：`f33c5ce`（CI tests+pages 双绿；`engine/src/assist/roster/` 从未入库缺陷已修复）
+> **基线**：`84fc2f3`（CI tests+pages 双绿；`engine/src/assist/roster/` 从未入库缺陷已修复）
 > **来源**：2026-09-30 代码审核（仅讨论轮），用户诉求 = 名单预览/标签预览像全部成绩总览一样"折叠 + 滚轮查看"；以下 I/J 两批为审核全量发现。
 
 ### I 批 · UI 收敛 + P0 缺陷（先做）
