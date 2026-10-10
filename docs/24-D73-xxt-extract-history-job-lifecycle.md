@@ -329,3 +329,167 @@ Playwright 浏览器操作历史
   - 历史列表 UI（时间/班级/作业/失败数）；
   - 清空全部历史；
   - HTML 存档按 run_id 重命名后再纳入删除。
+
+---
+
+## 8. D73 现场新增问题（2026-10-10）
+
+### 8.1 更新引擎：PWA 报超时，但 start.bat 显示安装成功
+
+**现场输出（PWA）：**
+
+```text
+检测到新版本：0.1.0（commit 7c4af0527059）
+下载 engine-main.zip → staging
+✓ 新引擎已暂存...
+♻ 更新包已暂存，正在请求重启并由 launcher 安装……
+⚠ 更新包已暂存，但自动重启/安装失败：引擎在时限内未重回在线；
+  请关闭终端后双击 start.bat。
+```
+
+**terminal：** 安装成功，然后出现“按任意键继续”。
+
+**代码分析：**
+
+- `restartEngineAndWait(180000)` 只轮询 `/status` 是否回在线，没有读 launcher 的安装状态；
+- start.bat `:APPLY_UPDATE` 成功/失败没有写状态文件，PWA 无法区分：
+  - 还在 pip install；
+  - 安装成功但 engine 启动失败；
+  - 安装成功、engine 已回在线但 PWA 没看到；
+- “按任意键继续”说明 start.bat 走到了某个 `pause`，需要结合 `start.log` 判断
+  是 engine 启动后退出，还是 `:UPDATE_APPLY_FAILED`；
+- 仅靠加长 PWA 等待时间不是根治：必须有 launcher 状态回执。
+
+**D73-7 要求：launcher 更新状态回执 + PWA 对账**
+
+- start.bat/start.sh 在 `:APPLY_UPDATE` 写状态文件：
+  ```text
+  _engine/update.status.json
+  {
+    "stage": "pending|installing|installed|failed",
+    "commit": "...",
+    "started_at": "...",
+    "finished_at": "...",
+    "returncode": 0/1,
+    "log_tail": "..."
+  }
+  ```
+- PWA 更新流程：
+  - 先轮询 `/status`；
+  - 同时轮询更新状态（或 `/engine/update/status` 端点）；
+  - 如果 launcher 报 `installed` 但 `/status` 未回在线，显示 `start.log` 尾部，
+    而不是只说“超时”；
+  - 如果 launcher 报 `failed`，直接显示失败原因和回滚状态。
+- 只有确认新 engine 回在线且 `instance_id` 变化，PWA 才显示更新成功。
+- PWA 的等待策略改为“阶段驱动”，不再只靠固定 180s。
+
+### 8.2 `xxt extract --all` 发现 0 个课程/班级
+
+**现场 run JSON：**
+
+```json
+{
+ "run_id": "xxt-20261010-124628-000102",
+ "session": {"verdict": "alive"},
+ "courses": [],
+ "failures": [{"kind":"not_extracted","detail":"discover found 0 courses/classes"}],
+ "target_source": "discover",
+ "steps": [
+   {"action":"发现课程列表","title":"课程",
+    "url":"https://mooc2-ans.chaoxing.com/visit/interaction"}
+ ]
+}
+```
+
+**代码分析：**
+
+- `discover_courses()` 已成功 goto 互动页，并保存 `pages/discover-courses.html`；
+- 但 `JS_COURSES` 没有扫描出任何 `a[href*="courseId="]`；
+- 旧 `.scratch/xxt_readonly_extract.py` 同样用这个 selector，之前可工作；
+  现在失败可能原因：
+  1. 页面 JS 渲染/跳转比 5s 更慢；
+  2. Edge/Chrome 与旧 Playwright Chromium 的 DOM/登录后页面差异；
+  3. 课程链接形态变化（`courseid=` / `%3D` / `data-courseid` / 卡片非 `<a>`）；
+  4. 互动页需要等待某个 tab/接口返回；
+  5. 登录会话虽然 alive，但账号首页/课程页未渲染。
+
+**D73-8 要求：发现课程/班级可诊断、可降级**
+
+- 保留 HTML archive：`pages/discover-courses.html`；
+- 诊断字段写入 run JSON/failures：
+  - `final_url`
+  - `title`
+  - `anchor_count`
+  - `course_link_count`
+  - `body_snippet`
+  - `browser`（msedge/chrome/chromium）
+- 发现课程 fallback 顺序：
+  1. 等 `networkidle` 或更长 settle（可配置）；
+  2. `a[href*="courseId="]`；
+  3. `a[href*="courseid="]` / URL decode / `%3D`；
+  4. `[data-courseid]` / 课程卡片选择器；
+  5. 若仍为 0，失败时明确给出 HTML archive 路径与诊断计数。
+- 班级发现同理增加 fallback 和诊断。
+- 保留 CLI `--targets` 精确路径；后续 PWA 可上传 targets 兜底。
+
+### 8.3 旧提取数据为什么“没展示在 PWA 上”
+
+用户口径：旧代码能提取，数据已存在；但 PWA 没有展示。
+
+**代码分析：**
+
+- 旧脚本产物是：
+  - `.scratch/xxt-readonly.json`：目标清单语义（courses/classes/homeworks/samples），不是 run schema；
+  - `.scratch/xxt-*.json`：旧全量 driver 产物，schema 与 D63 §19 run 不完全一致；
+- 当前 PWA `/xxt/runs` 只扫 `xxt_home()/runs` + 旧根目录，并加载 run schema：
+  - 需要 `run_id`、`courses[].classes[]`、`works[]`、`steps[]` 等；
+- `layout.run_json_files()` 主动排除了 `xxt-readonly.json`、`xxt-notices.json` 等旧文件；
+- 教师机 `xxt_home()` 是 `.runtime/xxt`，旧 `.scratch` 数据即使存在，也可能不在扫描路径；
+- 所以“旧代码有数据但 PWA 不显示”不是数据消失，而是：
+  1. 数据不在当前 artifact 路径；
+  2. 旧 schema 与 PWA 消费 schema 不一致；
+  3. PWA 没有“导入旧 run/兼容旧格式”入口。
+
+**D73-9 要求：旧数据兼容/导入**
+
+- 提供诊断命令或 PWA 空态提示：
+  - 当前 `xxt_home` 路径；
+  - 扫描到的 run 文件列表；
+  - 发现旧文件但不满足 schema 时，列出文件路径与原因；
+- 增加 `assist xxt run import <json>`（名称待定）：
+  - 把旧 `.scratch/xxt-*.json` 规范化为 run schema；
+  - 或至少复制到 `xxt_home()/runs/` 并补 `run_id`；
+- PWA 空态提供“扫描旧数据”按钮或明确 CLI 命令提示；
+- 不自动吞掉旧文件，避免把非 run JSON 误当 run。
+
+---
+
+## 9. D72 / D73 收尾清单（截至 2026-10-10）
+
+### D72 未完成
+
+1. **D72-5 真实数据预览**：
+   - 过程预览已打通；
+   - 作业纸预览真实班级/学生上下文已具备数据基础；
+   - 批阅报告预览（D64-N4）尚未接真实 submission/图片流转录。
+2. **D72-2/D72-3 targets 模式**：
+   - 第一版只有 `--all`；
+   - “先发现课程/班级 → 勾选 → 提取”未做；
+   - targets 上传/默认来源未做。
+3. **发现能力可靠性**：见 D73-8。
+
+### D73 未完成
+
+1. D73-7 launcher 更新状态回执；
+2. D73-8 课程/班级发现 fallback 与诊断；
+3. D73-9 旧数据兼容/导入；
+4. 历史管理 UI 完善（时间/班级/作业/失败数、清空全部）；
+5. HTML 存档按 run_id 归档后再纳入删除。
+
+### 建议顺序
+
+1. D73-8：先让 `--all` 能发现课程/班级（提取链路根）；
+2. D73-7：修 launcher/PWA 更新状态对账；
+3. D73-9：兼容旧数据，让“以前提取过”的数据能被 PWA 看到；
+4. D72-5：作业纸/批阅报告真实预览；
+5. 历史管理与 targets 选择作为收尾增强。
