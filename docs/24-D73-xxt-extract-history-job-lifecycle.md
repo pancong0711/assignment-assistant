@@ -767,3 +767,22 @@ bash -n tools/start.sh
 cd app && npm run build
 bash tools/check-secrets.sh
 ```
+
+### 11.7 隐私事件记录：飞书收件箱照片误入库（2026-09-23）
+
+- **事件**：提交 `43446dc`（start.bat v9 final）把 `.feishu4dsh/inbox/1790144067019-ccc144/image-919e05`
+  同时纳入版本控制。该文件为手机拍摄照片（HUAWEI Mate 60 Pro，EXIF 含 GPS 定位信息），仓库为公开仓库。
+- **发现**：2026-10-10 二次交接核对时，`git ls-files` 显示该文件仍在跟踪列表；当时 `.feishu4dsh/`
+  未被 `.gitignore` 覆盖。
+- **已做（非破坏性）**：`git rm --cached` 从 HEAD 移除（本地原文件保留），main 分支该路径 raw URL 失效；
+  `.gitignore` 已覆盖 `.feishu4dsh/`。
+- **未做（需人工确认后执行）**：该 blob 仍存在于 `43446dc` 及之后的历史提交中，旧 commit SHA 仍可访问。
+  - 彻底清除需用 `git filter-repo` / `filter-branch` 重写 `43446dc..HEAD` 后 force-push；代价是 134+ 提交
+    SHA 全变，文档中引用的短哈希（如 `07e9588`）会全部失效，需同步更新；
+  - GitHub 侧还需等待 GC 或联系支持回收不可达对象；彻底方案可考虑删除并重建仓库。
+- **其余大体积入库图片**：`pwa-*.png`、`local-designer*.png` 经 OCR 抽查仅含界面/帮助文案，
+  未发现真实名单；但同样属于“人工确认后才可入库”的范畴。
+- **纪律强化**：
+  1. 任何 `Bin` 变更与新增 `.png/.jpg/.zip/.tar.gz` 必须逐个人工确认来源与内容后才能 `git add`；
+  2. `git status --short` 出现 `.feishu4dsh/`、`.scratch/`、`workspace/` 相关内容一律先移除；
+  3. `check-secrets.sh` 只能拦截已知文本模式，不能替代二进制文件的人工审计。
