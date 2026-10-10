@@ -127,3 +127,24 @@ def test_start_bat_d71_pending_contract():
         assert b":APPLY_UPDATE" in raw, name
         assert b"run_engine.bat" in raw, name
         assert b"Scripts\assist.exe" not in raw, name  # 不再直接运行被替换的 exe
+
+
+def test_missing_required_files_detects_gaps(tmp_path):
+    from assist.engine_update import REQUIRED_STAGE_FILES
+    assert len(eu.missing_required_files(tmp_path)) == len(REQUIRED_STAGE_FILES)
+    for rel in REQUIRED_STAGE_FILES:
+        f = tmp_path / rel
+        f.parent.mkdir(parents=True, exist_ok=True)
+        f.write_text("x", encoding="utf-8")
+    assert eu.missing_required_files(tmp_path) == []
+
+
+def test_start_bat_d73_12_integrity_contract():
+    root = Path(__file__).resolve().parents[2]
+    for name in ("tools/start.bat", "app/public/start.bat"):
+        raw = (root / name).read_bytes()
+        assert b"xxt\\session.py" in raw, name
+        assert b"robocopy" in raw, name
+        assert b"REDOWNLOADED" in raw, name
+    engine_bat = (root / "engine" / "run_engine.bat").read_bytes()
+    assert b"cannot import assist.xxt.session" in engine_bat

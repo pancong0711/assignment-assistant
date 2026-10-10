@@ -926,3 +926,81 @@ assist xxt run list
 
 - D72-5 真实数据预览（作业纸 → 批阅报告）；
 - 真机验收 D72 targets 与历史管理。
+
+---
+
+## 14. D73-12 引擎更新后 xxt 模块缺失事件（2026-10-10 现场 start.log）
+
+### 14.1 现象
+
+老师 Windows 机器（`D:\BaiduSyncdisk\toolsPy\2609assignment`）在 **17:24 更新引擎后**，
+学习通页所有请求 500，日志反复出现：
+
+```
+serve.py, in _xxt_home / _xxt_session_check_cached
+ModuleNotFoundError: No module named 'assist.xxt.session'
+```
+
+时间线（start.log）：`10:38` 启动正常；`13:52` 重启后扫码登录正常（msedge + QR）；
+`17:24` 更新后新 serve 进程立即失败；`13:53`–`17:24` 之间 xxt 一直可用。
+
+### 14.2 根因判断
+
+- **不是发布产物问题**：线上 `engine-main.zip`（Pages `dl/`，commit edbfdb7）完整包含
+  `engine/src/assist/xxt/session.py`（已下载核对）。
+- **是老师本机 `_engine\engine` 安装树不完整**：serve 能启动说明 `assist/serve.py`、
+  `assist/xxt/__init__.py`、`assist/xxt/layout.py` 都在；但 `_xxt_home()` 的**懒加载**
+  `from .xxt.session import xxt_home` 找不到 `session.py`。
+- 触发链：`start.bat :APPLY_UPDATE` 把旧 `_engine\engine` 移到 `.bak` 后，
+  `xcopy /E /I /Y` 复制 staging；xcopy 只校验了 `pyproject.toml`，
+  **丢失/漏拷部分文件（含 `xxt/session.py`）时仍判定成功** → pip editable 安装成功 →
+  serve 启动 → 首次访问 `/xxt/*` 才暴露。
+- 老师引擎 traceback 行号与本仓库任何提交都不一致，进一步说明其安装树是
+  “新旧文件混合/非完整快照”，而非单一干净版本。
+
+### 14.3 立即修复（老师本机操作，一次性）
+
+```bat
+REM 1) 先关闭引擎 cmd 窗口（停止进程，避免文件占用）
+REM 2) 删除不完整的引擎安装与 staging（会重新下载）
+rmdir /S /Q D:\BaiduSyncdisk\toolsPy\2609assignment\_engine\engine
+rmdir /S /Q D:\BaiduSyncdisk\toolsPy\2609assignment\_engine\staging
+if exist D:\BaiduSyncdisk\toolsPy\2609assignment\_engine\engine.bak rmdir /S /Q D:\BaiduSyncdisk\toolsPy\2609assignment\_engine\engine.bak
+del /Q D:\BaiduSyncdisk\toolsPy\2609assignment\_engine\engine-version.json
+REM 3) 可选：清理 pip 残留的无效分布
+del /Q /S D:\BaiduSyncdisk\toolsPy\2609assignment\.runtime\venv\Lib\site-packages\~ssist-engine*
+REM 4) 重新双击 start.bat（重新下载 engine-main.zip 并安装）
+```
+
+### 14.4 防复发加固（已实施）
+
+- `start.bat`：
+  - `:ENGINE_CHECK` 检查 `src\assist\xxt\session.py`；缺失则强制重下一次（`REDOWNLOADED`），
+    仍缺失则明确报错并指向 `_engine` 删除；
+  - `:EXTRACT_ENGINE` 解压后清理 `src\**\__pycache__`，避免陈旧 pyc；
+  - `:APPLY_UPDATE` 改用 `robocopy /MIR`（失败再回退 `xcopy`），并在复制后**校验**
+    `src\assist\xxt\session.py` 与 `src\assist\serve.py`，缺失即回滚；
+  - 下载前清理旧的 `engine-main.zip` / `full-repo.zip`，避免复用上一次失败下载的残缺包；
+  - 本地版本“已是最新/版本检查离线”时也先走 `:ENGINE_CHECK` 完整性检查。
+- `engine/run_engine.bat`：启动 serve 前执行 `python -c "import assist.xxt.session"` 自检，
+  失败时打印中文修复指引并 `pause`，不再让 serve 起来刷 traceback。
+- `engine_update.py`：新增 `REQUIRED_STAGE_FILES`；下载的 zip **解压前**校验 zip 名单、
+  **解压后**校验磁盘文件，缺任一关键文件则不写 `update.pending`。
+- `serve.py`：新增 `_xxt_import_error()`；所有 `/xxt/*` 请求先探测，
+  失败时返回可读提示（`/xxt/status` 降级为 200 + hints，其余 503），
+  PWA 会显示“学习通模块不可用（引擎安装不完整）+ 修复步骤”。
+- `tools/start.bat` 与 `app/public/start.bat` 已同步（lint_bat 通过）。
+
+### 14.5 验证
+
+- `tools/lint_bat.py`：3 个启动脚本通过；
+- 新增纯函数测试：`missing_required_files`（空目录全缺 / 补齐后为空）、
+  `test_start_bat_d73_12_integrity_contract`（robocopy + REDOWNLOADED + run_engine 自检）；
+- 预期完整 `pytest engine/tests -q` = **103 passed**（原 101 + 本节 2）。
+
+### 14.6 遗留
+
+- `start.bat` 的 release 备用源（`releases/download/dl/engine-main.zip`）实测 404，
+  仅剩 Pages 主源 + ghfast/全仓兜底；后续可移除死源或补一个真实备用包。
+- 若再次出现“安装树混杂”，优先怀疑 BaiduSync 同步/文件占用导致复制不完整；
+  可考虑把 `_engine` 放到非同步目录（该项需教师拍板）。

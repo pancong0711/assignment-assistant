@@ -70,18 +70,20 @@ IF NOT EXIST "%ENGINE_DIR%\pyproject.toml" goto ENGINE_DOWNLOAD
 echo [5/6] check engine version
 curl -fsSL --connect-timeout 8 --max-time 15 -o "%VERSION_TMP%" "%VERSION_URL%"
 IF ERRORLEVEL 1 (
-  echo [5/6] version check unavailable - reuse local engine
-  goto ENGINE_LOCAL
+  echo [5/6] version check unavailable - check local engine integrity
+  goto ENGINE_CHECK
 )
 IF NOT EXIST "%VERSION_LOCAL%" goto ENGINE_DOWNLOAD
 FC /B "%VERSION_LOCAL%" "%VERSION_TMP%" >nul
 IF ERRORLEVEL 1 goto ENGINE_DOWNLOAD
-echo [5/6] engine up to date - reuse local copy
-goto ENGINE_LOCAL
+echo [5/6] engine up to date - check local engine integrity
+goto ENGINE_CHECK
 
 :ENGINE_DOWNLOAD
 echo [5/6] engine update required - downloading latest
 curl -fsSL --connect-timeout 8 --max-time 15 -o "%VERSION_TMP%" "%VERSION_URL%"
+REM D73-12: never reuse a stale zip from a previous failed download
+del /Q "%WORKSPACE%\engine-main.zip" >nul 2>nul
 
 echo [5/6a] engine source: PRIMARY mirror = github.io Pages dl (5 attempts x retry-delay)
 set "DELURL=https://pancong0711.github.io/assignment-assistant/dl/engine-main.zip"
@@ -102,6 +104,7 @@ curl -fL --retry 3 --connect-timeout 60 --retry-delay 10 -o "%WORKSPACE%\engine-
 IF EXIST "%WORKSPACE%\engine-main.zip" goto EXTRACT_ENGINE
 
 echo [5/6c] engine source: ghfast + github full-repo fallback (last resort, 41MB+)
+del /Q "%WORKSPACE%\full-repo.zip" >nul 2>nul
 curl -fL --retry 2 --connect-timeout 20 -o "%WORKSPACE%\full-repo.zip" "https://ghfast.top/https://github.com/pancong0711/assignment-assistant/archive/refs/heads/main.zip"
 IF NOT EXIST "%WORKSPACE%\full-repo.zip" curl -fL --retry 2 --connect-timeout 20 -o "%WORKSPACE%\full-repo.zip" "https://github.com/pancong0711/assignment-assistant/archive/refs/heads/main.zip"
 IF EXIST "%WORKSPACE%\full-repo.zip" powershell -NoProfile -ExecutionPolicy Bypass -Command "Expand-Archive -Force %WORKSPACE%\full-repo.zip %WORKSPACE%\_enginefull" >> "%LOG%" 2>&1
@@ -111,6 +114,7 @@ goto ENGINE_CHECK
 :EXTRACT_ENGINE
 powershell -NoProfile -ExecutionPolicy Bypass -Command "Expand-Archive -Force %WORKSPACE%\engine-main.zip %WORKSPACE%\_engine" >> "%LOG%" 2>&1
 set "ENGINE_DIR=%WORKSPACE%\_engine\engine"
+IF EXIST "%ENGINE_DIR%\src" for /d /r "%ENGINE_DIR%\src" %%d in (__pycache__) do @if exist "%%d" rd /s /q "%%d" >nul 2>nul
 IF EXIST "%VERSION_TMP%" copy /Y "%VERSION_TMP%" "%VERSION_LOCAL%" >nul
 
 :ENGINE_CHECK
@@ -120,6 +124,19 @@ IF NOT EXIST "%ENGINE_DIR%\pyproject.toml" (
   pause
   exit /b 1
 )
+REM D73-12: local engine integrity; missing xxt\session.py forces one re-download
+IF EXIST "%ENGINE_DIR%\src\assist\xxt\session.py" goto ENGINE_LOCAL
+IF DEFINED REDOWNLOADED (
+  echo [FAIL] engine source incomplete after redownload: missing src\assist\xxt\session.py
+  echo        delete "%WORKSPACE%\_engine" and rerun start.bat
+  notepad "%LOG%"
+  pause
+  exit /b 1
+)
+echo [5/6] local engine incomplete - forcing re-download (missing src\assist\xxt\session.py)
+set "REDOWNLOADED=1"
+goto ENGINE_DOWNLOAD
+
 :ENGINE_LOCAL
 REM engine dir validated at :ENGINE_CHECK (D34 chain)
 "%VPIP%" install -e "%ENGINE_DIR%" --index-url "%UV_DEFAULT_INDEX%" >> "%LOG%" 2>&1
@@ -192,9 +209,22 @@ if not exist "%ENGINE_BAK%\pyproject.toml" (
   echo [update] failed to move current engine to backup
   exit /b 1
 )
-xcopy /E /I /Y "%STAGE%\engine" "%ENGINE_DIR%" >nul 2>nul
+REM D73-12: robocopy /MIR first (reliable mirror), xcopy as fallback
+robocopy "%STAGE%\engine" "%ENGINE_DIR%" /MIR /NFL /NDL /NJH /NJS /NP /R:2 /W:1 >nul 2>nul
+IF ERRORLEVEL 8 xcopy /E /I /Y "%STAGE%\engine" "%ENGINE_DIR%" >nul 2>nul
 if not exist "%ENGINE_DIR%\pyproject.toml" (
   echo [update] failed to copy staging engine
+  call :RESTORE_ENGINE
+  exit /b 1
+)
+REM D73-12: verify critical files, not just pyproject.toml
+IF NOT EXIST "%ENGINE_DIR%\src\assist\xxt\session.py" (
+  echo [update] copy incomplete - missing src\assist\xxt\session.py; rolling back
+  call :RESTORE_ENGINE
+  exit /b 1
+)
+IF NOT EXIST "%ENGINE_DIR%\src\assist\serve.py" (
+  echo [update] copy incomplete - missing src\assist\serve.py; rolling back
   call :RESTORE_ENGINE
   exit /b 1
 )

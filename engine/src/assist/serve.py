@@ -289,6 +289,20 @@ def _xxt_home() -> Path:
     return xxt_home()
 
 
+def _xxt_import_error() -> str:
+    """D73-12：xxt.session 不可导入时返回可读错误；空串表示正常。
+
+    现场案例：更新后 _engine/engine 安装树缺少 src/assist/xxt/session.py，
+    serve 仍能启动（layout 已导入），但所有 /xxt/* 懒加载 session 时 500。
+    这里提前探测并给 PWA 可读提示，避免刷屏 traceback。
+    """
+    try:
+        from .xxt.session import xxt_home  # noqa: F401
+        return ""
+    except Exception as e:  # noqa: BLE001
+        return f"{type(e).__name__}: {e}"[:300]
+
+
 def _xxt_storage_newer_than(ts: float) -> bool:
     """D68：登录 CLI 刚写完 storage 时，不能被 60s 的旧 dead 缓存挡住。"""
     try:
@@ -558,6 +572,14 @@ class Handler(BaseHTTPRequestHandler):
         if not self._ok_token(qs):
             self._json({"ok": False, "error": "token required"}, 401)
             return
+        if u.path.startswith("/xxt/"):
+            xxt_err = _xxt_import_error()
+            if xxt_err:
+                self._json({"ok": False,
+                            "error": "学习通模块不可用（引擎安装不完整）",
+                            "detail": xxt_err,
+                            "hint": "关闭引擎窗口 → 删除 workspace\_engine → 重新双击 start.bat；见 docs/24 §14"}, 503)
+                return
         if u.path == "/kb/write":
             # B4：PWA 把内存 KbBook（kind + chapters）交给引擎，openpyxl 原位改值保留样式。
             from .files import snapshot, write_chapters_preserving
@@ -768,6 +790,21 @@ class Handler(BaseHTTPRequestHandler):
         if not self._ok_token(raw_qs):
             self._json({"ok": False, "error": "token required"}, 401)
             return
+        if u.path.startswith("/xxt/"):
+            xxt_err = _xxt_import_error()
+            if xxt_err:
+                if u.path == "/xxt/status":
+                    self._json({"ok": True, "xxt": {
+                        "verdict": "unknown",
+                        "reasons": [f"学习通模块不可用：{xxt_err}"],
+                        "hint": "引擎安装不完整：关闭引擎窗口后删除 workspace\_engine，再双击 start.bat 重装；见 docs/24 §14",
+                    }, "avatar": {"ok": False}})
+                else:
+                    self._json({"ok": False,
+                                "error": "学习通模块不可用（引擎安装不完整）",
+                                "detail": xxt_err,
+                                "hint": "关闭引擎窗口 → 删除 workspace\_engine → 重新双击 start.bat；见 docs/24 §14"}, 503)
+                return
         if u.path == "/xxt/status":
             self._json({"ok": True, "xxt": _xxt_session_check_cached(),
                         "avatar": _xxt_avatar_cached()})

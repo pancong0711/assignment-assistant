@@ -25,6 +25,23 @@ VERSION_URL = f"{PAGES_DL}/engine-version.json"
 ZIP_URL = f"{PAGES_DL}/engine-main.zip"
 PYPI_MIRROR = "https://pypi.tuna.tsinghua.edu.cn/simple"
 
+# D73-12：zip/解压后的完整性红线。现场曾出现 _engine/engine 缺 xxt/session.py，
+# serve 能启动但所有 /xxt/* 懒加载失败；这里在写 pending 前就拦住。
+REQUIRED_STAGE_FILES = (
+    "engine/pyproject.toml",
+    "engine/run_engine.bat",
+    "engine/src/assist/cli.py",
+    "engine/src/assist/serve.py",
+    "engine/src/assist/xxt/__init__.py",
+    "engine/src/assist/xxt/session.py",
+)
+
+
+def missing_required_files(root: "Path | str") -> list[str]:
+    """返回 root 下缺失的关键文件相对路径（可测纯函数）。"""
+    root = Path(root)
+    return [p for p in REQUIRED_STAGE_FILES if not (root / p).is_file()]
+
 
 def _fetch_json(url: str, timeout: int = 10) -> dict:
     req = urllib.request.Request(url, headers={"User-Agent": "Mozilla/5.0"})
@@ -231,10 +248,14 @@ def update_engine(ws: Path, emit) -> int:
 
     try:
         with zipfile.ZipFile(tmp_zip) as z:
-            names = z.namelist()
-            if "engine/pyproject.toml" not in names:
-                raise RuntimeError("zip 内缺少 engine/pyproject.toml（非预期包结构）")
+            names = set(z.namelist())
+            missing_names = [p for p in REQUIRED_STAGE_FILES if p not in names]
+            if missing_names:
+                raise RuntimeError("zip 内缺少关键文件：" + ", ".join(missing_names[:3]))
             z.extractall(stage)
+            missing_disk = missing_required_files(stage)
+            if missing_disk:
+                raise RuntimeError("解压后缺少关键文件：" + ", ".join(missing_disk[:3]))
         (stage / "engine-version.json").write_text(
             json.dumps(remote, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
         pending.write_text(
