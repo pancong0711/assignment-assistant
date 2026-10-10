@@ -1,10 +1,11 @@
 <script setup lang="ts">
 import { computed, onMounted, onUnmounted, ref } from 'vue'
 import {
-  fetchXxtLoginJob, fetchXxtRun, fetchXxtRuns, fetchXxtStatus,
+  deleteXxtRun, fetchXxtLoginJob, fetchXxtRun, fetchXxtRuns, fetchXxtStatus,
   startXxtExtract, startXxtLogin,
 } from '../lib/engineClient'
 import { useSettingsStore } from '../stores/settings'
+import { useXxtJobsStore } from '../stores/xxtJobs'
 import ProcessStreamView from '../components/ProcessStreamView.vue'
 
 /* 学习通 tab（D63 T7/T8 实装，docs/16 §20）：
@@ -14,6 +15,7 @@ import ProcessStreamView from '../components/ProcessStreamView.vue'
  * 写操作（公告发布/批阅回传）维持 D62 冻结——本页不提供任何写按钮。   */
 
 const settings = useSettingsStore()
+const xxtJobs = useXxtJobsStore()
 const engUrl = computed(() => settings.engineUrl)
 const tok = computed(() => settings.engineToken)
 
@@ -166,7 +168,8 @@ interface WorkRow {
 interface ClassRow { name: string; classId: string; status: string; works: WorkRow[]; roster?: { total?: number | null } ; notes?: string[] }
 interface CourseRow { name: string; courseId: string; classes: ClassRow[] }
 const runs = ref<{ run_id: string; ts_end?: string; works?: number; failures?: number }[]>([])
-const extracting = ref(false)
+const extracting = computed(() => xxtJobs.extractJobId !== '')
+const extractSubmitting = ref(false)
 const curRun = ref<string | null>(null)
 const courses = ref<CourseRow[]>([])
 const loadSteps = ref<{ action: string; detail?: string; title?: string; url?: string; ts?: string; shot?: string }[]>([])
@@ -267,39 +270,63 @@ function stopExtractPolling() {
   }
 }
 
-async function startExtract() {
-  if (extracting.value) return
+function pollExtractJob(jobId: string) {
   stopExtractPolling()
-  extracting.value = true
+  const tick = async () => {
+    // D73：job_id 可能已在别处结束/清理；旧的 tick 直接退出
+    if (xxtJobs.extractJobId !== jobId) return
+    try {
+      const job = await fetchXxtLoginJob(engUrl.value, tok.value, jobId)
+      if (job.status === 'running') {
+        const line = (job.lines || []).slice(-1)[0]
+        xxtJobs.setExtractMsg(line ? `提取中：${line.slice(-120)}` : '提取中……')
+        runMsg.value = xxtJobs.extractMsg
+        extractTimer = window.setTimeout(tick, 1500)
+        return
+      }
+      xxtJobs.finishExtractJob()
+      if (job.status === 'done' && (job.returncode ?? 0) === 0) {
+        runMsg.value = '提取完成，正在刷新列表……'
+        await refreshRuns()
+      } else {
+        const line = (job.lines || []).slice(-1)[0] || `任务状态：${job.status}`
+        runMsg.value = `提取失败：${line}`
+      }
+    } catch (e) {
+      xxtJobs.finishExtractJob()
+      runMsg.value = `提取任务状态查询失败：${String(e)}`
+    }
+  }
+  void tick()
+}
+
+async function startExtract() {
+  if (extracting.value || extractSubmitting.value) return
+  stopExtractPolling()
+  extractSubmitting.value = true
   runMsg.value = '已提交提取任务：扫描账户课程/班级并提取作业、通知等信息……'
   try {
     const jobId = await startXxtExtract(engUrl.value, tok.value, { skip_notices: false })
-    const tick = async () => {
-      try {
-        const job = await fetchXxtLoginJob(engUrl.value, tok.value, jobId)
-        if (job.status === 'running') {
-          const line = (job.lines || []).slice(-1)[0]
-          runMsg.value = line ? `提取中：${line.slice(-120)}` : '提取中……'
-          extractTimer = window.setTimeout(tick, 1500)
-          return
-        }
-        extracting.value = false
-        if (job.status === 'done' && (job.returncode ?? 0) === 0) {
-          runMsg.value = '提取完成，正在刷新列表……'
-          await refreshRuns()
-        } else {
-          const line = (job.lines || []).slice(-1)[0] || `任务状态：${job.status}`
-          runMsg.value = `提取失败：${line}`
-        }
-      } catch (e) {
-        extracting.value = false
-        runMsg.value = `提取任务状态查询失败：${String(e)}`
-      }
-    }
-    void tick()
+    xxtJobs.startExtractJob(jobId)
+    runMsg.value = xxtJobs.extractMsg
+    pollExtractJob(jobId)
   } catch (e) {
-    extracting.value = false
     runMsg.value = `提取启动失败：${String(e)}`
+  } finally {
+    extractSubmitting.value = false
+  }
+}
+
+async function deleteCurrentRun() {
+  if (!curRun.value) return
+  const id = curRun.value
+  if (!confirm(`删除历史 run ${id}？将同时删除其 JSON 与截图，不可恢复。`)) return
+  try {
+    await deleteXxtRun(engUrl.value, tok.value, id)
+    runMsg.value = `已删除 ${id}`
+    await refreshRuns()
+  } catch (e) {
+    runMsg.value = `删除失败：${String(e)}`
   }
 }
 
@@ -319,7 +346,15 @@ const grouped = computed(() => courses.value.map(c => {
 }))
 
 
-onMounted(() => { refreshStatus(); refreshRuns() })
+onMounted(() => {
+  refreshStatus()
+  refreshRuns()
+  // D73：切换 tab 回来后恢复提取 job 轮询
+  if (xxtJobs.extractJobId) {
+    runMsg.value = xxtJobs.extractMsg || '提取任务进行中……'
+    pollExtractJob(xxtJobs.extractJobId)
+  }
+})
 onUnmounted(() => { loginSeq += 1; stopLoginPolling(); stopExtractPolling() })
 </script>
 
@@ -420,7 +455,7 @@ onUnmounted(() => { loginSeq += 1; stopLoginPolling(); stopExtractPolling() })
 
     <!-- 导航过程展示框（§20.3 方案 A 抽共享组件 D64-b） -->
     <div class="card" v-if="loadSteps.length">
-      <h3>提取过程 <small style="font-weight:400;color:var(--c-muted)">最新 run 的页面导航流（每跳一张缩略图；引擎真会话所拍）</small></h3>
+      <h3>Playwright 浏览器操作历史 <small style="font-weight:400;color:var(--c-muted)">按 run 追加；每跳一张缩略图（引擎真会话所拍）</small></h3>
       <ProcessStreamView :run-id="curRun || ''" :steps="loadSteps" :engine-addr="engUrl" :token="tok" />
     </div>
 
@@ -428,7 +463,7 @@ onUnmounted(() => { loginSeq += 1; stopLoginPolling(); stopExtractPolling() })
     <div class="card">
       <h3>读提取结果 <small style="font-weight:400;color:var(--c-muted)">基于最近 run JSON（§19 schema）；点开行看名单</small></h3>
       <p>
-        <button class="btn primary" :disabled="extracting || loadingRun" @click="startExtract">{{ extracting ? '提取中…' : '📥 提取账户数据' }}</button>
+        <button class="btn primary" :disabled="extracting || extractSubmitting || loadingRun" @click="startExtract">{{ extracting || extractSubmitting ? '提取中…' : '📥 提取账户数据' }}</button>
         <button class="btn" style="margin-left:8px" :disabled="loadingRun" @click="refreshRuns">⟳ 刷新列表（读取已有 run）</button>
         <button class="btn" style="margin-left:8px" @click="restoreRemoved">♻ 从学习通恢复列表（回放最近 run）</button>
         <label class="field" style="margin-left:12px">置顶上限：
@@ -437,6 +472,7 @@ onUnmounted(() => { loginSeq += 1; stopLoginPolling(); stopExtractPolling() })
           </select>
         </label>
         <button class="btn" style="margin-left:8px" @click="() => loadRun(curRun || '')" :disabled="!curRun">重载本 run</button>
+        <button class="btn" style="margin-left:8px" @click="deleteCurrentRun" :disabled="!curRun">🗑 删除本 run</button>
         <label class="field" style="margin-left:12px">筛选：
           <select v-model="filterMode" style="width:150px">
             <option value="all">全部班级</option>
@@ -448,7 +484,7 @@ onUnmounted(() => { loginSeq += 1; stopLoginPolling(); stopExtractPolling() })
       </p>
       <p v-if="runMsg" class="hint">{{ runMsg }}</p>
       <p v-if="runs.length" class="hint" style="color:var(--c-muted)">
-        可选 run：
+        历史 run：
         <select v-model="curRun" @change="loadRun(curRun || '')" style="max-width:240px">
           <option v-for="r in runs" :key="r.run_id" :value="r.run_id">
             {{ r.run_id }}（{{ r.works || 0 }} 作业/失败 {{ r.failures || 0 }}）

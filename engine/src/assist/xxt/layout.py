@@ -75,3 +75,24 @@ def shot_candidates(run_id: str, fname: str,
             if p.is_file() and p.suffix.lower() == ".png":
                 out.append(p)
     return out
+
+def delete_run_artifacts(run_id: str, home: "Path | str | None" = None) -> list[str]:
+    """D73：删除单条 run 的 JSON 与 run 级截图；返回已删路径（字符串）。
+
+    HTML 存档当前按 class/work 命名、跨 run 共享，不在这里删除，避免误删其他 run。
+    """
+    home = _home(home)
+    removed: list[str] = []
+    for d in (runs_dir(home), home):
+        p = d / f"{run_id}.json"
+        if p.is_file():
+            p.unlink()
+            removed.append(str(p))
+    for d in (shots_dir(home), _legacy_shots_dir(home)):
+        if not d.is_dir():
+            continue
+        for p in d.glob(f"{run_id}-*.png"):
+            if p.is_file():
+                p.unlink()
+                removed.append(str(p))
+    return removed

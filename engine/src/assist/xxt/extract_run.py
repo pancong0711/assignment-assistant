@@ -7,6 +7,7 @@
 from __future__ import annotations
 
 import json
+import secrets
 import time
 from pathlib import Path
 
@@ -25,7 +26,7 @@ def run_extract(targets: "list[dict] | None", storage: "Path | str",
     out_dir.mkdir(parents=True, exist_ok=True)
     roster_dir = Path(roster_dir) if roster_dir else None
     roster_labels = roster_labels or set()
-    run_id = f"xxt-{time.strftime('%Y%m%d-%H%M%S')}"
+    run_id = f"xxt-{time.strftime('%Y%m%d-%H%M%S')}-{secrets.token_hex(3)}"
     chk = check_session(storage)
     rep: dict = {'run_id': None, 'mode': 'readonly',
                  'ts_start': time.strftime('%Y-%m-%d %H:%M:%S'),

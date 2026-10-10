@@ -32,3 +32,14 @@ def test_shot_candidates_new_then_legacy(tmp_path):
     p_new.write_bytes(b"png"); p_legacy.write_bytes(b"png")
     assert p_new in layout.shot_candidates("xxt-r", "xxt-r-step01.png", tmp_path)
     assert p_legacy in layout.shot_candidates("xxt-r", "xxt-r-step02.png", tmp_path)
+
+
+def test_delete_run_artifacts(tmp_path):
+    runs = layout.runs_dir(tmp_path); runs.mkdir(parents=True)
+    shots = layout.shots_dir(tmp_path); shots.mkdir(parents=True)
+    run = runs / "xxt-r1.json"; shot = shots / "xxt-r1-step01.png"
+    run.write_text("{}", encoding="utf-8"); shot.write_bytes(b"png")
+    removed = layout.delete_run_artifacts("xxt-r1", tmp_path)
+    assert not run.exists()
+    assert not shot.exists()
+    assert len(removed) == 2

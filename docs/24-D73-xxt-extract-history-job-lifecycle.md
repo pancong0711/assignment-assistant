@@ -1,6 +1,6 @@
 # D73 任务需求单：提取任务不中断 + Playwright 浏览器操作历史 + `assist.cli` 导入失败修复
 
-> 状态：**需求定稿 / 待实施**。
+> 状态：**第一阶段已实施（D73-1..D73-5 核心），待真机复测**。
 > 关联：`docs/23-D72-pwa-extract-preview.md`（D72 第一阶段已落地）、
 > `docs/16-xuexitong-integration.md` §20.3 过程预览、§25 D64 预览整合。
 > 来源：2026-10-09 现场实测：
@@ -246,3 +246,86 @@ Playwright 浏览器操作历史
 - 不引入 PWA 直连 chaoxing；
 - 不处理批阅回写/公告发布；
 - 不重构 D71 launcher/engine 解耦本身。
+
+---
+
+## 7. 实施记录（2026-10-09）
+
+### 7.1 D73-1 提取 job 跨 tab 恢复
+
+- 新增 Pinia store `app/src/stores/xxtJobs.ts`：
+  - `extractJobId` / `extractStartedAt` / `extractMsg`；
+  - localStorage key：`assignment-assistant.xxt-extract-job.v1`。
+- `XxetongView.vue`：
+  - `extracting` 改为由 `xxtJobs.extractJobId` 派生；
+  - `startExtract` 提交成功后写 store；
+  - `pollExtractJob` 轮询 job，消息写 store；
+  - 组件卸载只 `stopExtractPolling()`，不清 job；
+  - `onMounted` 若 store 有 job_id，自动恢复轮询；
+  - 活动 job 时按钮禁用，防重复提交。
+
+### 7.2 D73-2 子进程解释器/导入路径修复
+
+`serve.py` 新增：
+
+- `_xxt_python()`：优先 `sys.executable`（正在运行 engine 的解释器），fallback `_venv_python()`；
+- `_xxt_env(home)`：
+  - `XXT_HOME`、`XXT_STORAGE`；
+  - `ASSIST_WORKSPACE`；
+  - `PYTHONPATH=<engine_root>/src` 前置；
+- `_xxt_cli_cmd(args)`：统一 `[python, -m, assist.cli, ...]`；
+- `_xxt_preflight(cwd, env)`：
+  - 执行 `python -c "import assist.cli"`；
+  - 失败时返回可读 stderr，并让 `/xxt/login/start`、`/xxt/extract` 直接返回 500，而不是后台 job 里只报一条 `No module named assist.cli`；
+- `_start_stream_job(..., cwd=...)`：cwd 固定 workspace，不再依赖 `_ENGINE_ROOT.parent`。
+
+### 7.3 D73-3 Playwright 浏览器操作历史
+
+- 学习通页过程卡标题改为：
+  **Playwright 浏览器操作历史**；
+- run 列表下拉文案改为「历史 run」；
+- 新提取生成新 run，不覆盖旧 run；
+- `extract_run.run_id` 增加随机后缀：
+  ```text
+  xxt-YYYYmmdd-HHMMSS-<6hex>
+  ```
+  避免同一秒启动两个提取时覆盖。
+
+### 7.4 D73-4 历史删除
+
+- `layout.delete_run_artifacts(run_id, home)`：
+  - 删除 `runs/<run_id>.json` 或旧根目录 `<run_id>.json`；
+  - 删除新/旧 `shots/<run_id>-*.png`；
+  - HTML 存档暂不删（当前按 class/work 命名、跨 run 共享）。
+- `serve.py` 新增：
+  ```text
+  POST /xxt/run/<run_id>/delete
+  ```
+- PWA 新增「🗑 删除本 run」按钮，删除当前选中 run 后自动刷新列表。
+
+### 7.5 D73-5 失败与过程输出
+
+- preflight 失败：HTTP 500 + `detail`；
+- 提取 job 输出继续经 `/jobs`/terminal/start.log 实时转发；
+- PWA 失败时显示最近一条任务输出。
+
+### 7.6 验证
+
+- `pytest engine/tests -q` → **84 passed**；
+- `python tools/lint_bat.py` → 通过；
+- `bash -n tools/start.sh` → 通过；
+- `npm run build` → 通过；
+- 新增回归：
+  - `_xxt_env` 含 `PYTHONPATH/ASSIST_WORKSPACE`；
+  - `delete_run_artifacts` 删 JSON + run 级截图；
+  - layout 路径契约；
+  - CLI `xxt extract --all`。
+
+### 7.7 待复测/后续
+
+- 真机验证切换 tab 后 job 恢复；
+- 真机验证 `No module named assist.cli` 不再出现；
+- 后续可扩展：
+  - 历史列表 UI（时间/班级/作业/失败数）；
+  - 清空全部历史；
+  - HTML 存档按 run_id 重命名后再纳入删除。

@@ -104,17 +104,60 @@ def _venv_python() -> Path:
     return Path(sys.executable)
 
 
-def _xxt_login_cmd(home: Path) -> list[str]:
-    """D68：PWA 扫码登录走 CLI 套壳，而非直接绕过 click 调 qr_login()。
+def _xxt_python() -> str:
+    """D73：优先使用正在运行 engine 的解释器（它一定可 import assist.cli）。"""
+    try:
+        exe = str(sys.executable or "")
+        if exe and Path(exe).exists():
+            return exe
+    except Exception:
+        pass
+    return str(_venv_python())
 
-    CLI 的 `xxt login` 内部仍写同一份 `xxt-storage.json`，并在登录成功后执行
-    check_session() 做二次确认 + storage_state 回写续期，与终端路径完全一致。
-    """
+
+def _xxt_env(home: "Path | str") -> dict:
+    """D73：CLI 子进程统一环境：workspace + XXT_HOME/STORAGE + engine src PYTHONPATH。"""
     home = Path(home)
-    return [str(_venv_python()), "-m", "assist.cli", "xxt", "login",
-            "--storage", str(home / "xxt-storage.json"),
-            "--qr", str(home / "xxt-qr.png"),
-            "--timeout", "1800"]
+    env = {
+        **os.environ,
+        "XXT_HOME": str(home),
+        "XXT_STORAGE": str(home / "xxt-storage.json"),
+        "ASSIST_WORKSPACE": str(_ws()),
+    }
+    src = _ENGINE_ROOT / "src"
+    if src.is_dir():
+        old = env.get("PYTHONPATH", "")
+        env["PYTHONPATH"] = str(src) + (os.pathsep + old if old else "")
+    return env
+
+
+def _xxt_cli_cmd(args: list[str]) -> list[str]:
+    return [_xxt_python(), "-m", "assist.cli", *args]
+
+
+def _xxt_preflight(cwd: str, env: dict) -> tuple[bool, str]:
+    """D73：执行前先验证解释器能 import assist.cli，失败返回可读原因。"""
+    try:
+        cp = subprocess.run(
+            [_xxt_python(), "-c", "import assist.cli; print('assist.cli ok')"],
+            capture_output=True, text=True, timeout=20, env=env, cwd=cwd)
+    except Exception as e:  # noqa: BLE001
+        return False, str(e)[:300]
+    if cp.returncode == 0:
+        return True, ""
+    detail = (cp.stderr or cp.stdout or f"rc={cp.returncode}").strip()
+    return False, detail[:300]
+
+
+def _xxt_login_cmd(home: Path) -> list[str]:
+    """D68/D73：PWA 扫码登录走 CLI 套壳，而非直接绕过 click 调 qr_login()。"""
+    home = Path(home)
+    return _xxt_cli_cmd([
+        "xxt", "login",
+        "--storage", str(home / "xxt-storage.json"),
+        "--qr", str(home / "xxt-qr.png"),
+        "--timeout", "1800",
+    ])
 
 
 def installer_for(item: str) -> tuple[list[str] | None, str | None]:
@@ -370,7 +413,7 @@ class Handler(BaseHTTPRequestHandler):
         return (not Handler.token) or qs.get("token", [""])[0] == Handler.token
 
     def _start_stream_job(self, job_id: str, cmd: list[str], env: dict,
-                          item: str, prefix: str):
+                          item: str, prefix: str, cwd: "str | None" = None):
         """D72：通用 CLI job 流式转发（terminal/start.log + /jobs + SSE）。"""
         q_, out = queue.Queue(), []
         with _JOBS_LOCK:
@@ -383,7 +426,7 @@ class Handler(BaseHTTPRequestHandler):
                 proc = subprocess.Popen(
                     cmd, stdout=subprocess.PIPE, stderr=subprocess.STDOUT,
                     text=True, bufsize=1, env=env,
-                    cwd=str(_ENGINE_ROOT.parent))
+                    cwd=cwd or str(_ENGINE_ROOT.parent))
 
                 def reader():
                     try:
@@ -550,15 +593,19 @@ class Handler(BaseHTTPRequestHandler):
                 pass
             # 顺序很重要：本引擎解析出的 xxt 根必须覆盖外部环境里的旧 XXT_STORAGE/XXT_HOME；
             # 这样 qr_login 写出的 QR 与 GET /xxt/qr 读取的路径才是同一处。
-            storage_path = home / "xxt-storage.json"
-            env = {**os.environ,
-                   "XXT_HOME": str(home),
-                   "XXT_STORAGE": str(storage_path)}
             # D68：与 docs/16 §20.3 “CLI 套壳”决议对齐——PWA 不直接调 qr_login()，
             # 而是走 `assist xxt login`：内部同样写 storage JSON，并在登录后跑
             # check_session() 做二次确认 + storage_state 回写续期。
+            env = _xxt_env(home)
+            cwd = str(_ws())
+            ok, detail = _xxt_preflight(cwd, env)
+            if not ok:
+                self._json({"ok": False,
+                            "error": "engine 无法 import assist.cli",
+                            "detail": detail}, 500)
+                return
             cmd = _xxt_login_cmd(home)
-            self._start_stream_job(job_id, cmd, env, "xxt_login", "xxt-login")
+            self._start_stream_job(job_id, cmd, env, "xxt_login", "xxt-login", cwd)
             self._json({"ok": True, "job_id": job_id, "qr_url": "/xxt/qr"})
             return
         if u.path == "/xxt/extract":
@@ -579,16 +626,32 @@ class Handler(BaseHTTPRequestHandler):
                 }, 400)
                 return
             home = _xxt_home()
-            env = {**os.environ,
-                   "XXT_HOME": str(home),
-                   "XXT_STORAGE": str(home / "xxt-storage.json")}
-            cmd = [str(_venv_python()), "-m", "assist.cli", "xxt", "extract", "--all"]
+            env = _xxt_env(home)
+            cwd = str(_ws())
+            ok, detail = _xxt_preflight(cwd, env)
+            if not ok:
+                self._json({"ok": False,
+                            "error": "engine 无法 import assist.cli",
+                            "detail": detail}, 500)
+                return
+            cmd = _xxt_cli_cmd(["xxt", "extract", "--all"])
             if bool(payload.get("skip_notices", False)):
                 cmd.append("--skip-notices")
             job_id = secrets.token_urlsafe(6)
-            self._start_stream_job(job_id, cmd, env, "xxt_extract", "xxt-extract")
+            self._start_stream_job(job_id, cmd, env, "xxt_extract", "xxt-extract", cwd)
             self._json({"ok": True, "job_id": job_id, "mode": mode,
                         "skip_notices": bool(payload.get("skip_notices", False))})
+            return
+        if (m_del := re.fullmatch(r"/xxt/run/([A-Za-z0-9\-]+)/delete", u.path)):
+            run_id = m_del.group(1)
+            if not re.fullmatch(r"xxt-[0-9A-Za-z\-]+", run_id):
+                self._json({"ok": False, "error": "bad run"}, 404)
+                return
+            removed = xxt_layout.delete_run_artifacts(run_id, _xxt_home())
+            if not removed:
+                self._json({"ok": False, "error": "no such run"}, 404)
+                return
+            self._json({"ok": True, "run_id": run_id, "removed": removed})
             return
         if u.path == "/restart":
             # D64 §22.1 + D67：引擎自愈式重启（安装了新代码/改了 env 后 PWA 一键生效）。
