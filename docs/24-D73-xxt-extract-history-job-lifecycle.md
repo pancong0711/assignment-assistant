@@ -415,6 +415,20 @@ Playwright 浏览器操作历史
   4. 互动页需要等待某个 tab/接口返回；
   5. 登录会话虽然 alive，但账号首页/课程页未渲染。
 
+**2026-10-10 `discover-courses.html` + 只读端点实测结论：**
+
+- 这份 HTML 根目录 `a[href*="courseId="]` 数量为 **0**；
+- 但存在 3 个顶层课程文件夹：
+  - `fileid=5210383`，名称“在教”；
+  - `fileid=3038132`，名称“实验”；
+  - `fileid=2344825`，名称“其他”；
+- 用保留会话对这些 folder id 只读调用 `POST /mooc2-ans/visit/courselistdata`：
+  - 5210383 → 2 门唯一课程；
+  - 3038132 → 8 门唯一课程；
+  - 2344825 → 13 门唯一课程；
+- 说明课程确实在文件夹里，必须按 `courseFolderId` 递归请求；
+- 本次样本没有发现二级文件夹，但解析仍需支持 `li[fileid]` / `intoFolder(id)` 递归。
+
 **2026-10-10 `discover-courses.html` 实测分析（D73-8 定因）：**
 
 已收到教师机 `discover-courses.html`，只读统计：
