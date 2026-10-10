@@ -10,6 +10,7 @@ import shutil
 from pathlib import Path
 
 _EXCLUDE_NAMES = {
+    "xxt-extract-targets.json",   # D74-6：旧 targets spec，误被当成 run
     "xxt-readonly.json",
     "xxt-notices.json",
     "xxt-session-check.json",
@@ -33,6 +34,30 @@ def targets_json(home: "Path | str | None" = None) -> Path:
     return _home(home) / "targets.json"
 
 
+def targets_spec_json(home: "Path | str | None" = None) -> Path:
+    """D74-6：提取勾选清单落到非 run 扫描目录，避免被当成 run。"""
+    return _home(home) / "targets" / "extract-spec.json"
+
+
+def targets_history_dir(home: "Path | str | None" = None) -> Path:
+    """D74-3：发现结果历史快照目录（默认保留最近 5 份）。"""
+    return _home(home) / "targets-history"
+
+
+def is_run_shape(data) -> bool:
+    """D74-6：run JSON 形状白名单（纯函数）。
+
+    必须：dict、`courses` 是 list、`run_id` 以 `xxt-` 开头。
+    不满足者（如 targets spec）不得进入 run 列表/详情。
+    """
+    if not isinstance(data, dict):
+        return False
+    if not isinstance(data.get("courses"), list):
+        return False
+    rid = str(data.get("run_id") or "")
+    return rid.startswith("xxt-")
+
+
 def pages_dir(home: "Path | str | None" = None) -> Path:
     return _home(home) / "pages"
 
@@ -54,8 +79,18 @@ def run_pages_dir(run_id: str, home: "Path | str | None" = None) -> Path:
     return pages_dir(home) / "runs" / run_id
 
 
-def run_json_files(home: "Path | str | None" = None) -> list[Path]:
-    """返回 run JSON 列表（新 runs/ 优先；兼容旧 home 根目录）。"""
+def _read_run_json(path: Path):
+    try:
+        return json.loads(path.read_text(encoding="utf-8"))
+    except Exception:  # noqa: BLE001
+        return None
+
+
+def run_json_files(home: "Path | str | None" = None, validate: bool = True) -> list[Path]:
+    """返回 run JSON 列表（新 runs/ 优先；兼容旧 home 根目录）。
+
+    D74-6：默认按 is_run_shape 校验内容，targets spec 等非 run 文件不再混入。
+    """
     home = _home(home)
     found: dict[str, Path] = {}
     for d in (runs_dir(home), home):
@@ -63,6 +98,8 @@ def run_json_files(home: "Path | str | None" = None) -> list[Path]:
             continue
         for f in d.glob("xxt-*.json"):
             if f.name in _EXCLUDE_NAMES or "login-state" in f.name:
+                continue
+            if validate and not is_run_shape(_read_run_json(f)):
                 continue
             # runs/ 优先；若已存在同名，不用 home 根目录覆盖
             found.setdefault(f.name, f)
@@ -73,7 +110,7 @@ def find_run_json(run_id: str, home: "Path | str | None" = None) -> "Path | None
     home = _home(home)
     for d in (runs_dir(home), home):
         p = d / f"{run_id}.json"
-        if p.is_file():
+        if p.is_file() and is_run_shape(_read_run_json(p)):
             return p
     return None
 

@@ -1,9 +1,10 @@
 <script setup lang="ts">
 import { computed, onMounted, onUnmounted, ref } from 'vue'
+import type { XxtTargetsDiff } from '../lib/engineClient'
 import {
-  clearXxtRuns, deleteXxtRun, fetchXxtLoginJob, fetchXxtRun, fetchXxtRuns,
-  fetchXxtStatus, fetchXxtTargets, importXxtRun, startXxtDiscover, startXxtExtract,
-  startXxtExtractTargets, startXxtLogin,
+  clearXxtRuns, clearXxtTargetsHistory, deleteXxtRun, fetchXxtLoginJob, fetchXxtRun,
+  fetchXxtRuns, fetchXxtStatus, fetchXxtTargets, importXxtRun, startXxtDiscover,
+  startXxtExtract, startXxtExtractTargets, startXxtLogin,
 } from '../lib/engineClient'
 import { useSettingsStore } from '../stores/settings'
 import { useXxtJobsStore } from '../stores/xxtJobs'
@@ -251,12 +252,48 @@ async function refreshRuns() {
   } finally { loadingRun.value = false }
 }
 
+/** D74-6：run JSON 防御性归一，任何缺字段的坏数据都不允许拖垮整页渲染。 */
+function normalizeCourses(raw: unknown): CourseRow[] {
+  if (!Array.isArray(raw)) return []
+  const out: CourseRow[] = []
+  for (const c of raw) {
+    if (!c || typeof c !== 'object') continue
+    const co = c as Record<string, unknown>
+    const classes: ClassRow[] = []
+    const clsRaw = Array.isArray(co['classes']) ? co['classes'] : []
+    for (const cl of clsRaw) {
+      if (!cl || typeof cl !== 'object') continue
+      const clo = cl as Record<string, unknown>
+      const clRow: ClassRow = {
+        name: String(clo['name'] ?? clo['classId'] ?? '未命名班级'),
+        classId: String(clo['classId'] ?? ''),
+        status: String(clo['status'] ?? 'unknown'),
+        works: Array.isArray(clo['works']) ? (clo['works'] as WorkRow[]) : [],
+        roster: (clo['roster'] as { total?: number | null } | undefined) ?? undefined,
+        notes: Array.isArray(clo['notes']) ? (clo['notes'] as string[]) : [],
+      }
+      ;(clRow as unknown as { notices?: unknown }).notices =
+        Array.isArray(clo['notices']) ? clo['notices'] : []
+      classes.push(clRow)
+    }
+    out.push({
+      name: String(co['name'] ?? co['courseId'] ?? '未命名课程'),
+      courseId: String(co['courseId'] ?? ''),
+      classes,
+    })
+  }
+  return out
+}
+
 async function loadRun(id: string) {
   loadingRun.value = true
   try {
     const raw = (await fetchXxtRun(engUrl.value, tok.value, id)) as Record<string, unknown>
+    if (!raw || typeof raw !== 'object' || !Array.isArray(raw['courses'])) {
+      throw new Error('该条目不是有效的 run（可能已损坏或不是 run）')
+    }
     curRun.value = String(raw['run_id'] || id)
-    courses.value = (raw['courses'] as CourseRow[]) || []
+    courses.value = normalizeCourses(raw['courses'])
     loadSteps.value = ((raw['steps'] as unknown[]) || []) as typeof loadSteps.value
     runMsg.value = `run ${curRun.value} 已载入（${courses.value.reduce((a, c) => a + c.classes.length, 0)} 班）`
   } catch (e) {
@@ -323,6 +360,10 @@ interface TargetClass { name: string; classId: string }
 interface TargetCourse { name: string; courseId: string; classes: TargetClass[] }
 const targets = ref<TargetCourse[]>([])
 const targetsAt = ref('')
+const targetsDiff = ref<XxtTargetsDiff | null>(null)
+const targetsAge = ref<number | null>(null)
+const targetsHistory = ref(0)
+const diffAckAt = ref<string>(localStorage.getItem('xxt-targets-diff-ack') || '')
 const targetSel = ref<Record<string, boolean>>({})
 const targetMsg = ref('')
 const discoverLoading = ref(false)
@@ -357,9 +398,64 @@ async function loadTargets() {
   const o = await fetchXxtTargets(engUrl.value, tok.value)
   targets.value = (o.courses || []) as TargetCourse[]
   targetsAt.value = o.discovered_at || ''
+  targetsDiff.value = o.diff ?? null
+  targetsAge.value = o.age_seconds ?? null
+  targetsHistory.value = o.history_count ?? 0
   const sel: Record<string, boolean> = {}
   for (const c of targets.value) for (const k of c.classes) sel[tkey(c, k)] = true
   targetSel.value = sel
+}
+
+function fmtAge(sec: number | null): string {
+  if (sec === null || sec === undefined) return '未知'
+  if (sec < 3600) return `${Math.max(1, Math.round(sec / 60))} 分钟前`
+  if (sec < 86400) return `${Math.round(sec / 3600)} 小时前`
+  return `${Math.round(sec / 86400)} 天前`
+}
+function ageColor(sec: number | null): string {
+  if (sec === null || sec === undefined) return 'var(--c-muted)'
+  if (sec < 86400) return 'var(--c-ok, #16a34a)'
+  if (sec < 7 * 86400) return '#7a5c00'
+  return 'var(--c-danger, #dc2626)'
+}
+const diffCount = computed(() => {
+  const c = targetsDiff.value?.counts || {}
+  return (c.courses_added || 0) + (c.courses_removed || 0)
+    + (c.classes_added || 0) + (c.classes_removed || 0) + (c.renamed || 0)
+})
+const showDiff = computed(() => diffCount.value > 0 && diffAckAt.value !== targetsAt.value)
+function ackDiff() {
+  diffAckAt.value = targetsAt.value
+  try { localStorage.setItem('xxt-targets-diff-ack', diffAckAt.value) } catch { /* noop */ }
+}
+function isCourseAdded(c: TargetCourse): boolean {
+  return !!targetsDiff.value?.courses_added?.some(x => x.courseId === c.courseId)
+}
+function courseRename(c: TargetCourse): string {
+  const r = targetsDiff.value?.renamed?.find(x => x.courseId === c.courseId && !x.classId)
+  return r ? `${r.old} → ${r.new}` : ''
+}
+function isClassAdded(c: TargetCourse, k: TargetClass): boolean {
+  return !!targetsDiff.value?.classes_added?.some(
+    x => x.courseId === c.courseId && x.classId === k.classId)
+}
+function classRename(c: TargetCourse, k: TargetClass): string {
+  const r = targetsDiff.value?.renamed?.find(
+    x => x.courseId === c.courseId && x.classId === k.classId)
+  return r ? `${r.old} → ${r.new}` : ''
+}
+async function clearTargetsHistory() {
+  if (!targetsHistory.value) return
+  if (!confirm(`清理发现结果历史快照（保留当前快照）？当前 ${targetsHistory.value} 份。`)) return
+  try {
+    const n = await clearXxtTargetsHistory(engUrl.value, tok.value)
+    targetMsg.value = `已清理 ${n} 份历史快照`
+    targetsDiff.value = null
+    targetsHistory.value = 0
+    ackDiff()
+  } catch (e) {
+    targetMsg.value = `清理失败：${String(e)}`
+  }
 }
 function pollDiscoverJob(jobId: string) {
   stopDiscoverPolling()
@@ -598,18 +694,12 @@ onUnmounted(() => { loginSeq += 1; stopLoginPolling(); stopExtractPolling(); sto
       </p>
     </div>
 
-    <!-- 导航过程展示框（§20.3 方案 A 抽共享组件 D64-b） -->
-    <div class="card" v-if="loadSteps.length">
-      <h3>Playwright 浏览器操作历史 <small style="font-weight:400;color:var(--c-muted)">按 run 追加；每跳一张缩略图（引擎真会话所拍）</small></h3>
-      <ProcessStreamView :run-id="curRun || ''" :steps="loadSteps" :engine-addr="engUrl" :token="tok" />
-    </div>
-
     <!-- D72 targets：只读发现 → 勾选 → 按需提取；D73-9 旧 run 导入 -->
     <div class="card">
-      <h3>选择课程/班级提取 <small style="font-weight:400;color:var(--c-muted)">D72 targets：只读发现「我教的课」→ 勾选 → 提取；也可导入旧 run JSON（D73-9）</small></h3>
+      <h3>发现课程/班级 <small style="font-weight:400;color:var(--c-muted)">只读发现「我教的课」的课程/班级 → 勾选范围 → 提取；也可导入旧 run JSON（D73-9）</small></h3>
       <p>
         <button class="btn primary" :disabled="verdict!=='alive' || discoverLoading" @click="startDiscover">
-          {{ discoverLoading ? '发现中…' : '🔍 发现课程/班级（只读）' }}
+          {{ discoverLoading ? '发现中…' : (targets.length ? '🔄 刷新发现（只读）' : '🔍 发现课程/班级（只读）') }}
         </button>
         <button class="btn" style="margin-left:8px" :disabled="!targets.length" @click="toggleAll(true)">全选</button>
         <button class="btn" style="margin-left:8px" :disabled="!targets.length" @click="toggleAll(false)">全不选</button>
@@ -624,20 +714,50 @@ onUnmounted(() => { loginSeq += 1; stopLoginPolling(); stopExtractPolling(); sto
         <input ref="importInput" type="file" accept=".json,application/json" style="display:none" @change="onImportFile" />
       </p>
       <p v-if="targetMsg" class="hint">{{ targetMsg }}</p>
-      <p v-if="targetsAt" class="hint" style="color:var(--c-muted)">
-        发现时间：{{ targetsAt }}（课程/班级清单仅存本机引擎；默认只发现你教的课）
+      <p v-if="targetsAt" class="hint">
+        上次发现：{{ targetsAt }}
+        （<b :style="{ color: ageColor(targetsAge) }">{{ fmtAge(targetsAge) }}</b>）
+        · 历史快照 {{ targetsHistory }} 份
+        <button class="btn" style="margin-left:8px" :disabled="!targetsHistory" @click="clearTargetsHistory">🧹 清理发现快照</button>
+        <span style="color:var(--c-muted)">（清单仅存本机引擎；默认只发现你教的课）</span>
       </p>
+      <p v-if="targetsAge != null && targetsAge > 86400" class="hint"
+         :style="{ color: targetsAge > 7 * 86400 ? 'var(--c-danger, #dc2626)' : '#7a5c00' }">
+        ⚠ 发现结果已 {{ fmtAge(targetsAge) }} 未刷新，平台上可能有新增/删除的班级；建议先点「刷新发现」。
+      </p>
+      <div v-if="showDiff" class="hint" style="border:1px dashed var(--c-border); border-radius:8px; padding:8px; margin:6px 0">
+        <b>相比上次（{{ targetsDiff?.against_at || '—' }}）的变化：</b>
+        新增 {{ targetsDiff?.counts?.courses_added || 0 }} 门课 / {{ targetsDiff?.counts?.classes_added || 0 }} 个班，
+        移除 {{ targetsDiff?.counts?.courses_removed || 0 }} 门课 / {{ targetsDiff?.counts?.classes_removed || 0 }} 个班，
+        改名 {{ targetsDiff?.counts?.renamed || 0 }} 处。
+        <details v-if="(targetsDiff?.courses_removed?.length || targetsDiff?.classes_removed?.length)">
+          <summary>查看已移除项</summary>
+          <div v-for="x in targetsDiff?.courses_removed || []" :key="'cr' + x.courseId"
+               style="text-decoration:line-through; color:var(--c-danger, #dc2626)">
+            课程：{{ x.name }}（{{ x.courseId }}）
+          </div>
+          <div v-for="x in targetsDiff?.classes_removed || []" :key="'kr' + x.courseId + ':' + x.classId"
+               style="text-decoration:line-through; color:var(--c-danger, #dc2626)">
+            班级：{{ x.courseName || x.courseId }} / {{ x.name }}（{{ x.classId }}）
+          </div>
+        </details>
+        <button class="btn small" style="margin-left:8px" @click="ackDiff">知道了</button>
+      </div>
       <div v-if="targets.length" style="max-height:360px; overflow:auto; border:1px solid var(--c-border); border-radius:8px; padding:8px">
         <div v-for="c in targets" :key="c.courseId" style="margin-bottom:10px">
           <label style="font-weight:600">
             <input type="checkbox" :checked="c.classes.every(k => isSel(c, k))" @change="onCourseToggle(c, $event)" />
             {{ c.name }}
+            <span v-if="isCourseAdded(c)" class="tag" style="background:#dcfce7;color:#166534;padding:1px 6px;border-radius:6px;font-size:12px">新增</span>
+            <span v-else-if="courseRename(c)" class="tag" style="background:#ffedd5;color:#9a3412;padding:1px 6px;border-radius:6px;font-size:12px">{{ courseRename(c) }}</span>
             <span class="hint" style="color:var(--c-muted)">courseId {{ c.courseId }} · {{ c.classes.length }} 班</span>
           </label>
           <div style="display:flex; flex-wrap:wrap; gap:10px; margin:6px 0 0 22px">
             <label v-for="k in c.classes" :key="k.classId">
               <input type="checkbox" :checked="isSel(c, k)" @change="onClassToggle(c, k, $event)" />
               {{ k.name }}
+              <span v-if="isClassAdded(c, k)" class="tag" style="background:#dcfce7;color:#166534;padding:1px 5px;border-radius:6px;font-size:11px">新增</span>
+              <span v-else-if="classRename(c, k)" class="tag" style="background:#ffedd5;color:#9a3412;padding:1px 5px;border-radius:6px;font-size:11px">{{ classRename(c, k) }}</span>
             </label>
             <span v-if="!c.classes.length" class="hint" style="color:var(--c-muted)">（未发现班级）</span>
           </div>
@@ -646,42 +766,6 @@ onUnmounted(() => { loginSeq += 1; stopLoginPolling(); stopExtractPolling(); sto
       <p v-else class="hint" style="color:var(--c-muted)">
         点「发现课程/班级」后在此勾选；旧数据可点「导入旧 run JSON」后自动刷新列表。
       </p>
-    </div>
-
-    <!-- D73-11 历史 run 管理：时间/班级/作业/失败数 + 单删/清空（含 run 级 HTML 存档） -->
-    <div class="card" v-if="runs.length">
-      <h3>历史 run 管理
-        <small style="font-weight:400;color:var(--c-muted)">时间 / 班级 / 作业 / 失败数；删除=JSON+截图+run 级 HTML 存档</small>
-        <button class="btn" style="float:right" @click="clearAllRuns">🗑 清空全部历史（{{ runs.length }}）</button>
-      </h3>
-      <div style="max-height:300px; overflow:auto; border:1px solid var(--c-border); border-radius:8px">
-        <table style="width:100%; border-collapse:collapse">
-          <thead>
-            <tr style="position:sticky; top:0; background:var(--c-surface,#fff)">
-              <th style="text-align:left; padding:6px 8px">run</th>
-              <th style="padding:6px 8px">结束时间</th>
-              <th style="padding:6px 8px">班级</th>
-              <th style="padding:6px 8px">作业</th>
-              <th style="padding:6px 8px">失败</th>
-              <th style="padding:6px 8px">操作</th>
-            </tr>
-          </thead>
-          <tbody>
-            <tr v-for="r in runs" :key="r.run_id"
-                :style="r.run_id === curRun ? 'background:var(--c-pin-bg,#fffbe8)' : ''">
-              <td style="padding:6px 8px">{{ r.run_id }}</td>
-              <td style="padding:6px 8px; text-align:center">{{ r.ts_end || r.ts_start || '—' }}</td>
-              <td style="padding:6px 8px; text-align:center">{{ r.classes ?? 0 }}</td>
-              <td style="padding:6px 8px; text-align:center">{{ r.works ?? 0 }}</td>
-              <td style="padding:6px 8px; text-align:center">{{ r.failures ?? 0 }}</td>
-              <td style="padding:6px 8px; text-align:center; white-space:nowrap">
-                <button class="btn" @click="loadRun(r.run_id)">载入</button>
-                <button class="btn" style="margin-left:4px" @click="removeRun(r.run_id)">🗑 删除</button>
-              </td>
-            </tr>
-          </tbody>
-        </table>
-      </div>
     </div>
 
     <!-- 列表卡 -->
@@ -723,10 +807,10 @@ onUnmounted(() => { loginSeq += 1; stopLoginPolling(); stopExtractPolling(); sto
             <b>{{ g.course.name }}</b>
             <span class="hint" style="margin-left:8px; color:var(--c-muted)">courseId {{ g.course.courseId }} · {{ g.pinnedRows.length + g.normal.length }} 班</span>
           </div>
-          <div class="class-scroll" style="max-height:420px; overflow-y:auto; border:1px solid var(--c-border); border-radius:8px">
+          <div class="class-scroll" style="border:1px solid var(--c-border); border-radius:8px">
             <table style="width:100%; border-collapse:collapse">
               <thead>
-                <tr style="position:sticky; top:32px; background:var(--c-surface,#fff)">
+                <tr style="background:var(--c-surface,#fff)">
                   <th style="text-align:left; padding:6px 8px">班级</th>
                   <th style="padding:6px 8px">作业</th>
                   <th style="padding:6px 8px">状态</th>
@@ -787,5 +871,47 @@ onUnmounted(() => { loginSeq += 1; stopLoginPolling(); stopExtractPolling(); sto
         暂无列表数据：引擎侧先运行 <code>assist xxt extract --targets …</code> 或在 .scratch 放置 run JSON。
       </p>
     </div>
+    <!-- D73-11 历史 run 管理：时间/班级/作业/失败数 + 单删/清空（含 run 级 HTML 存档） -->
+    <div class="card" v-if="runs.length">
+      <h3>历史 run 管理
+        <small style="font-weight:400;color:var(--c-muted)">时间 / 班级 / 作业 / 失败数；删除=JSON+截图+run 级 HTML 存档</small>
+        <button class="btn" style="float:right" @click="clearAllRuns">🗑 清空全部历史（{{ runs.length }}）</button>
+      </h3>
+      <div style="max-height:300px; overflow:auto; border:1px solid var(--c-border); border-radius:8px">
+        <table style="width:100%; border-collapse:collapse">
+          <thead>
+            <tr style="position:sticky; top:0; background:var(--c-surface,#fff)">
+              <th style="text-align:left; padding:6px 8px">run</th>
+              <th style="padding:6px 8px">结束时间</th>
+              <th style="padding:6px 8px">班级</th>
+              <th style="padding:6px 8px">作业</th>
+              <th style="padding:6px 8px">失败</th>
+              <th style="padding:6px 8px">操作</th>
+            </tr>
+          </thead>
+          <tbody>
+            <tr v-for="r in runs" :key="r.run_id"
+                :style="r.run_id === curRun ? 'background:var(--c-pin-bg,#fffbe8)' : ''">
+              <td style="padding:6px 8px">{{ r.run_id }}</td>
+              <td style="padding:6px 8px; text-align:center">{{ r.ts_end || r.ts_start || '—' }}</td>
+              <td style="padding:6px 8px; text-align:center">{{ r.classes ?? 0 }}</td>
+              <td style="padding:6px 8px; text-align:center">{{ r.works ?? 0 }}</td>
+              <td style="padding:6px 8px; text-align:center">{{ r.failures ?? 0 }}</td>
+              <td style="padding:6px 8px; text-align:center; white-space:nowrap">
+                <button class="btn" @click="loadRun(r.run_id)">载入</button>
+                <button class="btn" style="margin-left:4px" @click="removeRun(r.run_id)">🗑 删除</button>
+              </td>
+            </tr>
+          </tbody>
+        </table>
+      </div>
+    </div>
+
+    <!-- 导航过程展示框（§20.3 方案 A 抽共享组件 D64-b） -->
+    <div class="card" v-if="loadSteps.length">
+      <h3>Playwright 浏览器操作历史 <small style="font-weight:400;color:var(--c-muted)">按 run 追加；每跳一张缩略图（引擎真会话所拍）</small></h3>
+      <ProcessStreamView :run-id="curRun || ''" :steps="loadSteps" :engine-addr="engUrl" :token="tok" />
+    </div>
+
   </section>
 </template>

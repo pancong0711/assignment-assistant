@@ -92,6 +92,10 @@ def register(group: click.Group) -> None:
                                archive_dir or layout.pages_dir())
         out_path = Path(out) if out else layout.targets_json()
         out_path.parent.mkdir(parents=True, exist_ok=True)
+        # D74-3：成功发现前先把当前快照归档，供 diff 对比；默认保留最近 5 份
+        if rep.get("ok") and out_path.resolve() == layout.targets_json().resolve():
+            from . import targets as _targets
+            _targets.archive_current(keep=5)
         out_path.write_text(json.dumps(rep, ensure_ascii=False, indent=1), encoding="utf-8")
         if rep.get("ok"):
             click.echo(json.dumps({

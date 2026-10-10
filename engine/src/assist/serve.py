@@ -649,10 +649,16 @@ class Handler(BaseHTTPRequestHandler):
                 if err:
                     self._json({"ok": False, "error": err}, 400)
                     return
-                spec = home / "xxt-extract-targets.json"
+                # D74-6：spec 写到 targets/ 子目录，避免被 run 扫描当成 run；
+                # 顺手清掉旧位置遗留文件，防止历史列表再出现 xxt-extract-targets。
+                spec = xxt_layout.targets_spec_json(home)
                 try:
+                    spec.parent.mkdir(parents=True, exist_ok=True)
                     spec.write_text(json.dumps({"courses": targets}, ensure_ascii=False),
                                     encoding="utf-8")
+                    legacy = home / "xxt-extract-targets.json"
+                    if legacy.is_file():
+                        legacy.unlink()
                 except Exception as exc:  # noqa: BLE001
                     self._json({"ok": False, "error": f"write targets failed: {exc}"}, 500)
                     return
@@ -721,6 +727,11 @@ class Handler(BaseHTTPRequestHandler):
                 self._json({"ok": False, "error": str(exc)[:200]}, 400)
                 return
             self._json({"ok": True, "imported": summary})
+            return
+        if u.path == "/xxt/targets/history/clear":
+            from .xxt.targets import clear_history
+            removed = clear_history(_xxt_home())
+            self._json({"ok": True, "removed": removed})
             return
         if u.path == "/xxt/runs/clear":
             res = xxt_layout.clear_runs(_xxt_home())
@@ -830,15 +841,13 @@ class Handler(BaseHTTPRequestHandler):
             self.wfile.write(body)
             return
         elif u.path == "/xxt/targets":
-            tp = xxt_layout.targets_json(_xxt_home())
-            if not tp.is_file():
+            from .xxt.targets import targets_view
+            view = targets_view(_xxt_home())
+            if not view.get("ok"):
                 self._json({"ok": False, "error": "no targets yet",
                             "hint": "先运行 POST /xxt/discover 或 assist xxt discover"}, 404)
                 return
-            try:
-                self._json(json.loads(tp.read_text(encoding="utf-8")))
-            except Exception as exc:  # noqa: BLE001
-                self._json({"ok": False, "error": f"bad targets json: {exc}"}, 500)
+            self._json(view)
             return
         elif u.path == "/xxt/runs":
             home = _xxt_home()

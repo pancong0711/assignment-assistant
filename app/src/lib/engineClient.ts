@@ -420,7 +420,33 @@ export async function startXxtExtract(
 
 export interface XxtTargetClass { name: string; classId: string }
 export interface XxtTargetCourse { name: string; courseId: string; classes: XxtTargetClass[] }
-export interface XxtTargets { ok?: boolean; discovered_at?: string; courses?: XxtTargetCourse[] }
+export interface XxtTargetDiffItem {
+  kind?: 'course' | 'class'
+  courseId?: string
+  courseName?: string
+  classId?: string
+  name?: string
+  old?: string
+  new?: string
+}
+export interface XxtTargetsDiff {
+  against_at?: string
+  courses_added?: XxtTargetDiffItem[]
+  courses_removed?: XxtTargetDiffItem[]
+  classes_added?: XxtTargetDiffItem[]
+  classes_removed?: XxtTargetDiffItem[]
+  renamed?: XxtTargetDiffItem[]
+  counts?: Record<string, number>
+}
+export interface XxtTargets {
+  ok?: boolean
+  discovered_at?: string
+  courses?: XxtTargetCourse[]
+  diff?: XxtTargetsDiff | null
+  age_seconds?: number | null
+  history_count?: number
+  keep?: number
+}
 
 /** POST /xxt/discover：D72 targets 模式——只读发现「我教的课」课程/班级清单。 */
 export async function startXxtDiscover(engineAddr: string, token?: string): Promise<string> {
@@ -439,6 +465,18 @@ export async function fetchXxtTargets(engineAddr: string, token?: string): Promi
   if (res.status === 404) return { courses: [] }
   if (!res.ok) throw new Error(`HTTP ${res.status}`)
   return (await res.json()) as XxtTargets
+}
+
+/** POST /xxt/targets/history/clear：D74-3 清理发现结果历史快照（保留当前快照）。 */
+export async function clearXxtTargetsHistory(
+  engineAddr: string, token?: string,
+): Promise<number> {
+  const base = normalizeEngineAddr(engineAddr)
+  const res = await fetch(engineUrlWithToken(base, '/xxt/targets/history/clear', token),
+    { method: 'POST' })
+  if (!res.ok) throw new Error(`HTTP ${res.status}`)
+  const o = (await res.json()) as { removed?: string[] }
+  return Array.isArray(o.removed) ? o.removed.length : 0
 }
 
 /** POST /xxt/extract（mode=targets）：只提取勾选的课程/班级。 */
