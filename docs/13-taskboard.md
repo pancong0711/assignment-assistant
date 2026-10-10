@@ -1162,3 +1162,20 @@ applyManualTranslation/setTranslationRatio 中 setTranslationRatio 保留——�
   - 过程预览/作业纸预览/批阅报告预览统一挂到本地 run 数据源。
   - **第一阶段已落地**：layout 路径契约、`xxt extract --all`、`POST /xxt/extract`、PWA「📥 提取账户数据」、过程预览打通；
     D72-5 作业纸/批阅报告真实数据预览待继续。
+
+---
+
+## D73 · 提取任务生命周期 + Playwright 浏览器操作历史（2026-10-09）
+
+- 主需求单：`docs/24-D73-xxt-extract-history-job-lifecycle.md`；
+- 现场：
+  - 提取后切换 tab，回来像中断失败；
+  - 过程栏只有一张缩略图；
+  - 失败：`No module named assist.cli`；
+- 任务：
+  - D73-1 提取 job 跨 tab 恢复，不重复提交；
+  - D73-2 子进程解释器/preflight/导入路径修复；
+  - D73-3 栏目改名「Playwright 浏览器操作历史」，新 run 接续添加；
+  - D73-4 历史删除（单条/清空）；
+  - D73-5 进程输出与失败可见；
+  - D73-6 与 D72 预览整合。
