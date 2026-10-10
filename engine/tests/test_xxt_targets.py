@@ -115,3 +115,15 @@ def test_clear_history_keeps_current(tmp_path):
     removed = _t.clear_history(tmp_path)
     assert len(removed) == 1 and _t.history_files(tmp_path) == []
     assert path.is_file()
+
+
+def test_sanitize_keeps_valid_works_ids():
+    out, err = sanitize_targets([{
+        "courseId": "1",
+        "classes": [{"classId": "2", "works": ["a1", "b2", "bad id", {"workId": "c3"}]}],
+    }])
+    assert err is None
+    assert out[0]["classes"][0]["works"] == ["a1", "b2", "c3"]
+
+    out2, err2 = sanitize_targets([{"courseId": "1", "classes": [{"classId": "2"}]}])
+    assert err2 is None and "works" not in out2[0]["classes"][0]

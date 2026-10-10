@@ -9,6 +9,7 @@ import GradingView from './views/GradingView.vue'
 import XxetongView from './views/XxetongView.vue'
 import TransferView from './views/TransferView.vue'
 import HelpView from './views/HelpView.vue'
+import JournalView from './views/JournalView.vue'
 
 const settings = useSettingsStore()
 
@@ -23,6 +24,7 @@ const TABS = [
   { key: 'grading', label: '批阅', component: GradingView },
   { key: 'transfer', label: '导入导出', component: TransferView },
   { key: 'help', label: '使用说明', component: HelpView },
+  { key: 'journal', label: '操作记录', component: JournalView },
 ] as const
 
 /** hash 兼容（R2.4 / D43-5 修订）：#/designer #/layout #/sheet → #/design； D64-N2=D63 tab 后置 xxetong→grading（key 不变，无 hash 迁移）；

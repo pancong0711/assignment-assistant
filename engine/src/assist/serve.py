@@ -243,6 +243,17 @@ def _doctor_checks(ws: Path) -> list[dict]:
     ok_kb = (ws / "kb" / "problems.xlsx").exists()
     checks.append(_check("kb", "green" if ok_kb else "yellow", "kb 题库",
                          "kb/problems.xlsx（真实题库不入仓库）", {} if ok_kb else {"type": "guide"}))
+    # D74-7：云同步/网盘占用（只提示，不阻塞）
+    try:
+        from .xxt.sync import detect as _detect_sync
+        sy = _detect_sync(ws)
+        if sy.get("detected"):
+            detail = "；".join(sy.get("reasons") or []) + "。更新引擎前请暂停同步并退出客户端"
+            checks.append(_check("sync_root", "yellow", "云同步/网盘占用", detail, {"type": "guide"}))
+        else:
+            checks.append(_check("sync_root", "green", "云同步/网盘占用", "未检测到同步目录/客户端", {}))
+    except Exception as exc:  # noqa: BLE001
+        checks.append(_check("sync_root", "green", "云同步/网盘占用", f"检测跳过：{exc}", {}))
     return checks
 
 
@@ -426,7 +437,9 @@ class Handler(BaseHTTPRequestHandler):
         return (not Handler.token) or qs.get("token", [""])[0] == Handler.token
 
     def _start_stream_job(self, job_id: str, cmd: list[str], env: dict,
-                          item: str, prefix: str, cwd: "str | None" = None):
+                          item: str, prefix: str, cwd: "str | None" = None,
+                          journal_kind: "str | None" = None,
+                          journal_params: "dict | None" = None):
         """D72：通用 CLI job 流式转发（terminal/start.log + /jobs + SSE）。"""
         q_, out = queue.Queue(), []
         with _JOBS_LOCK:
@@ -434,6 +447,7 @@ class Handler(BaseHTTPRequestHandler):
                              "status": "running", "returncode": None}
 
         def worker():
+            t0 = time.time()
             # D70/D72：Popen 逐行读取，避免长任务等待期间 terminal 空白。
             try:
                 proc = subprocess.Popen(
@@ -470,6 +484,16 @@ class Handler(BaseHTTPRequestHandler):
                 _JOBS[job_id]["returncode"] = rc
                 _JOBS[job_id]["status"] = "done" if rc == 0 else "failed"
                 q_.put(f"__DONE__{rc}__")
+                # D74-9：全局操作记录（成功/失败都记）
+                try:
+                    from .xxt import journal
+                    journal.log_event(journal_kind or item, home=_xxt_home(),
+                                      source="pwa", params=journal_params or {},
+                                      result="ok" if rc == 0 else "fail",
+                                      duration_ms=int((time.time() - t0) * 1000),
+                                      error=(out[-1] if out else ""))
+                except Exception:  # noqa: BLE001
+                    pass
             except Exception as exc:  # noqa: BLE001
                 q_.put(str(exc)); out.append(str(exc))
                 _JOBS[job_id]["status"] = "failed"; _JOBS[job_id]["returncode"] = -1
@@ -506,10 +530,23 @@ class Handler(BaseHTTPRequestHandler):
                     _JOBS[job_id]["status"] = "ok" if rc == 0 else "fail"
                     _JOBS[job_id]["returncode"] = rc
                     q.put(f"__DONE__{rc}__")
+                    try:
+                        from .xxt import journal as _journal
+                        _journal.log_event(f"install_{item}", home=_xxt_home(), source="pwa",
+                                           result="ok" if rc == 0 else "fail",
+                                           error=(out[-1] if out else ""))
+                    except Exception:  # noqa: BLE001
+                        pass
                 except Exception as e:  # noqa: BLE001
                     q.put(f"异常：{e}"); out.append(str(e))
                     _JOBS[job_id]["status"] = "fail"; _JOBS[job_id]["returncode"] = 1
                     q.put("__DONE__1__")
+                    try:
+                        from .xxt import journal as _journal
+                        _journal.log_event(f"install_{item}", home=_xxt_home(), source="pwa",
+                                           result="fail", error=str(e))
+                    except Exception:  # noqa: BLE001
+                        pass
 
             threading.Thread(target=special_worker, daemon=True).start()
             return
@@ -626,7 +663,8 @@ class Handler(BaseHTTPRequestHandler):
                             "detail": detail}, 500)
                 return
             cmd = _xxt_login_cmd(home)
-            self._start_stream_job(job_id, cmd, env, "xxt_login", "xxt-login", cwd)
+            self._start_stream_job(job_id, cmd, env, "xxt_login", "xxt-login", cwd,
+                                    journal_kind="xxt_login")
             self._json({"ok": True, "job_id": job_id, "qr_url": "/xxt/qr"})
             return
         if u.path == "/xxt/extract":
@@ -679,7 +717,10 @@ class Handler(BaseHTTPRequestHandler):
             if bool(payload.get("skip_notices", False)):
                 cmd.append("--skip-notices")
             job_id = secrets.token_urlsafe(6)
-            self._start_stream_job(job_id, cmd, env, "xxt_extract", "xxt-extract", cwd)
+            self._start_stream_job(job_id, cmd, env, "xxt_extract", "xxt-extract", cwd,
+                                    journal_kind="xxt_extract",
+                                    journal_params={"mode": mode, "classes": target_count,
+                                                    "skip_notices": bool(payload.get("skip_notices", False))})
             self._json({"ok": True, "job_id": job_id, "mode": mode,
                         "targets": target_count,
                         "skip_notices": bool(payload.get("skip_notices", False))})
@@ -697,7 +738,42 @@ class Handler(BaseHTTPRequestHandler):
             out_path = xxt_layout.targets_json(home)
             cmd = _xxt_cli_cmd(["xxt", "discover", "--out", str(out_path)])
             job_id = secrets.token_urlsafe(6)
-            self._start_stream_job(job_id, cmd, env, "xxt_discover", "xxt-discover", cwd)
+            self._start_stream_job(job_id, cmd, env, "xxt_discover", "xxt-discover", cwd,
+                                    journal_kind="xxt_discover")
+            self._json({"ok": True, "job_id": job_id})
+            return
+        if u.path == "/xxt/works":
+            payload: dict = {}
+            try:
+                length = int(self.headers.get("Content-Length") or 0)
+                if length:
+                    payload = json.loads(self.rfile.read(length).decode("utf-8")) or {}
+            except Exception as exc:  # noqa: BLE001
+                self._json({"ok": False, "error": f"bad json: {exc}"}, 400)
+                return
+            from .xxt.targets import sanitize_targets
+            targets, err = sanitize_targets(payload.get("targets"))
+            if err:
+                self._json({"ok": False, "error": err}, 400)
+                return
+            home = _xxt_home()
+            spec = xxt_layout.works_spec_json(home)
+            spec.parent.mkdir(parents=True, exist_ok=True)
+            spec.write_text(json.dumps({"courses": targets}, ensure_ascii=False),
+                            encoding="utf-8")
+            env = _xxt_env(home)
+            cwd = str(_ws())
+            ok, detail = _xxt_preflight(cwd, env)
+            if not ok:
+                self._json({"ok": False, "error": "engine 无法 import assist.cli",
+                            "detail": detail}, 500)
+                return
+            cmd = _xxt_cli_cmd(["xxt", "discover-works", "--targets", str(spec),
+                                "--out", str(xxt_layout.works_json(home))])
+            job_id = secrets.token_urlsafe(6)
+            self._start_stream_job(job_id, cmd, env, "xxt_works", "xxt-works", cwd,
+                                   journal_kind="xxt_discover_works",
+                                   journal_params={"classes": sum(len(c["classes"]) for c in targets)})
             self._json({"ok": True, "job_id": job_id})
             return
         if u.path == "/xxt/run/import":
@@ -726,15 +802,42 @@ class Handler(BaseHTTPRequestHandler):
             except Exception as exc:  # noqa: BLE001
                 self._json({"ok": False, "error": str(exc)[:200]}, 400)
                 return
+            try:
+                from .xxt import journal as _journal
+                _journal.log_event("xxt_run_import", home=home, source="pwa",
+                                   params={"filename": str(payload.get("filename") or ""),
+                                           "run_id": summary.get("run_id"),
+                                           "classes": summary.get("classes"),
+                                           "works": summary.get("works")})
+            except Exception:  # noqa: BLE001
+                pass
             self._json({"ok": True, "imported": summary})
             return
         if u.path == "/xxt/targets/history/clear":
             from .xxt.targets import clear_history
             removed = clear_history(_xxt_home())
+            try:
+                from .xxt import journal as _journal
+                _journal.log_event("targets_history_clear", home=_xxt_home(), source="pwa",
+                                   params={"removed": len(removed)})
+            except Exception:  # noqa: BLE001
+                pass
+            self._json({"ok": True, "removed": removed})
+            return
+        if u.path == "/journal/clear":
+            from .xxt import journal as _journal
+            removed = _journal.clear(_xxt_home())
             self._json({"ok": True, "removed": removed})
             return
         if u.path == "/xxt/runs/clear":
             res = xxt_layout.clear_runs(_xxt_home())
+            try:
+                from .xxt import journal as _journal
+                _journal.log_event("xxt_runs_clear", home=_xxt_home(), source="pwa",
+                                   params={"runs": len(res.get("runs") or []),
+                                           "removed": len(res.get("removed") or [])})
+            except Exception:  # noqa: BLE001
+                pass
             self._json({"ok": True, **res})
             return
         if (m_del := re.fullmatch(r"/xxt/run/([A-Za-z0-9\-]+)/delete", u.path)):
@@ -746,6 +849,12 @@ class Handler(BaseHTTPRequestHandler):
             if not removed:
                 self._json({"ok": False, "error": "no such run"}, 404)
                 return
+            try:
+                from .xxt import journal as _journal
+                _journal.log_event("xxt_run_delete", home=_xxt_home(), source="pwa",
+                                   params={"run_id": run_id, "removed": len(removed)})
+            except Exception:  # noqa: BLE001
+                pass
             self._json({"ok": True, "run_id": run_id, "removed": removed})
             return
         if u.path == "/restart":
@@ -767,6 +876,12 @@ class Handler(BaseHTTPRequestHandler):
                     "hint": "Windows 下请关闭当前引擎终端，再双击 start.bat；不要依赖 execv 原地重启",
                 }, 409)
                 return
+            try:
+                from .xxt import journal as _journal
+                _journal.log_event("engine_restart", home=_xxt_home(), source="pwa",
+                                   params={"mode": mode})
+            except Exception:  # noqa: BLE001
+                pass
             self._json({"ok": True, "restarting": True, "mode": mode})
             try:
                 self.wfile.flush()  # 确保 PWA 先收到受理响应；随后进程会退出
@@ -840,6 +955,17 @@ class Handler(BaseHTTPRequestHandler):
             self.end_headers()
             self.wfile.write(body)
             return
+        elif u.path == "/xxt/works":
+            wp = xxt_layout.works_json(_xxt_home())
+            if not wp.is_file():
+                self._json({"ok": False, "error": "no works yet",
+                            "hint": "先 POST /xxt/works 或 assist xxt discover-works"}, 404)
+                return
+            try:
+                self._json(json.loads(wp.read_text(encoding="utf-8")))
+            except Exception as exc:  # noqa: BLE001
+                self._json({"ok": False, "error": f"bad works json: {exc}"}, 500)
+            return
         elif u.path == "/xxt/targets":
             from .xxt.targets import targets_view
             view = targets_view(_xxt_home())
@@ -891,6 +1017,16 @@ class Handler(BaseHTTPRequestHandler):
                 self._json({"ok": False, "error": "no such run"}, 404)
                 return
             self._json(json.loads(fr.read_text(encoding="utf-8")))
+            return
+        if u.path == "/journal":
+            from .xxt import journal as _journal
+            q = raw_qs
+            ev = _journal.events(_xxt_home(),
+                                 start=(q.get("start", [""])[0] or None),
+                                 end=(q.get("end", [""])[0] or None),
+                                 kind=(q.get("kind", [""])[0] or None),
+                                 limit=int(q.get("limit", ["500"])[0] or 500))
+            self._json({"ok": True, "events": ev, "stats": _journal.stats(_xxt_home())})
             return
         if u.path == "/engine/version":
             from .engine_update import check_engine_update

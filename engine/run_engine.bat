@@ -13,6 +13,7 @@ REM D73-12: install integrity preflight (clear message instead of serve tracebac
 IF ERRORLEVEL 1 (
   echo [FAIL] engine install incomplete: cannot import assist.xxt.session
   echo        fix: close this window, delete "%WORKSPACE%\_engine", then run start.bat again
+  echo        if on BaiduNetdisk/OneDrive, pause sync + exit client before retrying
   pause
   exit /b 1
 )

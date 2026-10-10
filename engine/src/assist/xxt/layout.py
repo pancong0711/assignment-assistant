@@ -39,9 +39,24 @@ def targets_spec_json(home: "Path | str | None" = None) -> Path:
     return _home(home) / "targets" / "extract-spec.json"
 
 
+def works_spec_json(home: "Path | str | None" = None) -> Path:
+    """D74-4：待发现作业清单时传给 CLI 的 targets spec。"""
+    return _home(home) / "targets" / "works-spec.json"
+
+
+def works_json(home: "Path | str | None" = None) -> Path:
+    """D74-4：最近一次班级作业清单发现结果。"""
+    return _home(home) / "targets" / "works.json"
+
+
 def targets_history_dir(home: "Path | str | None" = None) -> Path:
     """D74-3：发现结果历史快照目录（默认保留最近 5 份）。"""
     return _home(home) / "targets-history"
+
+
+def journal_dir(home: "Path | str | None" = None) -> Path:
+    """D74-9：全局操作记录目录（JSONL 按月分片）。"""
+    return _home(home) / "journal"
 
 
 def is_run_shape(data) -> bool:

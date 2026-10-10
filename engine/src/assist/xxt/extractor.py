@@ -373,8 +373,26 @@ class ReadOnlyExtractor:
         self._step("goto课程工作台", f"courseid={course_id}", self.page.title())
         return info
 
+    def list_works(self, course_id: str, class_id: str, cpi: str = "0",
+                   settle_ms: int = 3500) -> dict:
+        """D74-4：只读发现单班作业清单（只读 work/list，不进 mark、不抓名单）。"""
+        url = WORK_URL.format(course=course_id, clazz=class_id, cpi=cpi)
+        self.page.goto(url, wait_until="domcontentloaded", timeout=60000)
+        self.page.wait_for_timeout(settle_ms)
+        self.archive(f"discover-works-{class_id}")
+        info = self.page.evaluate(JS_READ)
+        self._step("发现作业清单", f"class={class_id}", self.page.title())
+        works = []
+        for w in info.get("works", []):
+            works.append({k: w.get(k) for k in
+                          ("name", "workId", "pending", "submitted", "unsubmitted", "answer_window")})
+        return {"classId": class_id, "cpi": info.get("cpi") or cpi,
+                "activeClass": info.get("activeClass", ""), "works": works,
+                "empty_confirmed": "暂无作业" in info.get("nullPage", "")}
+
     def extract_class(self, course_id: str, class_id: str, cpi: str = "0",
-                      want_names: bool = True, settle_ms: int = 3500) -> dict:
+                      want_names: bool = True, settle_ms: int = 3500,
+                      work_ids: "set[str] | None" = None) -> dict:
         """单班提取（10-8 定案形态：直达 classid URL）。返回 19.2 ClassRecord 分量。"""
         rec: dict = {"classId": class_id, "status": "extracted", "notes": []}
         url = WORK_URL.format(course=course_id, clazz=class_id, cpi=cpi)
@@ -385,7 +403,15 @@ class ReadOnlyExtractor:
         self._step("课程班级列表读取", f"class={class_id}", self.page.title())
         rec["cpi"] = info.get("cpi") or cpi
         rec["activeClass"] = info.get("activeClass", "")
-        works = info.get("works", [])
+        all_works = info.get("works", [])
+        works = all_works
+        if work_ids is not None and all_works:
+            works = [w for w in all_works if str(w.get("workId")) in work_ids]
+            if not works:
+                rec["status"] = "not_extracted"
+                rec["works"] = []
+                rec["notes"] = list(rec.get("notes") or []) + ["选中的作业清单已不存在（可能平台已更新，请刷新）"]
+                return rec
         if not works:
             if "暂无作业" in info.get("nullPage", ""):
                 rec["status"] = "empty_confirmed"

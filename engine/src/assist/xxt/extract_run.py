@@ -55,6 +55,61 @@ def discover_targets(storage: "Path | str", archive_dir: "Path | str") -> dict:
             "courses": courses, "steps": steps}
 
 
+def discover_works(targets: "list[dict] | None", storage: "Path | str",
+                   archive_dir: "Path | str") -> dict:
+    """D74-4：对选中班级惰性发现作业清单（只读 work/list，不进入 mark）。
+
+    targets: courses[].classes[]（classes 里可带 name/classId/cpi）。
+    返回 courses[].classes[].works[]（name/workId/pending/submitted/unsubmitted/answer_window）。
+    """
+    from playwright.sync_api import sync_playwright
+    from .session import check_session, _launch
+    from .extractor import ReadOnlyExtractor
+    storage = Path(storage)
+    archive_dir = Path(archive_dir)
+    chk = check_session(storage)
+    if chk.get("verdict") != "alive":
+        return {"ok": False, "error": "session dead",
+                "hint": chk.get("hint", "请先 assist xxt login")}
+    out_courses: list[dict] = []
+    steps: list[dict] = []
+    with sync_playwright() as pw:
+        browser = _launch(pw, headless=True)
+        ctx = browser.new_context(storage_state=str(storage),
+                                  viewport={"width": 1440, "height": 1000}, locale="zh-CN")
+        page = ctx.new_page()
+        ext = ReadOnlyExtractor(ctx, page, archive_dir)
+        ext.run_id = "xxt-discover-works"
+        for course in targets or []:
+            cid = str(course.get("courseId") or "")
+            if not cid:
+                continue
+            cpi = str(course.get("cpi") or "0")
+            rec = {"name": str(course.get("name") or cid), "courseId": cid,
+                   "cpi": cpi, "classes": []}
+            for cl in course.get("classes") or []:
+                kid = str(cl.get("classId") or "")
+                label = str(cl.get("name") or kid)
+                if not kid:
+                    continue
+                try:
+                    info = ext.list_works(cid, kid, cpi=cpi)
+                    rec["classes"].append({
+                        "name": label, "classId": kid,
+                        "cpi": info.get("cpi") or cpi,
+                        "works": info.get("works") or [],
+                        "empty_confirmed": bool(info.get("empty_confirmed")),
+                    })
+                except Exception as e:  # noqa: BLE001
+                    rec["classes"].append({"name": label, "classId": kid, "cpi": cpi,
+                                           "works": [], "error": str(e)[:200]})
+            out_courses.append(rec)
+        steps = ext.steps
+        browser.close()
+    return {"ok": True, "discovered_at": time.strftime("%Y-%m-%d %H:%M:%S"),
+            "courses": out_courses, "steps": steps}
+
+
 def run_extract(targets: "list[dict] | None", storage: "Path | str",
                 out_dir: "Path | str", archive_dir: "Path | str",
                 roster_dir: "Path | str | None" = None,
@@ -126,10 +181,18 @@ def run_extract(targets: "list[dict] | None", storage: "Path | str",
             rep['courses'].append(rec)
             for cl in course.get('classes', []):
                 label, class_id = cl['name'], cl['classId']
+                # D74-4：classes[].works 为空/缺省 = 该班全部作业；有值 = 只提取选中 workId
+                work_ids = None
+                raw_works = cl.get('works')
+                if isinstance(raw_works, list):
+                    work_ids = {str(w.get('workId') if isinstance(w, dict) else w)
+                                for w in raw_works if (w.get('workId') if isinstance(w, dict) else w)}
+                    if not work_ids:
+                        work_ids = None
                 roster_label = next((k for k in roster_labels if k in label), None)
                 roster = []
                 try:
-                    cls_rec = ext.extract_class(cid, class_id, cpi=cpi)
+                    cls_rec = ext.extract_class(cid, class_id, cpi=cpi, work_ids=work_ids)
                     cls_rec['name'] = label
                     if roster_label and roster_dir:
                         fn = roster_dir / f'学习通-25C1-{roster_label}-0621.xlsx'

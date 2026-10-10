@@ -109,6 +109,36 @@ def register(group: click.Group) -> None:
         click.echo(json.dumps(rep, ensure_ascii=False, indent=1))
         raise SystemExit(2)
 
+    @group.command("discover-works")
+    @click.option("--targets", "targets", required=True, type=click.Path(exists=True, dir_okay=False))
+    @click.option("--out", "out", default=None, type=click.Path(dir_okay=False),
+                  help="发现结果 JSON 输出（默认 xxt_home()/targets/works.json）")
+    @click.option("--storage", "storage", default=None, type=click.Path(dir_okay=False))
+    @click.option("--archive-dir", "archive_dir", default=None, type=click.Path(file_okay=False))
+    def xxt_discover_works(targets, out, storage, archive_dir):
+        """只读发现选中班级的作业清单（D74-4；不进 mark、不抓名单）。"""
+        from . import layout
+        from .extract_run import discover_works
+        spec = json.loads(Path(targets).read_text(encoding="utf-8"))
+        rep = discover_works(spec.get("courses", []), storage or default_storage(None),
+                             archive_dir or layout.pages_dir())
+        out_path = Path(out) if out else layout.works_json()
+        out_path.parent.mkdir(parents=True, exist_ok=True)
+        out_path.write_text(json.dumps(rep, ensure_ascii=False, indent=1), encoding="utf-8")
+        if rep.get("ok"):
+            click.echo(json.dumps({
+                "ok": True,
+                "discovered_at": rep.get("discovered_at"),
+                "courses": len(rep.get("courses") or []),
+                "classes": sum(len(c.get("classes") or []) for c in rep.get("courses") or []),
+                "works": sum(len(cl.get("works") or []) for c in rep.get("courses") or []
+                             for cl in c.get("classes") or []),
+                "out": str(out_path),
+            }, ensure_ascii=False, indent=1))
+            raise SystemExit(0)
+        click.echo(json.dumps(rep, ensure_ascii=False, indent=1))
+        raise SystemExit(2)
+
     @group.group("run")
     def xxt_run():
         """run 管理（D73-9）：导入旧 run JSON，使其在 PWA 可见。"""

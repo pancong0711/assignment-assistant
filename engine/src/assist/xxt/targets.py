@@ -30,7 +30,16 @@ def sanitize_targets(raw) -> "tuple[list[dict] | None, str | None]":
             kid = str(cl.get("classId") or "").strip()
             if not TARGET_ID_RE.match(kid):
                 return None, f"非法 classId: {kid[:32]!r}"
-            classes.append({"name": str(cl.get("name") or kid)[:80], "classId": kid})
+            item = {"name": str(cl.get("name") or kid)[:80], "classId": kid}
+            # D74-4：可选 works[]（workId 列表）；缺省=该班全部作业
+            works = []
+            for w in cl.get("works") or []:
+                wid = str(w.get("workId") if isinstance(w, dict) else w).strip()
+                if TARGET_ID_RE.match(wid):
+                    works.append(wid)
+            if works:
+                item["works"] = sorted(set(works))
+            classes.append(item)
         if not classes:
             continue
         out.append({"name": str(c.get("name") or cid)[:80], "courseId": cid,

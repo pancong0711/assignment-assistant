@@ -20,6 +20,12 @@ set "UV_DEFAULT_INDEX=%UV_DEFAULT_INDEX%"
 IF NOT DEFINED UV_DEFAULT_INDEX set "UV_DEFAULT_INDEX=https://pypi.tuna.tsinghua.edu.cn/simple"
 IF NOT DEFINED PLAYWRIGHT_DOWNLOAD_HOST set "PLAYWRIGHT_DOWNLOAD_HOST=https://npmmirror.com/mirrors/playwright/"
 set "ASSIST_WORKSPACE=%WORKSPACE%"
+REM D74-7: warn when workspace is on a cloud-sync folder
+echo %WORKSPACE% | findstr /I /C:"BaiduSyncdisk" /C:"OneDrive" /C:"Dropbox" /C:"iCloudDrive" /C:"Nutstore" /C:"Weiyun" >nul
+IF NOT ERRORLEVEL 1 (
+  echo [warn] workspace is under a cloud-sync folder.
+  echo [warn] If engine update fails, pause sync + exit the sync client, delete _engine, then retry.
+)
 set "ASSIST_SUPERVISED=1"
 set "STAGE=%WORKSPACE%\_engine\staging"
 set "PENDING=%WORKSPACE%\_engine\update.pending"
@@ -129,6 +135,7 @@ IF EXIST "%ENGINE_DIR%\src\assist\xxt\session.py" goto ENGINE_LOCAL
 IF DEFINED REDOWNLOADED (
   echo [FAIL] engine source incomplete after redownload: missing src\assist\xxt\session.py
   echo        delete "%WORKSPACE%\_engine" and rerun start.bat
+  echo        if on BaiduNetdisk/OneDrive, pause sync + exit client, then retry
   notepad "%LOG%"
   pause
   exit /b 1
@@ -220,6 +227,7 @@ if not exist "%ENGINE_DIR%\pyproject.toml" (
 REM D73-12: verify critical files, not just pyproject.toml
 IF NOT EXIST "%ENGINE_DIR%\src\assist\xxt\session.py" (
   echo [update] copy incomplete - missing src\assist\xxt\session.py; rolling back
+  echo [update] if on BaiduNetdisk/OneDrive, pause sync + exit client, then retry
   call :RESTORE_ENGINE
   exit /b 1
 )

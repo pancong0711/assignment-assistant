@@ -418,7 +418,7 @@ export async function startXxtExtract(
   return o.job_id
 }
 
-export interface XxtTargetClass { name: string; classId: string }
+export interface XxtTargetClass { name: string; classId: string; works?: string[] }
 export interface XxtTargetCourse { name: string; courseId: string; classes: XxtTargetClass[] }
 export interface XxtTargetDiffItem {
   kind?: 'course' | 'class'
@@ -456,6 +456,57 @@ export async function startXxtDiscover(engineAddr: string, token?: string): Prom
   const o = (await res.json()) as { job_id?: string }
   if (!o?.job_id) throw new Error('引擎未返回 job_id')
   return o.job_id
+}
+
+export interface XxtWork {
+  name: string
+  workId: string
+  pending?: number | null
+  submitted?: number | null
+  unsubmitted?: number | null
+  answer_window?: string
+}
+export interface XxtWorksClass {
+  name: string
+  classId: string
+  cpi?: string
+  works: XxtWork[]
+  empty_confirmed?: boolean
+  error?: string
+}
+export interface XxtWorksCourse { name: string; courseId: string; cpi?: string; classes: XxtWorksClass[] }
+export interface XxtWorks { ok?: boolean; discovered_at?: string; courses?: XxtWorksCourse[] }
+
+/** POST /xxt/works：D74-4 对选中班级惰性发现作业清单（只读，不进 mark）。 */
+export async function startXxtDiscoverWorks(
+  engineAddr: string, token: string | undefined, targets: XxtTargetCourse[],
+): Promise<string> {
+  const base = normalizeEngineAddr(engineAddr)
+  const res = await fetch(engineUrlWithToken(base, '/xxt/works', token), {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ targets }),
+  })
+  if (!res.ok) {
+    let detail = `HTTP ${res.status}`
+    try {
+      const o = (await res.json()) as { error?: string }
+      if (o?.error) detail = o.error
+    } catch { /* keep status */ }
+    throw new Error(detail)
+  }
+  const o = (await res.json()) as { job_id?: string }
+  if (!o?.job_id) throw new Error('引擎未返回 job_id')
+  return o.job_id
+}
+
+/** GET /xxt/works：最近一次作业清单发现结果（无结果返回空）。 */
+export async function fetchXxtWorks(engineAddr: string, token?: string): Promise<XxtWorks> {
+  const base = normalizeEngineAddr(engineAddr)
+  const res = await fetch(engineUrlWithToken(base, '/xxt/works', token))
+  if (res.status === 404) return { courses: [] }
+  if (!res.ok) throw new Error(`HTTP ${res.status}`)
+  return (await res.json()) as XxtWorks
 }
 
 /** GET /xxt/targets：最近一次只读发现结果（无结果时返回空清单而非抛错）。 */
@@ -581,4 +632,43 @@ async function getJson2(url: string): Promise<unknown> {
   const res = await fetch(url)
   if (!res.ok) throw new Error(`HTTP ${res.status}`)
   return res.json()
+}
+
+/* ========== D74-9：全局操作记录（journal） ========== */
+
+export interface JournalEvent {
+  ts?: string
+  kind?: string
+  source?: string
+  result?: string
+  run_id?: string | null
+  duration_ms?: number | null
+  params?: Record<string, unknown>
+  error?: string
+}
+
+export interface JournalStats { files?: number; bytes?: number; months?: number }
+
+export async function fetchJournal(
+  engineAddr: string, token: string | undefined,
+  opts?: { start?: string; end?: string; kind?: string; limit?: number },
+): Promise<{ events: JournalEvent[]; stats: JournalStats }> {
+  const base = normalizeEngineAddr(engineAddr)
+  const qs = new URLSearchParams()
+  if (opts?.start) qs.set('start', opts.start)
+  if (opts?.end) qs.set('end', opts.end)
+  if (opts?.kind) qs.set('kind', opts.kind)
+  if (opts?.limit) qs.set('limit', String(opts.limit))
+  const path = `/journal${qs.toString() ? `?${qs.toString()}` : ''}`
+  const o = (await getJson2(engineUrlWithToken(base, path, token))) as
+    { ok?: boolean; events?: JournalEvent[]; stats?: JournalStats }
+  return { events: o.events || [], stats: o.stats || {} }
+}
+
+export async function clearJournal(engineAddr: string, token?: string): Promise<number> {
+  const base = normalizeEngineAddr(engineAddr)
+  const res = await fetch(engineUrlWithToken(base, '/journal/clear', token), { method: 'POST' })
+  if (!res.ok) throw new Error(`HTTP ${res.status}`)
+  const o = (await res.json()) as { removed?: string[] }
+  return Array.isArray(o.removed) ? o.removed.length : 0
 }

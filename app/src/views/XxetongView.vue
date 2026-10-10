@@ -1,10 +1,11 @@
 <script setup lang="ts">
 import { computed, onMounted, onUnmounted, ref } from 'vue'
-import type { XxtTargetsDiff } from '../lib/engineClient'
+import type { XxtTargetsDiff, XxtWork, XxtWorksCourse } from '../lib/engineClient'
 import {
   clearXxtRuns, clearXxtTargetsHistory, deleteXxtRun, fetchXxtLoginJob, fetchXxtRun,
-  fetchXxtRuns, fetchXxtStatus, fetchXxtTargets, importXxtRun, startXxtDiscover,
-  startXxtExtract, startXxtExtractTargets, startXxtLogin,
+  fetchXxtRuns, fetchXxtStatus, fetchXxtTargets, fetchXxtWorks, importXxtRun,
+  startXxtDiscover, startXxtDiscoverWorks, startXxtExtract, startXxtExtractTargets,
+  startXxtLogin,
 } from '../lib/engineClient'
 import { useSettingsStore } from '../stores/settings'
 import { useXxtJobsStore } from '../stores/xxtJobs'
@@ -356,7 +357,7 @@ async function startExtract() {
 }
 
 /* ---------- D72 targets 选择提取（发现→勾选→提取） ---------- */
-interface TargetClass { name: string; classId: string }
+interface TargetClass { name: string; classId: string; works?: string[] }
 interface TargetCourse { name: string; courseId: string; classes: TargetClass[] }
 const targets = ref<TargetCourse[]>([])
 const targetsAt = ref('')
@@ -496,9 +497,9 @@ async function startDiscover() {
 }
 async function extractSelected() {
   if (extracting.value || extractSubmitting.value) return
-  const sel = selectedTargets()
+  const sel = extractionTargets()
   const n = sel.reduce((a, c) => a + c.classes.length, 0)
-  if (!n) { targetMsg.value = '请先勾选至少一个班级'; return }
+  if (!n) { targetMsg.value = '请先勾选至少一个班级/作业'; return }
   stopExtractPolling()
   extractSubmitting.value = true
   targetMsg.value = `正在提取所选 ${n} 个班……`
@@ -531,6 +532,117 @@ async function onImportFile(ev: Event) {
     importLoading.value = false
     input.value = ''
   }
+}
+
+/* ---------- D74-4：作业级惰性展开 ---------- */
+const worksCourses = ref<XxtWorksCourse[]>([])
+const worksAt = ref('')
+const worksLoading = ref(false)
+const worksMsg = ref('')
+const worksSel = ref<Record<string, boolean>>({})
+let worksTimer: number | undefined
+
+function stopWorksPolling() {
+  if (worksTimer !== undefined) { window.clearTimeout(worksTimer); worksTimer = undefined }
+}
+function wkey(c: TargetCourse, k: TargetClass, w: XxtWork): string {
+  return `${c.courseId}:${k.classId}:${w.workId}`
+}
+function worksOf(c: TargetCourse, k: TargetClass): XxtWork[] {
+  for (const wc of worksCourses.value) {
+    if (wc.courseId !== c.courseId) continue
+    for (const wcl of wc.classes || []) {
+      if (wcl.classId === k.classId) return wcl.works || []
+    }
+  }
+  return []
+}
+function hasWorks(c: TargetCourse, k: TargetClass): boolean {
+  return worksCourses.value.some(wc => wc.courseId === c.courseId
+    && (wc.classes || []).some(wcl => wcl.classId === k.classId))
+}
+function isWorkSel(c: TargetCourse, k: TargetClass, w: XxtWork): boolean {
+  return worksSel.value[wkey(c, k, w)] !== false
+}
+function onWorkToggle(c: TargetCourse, k: TargetClass, w: XxtWork, ev: Event) {
+  worksSel.value[wkey(c, k, w)] = (ev.target as HTMLInputElement).checked
+}
+function selectedWorksCount(): number {
+  let n = 0
+  for (const c of targets.value) for (const k of c.classes) {
+    if (!isSel(c, k)) continue
+    for (const w of worksOf(c, k)) if (isWorkSel(c, k, w)) n++
+  }
+  return n
+}
+async function loadWorks() {
+  const o = await fetchXxtWorks(engUrl.value, tok.value)
+  worksCourses.value = (o.courses || []) as XxtWorksCourse[]
+  worksAt.value = o.discovered_at || ''
+  const sel: Record<string, boolean> = {}
+  for (const wc of worksCourses.value) for (const wcl of wc.classes || []) {
+    for (const w of wcl.works || []) sel[`${wc.courseId}:${wcl.classId}:${w.workId}`] = true
+  }
+  worksSel.value = sel
+}
+function pollWorksJob(jobId: string) {
+  stopWorksPolling()
+  const tick = async () => {
+    try {
+      const job = await fetchXxtLoginJob(engUrl.value, tok.value, jobId)
+      if (job.status === 'running') {
+        const line = (job.lines || []).slice(-1)[0]
+        worksMsg.value = line ? `发现作业中：${line.slice(-120)}` : '发现作业中……'
+        worksTimer = window.setTimeout(tick, 1500)
+        return
+      }
+      if (job.status === 'done' && (job.returncode ?? 0) === 0) {
+        await loadWorks()
+        worksMsg.value = `作业清单已发现：${worksCourses.value.reduce((a, c) => a + (c.classes || []).length, 0)} 个班`
+          + ` / ${selectedWorksCount()} 份作业（默认全选）`
+      } else {
+        worksMsg.value = `发现作业失败：${(job.lines || []).slice(-1)[0] || job.status}`
+      }
+    } catch (e) {
+      worksMsg.value = `发现作业状态查询失败：${String(e)}`
+    } finally {
+      worksLoading.value = false
+    }
+  }
+  void tick()
+}
+async function startDiscoverWorks() {
+  if (worksLoading.value) return
+  const sel = selectedTargets()
+  if (!sel.length) { worksMsg.value = '请先在「发现课程/班级」勾选至少一个班'; return }
+  worksLoading.value = true
+  worksMsg.value = '正在只读发现所选班级的作业清单……'
+  try {
+    const jobId = await startXxtDiscoverWorks(engUrl.value, tok.value, sel)
+    pollWorksJob(jobId)
+  } catch (e) {
+    worksMsg.value = `发现作业启动失败：${String(e)}`
+    worksLoading.value = false
+  }
+}
+/** 提取用的 targets：班级勾选 + （已发现作业时）只带勾选的 workId。 */
+function extractionTargets(): TargetCourse[] {
+  const out: TargetCourse[] = []
+  for (const c of targets.value) {
+    const classes: TargetClass[] = []
+    for (const k of c.classes) {
+      if (!isSel(c, k)) continue
+      if (hasWorks(c, k)) {
+        const chosen = worksOf(c, k).filter(w => isWorkSel(c, k, w)).map(w => w.workId)
+        if (!chosen.length) continue   // 该班一个作业都没选 → 整班跳过
+        classes.push({ name: k.name, classId: k.classId, works: chosen })
+      } else {
+        classes.push({ name: k.name, classId: k.classId })
+      }
+    }
+    if (classes.length) out.push({ name: c.name, courseId: c.courseId, classes })
+  }
+  return out
 }
 
 async function deleteCurrentRun() {
@@ -590,13 +702,14 @@ onMounted(() => {
   refreshStatus()
   refreshRuns()
   loadTargets().catch(() => { /* 无历史发现结果时忽略 */ })
+  loadWorks().catch(() => { /* 无历史作业清单时忽略 */ })
   // D73：切换 tab 回来后恢复提取 job 轮询
   if (xxtJobs.extractJobId) {
     runMsg.value = xxtJobs.extractMsg || '提取任务进行中……'
     pollExtractJob(xxtJobs.extractJobId)
   }
 })
-onUnmounted(() => { loginSeq += 1; stopLoginPolling(); stopExtractPolling(); stopDiscoverPolling() })
+onUnmounted(() => { loginSeq += 1; stopLoginPolling(); stopExtractPolling(); stopDiscoverPolling(); stopWorksPolling() })
 </script>
 
 <template>
@@ -703,6 +816,11 @@ onUnmounted(() => { loginSeq += 1; stopLoginPolling(); stopExtractPolling(); sto
         </button>
         <button class="btn" style="margin-left:8px" :disabled="!targets.length" @click="toggleAll(true)">全选</button>
         <button class="btn" style="margin-left:8px" :disabled="!targets.length" @click="toggleAll(false)">全不选</button>
+        <button class="btn" style="margin-left:8px"
+                :disabled="!selectedCount() || worksLoading || extracting || extractSubmitting"
+                @click="startDiscoverWorks">
+          {{ worksLoading ? '发现作业中…' : '📚 发现所选班级的作业（只读）' }}
+        </button>
         <button class="btn primary" style="margin-left:8px"
                 :disabled="!selectedCount() || extracting || extractSubmitting"
                 @click="extractSelected">
@@ -743,6 +861,10 @@ onUnmounted(() => { loginSeq += 1; stopLoginPolling(); stopExtractPolling(); sto
         </details>
         <button class="btn small" style="margin-left:8px" @click="ackDiff">知道了</button>
       </div>
+      <p v-if="worksMsg" class="hint">{{ worksMsg }}</p>
+      <p v-if="worksAt" class="hint" style="color:var(--c-muted)">
+        作业清单发现时间：{{ worksAt }}（默认全选；取消即不提取该作业）
+      </p>
       <div v-if="targets.length" style="max-height:360px; overflow:auto; border:1px solid var(--c-border); border-radius:8px; padding:8px">
         <div v-for="c in targets" :key="c.courseId" style="margin-bottom:10px">
           <label style="font-weight:600">
@@ -752,13 +874,24 @@ onUnmounted(() => { loginSeq += 1; stopLoginPolling(); stopExtractPolling(); sto
             <span v-else-if="courseRename(c)" class="tag" style="background:#ffedd5;color:#9a3412;padding:1px 6px;border-radius:6px;font-size:12px">{{ courseRename(c) }}</span>
             <span class="hint" style="color:var(--c-muted)">courseId {{ c.courseId }} · {{ c.classes.length }} 班</span>
           </label>
-          <div style="display:flex; flex-wrap:wrap; gap:10px; margin:6px 0 0 22px">
-            <label v-for="k in c.classes" :key="k.classId">
-              <input type="checkbox" :checked="isSel(c, k)" @change="onClassToggle(c, k, $event)" />
-              {{ k.name }}
-              <span v-if="isClassAdded(c, k)" class="tag" style="background:#dcfce7;color:#166534;padding:1px 5px;border-radius:6px;font-size:11px">新增</span>
-              <span v-else-if="classRename(c, k)" class="tag" style="background:#ffedd5;color:#9a3412;padding:1px 5px;border-radius:6px;font-size:11px">{{ classRename(c, k) }}</span>
-            </label>
+          <div style="margin:6px 0 0 22px">
+            <div v-for="k in c.classes" :key="k.classId" style="margin-bottom:8px">
+              <label>
+                <input type="checkbox" :checked="isSel(c, k)" @change="onClassToggle(c, k, $event)" />
+                {{ k.name }}
+                <span v-if="isClassAdded(c, k)" class="tag" style="background:#dcfce7;color:#166534;padding:1px 5px;border-radius:6px;font-size:11px">新增</span>
+                <span v-else-if="classRename(c, k)" class="tag" style="background:#ffedd5;color:#9a3412;padding:1px 5px;border-radius:6px;font-size:11px">{{ classRename(c, k) }}</span>
+                <span v-if="hasWorks(c, k)" class="hint" style="color:var(--c-muted)">（{{ worksOf(c, k).length }} 份作业）</span>
+              </label>
+              <div v-if="hasWorks(c, k)" style="margin:4px 0 0 22px; display:flex; flex-wrap:wrap; gap:12px">
+                <label v-for="w in worksOf(c, k)" :key="w.workId" class="hint">
+                  <input type="checkbox" :checked="isWorkSel(c, k, w)" @change="onWorkToggle(c, k, w, $event)" />
+                  {{ w.name }}
+                  <span style="color:var(--c-muted)">{{ w.pending ?? '-' }}/{{ w.submitted ?? '-' }}/{{ w.unsubmitted ?? '-' }}</span>
+                </label>
+                <span v-if="!worksOf(c, k).length" class="hint" style="color:var(--c-muted)">（该班未发现作业）</span>
+              </div>
+            </div>
             <span v-if="!c.classes.length" class="hint" style="color:var(--c-muted)">（未发现班级）</span>
           </div>
         </div>
@@ -770,7 +903,7 @@ onUnmounted(() => { loginSeq += 1; stopLoginPolling(); stopExtractPolling(); sto
 
     <!-- 列表卡 -->
     <div class="card">
-      <h3>读提取结果 <small style="font-weight:400;color:var(--c-muted)">基于最近 run JSON（§19 schema）；点开行看名单</small></h3>
+      <h3>发现作业 <small style="font-weight:400;color:var(--c-muted)">提取后按班级/作业展示结果（数据=最近 run JSON）；点开行看名单</small></h3>
       <p>
         <button class="btn primary" :disabled="extracting || extractSubmitting || loadingRun" @click="startExtract">{{ extracting || extractSubmitting ? '提取中…' : '📥 提取账户数据' }}</button>
         <button class="btn" style="margin-left:8px" :disabled="loadingRun" @click="refreshRuns">⟳ 刷新列表（读取已有 run）</button>
