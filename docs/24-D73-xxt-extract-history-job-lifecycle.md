@@ -743,7 +743,7 @@ def readonly_route_decision(method, url) -> "continue"|"abort"
    - 确认根目录 + 文件夹课程都能进列表（新版 `.course` / `.course-name` 解析）；
    - 确认“我教的课”范围生效；
    - 验证跨 tab job 恢复、Playwright 历史卡、删除 run。
-1. **D73-10 生效复核**：确认提取课程/班级列表不再包含“我学的课”。
+1. **D73-10 生效复核**：确认提取课程/班级列表不再包含“我学的课”。（D73-9 与 D72 targets 已实施，见 §12）
 2. **D73-9 旧数据兼容/导入**：legacy run 扫描 + `assist xxt run import <json>`（或 PWA 导入入口），让旧 run JSON 可见。
 3. **D72-5 真实数据预览**：作业纸预览接已批阅样例；批阅报告按 D64-N4 接 submission/图片/转录/评阅（样例需去敏后入库）。
 4. **D72 targets 模式**：先发现课程/班级（默认“我教的课”）→ 勾选 → 提取；保留 `--all` 为快捷方式。
@@ -801,3 +801,80 @@ bash tools/check-secrets.sh
   1. 任何 `Bin` 变更与新增 `.png/.jpg/.zip/.tar.gz` 必须逐个人工确认来源与内容后才能 `git add`；
   2. `git status --short` 出现 `.feishu4dsh/`、`.scratch/`、`workspace/` 相关内容一律先移除；
   3. `check-secrets.sh` 只能拦截已知文本模式，不能替代二进制文件的人工审计。
+
+---
+
+## 12. D73-9 旧数据导入 + D72 targets 勾选提取（实施记录，2026-10-10）
+
+### 12.1 D73-9：旧 run / targets JSON 导入（已实施）
+
+**问题**：D63/D72 早期提取产物落在 `.scratch/` 或仓库根目录，不在 `xxt_home()/runs/`，
+PWA 的 `/xxt/runs` 看不到。
+
+**实现**：
+
+- 新增 `engine/src/assist/xxt/legacy.py`（纯函数、不触网）：
+  - `normalize_run_id`：保留合法 `run_id`；否则用文件名前缀；最后生成 `xxt-<ts>-import-<hex>`；
+  - `normalize_legacy_run`：把旧 run / targets 规整为当前 schema（保留 course/class/work 已知字段，
+    补 `imported`/`imported_at`，丢弃未知噪声；空 courses 拒绝）；
+  - `import_run_data` / `import_run_file`：写入 `runs/<run_id>.json`，重名自动 `-2`/`-3`；
+  - `scan_legacy_run_files`：目录扫描，排除 `xxt-storage.json` / `xxt-login-state.json` 等会话文件。
+- CLI：`assist xxt run import <files…>`（或 `--scan <dir>` 批量）；`assist xxt run list` 查看结果。
+- serve：`POST /xxt/run/import`，接受 `{data: <run JSON>}`（PWA 上传）或 `{path: "..."}`（本机路径），
+  20MB 上限。
+- PWA：新增卡「选择课程/班级提取」内含「📂 导入旧 run JSON」文件选择，导入后自动刷新列表。
+
+**本机已有可导入数据**（`.scratch/`，gitignored；含真实姓名，仅本地使用）：
+
+| 文件 | 内容 |
+|---|---|
+| `xxt-20261008-122317-full.json` | 5 课 / 多班（D63 全量提取） |
+| `xxt-20261008-184915.json` | 1 课 1 班 9 作业（含 submitted_names/anchor） |
+
+导入示例：
+
+```bash
+assist xxt run import --scan .scratch
+assist xxt run list
+# 或 PWA：学习通 → 选择课程/班级提取 → 📂 导入旧 run JSON（选文件即可）
+```
+
+### 12.2 D72 targets：发现 → 勾选 → 提取（已实施）
+
+- 引擎 `extract_run.discover_targets(storage, archive_dir)`：会话体检 → 只读发现「我教的课」
+  （`discover_courses` 默认 courseType=0）→ 逐课 `discover_classes`；返回
+  `{ok, discovered_at, courses:[{name,courseId,classes:[{name,classId}]}], steps}`，不写 run。
+- 路径契约：`layout.targets_json(home)` = `xxt_home()/targets.json`。
+- CLI：`assist xxt discover [--out FILE]`（默认写 `xxt_home()/targets.json`）。
+- serve：
+  - `POST /xxt/discover` → CLI stream job；
+  - `GET /xxt/targets` → 最近一次发现结果（无结果 404 + hint）；
+  - `POST /xxt/extract`：`mode=all`（原有）或 `mode=targets`；
+    targets 先经 `xxt.targets.sanitize_targets` 白名单校验（只允许 courseId/classId/name，
+    非法 id 整体拒绝），再写入 `xxt_home()/xxt-extract-targets.json` 并调用
+    `assist xxt extract --targets`。
+- PWA：新增卡「选择课程/班级提取」——「🔍 发现课程/班级（只读）」→ 课程/班级 checkbox
+  （默认全选）→「📥 提取所选（N 个班）」；提取 job 复用 `xxtJobs` store，跨 tab 恢复。
+
+### 12.3 验证
+
+- 新增测试：`engine/tests/test_xxt_legacy.py`（8）、`engine/tests/test_xxt_targets.py`（5）、
+  `test_xxt_layout.py` +1（targets 路径）；
+- 本沙箱无 pytest，用等价 harness 手跑 24 项纯函数测试全绿；全量 `py_compile` 全绿；
+- `npx vue-tsc --noEmit` 0 err；`cd app && npm run build` 成功；
+- 预期完整 `pytest engine/tests -q` = **99 passed**（原 85 + 新增 14）。
+
+### 12.4 安全边界
+
+- 导入的 run 含真实姓名 / 未交名单，只写本机 `xxt_home()/runs/`，不得入库
+  （`.scratch/`、`runs/` 均已 gitignore）；
+- `discover` 全程只读（GET/HEAD/OPTIONS + 白名单只读 POST `/visit/courselistdata`），
+  不触发任何写操作；
+- `mode=targets` 只改变提取范围，仍走同一套 `ReadOnlyExtractor` route 拦截。
+
+### 12.5 下一步
+
+1. 真机验收：更新引擎 → 扫码 → 「发现课程/班级」→ 勾选 → 「提取所选」；
+   确认清单只含「我教的课」、勾选班正确、跨 tab job 可恢复。
+2. D72-5 真实数据预览（作业纸 → 批阅报告）。
+3. 历史管理增强（时间/班级/作业/失败数、清空全部）。

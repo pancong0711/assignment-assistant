@@ -43,3 +43,7 @@ def test_delete_run_artifacts(tmp_path):
     assert not run.exists()
     assert not shot.exists()
     assert len(removed) == 2
+
+
+def test_targets_json_path(tmp_path):
+    assert layout.targets_json(tmp_path) == tmp_path / "targets.json"

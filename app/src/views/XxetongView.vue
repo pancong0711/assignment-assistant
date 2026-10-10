@@ -2,7 +2,8 @@
 import { computed, onMounted, onUnmounted, ref } from 'vue'
 import {
   deleteXxtRun, fetchXxtLoginJob, fetchXxtRun, fetchXxtRuns, fetchXxtStatus,
-  startXxtExtract, startXxtLogin,
+  fetchXxtTargets, importXxtRun, startXxtDiscover, startXxtExtract,
+  startXxtExtractTargets, startXxtLogin,
 } from '../lib/engineClient'
 import { useSettingsStore } from '../stores/settings'
 import { useXxtJobsStore } from '../stores/xxtJobs'
@@ -317,6 +318,125 @@ async function startExtract() {
   }
 }
 
+/* ---------- D72 targets 选择提取（发现→勾选→提取） ---------- */
+interface TargetClass { name: string; classId: string }
+interface TargetCourse { name: string; courseId: string; classes: TargetClass[] }
+const targets = ref<TargetCourse[]>([])
+const targetsAt = ref('')
+const targetSel = ref<Record<string, boolean>>({})
+const targetMsg = ref('')
+const discoverLoading = ref(false)
+const importLoading = ref(false)
+const importInput = ref<HTMLInputElement | null>(null)
+let discoverTimer: number | undefined
+
+function tkey(c: TargetCourse, k: TargetClass): string { return `${c.courseId}:${k.classId}` }
+function isSel(c: TargetCourse, k: TargetClass): boolean { return targetSel.value[tkey(c, k)] !== false }
+function onClassToggle(c: TargetCourse, k: TargetClass, ev: Event) {
+  targetSel.value[tkey(c, k)] = (ev.target as HTMLInputElement).checked
+}
+function onCourseToggle(c: TargetCourse, ev: Event) {
+  const on = (ev.target as HTMLInputElement).checked
+  for (const k of c.classes) targetSel.value[tkey(c, k)] = on
+}
+function toggleAll(on: boolean) {
+  for (const c of targets.value) for (const k of c.classes) targetSel.value[tkey(c, k)] = on
+}
+function selectedTargets(): TargetCourse[] {
+  return targets.value
+    .map(c => ({ ...c, classes: c.classes.filter(k => isSel(c, k)) }))
+    .filter(c => c.classes.length > 0)
+}
+function selectedCount(): number {
+  return selectedTargets().reduce((a, c) => a + c.classes.length, 0)
+}
+function stopDiscoverPolling() {
+  if (discoverTimer !== undefined) { window.clearTimeout(discoverTimer); discoverTimer = undefined }
+}
+async function loadTargets() {
+  const o = await fetchXxtTargets(engUrl.value, tok.value)
+  targets.value = (o.courses || []) as TargetCourse[]
+  targetsAt.value = o.discovered_at || ''
+  const sel: Record<string, boolean> = {}
+  for (const c of targets.value) for (const k of c.classes) sel[tkey(c, k)] = true
+  targetSel.value = sel
+}
+function pollDiscoverJob(jobId: string) {
+  stopDiscoverPolling()
+  const tick = async () => {
+    try {
+      const job = await fetchXxtLoginJob(engUrl.value, tok.value, jobId)
+      if (job.status === 'running') {
+        const line = (job.lines || []).slice(-1)[0]
+        targetMsg.value = line ? `发现中：${line.slice(-120)}` : '发现中……'
+        discoverTimer = window.setTimeout(tick, 1500)
+        return
+      }
+      if (job.status === 'done' && (job.returncode ?? 0) === 0) {
+        await loadTargets()
+        targetMsg.value = `发现完成：${targets.value.length} 门课 / ${selectedCount()} 个班（默认全选，可取消）`
+      } else {
+        targetMsg.value = `发现失败：${(job.lines || []).slice(-1)[0] || job.status}`
+      }
+    } catch (e) {
+      targetMsg.value = `发现状态查询失败：${String(e)}`
+    } finally {
+      discoverLoading.value = false
+    }
+  }
+  void tick()
+}
+async function startDiscover() {
+  if (discoverLoading.value) return
+  discoverLoading.value = true
+  targetMsg.value = '正在只读发现「我教的课」课程/班级……'
+  try {
+    const jobId = await startXxtDiscover(engUrl.value, tok.value)
+    pollDiscoverJob(jobId)
+  } catch (e) {
+    targetMsg.value = `发现启动失败：${String(e)}`
+    discoverLoading.value = false
+  }
+}
+async function extractSelected() {
+  if (extracting.value || extractSubmitting.value) return
+  const sel = selectedTargets()
+  const n = sel.reduce((a, c) => a + c.classes.length, 0)
+  if (!n) { targetMsg.value = '请先勾选至少一个班级'; return }
+  stopExtractPolling()
+  extractSubmitting.value = true
+  targetMsg.value = `正在提取所选 ${n} 个班……`
+  try {
+    const jobId = await startXxtExtractTargets(engUrl.value, tok.value, sel, { skip_notices: false })
+    xxtJobs.startExtractJob(jobId)
+    runMsg.value = xxtJobs.extractMsg
+    pollExtractJob(jobId)
+  } catch (e) {
+    targetMsg.value = `提取启动失败：${String(e)}`
+  } finally {
+    extractSubmitting.value = false
+  }
+}
+function pickImportFile() { importInput.value?.click() }
+async function onImportFile(ev: Event) {
+  const input = ev.target as HTMLInputElement
+  const f = input.files?.[0]
+  if (!f) return
+  importLoading.value = true
+  targetMsg.value = `正在导入 ${f.name}……`
+  try {
+    const data = JSON.parse(await f.text())
+    const r = await importXxtRun(engUrl.value, tok.value, data, f.name)
+    targetMsg.value = `已导入 run ${r.run_id || ''}（${r.courses ?? 0} 课 / ${r.classes ?? 0} 班 / ${r.works ?? 0} 作业）`
+    await refreshRuns()
+  } catch (e) {
+    targetMsg.value = `导入失败：${String(e)}`
+  } finally {
+    importLoading.value = false
+    input.value = ''
+  }
+}
+
 async function deleteCurrentRun() {
   if (!curRun.value) return
   const id = curRun.value
@@ -349,13 +469,14 @@ const grouped = computed(() => courses.value.map(c => {
 onMounted(() => {
   refreshStatus()
   refreshRuns()
+  loadTargets().catch(() => { /* 无历史发现结果时忽略 */ })
   // D73：切换 tab 回来后恢复提取 job 轮询
   if (xxtJobs.extractJobId) {
     runMsg.value = xxtJobs.extractMsg || '提取任务进行中……'
     pollExtractJob(xxtJobs.extractJobId)
   }
 })
-onUnmounted(() => { loginSeq += 1; stopLoginPolling(); stopExtractPolling() })
+onUnmounted(() => { loginSeq += 1; stopLoginPolling(); stopExtractPolling(); stopDiscoverPolling() })
 </script>
 
 <template>
@@ -457,6 +578,50 @@ onUnmounted(() => { loginSeq += 1; stopLoginPolling(); stopExtractPolling() })
     <div class="card" v-if="loadSteps.length">
       <h3>Playwright 浏览器操作历史 <small style="font-weight:400;color:var(--c-muted)">按 run 追加；每跳一张缩略图（引擎真会话所拍）</small></h3>
       <ProcessStreamView :run-id="curRun || ''" :steps="loadSteps" :engine-addr="engUrl" :token="tok" />
+    </div>
+
+    <!-- D72 targets：只读发现 → 勾选 → 按需提取；D73-9 旧 run 导入 -->
+    <div class="card">
+      <h3>选择课程/班级提取 <small style="font-weight:400;color:var(--c-muted)">D72 targets：只读发现「我教的课」→ 勾选 → 提取；也可导入旧 run JSON（D73-9）</small></h3>
+      <p>
+        <button class="btn primary" :disabled="verdict!=='alive' || discoverLoading" @click="startDiscover">
+          {{ discoverLoading ? '发现中…' : '🔍 发现课程/班级（只读）' }}
+        </button>
+        <button class="btn" style="margin-left:8px" :disabled="!targets.length" @click="toggleAll(true)">全选</button>
+        <button class="btn" style="margin-left:8px" :disabled="!targets.length" @click="toggleAll(false)">全不选</button>
+        <button class="btn primary" style="margin-left:8px"
+                :disabled="!selectedCount() || extracting || extractSubmitting"
+                @click="extractSelected">
+          📥 提取所选（{{ selectedCount() }} 个班）
+        </button>
+        <button class="btn" style="margin-left:12px" :disabled="importLoading" @click="pickImportFile">
+          {{ importLoading ? '导入中…' : '📂 导入旧 run JSON' }}
+        </button>
+        <input ref="importInput" type="file" accept=".json,application/json" style="display:none" @change="onImportFile" />
+      </p>
+      <p v-if="targetMsg" class="hint">{{ targetMsg }}</p>
+      <p v-if="targetsAt" class="hint" style="color:var(--c-muted)">
+        发现时间：{{ targetsAt }}（课程/班级清单仅存本机引擎；默认只发现你教的课）
+      </p>
+      <div v-if="targets.length" style="max-height:360px; overflow:auto; border:1px solid var(--c-border); border-radius:8px; padding:8px">
+        <div v-for="c in targets" :key="c.courseId" style="margin-bottom:10px">
+          <label style="font-weight:600">
+            <input type="checkbox" :checked="c.classes.every(k => isSel(c, k))" @change="onCourseToggle(c, $event)" />
+            {{ c.name }}
+            <span class="hint" style="color:var(--c-muted)">courseId {{ c.courseId }} · {{ c.classes.length }} 班</span>
+          </label>
+          <div style="display:flex; flex-wrap:wrap; gap:10px; margin:6px 0 0 22px">
+            <label v-for="k in c.classes" :key="k.classId">
+              <input type="checkbox" :checked="isSel(c, k)" @change="onClassToggle(c, k, $event)" />
+              {{ k.name }}
+            </label>
+            <span v-if="!c.classes.length" class="hint" style="color:var(--c-muted)">（未发现班级）</span>
+          </div>
+        </div>
+      </div>
+      <p v-else class="hint" style="color:var(--c-muted)">
+        点「发现课程/班级」后在此勾选；旧数据可点「导入旧 run JSON」后自动刷新列表。
+      </p>
     </div>
 
     <!-- 列表卡 -->

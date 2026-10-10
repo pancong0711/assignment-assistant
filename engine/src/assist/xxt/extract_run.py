@@ -12,6 +12,49 @@ import time
 from pathlib import Path
 
 
+def discover_targets(storage: "Path | str", archive_dir: "Path | str") -> dict:
+    """D72 targets 模式：只读发现「我教的课」课程/班级清单，不写 run、不提取。
+
+    返回：{ok, discovered_at, courses:[{name,courseId,classes:[{name,classId}]}], steps, hint?}
+    """
+    from playwright.sync_api import sync_playwright
+    from .session import check_session, _launch
+    from .extractor import ReadOnlyExtractor
+    storage = Path(storage)
+    archive_dir = Path(archive_dir)
+    chk = check_session(storage)
+    if chk.get("verdict") != "alive":
+        return {"ok": False, "error": "session dead",
+                "hint": chk.get("hint", "请先 assist xxt login")}
+    courses: list[dict] = []
+    steps: list[dict] = []
+    with sync_playwright() as pw:
+        browser = _launch(pw, headless=True)
+        ctx = browser.new_context(storage_state=str(storage),
+                                  viewport={"width": 1440, "height": 1000}, locale="zh-CN")
+        page = ctx.new_page()
+        ext = ReadOnlyExtractor(ctx, page, archive_dir)
+        ext.run_id = "xxt-discover"
+        for c in ext.discover_courses() or []:
+            cid = str(c.get("courseId") or "")
+            if not cid:
+                continue
+            classes = []
+            for cl in ext.discover_classes(cid) or []:
+                kid = str(cl.get("classId") or "")
+                if kid and kid != "0":
+                    classes.append({"name": str(cl.get("name") or kid)[:80], "classId": kid})
+            courses.append({
+                "name": str(c.get("name") or cid)[:80],
+                "courseId": cid,
+                "classes": classes,
+            })
+        steps = ext.steps
+        browser.close()
+    return {"ok": True, "discovered_at": time.strftime("%Y-%m-%d %H:%M:%S"),
+            "courses": courses, "steps": steps}
+
+
 def run_extract(targets: "list[dict] | None", storage: "Path | str",
                 out_dir: "Path | str", archive_dir: "Path | str",
                 roster_dir: "Path | str | None" = None,

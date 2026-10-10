@@ -134,7 +134,6 @@ def _xxt_env(home: "Path | str") -> dict:
 def _xxt_cli_cmd(args: list[str]) -> list[str]:
     return [_xxt_python(), "-m", "assist.cli", *args]
 
-
 def _xxt_preflight(cwd: str, env: dict) -> tuple[bool, str]:
     """D73：执行前先验证解释器能 import assist.cli，失败返回可读原因。"""
     try:
@@ -618,13 +617,46 @@ class Handler(BaseHTTPRequestHandler):
                 self._json({"ok": False, "error": f"bad json: {exc}"}, 400)
                 return
             mode = str(payload.get("mode") or "all")
-            if mode != "all":
-                self._json({
-                    "ok": False,
-                    "error": "unsupported mode",
-                    "hint": "D72 第一版仅支持 mode=all；targets 模式后续开放",
-                }, 400)
+            home = _xxt_home()
+            target_count = 0
+            if mode == "all":
+                cmd = _xxt_cli_cmd(["xxt", "extract", "--all"])
+            elif mode == "targets":
+                from .xxt.targets import sanitize_targets
+                targets, err = sanitize_targets(payload.get("targets"))
+                if err:
+                    self._json({"ok": False, "error": err}, 400)
+                    return
+                spec = home / "xxt-extract-targets.json"
+                try:
+                    spec.write_text(json.dumps({"courses": targets}, ensure_ascii=False),
+                                    encoding="utf-8")
+                except Exception as exc:  # noqa: BLE001
+                    self._json({"ok": False, "error": f"write targets failed: {exc}"}, 500)
+                    return
+                target_count = sum(len(c["classes"]) for c in targets)
+                cmd = _xxt_cli_cmd(["xxt", "extract", "--targets", str(spec)])
+            else:
+                self._json({"ok": False, "error": "unsupported mode",
+                            "hint": "支持 mode=all 或 mode=targets"}, 400)
                 return
+            env = _xxt_env(home)
+            cwd = str(_ws())
+            ok, detail = _xxt_preflight(cwd, env)
+            if not ok:
+                self._json({"ok": False,
+                            "error": "engine 无法 import assist.cli",
+                            "detail": detail}, 500)
+                return
+            if bool(payload.get("skip_notices", False)):
+                cmd.append("--skip-notices")
+            job_id = secrets.token_urlsafe(6)
+            self._start_stream_job(job_id, cmd, env, "xxt_extract", "xxt-extract", cwd)
+            self._json({"ok": True, "job_id": job_id, "mode": mode,
+                        "targets": target_count,
+                        "skip_notices": bool(payload.get("skip_notices", False))})
+            return
+        if u.path == "/xxt/discover":
             home = _xxt_home()
             env = _xxt_env(home)
             cwd = str(_ws())
@@ -634,13 +666,39 @@ class Handler(BaseHTTPRequestHandler):
                             "error": "engine 无法 import assist.cli",
                             "detail": detail}, 500)
                 return
-            cmd = _xxt_cli_cmd(["xxt", "extract", "--all"])
-            if bool(payload.get("skip_notices", False)):
-                cmd.append("--skip-notices")
+            out_path = xxt_layout.targets_json(home)
+            cmd = _xxt_cli_cmd(["xxt", "discover", "--out", str(out_path)])
             job_id = secrets.token_urlsafe(6)
-            self._start_stream_job(job_id, cmd, env, "xxt_extract", "xxt-extract", cwd)
-            self._json({"ok": True, "job_id": job_id, "mode": mode,
-                        "skip_notices": bool(payload.get("skip_notices", False))})
+            self._start_stream_job(job_id, cmd, env, "xxt_discover", "xxt-discover", cwd)
+            self._json({"ok": True, "job_id": job_id})
+            return
+        if u.path == "/xxt/run/import":
+            payload: dict = {}
+            try:
+                length = int(self.headers.get("Content-Length") or 0)
+                if length:
+                    if length > 20 * 1024 * 1024:
+                        self._json({"ok": False, "error": "payload too large"}, 413)
+                        return
+                    payload = json.loads(self.rfile.read(length).decode("utf-8")) or {}
+            except Exception as exc:  # noqa: BLE001
+                self._json({"ok": False, "error": f"bad json: {exc}"}, 400)
+                return
+            from .xxt import legacy
+            home = _xxt_home()
+            try:
+                if isinstance(payload.get("data"), dict):
+                    summary = legacy.import_run_data(
+                        payload["data"], fallback_id=payload.get("filename"), home=home)
+                elif payload.get("path"):
+                    summary = legacy.import_run_file(payload["path"], home=home)
+                else:
+                    self._json({"ok": False, "error": "需要 data 对象或 path"}, 400)
+                    return
+            except Exception as exc:  # noqa: BLE001
+                self._json({"ok": False, "error": str(exc)[:200]}, 400)
+                return
+            self._json({"ok": True, "imported": summary})
             return
         if (m_del := re.fullmatch(r"/xxt/run/([A-Za-z0-9\-]+)/delete", u.path)):
             run_id = m_del.group(1)
@@ -729,6 +787,17 @@ class Handler(BaseHTTPRequestHandler):
             self.send_header("Content-Length", str(len(body)))
             self.end_headers()
             self.wfile.write(body)
+            return
+        elif u.path == "/xxt/targets":
+            tp = xxt_layout.targets_json(_xxt_home())
+            if not tp.is_file():
+                self._json({"ok": False, "error": "no targets yet",
+                            "hint": "先运行 POST /xxt/discover 或 assist xxt discover"}, 404)
+                return
+            try:
+                self._json(json.loads(tp.read_text(encoding="utf-8")))
+            except Exception as exc:  # noqa: BLE001
+                self._json({"ok": False, "error": f"bad targets json: {exc}"}, 500)
             return
         elif u.path == "/xxt/runs":
             home = _xxt_home()

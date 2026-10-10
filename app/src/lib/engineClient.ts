@@ -418,6 +418,76 @@ export async function startXxtExtract(
   return o.job_id
 }
 
+export interface XxtTargetClass { name: string; classId: string }
+export interface XxtTargetCourse { name: string; courseId: string; classes: XxtTargetClass[] }
+export interface XxtTargets { ok?: boolean; discovered_at?: string; courses?: XxtTargetCourse[] }
+
+/** POST /xxt/discover：D72 targets 模式——只读发现「我教的课」课程/班级清单。 */
+export async function startXxtDiscover(engineAddr: string, token?: string): Promise<string> {
+  const base = normalizeEngineAddr(engineAddr)
+  const res = await fetch(engineUrlWithToken(base, '/xxt/discover', token), { method: 'POST' })
+  if (!res.ok) throw new Error(`HTTP ${res.status}`)
+  const o = (await res.json()) as { job_id?: string }
+  if (!o?.job_id) throw new Error('引擎未返回 job_id')
+  return o.job_id
+}
+
+/** GET /xxt/targets：最近一次只读发现结果（无结果时返回空清单而非抛错）。 */
+export async function fetchXxtTargets(engineAddr: string, token?: string): Promise<XxtTargets> {
+  const base = normalizeEngineAddr(engineAddr)
+  const res = await fetch(engineUrlWithToken(base, '/xxt/targets', token))
+  if (res.status === 404) return { courses: [] }
+  if (!res.ok) throw new Error(`HTTP ${res.status}`)
+  return (await res.json()) as XxtTargets
+}
+
+/** POST /xxt/extract（mode=targets）：只提取勾选的课程/班级。 */
+export async function startXxtExtractTargets(
+  engineAddr: string, token: string | undefined,
+  targets: XxtTargetCourse[], opts?: { skip_notices?: boolean },
+): Promise<string> {
+  const base = normalizeEngineAddr(engineAddr)
+  const res = await fetch(engineUrlWithToken(base, '/xxt/extract', token), {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ mode: 'targets', targets, skip_notices: opts?.skip_notices ?? false }),
+  })
+  if (!res.ok) {
+    let detail = `HTTP ${res.status}`
+    try {
+      const o = (await res.json()) as { error?: string; hint?: string }
+      if (o?.error) detail = o.error
+      if (o?.hint) detail += `（${o.hint}）`
+    } catch { /* keep status */ }
+    throw new Error(detail)
+  }
+  const o = (await res.json()) as { job_id?: string }
+  if (!o?.job_id) throw new Error('引擎未返回 job_id')
+  return o.job_id
+}
+
+/** POST /xxt/run/import：D73-9 导入旧 run JSON（文件内容直接上传，仅本机引擎落盘）。 */
+export async function importXxtRun(
+  engineAddr: string, token: string | undefined, data: unknown, filename?: string,
+): Promise<{ run_id?: string; classes?: number; works?: number; courses?: number }> {
+  const base = normalizeEngineAddr(engineAddr)
+  const res = await fetch(engineUrlWithToken(base, '/xxt/run/import', token), {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ data, filename }),
+  })
+  if (!res.ok) {
+    let detail = `HTTP ${res.status}`
+    try {
+      const o = (await res.json()) as { error?: string }
+      if (o?.error) detail = o.error
+    } catch { /* keep status */ }
+    throw new Error(detail)
+  }
+  const o = (await res.json()) as { imported?: { run_id?: string; classes?: number; works?: number; courses?: number } }
+  return o.imported || {}
+}
+
 /** POST /xxt/run/<id>/delete：D73 删除单条 run JSON + run 级截图。 */
 export async function deleteXxtRun(
   engineAddr: string, token: string | undefined, runId: string,

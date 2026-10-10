@@ -26,6 +26,10 @@ def _home(home: "Path | str | None" = None) -> Path:
 def runs_dir(home: "Path | str | None" = None) -> Path:
     return _home(home) / "runs"
 
+def targets_json(home: "Path | str | None" = None) -> Path:
+    """D72 targets 模式：最近一次只读发现（课程/班级清单）的落盘位置。"""
+    return _home(home) / "targets.json"
+
 
 def pages_dir(home: "Path | str | None" = None) -> Path:
     return _home(home) / "pages"

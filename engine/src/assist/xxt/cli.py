@@ -79,6 +79,84 @@ def register(group: click.Group) -> None:
         click.echo(f"out={rep.get('out', '(failed)')}")
         raise SystemExit(0 if not rep.get('failures') else 1)
 
+    @group.command("discover")
+    @click.option("--out", "out", default=None, type=click.Path(dir_okay=False),
+                  help="发现结果 JSON 输出（默认 xxt_home()/targets.json）")
+    @click.option("--storage", "storage", default=None, type=click.Path(dir_okay=False))
+    @click.option("--archive-dir", "archive_dir", default=None, type=click.Path(file_okay=False))
+    def xxt_discover(out, storage, archive_dir):
+        """只读发现「我教的课」课程/班级清单（D72 targets 模式；不提取、不写操作）。"""
+        from . import layout
+        from .extract_run import discover_targets
+        rep = discover_targets(storage or default_storage(None),
+                               archive_dir or layout.pages_dir())
+        out_path = Path(out) if out else layout.targets_json()
+        out_path.parent.mkdir(parents=True, exist_ok=True)
+        out_path.write_text(json.dumps(rep, ensure_ascii=False, indent=1), encoding="utf-8")
+        if rep.get("ok"):
+            click.echo(json.dumps({
+                "ok": True,
+                "discovered_at": rep.get("discovered_at"),
+                "courses": len(rep.get("courses") or []),
+                "classes": sum(len(c.get("classes") or []) for c in rep.get("courses") or []),
+                "out": str(out_path),
+            }, ensure_ascii=False, indent=1))
+            raise SystemExit(0)
+        click.echo(json.dumps(rep, ensure_ascii=False, indent=1))
+        raise SystemExit(2)
+
+    @group.group("run")
+    def xxt_run():
+        """run 管理（D73-9）：导入旧 run JSON，使其在 PWA 可见。"""
+
+    @xxt_run.command("import")
+    @click.argument("paths", nargs=-1, type=click.Path(exists=True, dir_okay=False))
+    @click.option("--scan", "scan_dir", default=None, type=click.Path(exists=True, file_okay=False),
+                  help="扫描该目录下的 xxt-*.json 批量导入")
+    def xxt_run_import(paths, scan_dir):
+        """把旧 run / targets JSON 规范化导入 xxt_home()/runs/（只读复制，不触网）。"""
+        from .legacy import import_run_file, scan_legacy_run_files
+        files = [Path(p) for p in paths]
+        if scan_dir:
+            files += scan_legacy_run_files(scan_dir)
+        seen, ordered = set(), []
+        for f in files:
+            key = str(f.resolve())
+            if key not in seen:
+                seen.add(key)
+                ordered.append(f)
+        if not ordered:
+            raise click.UsageError("请提供文件路径，或使用 --scan <目录>")
+        results, failed = [], []
+        for f in ordered:
+            try:
+                results.append(import_run_file(f))
+            except Exception as e:  # noqa: BLE001
+                failed.append({"file": str(f), "error": str(e)[:200]})
+        click.echo(json.dumps({"ok": not failed, "imported": results, "failed": failed},
+                              ensure_ascii=False, indent=1))
+        raise SystemExit(1 if failed else 0)
+
+    @xxt_run.command("list")
+    def xxt_run_list():
+        """列出当前 runs/ 中可见的 run（含刚导入的旧数据）。"""
+        from . import layout
+        rows = []
+        for f in layout.run_json_files():
+            try:
+                d = json.loads(f.read_text(encoding="utf-8"))
+            except Exception:  # noqa: BLE001
+                continue
+            rows.append({
+                "run_id": d.get("run_id") or f.stem,
+                "imported": bool(d.get("imported")),
+                "ts_end": d.get("ts_end"),
+                "classes": sum(len(c.get("classes") or []) for c in d.get("courses") or []),
+                "works": sum(len(cl.get("works") or []) for c in d.get("courses") or []
+                             for cl in c.get("classes") or []),
+            })
+        click.echo(json.dumps(rows, ensure_ascii=False, indent=1))
+
     @group.command("login")
     @click.option("--storage", "storage", default=None, type=click.Path(dir_okay=False),
                   help="storage_state JSON 目标（覆盖旧值）")
