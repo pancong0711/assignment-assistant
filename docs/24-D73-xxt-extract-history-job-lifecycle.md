@@ -405,13 +405,132 @@ Playwright 浏览器操作历史
 
 - `discover_courses()` 已成功 goto 互动页，并保存 `pages/discover-courses.html`；
 - 但 `JS_COURSES` 没有扫描出任何 `a[href*="courseId="]`；
-- 旧 `.scratch/xxt_readonly_extract.py` 同样用这个 selector，之前可工作；
-  现在失败可能原因：
+- 旧 `.scratch/xxt_readonly_extract.py` 只扫描一次 `a[href*="courseId="]`，
+  **不支持课程文件夹递归**；之前可工作是因为当时课程在根目录；
+  现在用户用文件夹管理课程，根目录只有文件夹，因此会返回 0；
+- 其他可能原因：
   1. 页面 JS 渲染/跳转比 5s 更慢；
   2. Edge/Chrome 与旧 Playwright Chromium 的 DOM/登录后页面差异；
   3. 课程链接形态变化（`courseid=` / `%3D` / `data-courseid` / 卡片非 `<a>`）；
   4. 互动页需要等待某个 tab/接口返回；
   5. 登录会话虽然 alive，但账号首页/课程页未渲染。
+
+**2026-10-10 `discover-courses.html` 实测分析（D73-8 定因）：**
+
+已收到教师机 `discover-courses.html`，只读统计：
+
+```text
+courseId=    0
+courseid=    0
+getFileCourseList 只出现函数定义，1 次
+courselistArea 容器存在，但没有课程数据
+```
+
+说明：
+
+- 页面框架加载了，但**填充课程列表的 AJAX 没有成功**；
+- `#courselistArea` 仍是空壳，所以 `a[href*="courseId="]` 为 0；
+- 这不是“账号没有课程”，而是 discovery 所在的浏览器上下文把课程列表请求拦截了。
+
+**根因：`ReadOnlyExtractor._install_readonly_route()` 把所有非 GET 请求都 abort 了。**
+
+学习通互动页的课程列表是：
+
+```text
+POST /mooc2-ans/visit/courselistdata
+```
+
+这是一个**只读列表 POST 接口**，不是写操作。  
+当前 route 硬只读策略把 `POST` 全部 abort，导致：
+
+- 页面自己的 `ajaxGetCourseList()` 失败；
+- `#courselistArea` 为空；
+- `discover_courses()` 扫描不到任何课程；
+- 旧 `.scratch/xxt_readonly_extract.py` 没有这个 route 拦截，所以当时能跑通。
+
+这解释了两个现象：
+
+1. 旧代码能提取、PWA/engine `--all` 为空；
+2. 有文件夹/无文件夹账号都会失败，不是文件夹本身导致。
+
+**修复优先级：**
+
+1. 在 route 白名单中允许：
+   ```text
+   POST /mooc2-ans/visit/courselistdata
+   ```
+   （以及后续确认的其他只读 POST 列表接口；其余非 GET 继续 abort）
+2. 或让 discovery 使用 `ctx.request.post` 直接调该端点，绕过页面 route；
+3. 仍保留写操作 POST/PUT/DELETE 拦截。
+
+
+
+在保留的旧会话上做只读测试，确认学习通互动页的课程列表实际是 AJAX 加载：
+
+- 页面内 JS 函数：
+  ```js
+  function ajaxGetCourseList() {
+    ...
+    $.ajax({
+      url: "/mooc2-ans/visit/courselistdata",
+      type: "post",
+      data: {
+        courseType, courseFolderId, query, pageHeader,
+        single, superstarClass, isFirefly, fid, from
+      },
+      dataType: "html",
+      success: function(data){ $("#courselistArea").html(data); ... }
+    });
+  }
+  ```
+- 文件夹点击函数：
+  ```js
+  function getFileCourseList(obj, id, name) { intoFolder(id) }
+  function intoFolder(courseFolderId) {
+    $("#courseFolderId").val(courseFolderId);
+    ajaxGetCourseList();
+  }
+  ```
+- 也就是说：
+  - 根目录课程和文件夹由 `/visit/courselistdata` 返回；
+  - 文件夹里的课程需要带着 `courseFolderId` **递归请求同一端点**获得；
+  - 旧 `.scratch/xxt_readonly_extract.py` 只扫描一次 `a[href*="courseId="]`，
+    因此它天然只能发现**根目录课程**，无法发现文件夹里的课程；
+  - 当前 `discover_courses()` 更是叠加了 route 拦截：页面 AJAX 被 abort，
+  连根目录课程都拿不到；文件夹递归则是第二层待补能力。
+
+只读实测还确认：
+
+- 用 Playwright 的 `ctx.request.post("/mooc2-ans/visit/courselistdata", form=...)`
+  可以拿到与页面 AJAX 相同的 HTML；
+- 该 HTML 里包含课程卡片和文件夹回调；
+- 对 `courseType=0`（我教的课）和 `courseType=1`（我学的课）都要兼容探测；
+- 根目录一次返回可能出现**重复链接**，必须按 `courseId` 去重。
+
+**修复方案（D73-8 定版方向）：**
+
+在 `ReadOnlyExtractor.discover_courses()` 内改为：
+
+1. goto `https://mooc2-ans.chaoxing.com/visit/interaction`；
+2. 读取隐藏字段：
+   `courseType / superstarClass / single / filterFid / from / tchPageHeader / stuPageHeader / isFirefly`；
+3. 对 `courseType=0` 和 `courseType=1`：
+   - 从 `courseFolderId=0` 开始 BFS；
+   - 用 `ctx.request.post` 调用 `/mooc2-ans/visit/courselistdata`；
+   - 解析返回 HTML：
+     - `a[href*="courseId="]` → 课程，按 courseId 去重；
+     - `[onclick*="getFileCourseList"]` → 文件夹 id/name；
+   - 对每个未访问的 folder id 继续请求；
+4. 保存每个 folder 响应 HTML 到：
+   `pages/discover-courselist-<courseType>-<folderId>.html`；
+5. 将发现结果写入 run JSON 的 `steps[]` 与 failures 诊断；
+6. 保留 DOM fallback：若请求端点失败，再扫描当前页面 anchors。
+
+**注意：**
+
+- `/visit/courselistdata` 是 POST，但它是**只读列表接口**；
+  需要在 route 白名单中允许该路径，或使用 `ctx.request` 绕开页面 route；
+- 这是本轮“发现能力可靠性”的核心修复点。
 
 **D73-8 要求：发现课程/班级可诊断、可降级**
 
