@@ -1,7 +1,8 @@
 """D63 T4 纯函数回归：wid15 计数解析 + 未交差集 + 锚点检查（不触网）。"""
 
 from assist.xxt.extractor import (
-    anchor_check, parse_count_token, readonly_route_decision, submitted_name_set, unsubmitted_diff,
+    DEFAULT_DISCOVER_COURSE_TYPES, anchor_check, parse_count_token, readonly_route_decision,
+    submitted_name_set, unsubmitted_diff,
 )
 
 LI = ('<div class="wid15"><p class="piyuePcon color3"><span class="color1">'
@@ -48,3 +49,9 @@ def test_readonly_route_decision_whitelists_courselist_post():
     assert readonly_route_decision(
         "POST", "https://mooc2-ans.chaoxing.com/mooc2-ans/work/submit") == "abort"
     assert readonly_route_decision("DELETE", "https://mooc2-ans.chaoxing.com/x") == "abort"
+
+
+def test_discover_defaults_to_teacher_courses_only():
+    """D73-10：默认只扫描“我教的课”，不默认扫描“我学的课”。"""
+    assert DEFAULT_DISCOVER_COURSE_TYPES == ("0",)
+    assert "1" not in DEFAULT_DISCOVER_COURSE_TYPES

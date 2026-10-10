@@ -77,6 +77,10 @@ JS_NOTICES = """() => {
 READONLY_POST_PATHS = ("/mooc2-ans/visit/courselistdata",)
 COURSELIST_URL = BASE + "/visit/courselistdata"
 
+# D73-10：提取范围收敛为“我教的课”（courseType=0）。
+# “我学的课”（courseType=1）是学生视角，与教师作业纸设计/批阅主线无关，默认不扫描。
+DEFAULT_DISCOVER_COURSE_TYPES = ("0",)
+
 
 def readonly_route_decision(method: str, url: str) -> str:
     """D73：只读 POST 列表接口放行，其余写操作继续 abort。"""
@@ -285,8 +289,10 @@ class ReadOnlyExtractor:
         self._archive_text(f"discover-courselist-{course_type}-{folder_id}", text)
         return text
 
-    def discover_courses(self) -> list:
-        """D73：根目录 + 课程文件夹 BFS 发现全部课程（只读列表 POST）。
+    def discover_courses(self, course_types: "tuple[str, ...] | None" = None) -> list:
+        """D73：根目录 + 课程文件夹 BFS 发现课程（只读列表 POST）。
+
+        默认仅扫描“我教的课”（courseType=0）；如需学生视角可显式传入 ("0","1")。
 
         旧实现只扫一次 a[href*="courseId="]，根目录为空时即失败；
         新实现兼容 courseFolderId 递归，并放行只读列表 POST。
@@ -299,7 +305,8 @@ class ReadOnlyExtractor:
         defaults = initial.get("defaults") or {}
         results: dict[str, dict] = {}
 
-        for course_type in ("0", "1"):
+        course_types = tuple(course_types or DEFAULT_DISCOVER_COURSE_TYPES)
+        for course_type in course_types:
             self._switch_course_type(course_type)
             state = self.page.evaluate(JS_DISCOVER_INFO)
             queue: list[str] = ["0"]

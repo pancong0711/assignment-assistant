@@ -692,3 +692,78 @@ def readonly_route_decision(method, url) -> "continue"|"abort"
 - 不调用任何发布/删除/上传/评分/公告接口；
 - 学习通侧写操作继续 abort；
 - 后续 D72/D73 全部完成前，不在真实课程上做任何写测试。
+
+---
+
+## 11. 二次交接总结（2026-10-10 晚）
+
+> 本节在压缩会话交接后复核对齐生成。§9 的收尾清单仍然有效，但**执行顺序与范围口径以本节为准**。
+
+### 11.1 本轮新增结论
+
+1. **引擎更新已可正常使用（D73-7 降级）**
+   - 用户真机反馈：更新到 `07e9588` 后未再出现“引擎在时限内未重回在线”，terminal 也不再停在“按任意键继续”。
+   - 处置：D73-7 从“必修阻塞”降级为“健壮性增强/待观察”；`update.status.json` 阶段回执仍建议做，用于区分“安装中 / 启动失败 / 已成功”，但不再阻塞主线。
+2. **提取范围收敛：仅“我教的课”（D73-10，已实施）**
+   - 决策：项目定位教师端（作业纸设计 + 批阅），`xxt extract --all` **默认只扫描 `courseType=0`（我教的课）**，不再默认扫描 `courseType=1`（我学的课）。
+   - 实现：`engine/src/assist/xxt/extractor.py` 新增 `DEFAULT_DISCOVER_COURSE_TYPES = ("0",)`；`discover_courses(course_types=None)` 默认只用该常量；需要学生视角时可显式传 `("0", "1")`。
+   - 回归：`engine/tests/test_xxt_extract_pure.py::test_discover_defaults_to_teacher_courses_only`。
+   - 影响：此前 §10.3 实测的 52 门唯一课程含“我学的课”23 门；收敛后数量应明显下降，属预期行为。
+3. **运行时已产出较多课程/页面存档**
+   - 用户观察到 `workspace/.runtime/xxt/pages`（对应 `xxt_home()/pages`）下缩略图很多，说明发现阶段确实在产出多课程数据；
+   - PWA 是否已完整展示全部班级仍待上线后真机复核（用户当时不在电脑前）。
+   - 复核项：课程数 / 班级数 / run JSON 与 `pages/shots` 是否一致；确认“仅我教的课”范围生效。
+
+### 11.2 已完成里程碑（D66 → D73-8）
+
+| 编号 | 内容 | 提交 |
+|---|---|---|
+| D66 | 二维码不显示修复：统一 QR 路径、no-store、预加载重试 | `a3d6f73` |
+| D67 | Windows start.bat 托管式重启：退出码 75、`:ENGINE_LOOP`、`instance_id` 校验 | `ac3bc2e` |
+| D68 | 扫码后无反应：登录走 CLI、教学域登录态、status 缓存按 mtime 失效 | `a2a6002` |
+| D69 | 依赖安装 uv→venv pip 回退（后被 D71 取代，仅留 `/install/deps`） | `a1c92a7` |
+| D70 | 浏览器存活检查 / cookie 诊断 / CLI 输出实时转发 | `7a3bd5f` |
+| D71 | 两阶段自更新 + launcher/engine 解耦 + 导航竞态修复 | `9f7393c`、`c62d61a` |
+| D72 | PWA 一键提取第一阶段：路径契约、extract job、过程预览 | `cad52d1` |
+| D73-1~4 | 提取 job 跨 tab 恢复、解释器修复、Playwright 历史、删除 run | `7c4af05` |
+| D73-8 | 发现 0 课程修复：只读 POST 白名单 + `courseFolderId` BFS | `07e9588` |
+| D73-10 | 提取范围收敛为“我教的课” | 本节随附 |
+
+### 11.3 不变口径
+
+- **只读边界**：仅放行 GET/HEAD/OPTIONS + 白名单只读 POST `/mooc2-ans/visit/courselistdata`；其余 POST/PUT/DELETE 一律 abort；发布公告/删除/上传/评分回写等写操作继续冻结。
+- **架构**：Python-first；系统 Python 优先 → Miniconda fallback → venv+pip 保底；uv 仅可选加速，不作运行前置。
+- **更新模型**：PWA 只下载解压到 `_engine/staging` 并写 `update.pending`；旧 engine 停止后由 launcher 安装、失败回滚。
+- **artifact 路径**：run JSON → `xxt_home()/runs/xxt-*.json`；截图 → `xxt_home()/pages/shots/`；兼容旧根目录与 `xxt-pages/shots`。
+- **隐私红线**：真实学生数据、QR、storage JSON、教师工作区数据一律不入库。
+
+### 11.4 规划（建议顺序）
+
+0. **真机验证（前置）**：更新 engine 到最新 → PWA 强刷 → 扫码登录 → 提取；
+   - 确认根目录 + 文件夹课程都能进列表（新版 `.course` / `.course-name` 解析）；
+   - 确认“我教的课”范围生效；
+   - 验证跨 tab job 恢复、Playwright 历史卡、删除 run。
+1. **D73-10 生效复核**：确认提取课程/班级列表不再包含“我学的课”。
+2. **D73-9 旧数据兼容/导入**：legacy run 扫描 + `assist xxt run import <json>`（或 PWA 导入入口），让旧 run JSON 可见。
+3. **D72-5 真实数据预览**：作业纸预览接已批阅样例；批阅报告按 D64-N4 接 submission/图片/转录/评阅（样例需去敏后入库）。
+4. **D72 targets 模式**：先发现课程/班级（默认“我教的课”）→ 勾选 → 提取；保留 `--all` 为快捷方式。
+5. **历史管理增强**：列表显示时间/班级/作业/失败数；清空全部；HTML 存档按 run_id 归档并纳入删除。
+6. **D73-7 状态回执（增强，可穿插）**：`_engine/update.status.json` + PWA 阶段驱动轮询。
+7. **写操作解冻（最后）**：上述全部完成后，先在特殊课程测试，再扩到其他课程，最后上线。
+
+### 11.5 脱敏与推送纪律
+
+- `.gitignore` 已新增忽略 `.feishu4dsh/`：此前 `git status` 会直接列出 `.feishu4dsh/inbox/*/discover-courses.html`（含真实课程页），存在误提交风险。
+- 推送前必须执行 `bash tools/check-secrets.sh`；该脚本默认只检查**已暂存文件**，因此流程应为 `git add` 指定文件 → 检查 → 再 commit。
+- 禁止 `git add -f` 绕过忽略规则；`.scratch/`、`workspace/.runtime/`、`xxt_home()` 下的 `runs/`、`pages/`、QR、storage JSON、run JSON、HTML 存档、截图一律视为潜在真实数据，不入库。
+- 推送网络不稳时使用：`git -c http.version=HTTP/1.1 push origin main`，失败后 sleep 重试。
+
+### 11.6 验证命令
+
+```bash
+pytest engine/tests -q          # 应 86 passed（D73-10 新增 1 条）
+python tools/lint_bat.py
+bash -n tools/start.sh
+cd app && npm run build
+bash tools/check-secrets.sh
+```
