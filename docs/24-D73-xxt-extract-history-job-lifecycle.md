@@ -1,6 +1,6 @@
 # D73 任务需求单：提取任务不中断 + Playwright 浏览器操作历史 + `assist.cli` 导入失败修复
 
-> 状态：**第一阶段已实施（D73-1..D73-5 核心），待真机复测**。
+> 状态：**D73-1..D73-5、D73-8 已实施，待真机复测；D73-7/D73-9 待实施**。
 > 关联：`docs/23-D72-pwa-extract-preview.md`（D72 第一阶段已落地）、
 > `docs/16-xuexitong-integration.md` §20.3 过程预览、§25 D64 预览整合。
 > 来源：2026-10-09 现场实测：
@@ -609,20 +609,86 @@ POST /mooc2-ans/visit/courselistdata
    - 第一版只有 `--all`；
    - “先发现课程/班级 → 勾选 → 提取”未做；
    - targets 上传/默认来源未做。
-3. **发现能力可靠性**：见 D73-8。
 
 ### D73 未完成
 
 1. D73-7 launcher 更新状态回执；
-2. D73-8 课程/班级发现 fallback 与诊断；
-3. D73-9 旧数据兼容/导入；
-4. 历史管理 UI 完善（时间/班级/作业/失败数、清空全部）；
-5. HTML 存档按 run_id 归档后再纳入删除。
+2. D73-9 旧数据兼容/导入；
+3. 历史管理 UI 完善（时间/班级/作业/失败数、清空全部）；
+4. HTML 存档按 run_id 归档后再纳入删除。
+5. D73-8 已实施（只读 POST 白名单 + courseFolderId BFS + 根目录/文件夹课程发现）。
 
 ### 建议顺序
 
-1. D73-8：先让 `--all` 能发现课程/班级（提取链路根）；
-2. D73-7：修 launcher/PWA 更新状态对账；
-3. D73-9：兼容旧数据，让“以前提取过”的数据能被 PWA 看到；
-4. D72-5：作业纸/批阅报告真实预览；
-5. 历史管理与 targets 选择作为收尾增强。
+1. D73-7：修 launcher/PWA 更新状态对账；
+2. D73-9：兼容旧数据，让“以前提取过”的数据能被 PWA 看到；
+3. D72-5：作业纸/批阅报告真实预览（可先用某门已批阅课程/作业纸作为样例）；
+4. 历史管理与 targets 选择作为收尾增强。
+
+---
+
+## 10. D73-8 实施记录（2026-10-10）
+
+### 10.1 route 白名单
+
+`ReadOnlyExtractor` 新增纯函数：
+
+```python
+def readonly_route_decision(method, url) -> "continue"|"abort"
+```
+
+规则：
+
+- `GET/HEAD/OPTIONS` → continue；
+- `POST /mooc2-ans/visit/courselistdata` → continue（只读课程列表接口）；
+- 其余 POST/PUT/DELETE → abort。
+
+即：**放行只读列表 POST，继续拦截所有写操作。**
+
+### 10.2 discover_courses BFS
+
+重写 `ReadOnlyExtractor.discover_courses()`：
+
+1. goto 互动页，等待页面壳；
+2. 读取隐藏字段：
+   `courseType / superstarClass / single / filterFid / from / tchPageHeader / stuPageHeader / isFirefly`；
+3. 对 `courseType=0/1`：
+   - 从 `courseFolderId=0` 开始 BFS；
+   - 通过 `ctx.request.post` 调 `/visit/courselistdata`；
+   - 解析响应 HTML：
+     - `.course` 容器 / `input.courseId` / `.course-name` → 课程；
+     - `a[href*="courseId="]` 兜底；
+     - `li[fileid]` / `intoFolder` → 文件夹；
+   - 文件夹递归；
+4. 课程按 `courseId` 去重；
+5. 每个响应保存到：
+   `pages/discover-courselist-<courseType>-<folderId>.html`；
+6. 每个 folder 写一条 `steps[]`。
+
+### 10.3 实测验证（保留会话，只读）
+
+根目录/文件夹实测：
+
+| courseType | folder | 唯一课程 |
+|---|---:|---:|
+| 0 | 0（根目录） | 6 |
+| 0 | 5210383 在教 | 2 |
+| 0 | 3038132 实验 | 8 |
+| 0 | 2344825 其他 | 13 |
+| 1 | 0（我学的课） | 23 |
+
+合计发现 **52 门唯一课程**。  
+说明“根目录课程 + 文件夹课程”都能被发现；后续可通过 targets 勾选只提取子集。
+
+### 10.4 验证
+
+- `pytest engine/tests -q` → **85 passed**；
+- 新增 `readonly_route_decision` 回归：只放行 GET/HEAD/OPTIONS + 指定只读 POST；
+- 解析器修复：兼容新版 `.course` 卡片结构（封面 `<a>` 无课程名、名称在 `.course-name`）。
+
+### 10.5 边界
+
+- `/visit/courselistdata` 只用于读取列表；
+- 不调用任何发布/删除/上传/评分/公告接口；
+- 学习通侧写操作继续 abort；
+- 后续 D72/D73 全部完成前，不在真实课程上做任何写测试。

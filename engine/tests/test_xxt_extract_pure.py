@@ -1,6 +1,8 @@
 """D63 T4 纯函数回归：wid15 计数解析 + 未交差集 + 锚点检查（不触网）。"""
 
-from assist.xxt.extractor import anchor_check, parse_count_token, submitted_name_set, unsubmitted_diff
+from assist.xxt.extractor import (
+    anchor_check, parse_count_token, readonly_route_decision, submitted_name_set, unsubmitted_diff,
+)
 
 LI = ('<div class="wid15"><p class="piyuePcon color3"><span class="color1">'
       '<em class="fs28" style="margin-right:5px">0</em>待批 </span>'
@@ -38,3 +40,11 @@ def test_anchor_check():
 def test_submitted_name_set():
     assert submitted_name_set({"submitted_names": [{"name": " a "}, {"name": ""},
                                                    {"name": "b"}]}) == {"a", "b"}
+
+def test_readonly_route_decision_whitelists_courselist_post():
+    assert readonly_route_decision("GET", "https://mooc2-ans.chaoxing.com/visit/interaction") == "continue"
+    assert readonly_route_decision(
+        "POST", "https://mooc2-ans.chaoxing.com/mooc2-ans/visit/courselistdata") == "continue"
+    assert readonly_route_decision(
+        "POST", "https://mooc2-ans.chaoxing.com/mooc2-ans/work/submit") == "abort"
+    assert readonly_route_decision("DELETE", "https://mooc2-ans.chaoxing.com/x") == "abort"

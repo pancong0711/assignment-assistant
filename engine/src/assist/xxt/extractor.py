@@ -74,18 +74,117 @@ JS_NOTICES = """() => {
 }"""
 
 
-JS_COURSES = r"""() => {
-  const items=[];
-  document.querySelectorAll('a[href*="courseId="]').forEach(a=>{
-    const href=a.getAttribute('href')||'';
-    let text=(a.textContent||'').trim().replace(/\s+/g,' ');
-    const m=href.match(/courseId=(\d+)/);
-    if(m&&text&&text.length<80&&!items.some(x=>x.courseId===m[1])){
-      text=text.replace(/\s+(已结课|进行中|未开始)$/,'').trim();
-      items.push({name:text, courseId:m[1]});
+READONLY_POST_PATHS = ("/mooc2-ans/visit/courselistdata",)
+COURSELIST_URL = BASE + "/visit/courselistdata"
+
+
+def readonly_route_decision(method: str, url: str) -> str:
+    """D73：只读 POST 列表接口放行，其余写操作继续 abort。"""
+    m = (method or "").upper()
+    if m in ("GET", "HEAD", "OPTIONS"):
+        return "continue"
+    if m == "POST" and any(p in (url or "") for p in READONLY_POST_PATHS):
+        return "continue"
+    return "abort"
+
+
+JS_DISCOVER_INFO = r"""() => {
+  const val=id=>{const e=document.getElementById(id); return e?e.value:'';};
+  const courses=[]; const cseen=new Set();
+  const pushCourse=(id,name)=>{
+    id=String(id||''); if(!id||cseen.has(id)) return;
+    const text=String(name||'').trim().replace(/\s+/g,' ')
+      .replace(/\s+(已结课|进行中|未开始)$/,'').trim();
+    if(!text) return;
+    cseen.add(id); courses.push({name:text.slice(0,80), courseId:id});
+  };
+  document.querySelectorAll('.course, [id^="c_"]').forEach(box=>{
+    let id='';
+    const inp=box.querySelector('input.courseId, input[name="courseId"]');
+    if(inp) id=inp.value||'';
+    if(!id){
+      const a=box.querySelector('a[href*="courseId="]');
+      if(a){ const m=(a.getAttribute('href')||'').match(/courseId=(\d+)/i); if(m) id=m[1]; }
     }
+    const el=box.querySelector('.course-name, h3 .course-name, h3');
+    pushCourse(id, el?el.textContent:box.textContent);
   });
-  return items;
+  document.querySelectorAll('a[href*="courseId="]').forEach(a=>{
+    const m=(a.getAttribute('href')||'').match(/courseId=(\d+)/i); if(!m) return;
+    const box=a.closest('.course, li, [id^="c_"]');
+    const el=box?box.querySelector('.course-name, h3 .course-name, h3'):null;
+    pushCourse(m[1], el?el.textContent:(a.getAttribute('title')||a.textContent));
+  });
+  const folders=[]; const fseen=new Set();
+  document.querySelectorAll('#fileList li[fileid], [onclick*="intoFolder"], [onclick*="getFileCourseList"]').forEach(el=>{
+    let id=el.getAttribute('fileid')||'';
+    if(!id){
+      const oc=el.getAttribute('onclick')||'';
+      const m=oc.match(/(?:intoFolder|getFileCourseList)\([^,]*?,?\s*['"]?(\d+)['"]?/);
+      if(m) id=m[1];
+    }
+    if(!id||fseen.has(id)) return; fseen.add(id);
+    const h=el.querySelector('h3.file-name');
+    const name=(h?h.textContent:el.textContent||'').trim().replace(/\s+/g,' ').slice(0,80);
+    folders.push({folderId:id, name});
+  });
+  return {
+    defaults: {
+      courseType: val('courseType') || '0',
+      superstarClass: val('superstarClass') || '0',
+      single: val('single') || '0',
+      filterFid: val('filterFid') || '',
+      from: val('from') || '',
+      tchPageHeader: val('tchPageHeader') || '-1',
+      stuPageHeader: val('stuPageHeader') || '-1',
+      isFirefly: val('isFirefly') || '0'
+    },
+    courses, folders
+  };
+}"""
+
+
+JS_PARSE_COURSELIST_HTML = r"""(html) => {
+  const d=document.createElement('div'); d.innerHTML=html||'';
+  const courses=[]; const cseen=new Set();
+  const pushCourse=(id,name)=>{
+    id=String(id||''); if(!id||cseen.has(id)) return;
+    const text=String(name||'').trim().replace(/\s+/g,' ')
+      .replace(/\s+(已结课|进行中|未开始)$/,'').trim();
+    if(!text) return;
+    cseen.add(id); courses.push({name:text.slice(0,80), courseId:id});
+  };
+  d.querySelectorAll('.course, [id^="c_"]').forEach(box=>{
+    let id='';
+    const inp=box.querySelector('input.courseId, input[name="courseId"]');
+    if(inp) id=inp.value||'';
+    if(!id){
+      const a=box.querySelector('a[href*="courseId="]');
+      if(a){ const m=(a.getAttribute('href')||'').match(/courseId=(\d+)/i); if(m) id=m[1]; }
+    }
+    const el=box.querySelector('.course-name, h3 .course-name, h3');
+    pushCourse(id, el?el.textContent:box.textContent);
+  });
+  d.querySelectorAll('a[href*="courseId="]').forEach(a=>{
+    const m=(a.getAttribute('href')||'').match(/courseId=(\d+)/i); if(!m) return;
+    const box=a.closest('.course, li, [id^="c_"]');
+    const el=box?box.querySelector('.course-name, h3 .course-name, h3'):null;
+    pushCourse(m[1], el?el.textContent:(a.getAttribute('title')||a.textContent));
+  });
+  const folders=[]; const fseen=new Set();
+  d.querySelectorAll('li[fileid], [onclick*="intoFolder"], [onclick*="getFileCourseList"]').forEach(el=>{
+    let id=el.getAttribute('fileid')||'';
+    if(!id){
+      const oc=el.getAttribute('onclick')||'';
+      const m=oc.match(/(?:intoFolder|getFileCourseList)\([^,]*?,?\s*['"]?(\d+)['"]?/);
+      if(m) id=m[1];
+    }
+    if(!id||fseen.has(id)) return; fseen.add(id);
+    const h=el.querySelector('h3.file-name');
+    const name=(h?h.textContent:el.textContent||'').trim().replace(/\s+/g,' ').slice(0,80);
+    folders.push({folderId:id, name});
+  });
+  return {courses, folders};
 }"""
 
 JS_CLASSES = r"""() => {
@@ -134,9 +233,9 @@ class ReadOnlyExtractor:
 
     def _install_readonly_route(self):
         def route_handler(route, request):
-            if request.method.upper() not in ("GET", "HEAD", "OPTIONS"):
-                return route.abort()
-            return route.continue_()
+            if readonly_route_decision(request.method, request.url) == "continue":
+                return route.continue_()
+            return route.abort()
         self.ctx.route("**/*", route_handler)
 
     def archive(self, name: str):
@@ -147,14 +246,103 @@ class ReadOnlyExtractor:
             except Exception:
                 pass
 
+    def _archive_text(self, name: str, text: str) -> None:
+        """保存接口返回 HTML 片段（用于发现诊断）。"""
+        if not self.archive_dir:
+            return
+        try:
+            (Path(self.archive_dir) / f"{name}.html").write_text(text, encoding="utf-8")
+        except Exception:
+            pass
+
+    def _switch_course_type(self, course_type: str) -> None:
+        """D73：切换“我教的课/我学的课”，仅点击 tab，不写改删。"""
+        sel = "#myTeach" if course_type == "0" else "#myLearn"
+        try:
+            loc = self.page.locator(sel)
+            if loc.count() > 0:
+                loc.first.click(timeout=3000)
+                self.page.wait_for_timeout(2000)
+        except Exception:
+            pass
+
+    def _request_courselist(self, course_type: str, folder_id: str, defaults: dict) -> str:
+        """D73：只读 POST 课程列表接口；不依赖页面 route 拦截。"""
+        page_header = defaults.get("stuPageHeader") if course_type == "1" else defaults.get("tchPageHeader")
+        form = {
+            "courseType": course_type,
+            "courseFolderId": str(folder_id),
+            "query": "",
+            "pageHeader": page_header or "-1",
+            "single": defaults.get("single") or "0",
+            "superstarClass": defaults.get("superstarClass") or "0",
+            "isFirefly": defaults.get("isFirefly") or "0",
+            "fid": defaults.get("filterFid") or "",
+            "from": defaults.get("from") or "",
+        }
+        resp = self.ctx.request.post(COURSELIST_URL, form=form, timeout=30000)
+        text = resp.text()
+        self._archive_text(f"discover-courselist-{course_type}-{folder_id}", text)
+        return text
+
     def discover_courses(self) -> list:
-        """D72：从互动页扫描当前账户课程（借鉴 .scratch/xxt_readonly_extract.py）。"""
+        """D73：根目录 + 课程文件夹 BFS 发现全部课程（只读列表 POST）。
+
+        旧实现只扫一次 a[href*="courseId="]，根目录为空时即失败；
+        新实现兼容 courseFolderId 递归，并放行只读列表 POST。
+        """
         self.page.goto(f"{BASE}/visit/interaction",
                        wait_until="domcontentloaded", timeout=60000)
         self.page.wait_for_timeout(5000)
         self.archive("discover-courses")
-        self._step("发现课程列表", "", self.page.title())
-        return self.page.evaluate(JS_COURSES)
+        initial = self.page.evaluate(JS_DISCOVER_INFO)
+        defaults = initial.get("defaults") or {}
+        results: dict[str, dict] = {}
+
+        for course_type in ("0", "1"):
+            self._switch_course_type(course_type)
+            state = self.page.evaluate(JS_DISCOVER_INFO)
+            queue: list[str] = ["0"]
+            for f in state.get("folders") or []:
+                fid = str(f.get("folderId") or "")
+                if fid and fid not in queue:
+                    queue.append(fid)
+            # 根目录 DOM 里已有的课程也先计入（可能是不需要 AJAX 的账号）
+            for c in state.get("courses") or []:
+                results.setdefault(str(c.get("courseId")), {"name": c.get("name") or "", "courseId": str(c.get("courseId"))})
+
+            seen_folders: set[str] = set()
+            while queue:
+                fid = queue.pop(0)
+                if fid in seen_folders:
+                    continue
+                seen_folders.add(fid)
+                try:
+                    html = self._request_courselist(course_type, fid, defaults)
+                    parsed = self.page.evaluate(JS_PARSE_COURSELIST_HTML, html)
+                except Exception as e:  # noqa: BLE001
+                    self._step("发现课程列表失败", f"courseType={course_type} folder={fid}", str(e)[:80])
+                    continue
+                for c in parsed.get("courses") or []:
+                    cid = str(c.get("courseId") or "")
+                    if cid:
+                        results.setdefault(cid, {"name": c.get("name") or "", "courseId": cid})
+                new_folders = 0
+                for f in parsed.get("folders") or []:
+                    nfid = str(f.get("folderId") or "")
+                    if nfid and nfid not in seen_folders:
+                        queue.append(nfid); new_folders += 1
+                self._step("发现课程列表",
+                           f"courseType={course_type} folder={fid} "
+                           f"courses={len(parsed.get('courses') or [])} folders={new_folders}",
+                           self.page.title())
+        if not results:
+            # 最后兜底：当前 DOM anchors（兼容极简页面）
+            for c in (self.page.evaluate(JS_DISCOVER_INFO).get("courses") or []):
+                cid = str(c.get("courseId") or "")
+                if cid:
+                    results[cid] = {"name": c.get("name") or "", "courseId": cid}
+        return list(results.values())
 
     def discover_classes(self, course_id: str) -> list:
         """D72：从课程 work/list 扫描班级（借鉴 .scratch/xxt_readonly_extract.py）。"""
