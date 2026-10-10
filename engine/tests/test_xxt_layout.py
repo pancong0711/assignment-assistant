@@ -47,3 +47,26 @@ def test_delete_run_artifacts(tmp_path):
 
 def test_targets_json_path(tmp_path):
     assert layout.targets_json(tmp_path) == tmp_path / "targets.json"
+
+
+def test_run_pages_dir_and_delete(tmp_path):
+    runs = layout.runs_dir(tmp_path); runs.mkdir(parents=True)
+    rp = layout.run_pages_dir("xxt-r2", tmp_path); rp.mkdir(parents=True)
+    (rp / "v2-list-1.html").write_text("x", encoding="utf-8")
+    (runs / "xxt-r2.json").write_text("{}", encoding="utf-8")
+    assert layout.run_pages_dir("xxt-r2", tmp_path) == tmp_path / "pages" / "runs" / "xxt-r2"
+    removed = layout.delete_run_artifacts("xxt-r2", tmp_path)
+    assert not rp.exists() and not (runs / "xxt-r2.json").exists()
+    assert any("v2-list-1.html" in x for x in removed)
+
+
+def test_clear_runs_keeps_session_files(tmp_path):
+    runs = layout.runs_dir(tmp_path); runs.mkdir(parents=True)
+    (runs / "xxt-r3.json").write_text('{"run_id": "xxt-r3"}', encoding="utf-8")
+    (tmp_path / "xxt-storage.json").write_text("{}", encoding="utf-8")
+    (tmp_path / "xxt-login-state.json").write_text("{}", encoding="utf-8")
+    res = layout.clear_runs(tmp_path)
+    assert res["runs"] == ["xxt-r3"]
+    assert not (runs / "xxt-r3.json").exists()
+    assert (tmp_path / "xxt-storage.json").exists()
+    assert (tmp_path / "xxt-login-state.json").exists()

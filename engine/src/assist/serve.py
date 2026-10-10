@@ -700,6 +700,10 @@ class Handler(BaseHTTPRequestHandler):
                 return
             self._json({"ok": True, "imported": summary})
             return
+        if u.path == "/xxt/runs/clear":
+            res = xxt_layout.clear_runs(_xxt_home())
+            self._json({"ok": True, **res})
+            return
         if (m_del := re.fullmatch(r"/xxt/run/([A-Za-z0-9\-]+)/delete", u.path)):
             run_id = m_del.group(1)
             if not re.fullmatch(r"xxt-[0-9A-Za-z\-]+", run_id):

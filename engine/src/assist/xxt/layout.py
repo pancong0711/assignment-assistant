@@ -5,6 +5,8 @@ CLI `xxt extract` 与 serve `/xxt/*` 必须共用这里，避免再次出现
 """
 from __future__ import annotations
 
+import json
+import shutil
 from pathlib import Path
 
 _EXCLUDE_NAMES = {
@@ -41,6 +43,15 @@ def shots_dir(home: "Path | str | None" = None) -> Path:
 
 def _legacy_shots_dir(home: "Path | str | None" = None) -> Path:
     return _home(home) / "xxt-pages" / "shots"
+
+
+def run_pages_dir(run_id: str, home: "Path | str | None" = None) -> Path:
+    """D73-11：单条 run 的 HTML 存档目录（pages/runs/<run_id>/）。
+
+    新契约：每个 run 的 HTML 存档独立归档，删除 run 时可一并删除；
+    旧版平铺在 pages/ 根目录的存档仍兼容读取，但不随单 run 删除（跨 run 共享）。
+    """
+    return pages_dir(home) / "runs" / run_id
 
 
 def run_json_files(home: "Path | str | None" = None) -> list[Path]:
@@ -99,4 +110,29 @@ def delete_run_artifacts(run_id: str, home: "Path | str | None" = None) -> list[
             if p.is_file():
                 p.unlink()
                 removed.append(str(p))
+    # D73-11：run 级 HTML 存档目录
+    rp = run_pages_dir(run_id, home)
+    if rp.is_dir():
+        removed.extend(str(p) for p in rp.rglob("*") if p.is_file())
+        shutil.rmtree(rp, ignore_errors=True)
     return removed
+
+
+def clear_runs(home: "Path | str | None" = None) -> dict:
+    """D73-11：清空全部 run（JSON + run 级截图 + run 级 HTML 存档）。
+
+    只处理 run_json_files() 识别出的 run；会话文件（xxt-storage 等）永不触碰。
+    """
+    home = _home(home)
+    run_ids: list[str] = []
+    seen: set[str] = set()
+    for f in run_json_files(home):
+        stem = f.stem
+        if stem in seen:
+            continue
+        seen.add(stem)
+        run_ids.append(stem)
+    removed: list[str] = []
+    for rid in run_ids:
+        removed.extend(delete_run_artifacts(rid, home))
+    return {"runs": run_ids, "removed": removed}

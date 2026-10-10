@@ -213,8 +213,11 @@ def parse_count_token(li_html: str, label: str) -> "int | None":
 class ReadOnlyExtractor:
     """单 page 会话内的逐班只读提取器（route 层拦截写请求=反记忆化防线）。"""
 
-    def __init__(self, ctx, page, archive_dir: "Path | None" = None):
+    def __init__(self, ctx, page, archive_dir: "Path | None" = None,
+                 html_dir: "Path | None" = None):
         self.ctx, self.page, self.archive_dir = ctx, page, archive_dir
+        # D73-11：HTML 存档可与截图目录分离（run_extract 传入 pages/runs/<run_id>）
+        self.html_dir = Path(html_dir) if html_dir is not None else archive_dir
         self.steps: list[dict] = []   # D63 批次三：导航过程事件（20.3 方案 A 数据源）
         self.run_id = ''
         self._install_readonly_route()
@@ -243,19 +246,22 @@ class ReadOnlyExtractor:
         self.ctx.route("**/*", route_handler)
 
     def archive(self, name: str):
-        if self.archive_dir:
+        if self.html_dir:
             try:
-                (Path(self.archive_dir) / f"{name}.html").write_text(
-                    self.page.content(), encoding="utf-8")
+                d = Path(self.html_dir)
+                d.mkdir(parents=True, exist_ok=True)
+                (d / f"{name}.html").write_text(self.page.content(), encoding="utf-8")
             except Exception:
                 pass
 
     def _archive_text(self, name: str, text: str) -> None:
         """保存接口返回 HTML 片段（用于发现诊断）。"""
-        if not self.archive_dir:
+        if not self.html_dir:
             return
         try:
-            (Path(self.archive_dir) / f"{name}.html").write_text(text, encoding="utf-8")
+            d = Path(self.html_dir)
+            d.mkdir(parents=True, exist_ok=True)
+            (d / f"{name}.html").write_text(text, encoding="utf-8")
         except Exception:
             pass
 

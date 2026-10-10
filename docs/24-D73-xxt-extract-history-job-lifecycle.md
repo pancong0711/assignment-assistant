@@ -747,7 +747,7 @@ def readonly_route_decision(method, url) -> "continue"|"abort"
 2. **D73-9 旧数据兼容/导入**：legacy run 扫描 + `assist xxt run import <json>`（或 PWA 导入入口），让旧 run JSON 可见。
 3. **D72-5 真实数据预览**：作业纸预览接已批阅样例；批阅报告按 D64-N4 接 submission/图片/转录/评阅（样例需去敏后入库）。
 4. **D72 targets 模式**：先发现课程/班级（默认“我教的课”）→ 勾选 → 提取；保留 `--all` 为快捷方式。
-5. **历史管理增强**：列表显示时间/班级/作业/失败数；清空全部；HTML 存档按 run_id 归档并纳入删除。
+5. **历史管理增强**：列表显示时间/班级/作业/失败数；清空全部；HTML 存档按 run_id 归档并纳入删除。（D73-11 已实施，见 §13）
 6. **D73-7 状态回执（增强，可穿插）**：`_engine/update.status.json` + PWA 阶段驱动轮询。
 7. **写操作解冻（最后）**：上述全部完成后，先在特殊课程测试，再扩到其他课程，最后上线。
 
@@ -877,4 +877,52 @@ assist xxt run list
 1. 真机验收：更新引擎 → 扫码 → 「发现课程/班级」→ 勾选 → 「提取所选」；
    确认清单只含「我教的课」、勾选班正确、跨 tab job 可恢复。
 2. D72-5 真实数据预览（作业纸 → 批阅报告）。
-3. 历史管理增强（时间/班级/作业/失败数、清空全部）。
+3. 历史管理增强（时间/班级/作业/失败数、清空全部）——D73-11 已实施，见 §13。
+
+---
+
+## 13. D73-11 历史管理增强（实施记录，2026-10-10）
+
+### 13.1 HTML 存档按 run 归档
+
+- `ReadOnlyExtractor` 新增可选 `html_dir`：HTML 存档写 `html_dir`，截图仍写 `archive_dir/shots/`
+  （`shot` 字段与 `/xxt/shot/<run>/<file>` 契约不变，ProcessStreamView 不受影响）。
+- `run_extract` 传入 `html_dir = <archive_dir>/runs/<run_id>`，即 `xxt_home()/pages/runs/<run_id>/`；
+  每个 run 的 `v2-list-* / v2-review-* / v2-notice-*` 等 HTML 独立归档，可随 run 删除。
+- `discover_targets` 不传 `html_dir`，发现诊断 HTML 仍平铺在 `pages/` 根目录（跨 run 共享，不随单 run 删除）。
+- 旧版平铺 HTML 兼容读取，但**不纳入单 run 删除**（避免误删其他 run 共用文件）——文档明确此边界。
+
+### 13.2 删除与清空
+
+- `layout.run_pages_dir(run_id, home)` = `pages/runs/<run_id>`；
+- `delete_run_artifacts` 现在删除：run JSON（runs/ 与 home 根目录）+ `shots/<run_id>-*.png`
+  + `pages/runs/<run_id>/` 整目录；
+- 新增 `layout.clear_runs(home)`：对 `run_json_files()` 识别出的全部 run 逐个删除，
+  返回 `{runs, removed}`；**永不触碰** `xxt-storage.json` / `xxt-login-state.json` 等会话文件；
+- serve 新增 `POST /xxt/runs/clear`。
+
+### 13.3 PWA 历史管理卡
+
+- 新增「历史 run 管理」卡：
+  - 列：run_id / 结束时间（缺省用开始时间）/ 班级数 / 作业数 / 失败数；
+  - 操作：载入该 run、🗑 单条删除（JSON + 截图 + run 级 HTML 存档）；
+  - 卡头「🗑 清空全部历史（N）」：二次确认后调用 `/xxt/runs/clear`，清空并刷新；
+- 原有下拉选择器与「删除本 run / 重载本 run」保留，作为快捷入口。
+
+### 13.4 验证
+
+- `engine/tests/test_xxt_layout.py` 新增 2 条：`run_pages_dir` + `delete_run_artifacts` 删除 run 级 HTML、
+  `clear_runs` 保留会话文件；
+- 沙箱等价 harness：4 个 xxt 测试模块共 **26 项全绿**（legacy 8 / targets 5 / layout 7 / extract_pure 6）；
+- `py_compile` 全绿；`vue-tsc --noEmit` 0 err；`npm run build` 成功；
+- 预期完整 `pytest engine/tests -q` = **101 passed**（原 85 + D73-9/D72 的 14 + 本节 2）。
+
+### 13.5 安全边界
+
+- 删除/清空只作用于本机 `xxt_home()` 工件，不触网、不涉及学习通写操作；
+- run JSON / HTML 存档含真实姓名，删除即本地删除；备份请自行在删除前拷贝。
+
+### 13.6 下一步
+
+- D72-5 真实数据预览（作业纸 → 批阅报告）；
+- 真机验收 D72 targets 与历史管理。

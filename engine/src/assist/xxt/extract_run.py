@@ -86,7 +86,9 @@ def run_extract(targets: "list[dict] | None", storage: "Path | str",
         ctx = browser.new_context(storage_state=str(storage),
                                   viewport={'width': 1440, 'height': 1000}, locale='zh-CN')
         page = ctx.new_page()
-        ext = ReadOnlyExtractor(ctx, page, archive_dir)
+        # D73-11：HTML 存档按 run 归档到 pages/runs/<run_id>/，便于随 run 删除
+        ext = ReadOnlyExtractor(ctx, page, archive_dir,
+                                html_dir=Path(archive_dir) / "runs" / run_id)
         ext.run_id = run_id
         # D72：--all 时先在真会话里发现课程/班级，再走同一套逐班提取逻辑。
         if discover_all:

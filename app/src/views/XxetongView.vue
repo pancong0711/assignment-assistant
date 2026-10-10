@@ -1,8 +1,8 @@
 <script setup lang="ts">
 import { computed, onMounted, onUnmounted, ref } from 'vue'
 import {
-  deleteXxtRun, fetchXxtLoginJob, fetchXxtRun, fetchXxtRuns, fetchXxtStatus,
-  fetchXxtTargets, importXxtRun, startXxtDiscover, startXxtExtract,
+  clearXxtRuns, deleteXxtRun, fetchXxtLoginJob, fetchXxtRun, fetchXxtRuns,
+  fetchXxtStatus, fetchXxtTargets, importXxtRun, startXxtDiscover, startXxtExtract,
   startXxtExtractTargets, startXxtLogin,
 } from '../lib/engineClient'
 import { useSettingsStore } from '../stores/settings'
@@ -168,7 +168,7 @@ interface WorkRow {
 }
 interface ClassRow { name: string; classId: string; status: string; works: WorkRow[]; roster?: { total?: number | null } ; notes?: string[] }
 interface CourseRow { name: string; courseId: string; classes: ClassRow[] }
-const runs = ref<{ run_id: string; ts_end?: string; works?: number; failures?: number }[]>([])
+const runs = ref<{ run_id: string; ts_start?: string; ts_end?: string; classes?: number; works?: number; failures?: number }[]>([])
 const extracting = computed(() => xxtJobs.extractJobId !== '')
 const extractSubmitting = ref(false)
 const curRun = ref<string | null>(null)
@@ -450,6 +450,30 @@ async function deleteCurrentRun() {
   }
 }
 
+async function removeRun(id: string) {
+  if (!confirm(`删除历史 run ${id}？将同时删除其 JSON、截图与 run 级 HTML 存档，不可恢复。`)) return
+  try {
+    await deleteXxtRun(engUrl.value, tok.value, id)
+    runMsg.value = `已删除 ${id}`
+    if (curRun.value === id) { curRun.value = null; courses.value = []; loadSteps.value = [] }
+    await refreshRuns()
+  } catch (e) {
+    runMsg.value = `删除失败：${String(e)}`
+  }
+}
+async function clearAllRuns() {
+  if (!runs.value.length) return
+  if (!confirm(`清空全部 ${runs.value.length} 条历史 run？将删除 JSON、run 级截图与 HTML 存档，不可恢复。`)) return
+  try {
+    const n = await clearXxtRuns(engUrl.value, tok.value)
+    curRun.value = null; courses.value = []; loadSteps.value = []
+    runMsg.value = `已清空 ${n} 项历史工件`
+    await refreshRuns()
+  } catch (e) {
+    runMsg.value = `清空失败：${String(e)}`
+  }
+}
+
 const grouped = computed(() => courses.value.map(c => {
   const pass = (cl: ClassRow): boolean => {
     if (isRemoved(cl)) { return false }
@@ -622,6 +646,42 @@ onUnmounted(() => { loginSeq += 1; stopLoginPolling(); stopExtractPolling(); sto
       <p v-else class="hint" style="color:var(--c-muted)">
         点「发现课程/班级」后在此勾选；旧数据可点「导入旧 run JSON」后自动刷新列表。
       </p>
+    </div>
+
+    <!-- D73-11 历史 run 管理：时间/班级/作业/失败数 + 单删/清空（含 run 级 HTML 存档） -->
+    <div class="card" v-if="runs.length">
+      <h3>历史 run 管理
+        <small style="font-weight:400;color:var(--c-muted)">时间 / 班级 / 作业 / 失败数；删除=JSON+截图+run 级 HTML 存档</small>
+        <button class="btn" style="float:right" @click="clearAllRuns">🗑 清空全部历史（{{ runs.length }}）</button>
+      </h3>
+      <div style="max-height:300px; overflow:auto; border:1px solid var(--c-border); border-radius:8px">
+        <table style="width:100%; border-collapse:collapse">
+          <thead>
+            <tr style="position:sticky; top:0; background:var(--c-surface,#fff)">
+              <th style="text-align:left; padding:6px 8px">run</th>
+              <th style="padding:6px 8px">结束时间</th>
+              <th style="padding:6px 8px">班级</th>
+              <th style="padding:6px 8px">作业</th>
+              <th style="padding:6px 8px">失败</th>
+              <th style="padding:6px 8px">操作</th>
+            </tr>
+          </thead>
+          <tbody>
+            <tr v-for="r in runs" :key="r.run_id"
+                :style="r.run_id === curRun ? 'background:var(--c-pin-bg,#fffbe8)' : ''">
+              <td style="padding:6px 8px">{{ r.run_id }}</td>
+              <td style="padding:6px 8px; text-align:center">{{ r.ts_end || r.ts_start || '—' }}</td>
+              <td style="padding:6px 8px; text-align:center">{{ r.classes ?? 0 }}</td>
+              <td style="padding:6px 8px; text-align:center">{{ r.works ?? 0 }}</td>
+              <td style="padding:6px 8px; text-align:center">{{ r.failures ?? 0 }}</td>
+              <td style="padding:6px 8px; text-align:center; white-space:nowrap">
+                <button class="btn" @click="loadRun(r.run_id)">载入</button>
+                <button class="btn" style="margin-left:4px" @click="removeRun(r.run_id)">🗑 删除</button>
+              </td>
+            </tr>
+          </tbody>
+        </table>
+      </div>
     </div>
 
     <!-- 列表卡 -->

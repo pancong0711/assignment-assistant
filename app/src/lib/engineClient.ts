@@ -507,6 +507,22 @@ export async function deleteXxtRun(
   return Array.isArray(o.removed) ? o.removed.length : 0
 }
 
+/** POST /xxt/runs/clear：D73-11 清空全部 run（JSON + run 级截图 + run 级 HTML 存档）。 */
+export async function clearXxtRuns(engineAddr: string, token?: string): Promise<number> {
+  const base = normalizeEngineAddr(engineAddr)
+  const res = await fetch(engineUrlWithToken(base, '/xxt/runs/clear', token), { method: 'POST' })
+  if (!res.ok) {
+    let detail = `HTTP ${res.status}`
+    try {
+      const o = (await res.json()) as { error?: string }
+      if (o?.error) detail = o.error
+    } catch { /* keep status */ }
+    throw new Error(detail)
+  }
+  const o = (await res.json()) as { removed?: string[] }
+  return Array.isArray(o.removed) ? o.removed.length : 0
+}
+
 /** GET /xxt/runs：只读提取 run 清单（engine 本仓/工件目录）。 */
 export async function fetchXxtRuns(engineAddr: string, token?: string): Promise<XxtRunRow[]>
   {
