@@ -778,15 +778,23 @@ bash tools/check-secrets.sh
 - **处置一（非破坏性）**：`git rm --cached` 从当时 HEAD 移除（本地原文件保留），
   `.gitignore` 已覆盖 `.feishu4dsh/`，main 该路径 raw URL 失效。
 - **处置二（历史重写，2026-10-10 已执行）**：经确认后执行 `git filter-branch` 从全部历史移除该路径：
-  - 217 个提交中，自 `43446dc`（含）起共 **136 个提交 SHA 变化**；重写后本地 tip 为 `80259a6`；
+  - 217 个提交中，自 `43446dc`（含）起共 **136 个提交 SHA 变化**；重写后 tip 为 `80259a6`，
+    随后补文档提交为 `b073799`，并已 force-push 同步远端 `refs/heads/main`；
   - 已删除 `refs/original`、过期 reflog 并 `git gc --prune=now`，该照片 blob 在本地对象库已不可达；
   - 旧历史完整备份为 gitignored 的 `.scratch/pii-rewrite-backup/pre-rewrite.bundle`（不入库），
     照片本体另存本地；
   - 文档中受影响的提交短哈希已按 old→new 映射批量更新；本节刻意保留旧哈希 `43446dc` 仅作历史指代。
-- **仍未解决（GitHub 侧）**：
-  - force-push 后 GitHub 服务器可能仍短期缓存旧对象/旧 SHA 页面，需等待 GC 或联系 GitHub Support 回收；
+- **仍未解决（GitHub 侧，2026-10-10 实测）**：
+  - `main` 分支该路径已 404；但旧 `blob/43446dc/...image-919e05` 页面仍返回 **HTTP 200**，
+    说明 GitHub 尚未 GC 不可达对象，知道旧 SHA 的人仍可访问到该照片；
+  - 补救路径（按优先级）：
+    1. 向 GitHub Support 提交 **Private information removal** 请求，附仓库、旧 commit SHA 与文件路径，
+       请其清除缓存视图与不可达对象（推荐，需登录账号操作）；
+    2. 若接受代价，可**删除并重建仓库**（当前仓库公开、0 star / 0 fork / 0 issue，迁移成本低），
+       删除后旧 URL 立即失效，但 GitHub 对删除仓库保留约 90 天恢复窗口；
+    3. 仅等待 GitHub 自动 GC 时间不可控，不建议作为唯一手段。
   - 已被克隆 / fork / 第三方归档（GH Archive 等）的副本无法回收；
-  - 结论：**远端清洁只能保证“从现在起不再有”**，历史泄漏的完全回收存在客观上限。
+  - 结论：**force-push 只保证“main 及此后提交不再包含”，旧 SHA 的完全回收需上述支持请求或重建。**
 - **其余大体积入库图片**：`pwa-*.png`、`local-designer*.png` 经 OCR 抽查仅含界面/帮助文案，
   未发现真实名单；但同样属于“人工确认后才可入库”的范畴。
 - **纪律强化**：
