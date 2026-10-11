@@ -3,11 +3,12 @@ import { computed, onMounted, onUnmounted, ref } from 'vue'
 import type { XxtTargetsDiff, XxtWork, XxtWorksCourse } from '../lib/engineClient'
 import {
   clearXxtRuns, clearXxtTargetsHistory, deleteXxtRun, fetchXxtLoginJob, fetchXxtRun,
-  fetchXxtFreshness, fetchXxtReviewStudents, fetchXxtRuns, fetchXxtStatus, fetchXxtStorage,
-  fetchXxtTargets, fetchXxtWorks, importXxtRun, pruneXxtRuns, startXxtDiscover,
-  startXxtDiscoverWorks, startXxtExtract, startXxtExtractTargets, startXxtLogin,
+  fetchXxtFreshness, fetchXxtReviewIndex, fetchXxtReviewStudents, fetchXxtRuns,
+  fetchXxtStatus, fetchXxtStorage, fetchXxtTargets, fetchXxtWorks, importXxtRun,
+  pruneXxtReview, pruneXxtRuns, startXxtDiscover, startXxtDiscoverWorks, startXxtExtract,
+  startXxtExtractTargets, startXxtLogin, startXxtReviewDownload, xxtReviewFileUrl,
 } from '../lib/engineClient'
-import type { XxtReviewStudent, XxtStorageStats } from '../lib/engineClient'
+import type { XxtReviewImageWork, XxtReviewStudent, XxtStorageStats } from '../lib/engineClient'
 import { useSettingsStore } from '../stores/settings'
 import { useXxtJobsStore } from '../stores/xxtJobs'
 import ProcessStreamView from '../components/ProcessStreamView.vue'
@@ -718,6 +719,75 @@ async function openReview(cl: ClassRow, w: WorkRow) {
 }
 function closeReview() { reviewOpen.value = false }
 
+/* ---------- D75-1c/d：批阅图片（按班级/作业文件夹） ---------- */
+const reviewIndex = ref<XxtReviewImageWork[]>([])
+const reviewIndexStats = ref<{ works?: number; images?: number; bytes?: number }>({})
+const reviewDlMsg = ref('')
+const reviewDlLoading = ref(false)
+let reviewDlTimer: number | undefined
+
+async function loadReviewIndex() {
+  try {
+    const r = await fetchXxtReviewIndex(engUrl.value, tok.value)
+    reviewIndex.value = r.works || []
+    reviewIndexStats.value = r.stats || {}
+  } catch { /* 引擎离线时忽略 */ }
+}
+function reviewFileUrl(item: XxtReviewImageWork, fname: string): string {
+  return xxtReviewFileUrl(engUrl.value, tok.value, item.classId, item.workId, fname)
+}
+function stopReviewDlPolling() {
+  if (reviewDlTimer !== undefined) { window.clearTimeout(reviewDlTimer); reviewDlTimer = undefined }
+}
+function pollReviewDl(jobId: string) {
+  stopReviewDlPolling()
+  const tick = async () => {
+    try {
+      const job = await fetchXxtLoginJob(engUrl.value, tok.value, jobId)
+      if (job.status === 'running') {
+        const line = (job.lines || []).slice(-1)[0]
+        reviewDlMsg.value = line ? `下载中：${line.slice(-120)}` : '下载作答图片/批语中……'
+        reviewDlTimer = window.setTimeout(tick, 1500)
+        return
+      }
+      if (job.status === 'done' && (job.returncode ?? 0) === 0) {
+        await loadReviewIndex()
+        reviewDlMsg.value = '下载完成（见下方「批阅图片」文件夹）'
+      } else {
+        reviewDlMsg.value = `下载失败：${(job.lines || []).slice(-1)[0] || job.status}`
+      }
+    } catch (e) {
+      reviewDlMsg.value = `下载状态查询失败：${String(e)}`
+    } finally {
+      reviewDlLoading.value = false
+    }
+  }
+  void tick()
+}
+async function downloadReview(c: CourseRow, cl: ClassRow, w: WorkRow) {
+  if (reviewDlLoading.value) return
+  reviewDlLoading.value = true
+  reviewDlMsg.value = `正在下载 ${cl.name} · ${w.name} 的作答图片与批语……`
+  try {
+    const jobId = await startXxtReviewDownload(engUrl.value, tok.value, {
+      courseId: c.courseId, classId: cl.classId, workId: w.workId,
+      courseName: c.name, className: cl.name, workName: w.name,
+    })
+    pollReviewDl(jobId)
+  } catch (e) {
+    reviewDlMsg.value = `下载启动失败：${String(e)}`
+    reviewDlLoading.value = false
+  }
+}
+async function pruneReview() {
+  if (!confirm('清理 6 个月前的批阅图片/批语？（按作业文件夹时间，独立于 run 历史清理）')) return
+  try {
+    const n = await pruneXxtReview(engUrl.value, tok.value)
+    reviewDlMsg.value = `已清理 ${n} 个旧作业目录`
+    await loadReviewIndex()
+  } catch (e) { reviewDlMsg.value = `清理失败：${String(e)}` }
+}
+
 async function deleteCurrentRun() {
   if (!curRun.value) return
   const id = curRun.value
@@ -776,13 +846,14 @@ onMounted(() => {
   refreshRuns()
   loadTargets().catch(() => { /* 无历史发现结果时忽略 */ })
   loadWorks().catch(() => { /* 无历史作业清单时忽略 */ })
+  loadReviewIndex().catch(() => { /* 无批阅图片目录时忽略 */ })
   // D73：切换 tab 回来后恢复提取 job 轮询
   if (xxtJobs.extractJobId) {
     runMsg.value = xxtJobs.extractMsg || '提取任务进行中……'
     pollExtractJob(xxtJobs.extractJobId)
   }
 })
-onUnmounted(() => { loginSeq += 1; stopLoginPolling(); stopExtractPolling(); stopDiscoverPolling(); stopWorksPolling() })
+onUnmounted(() => { loginSeq += 1; stopLoginPolling(); stopExtractPolling(); stopDiscoverPolling(); stopWorksPolling(); stopReviewDlPolling() })
 </script>
 
 <template>
@@ -1052,8 +1123,10 @@ onUnmounted(() => { loginSeq += 1; stopLoginPolling(); stopExtractPolling(); sto
                         <td style="padding:2px 4px; text-align:center">{{ w.pending ?? '-' }}</td>
                         <td style="padding:2px 4px; text-align:center">{{ w.submitted ?? '-' }}</td>
                         <td style="padding:2px 4px; text-align:center">{{ w.unsubmitted ?? '-' }}</td>
-                        <td style="padding:2px 4px; text-align:center">
+                        <td style="padding:2px 4px; text-align:center; white-space:nowrap">
                           <button class="btn" style="padding:2px 8px" @click="openReview(cl, w)">👁 预览</button>
+                          <button class="btn" style="padding:2px 8px; margin-left:4px"
+                                  :disabled="reviewDlLoading" @click="downloadReview(g.course, cl, w)">⬇</button>
                         </td>
                       </tr>
                     </tbody>
@@ -1087,6 +1160,29 @@ onUnmounted(() => { loginSeq += 1; stopLoginPolling(); stopExtractPolling(); sto
         暂无列表数据：引擎侧先运行 <code>assist xxt extract --targets …</code> 或在 .scratch 放置 run JSON。
       </p>
     </div>
+    <!-- D75-1d 批阅图片：按班级/作业文件夹 + 6 个月清理 -->
+    <div class="card" v-if="reviewIndex.length || reviewDlMsg">
+      <h3>批阅图片 <small style="font-weight:400;color:var(--c-muted)">按班级/作业分文件夹；图片用「学生_班级+作业_pNN」命名；保留 6 个月，可手动清理</small>
+        <button class="btn" style="float:right" @click="pruneReview">🧹 清理 6 个月前</button>
+      </h3>
+      <p class="hint">
+        共 {{ reviewIndexStats.works ?? 0 }} 个作业目录 / {{ reviewIndexStats.images ?? 0 }} 张图 /
+        {{ fmtBytes(reviewIndexStats.bytes) }}
+        <span v-if="reviewDlMsg">｜{{ reviewDlMsg }}</span>
+      </p>
+      <div v-for="(it, i) in reviewIndex" :key="i"
+           style="border:1px solid var(--c-border); border-radius:8px; padding:8px; margin-bottom:8px">
+        <b>{{ it.className || it.classId }}</b> · {{ it.workName || it.workId }}
+        <span class="hint" style="color:var(--c-muted)">
+          （{{ it.count }} 图 / {{ it.students }} 人 / {{ fmtBytes(it.bytes) }}<template v-if="it.generated_at"> / {{ it.generated_at }}</template>）
+        </span>
+        <div style="display:flex; flex-wrap:wrap; gap:6px; margin-top:6px">
+          <img v-for="f in it.images" :key="f" :src="reviewFileUrl(it, f)" :alt="f"
+               style="width:96px; height:72px; object-fit:cover; border:1px solid var(--c-border); border-radius:4px" />
+        </div>
+      </div>
+    </div>
+
     <!-- D73-11 历史 run 管理：时间/班级/作业/失败数 + 单删/清空（含 run 级 HTML 存档） -->
     <div class="card" v-if="runs.length">
       <h3>历史 run 管理

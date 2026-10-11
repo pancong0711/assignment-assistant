@@ -778,6 +778,52 @@ class Handler(BaseHTTPRequestHandler):
                                    journal_params={"classes": sum(len(c["classes"]) for c in targets)})
             self._json({"ok": True, "job_id": job_id})
             return
+        if u.path in ("/xxt/review/download", "/xxt/review/probe"):
+            payload: dict = {}
+            try:
+                length = int(self.headers.get("Content-Length") or 0)
+                if length:
+                    payload = json.loads(self.rfile.read(length).decode("utf-8")) or {}
+            except Exception as exc:  # noqa: BLE001
+                self._json({"ok": False, "error": f"bad json: {exc}"}, 400)
+                return
+            ids = {k: str(payload.get(k) or "").strip() for k in ("courseId", "classId", "workId")}
+            bad = next((k for k, v in ids.items() if not re.fullmatch(r"[0-9A-Za-z]{1,32}", v)), None)
+            if bad:
+                self._json({"ok": False, "error": f"{bad} 非法"}, 400)
+                return
+            home = _xxt_home()
+            env = _xxt_env(home)
+            cwd = str(_ws())
+            ok, detail = _xxt_preflight(cwd, env)
+            if not ok:
+                self._json({"ok": False, "error": "engine 无法 import assist.cli",
+                            "detail": detail}, 500)
+                return
+            is_probe = u.path.endswith("/probe")
+            args = ["xxt", "review-probe" if is_probe else "review-download",
+                    "--course", ids["courseId"], "--class", ids["classId"], "--work", ids["workId"]]
+            if not is_probe:
+                for key, flag in (("courseName", "--course-name"), ("className", "--class-name"),
+                                  ("workName", "--work-name")):
+                    if payload.get(key):
+                        args += [flag, str(payload[key])[:80]]
+                if payload.get("limit"):
+                    args += ["--limit", str(int(payload["limit"]))]
+            else:
+                args += ["--sample", str(int(payload.get("sample") or 1))]
+            for pat in (payload.get("allowPost") or [])[:20]:
+                args += ["--allow-post", str(pat)[:200]]
+            if payload.get("fallback"):
+                args.append("--fallback")
+            job_id = secrets.token_urlsafe(6)
+            self._start_stream_job(job_id, _xxt_cli_cmd(args), env,
+                                   "xxt_review_probe" if is_probe else "xxt_review_download",
+                                   "xxt-review", cwd,
+                                   journal_kind="xxt_review_probe" if is_probe else "xxt_review_download",
+                                   journal_params={"classId": ids["classId"], "workId": ids["workId"]})
+            self._json({"ok": True, "job_id": job_id})
+            return
         if u.path == "/xxt/run/import":
             payload: dict = {}
             try:
@@ -814,6 +860,17 @@ class Handler(BaseHTTPRequestHandler):
             except Exception:  # noqa: BLE001
                 pass
             self._json({"ok": True, "imported": summary})
+            return
+        if u.path == "/xxt/review/prune":
+            from .xxt import review as _review
+            res = _review.prune_review(_xxt_home(), months=6)
+            try:
+                from .xxt import journal as _journal
+                _journal.log_event("xxt_review_prune", home=_xxt_home(), source="pwa",
+                                   params={"removed": res.get("removed_count"), "months": 6})
+            except Exception:  # noqa: BLE001
+                pass
+            self._json({"ok": True, **res})
             return
         if u.path == "/xxt/runs/prune":
             res = xxt_layout.prune_runs(_xxt_home())
@@ -963,6 +1020,29 @@ class Handler(BaseHTTPRequestHandler):
             self.send_response(200)
             self.send_header("Content-Type", "image/png")
             self.send_header("Cache-Control", "no-store, no-cache, must-revalidate")
+            self.send_header("Content-Length", str(len(body)))
+            self.end_headers()
+            self.wfile.write(body)
+            return
+        elif u.path == "/xxt/review/index":
+            from .xxt import review as _review
+            self._json({"ok": True, "works": _review.list_review_works(_xxt_home()),
+                        "stats": _review.review_stats(_xxt_home())})
+            return
+        elif (m_rev := re.fullmatch(r"/xxt/review/file/([0-9A-Za-z\-_]{1,40})/([0-9A-Za-z\-_]{1,40})/([^/]{1,160})", u.path)):
+            from .xxt import review as _review
+            fname = urllib.parse.unquote(m_rev.group(3))
+            fpath = _review.safe_image_path(_xxt_home(), m_rev.group(1), m_rev.group(2), fname)
+            if fpath is None:
+                self._json({"ok": False, "error": "no such image"}, 404)
+                return
+            ctype = {"jpg": "image/jpeg", "jpeg": "image/jpeg", "png": "image/png",
+                     "gif": "image/gif", "webp": "image/webp"}.get(
+                fpath.suffix.lstrip(".").lower(), "application/octet-stream")
+            body = fpath.read_bytes()
+            self.send_response(200)
+            self.send_header("Content-Type", ctype)
+            self.send_header("Cache-Control", "no-store")
             self.send_header("Content-Length", str(len(body)))
             self.end_headers()
             self.wfile.write(body)

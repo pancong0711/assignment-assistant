@@ -22,6 +22,9 @@ MARK_URL = (BASE + "/mooc2-ans/work/mark?courseid={course}&clazzid={clazz}&id={w
             "&prePageNum=1&prePageSize=200&topicid=0&perspectiveType=0")
 NOTICE_URL = (NOTICE_BASE + "/pc/course/notice/myNoticeList?courseid={course}&clazzid={clazz}")
 
+REVIEW_WORK_URL = BASE + "/mooc2-ans/work/library/review-work"
+REVIEW_WORK_URL_OLD = "https://mooc1.chaoxing.com/mooc-ans/work/reviewTheContentNew"
+
 JS_READ = """() => {
   const works=[];
   document.querySelectorAll('[onclick*="viewWork"]').forEach(el=>{
@@ -190,6 +193,61 @@ JS_PARSE_COURSELIST_HTML = r"""(html) => {
   });
   return {courses, folders};
 }"""
+
+JS_REVIEW_DETAIL = r"""() => {
+  const abs = s => !s ? '' : (s.startsWith('//') ? location.protocol + s
+    : (s.startsWith('/') ? location.origin + s : s));
+  const pick = img => img.getAttribute('data-original') || img.getAttribute('src') || '';
+  const imgs = [];
+  document.querySelectorAll('img.ans-ued-img, img[class*="ans-ued"], img.ued-img, ' +
+      'img[class*="studentAnswer"] img, .studentAnswer img').forEach(img => {
+    let src = pick(img);
+    if (!src) return;
+    if (src.includes('photo.chaoxing.com')) return;
+    if (src.includes('eidt.png') || src.includes('editor')) return;
+    if (src.includes('popClose')) return;
+    if (img.naturalWidth > 0 && img.naturalWidth < 100) return;
+    if (img.naturalHeight > 0 && img.naturalHeight < 100) return;
+    imgs.push(abs(src));
+  });
+  const commentEl = document.querySelector('textarea[name="comment"]');
+  const answerEls = Array.from(document.querySelectorAll('textarea[id^="answer"]'));
+  let ueditor0 = '';
+  const ifr = document.getElementById('ueditor_0');
+  if (ifr) {
+    try {
+      const doc = ifr.contentDocument || ifr.contentWindow.document;
+      ueditor0 = doc && doc.body ? doc.body.innerHTML : '';
+    } catch (e) { ueditor0 = ''; }
+  }
+  const scoreEl = document.querySelector('#tmpscore');
+  return {
+    images: Array.from(new Set(imgs)),
+    comment: commentEl ? commentEl.value : '',
+    per_question_comments: answerEls.map(t => t.value || ''),
+    ueditor0,
+    score: scoreEl ? (scoreEl.value || scoreEl.textContent || '') : ''
+  };
+}"""
+
+
+def parse_work_answer_id(review_path: str) -> str:
+    """从 review_path / cz_py data 中解析 workAnswerId（纯函数）。"""
+    m = re.search(r"workAnswerId=(\d+)", review_path or "")
+    return m.group(1) if m else ""
+
+
+def review_work_url(course_id: str, class_id: str, work_id: str,
+                    work_answer_id: str, fallback: bool = False) -> str:
+    if fallback:
+        return (REVIEW_WORK_URL_OLD
+                + f"?workId={work_id}&workAnswerId={work_answer_id}"
+                + f"&courseId={course_id}&classId={class_id}"
+                + "&isdisplaytable=2&mooc=1&isWork=true&firstHeader=2&pageNum=1")
+    return (REVIEW_WORK_URL
+            + f"?courseid={course_id}&clazzid={class_id}"
+            + f"&workId={work_id}&workAnswerId={work_answer_id}")
+
 
 JS_CLASSES = r"""() => {
   const out=[];

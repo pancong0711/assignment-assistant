@@ -30,6 +30,78 @@
 
 ---
 
+## D75-1b · review-probe：只读侦察（已实施，见 docs/24 §17.1）
+
+**目的**：`review-work` 详情页可能像通知页一样用 POST AJAX 加载作答图片/批语（docs/16 §24.1 教训）。
+在放开任何写权限前，先只读侦察「打开一个学生详情页需要哪些请求」。
+
+- CLI：`assist xxt review-probe --course --class --work`（或 `--review-path`）；
+- 行为：GET 放行；所有非 GET 只**记录** `(method,url)` 到 probe JSON（不继续、不写平台）；
+- 同时记录 `img.ans-ued-img` 命中数、两栏批语字段是否可读；
+- 产出：`xxt_home()/runs/xxt-review-probe-<ts>.json`；
+- 依据 probe 结果，把详情页**只读** AJAX 加入 route 白名单，再实现下载。
+
+---
+
+## D75-1c · review-download：作答图片 + 两栏批语（已实施，见 docs/24 §17.2）
+
+**参考旧代码**（`_legacy/2601playwright/src/xuexitong/homeworks.py` + `path_utils.py` + `uploader.py`）：
+
+- 学生列表：`ul.dataBody_td` → `div.py_name`（姓名）、`a.cz_py[data]`（含 `workAnswerId`）、状态、提交时间；
+- 单生作答页：`/mooc2-ans/work/library/review-work?courseid&clazzid&workId&workAnswerId`（旧版兜底 `reviewTheContentNew`）；
+- 图片：`img.ans-ued-img` 等选择器，优先 `data-original`；过滤头像/编辑器图标/小图；
+- 下载：`page.context.request.get(url)`（复用登录会话）；
+- **作业批语**：`textarea[name="comment"]`（UEditor `edui1`）；
+- **题目批语**：`textarea[id^="answer"]`（多个）/ `#ueditor_0` iframe body；
+- 分数：`#tmpscore` 等（用于核对已有批阅结果）。
+
+**命名（采用旧代码的友好命名，用户拍板）**
+
+- 目录：`xxt_home()/pages/review/<classId>/<workId>/`；
+- 图片文件：`{学生名}_{班级名}+{作业名}_pNN.{ext}`（`sanitize_filename`，沿用 `path_utils.build_image_path`）；
+- 兼容：同一目录下额外写 `students.json`，记录映射与两栏批语。
+
+**`students.json`（manifest）字段**
+
+```json
+{
+  "classId": "...", "workId": "...", "courseId": "...",
+  "courseName": "...", "className": "...", "workName": "...",
+  "generated_at": "2026-10-10 20:00:00",
+  "students": [{
+    "studentId": "...", "name": "...", "workAnswerId": "...", "status": "...",
+    "images": ["张三_示例班+热力学作业_p01.jpg", "..."],
+    "comment": "作业批语 HTML/文本",
+    "per_question_comments": ["题目1批语", "题目2批语"],
+    "score": "95"
+  }]
+}
+```
+
+- 说明：`images[]` 记录的就是旧命名文件名；`name`/`studentId`/`workAnswerId` 做映射，
+  两者同时保留，既方便用户阅读，也方便 AI 按 id 索引。
+
+**边界**
+- 只读；不调用任何写接口；
+- 学生图片可能懒加载：`wait_for_selector` + 逐步滚动；
+- 逐生顺序处理 + 延时 + 失败重试；每生写 `steps[]` 便于 PWA 观察。
+
+---
+
+## D75-1d · 批阅图片目录浏览 + 时长清理（已实施，见 docs/24 §17.3）
+
+- 存储：`xxt_home()/pages/review/`（按班级/作业分文件夹）；
+- 接口：
+  - `GET /xxt/review/index`：返回目录树 `{classId, className, works:[{workId, workName, count, bytes, mtime}]}`；
+  - `GET /xxt/review/file/<classId>/<workId>/<filename>`：图片预览；
+  - `POST /xxt/review/prune`：按保留时长清理（默认 **6 个月**，可配）。
+- PWA：新增「批阅图片」区（按班级 → 作业 折叠），展示缩略图/两栏批语/分数；
+  提供「🧹 按 6 个月清理」按钮；**与「历史 run 管理」的清空/容量清理相互独立**。
+- 容量：批阅图片目录大，纳入容量统计但按**时长**清理（用户拍板），不与 50MB/1000 条的 run 规则混用。
+
+---
+
+
 ## D75-2 · 发现作业 UI 修正（已实施，见 docs/24 §16.1）
 
 ### D75-2a 数字含义（1.1 答复）
@@ -66,7 +138,8 @@
 - 图片先压缩/裁剪；一题一图或一页一图；
 - 题目/参考答案/评分标准做成共享前缀（支持 prompt caching 时复用）；
 - 结构化 JSON 输出，减少往返；
-- **Aliyun Batch 调用**：批量转写/批量评阅走 batch，输入价再降约一半；
+- **Aliyun Batch 调用（待核实）**：DashScope batch 通常面向文本模型；**多模态批量是否支持需先验证**。
+  建议：**转写（图片输入）走实时多模态**；**评阅（纯文本、输入很小）走 batch**，输入价再降约一半。
   交互式单条仍走实时接口。
 - 设计 `engine/src/assist/grading/llm_batch.py`：
   - 任务 JSONL（custom_id + request）生成；

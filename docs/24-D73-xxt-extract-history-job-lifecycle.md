@@ -1116,3 +1116,53 @@ REM 4) 重新双击 start.bat（重新下载 engine-main.zip 并安装）
 - 沙箱 harness：上述纯函数测试 + 既有 xxt 模块共 **49 项全绿**；
 - `py_compile` / `lint_bat` / `check-secrets` 通过；`vue-tsc` 0 err；`npm run build` 成功；
 - 全库 `def test_` 计数 **127**，预期 `pytest engine/tests -q` = 127 passed。
+
+---
+
+## 17. D75 第二批实施记录：作答页探针 + 图片/两栏批语下载 + 目录浏览与时长清理（2026-10-10）
+
+### 17.1 D75-1b 只读探针 `review-probe`
+
+- 新增 `xxt/review_download.py::probe_review()` + CLI `assist xxt review-probe --course --class --work [--sample N]`；
+- 打开 mark 列表页 + 前 N 个学生 `review-work` 详情页；
+- 只放行 GET/HEAD/OPTIONS（+ `--allow-post` 显式白名单）；其余非 GET **只记录不继续**，
+  产出 `pages/review-probe-<ts>.json`（含 aborted 请求、图片/批语字段命中数）。
+- 用途：确认详情页是否需要只读 POST AJAX，再决定 route 白名单；避免误杀内容页。
+
+### 17.2 D75-1c 作答图片 + 两栏批语下载
+
+- `extractor.py` 新增：
+  - `REVIEW_WORK_URL` / `REVIEW_WORK_URL_OLD`；
+  - `JS_REVIEW_DETAIL`：图片（`img.ans-ued-img` 等，优先 `data-original`，过滤头像/图标/小图）、
+    **作业批语** `textarea[name="comment"]`、**题目批语** `textarea[id^="answer"]`/`#ueditor_0`、分数 `#tmpscore`；
+  - `parse_work_answer_id` / `review_work_url`（纯函数）。
+- `review_download.py::download_review()`：mark 列表取学生（姓名 + workAnswerId）→ 逐生详情页 →
+  `ctx.request.get(url)`（复用会话）下载图片 → 写 `students.json`；顺序执行、失败留痕、可 `--limit`。
+- CLI：`assist xxt review-download --course --class --work [--course-name --class-name --work-name]
+  [--limit N] [--months 6] [--allow-post ...] [--fallback]`。
+
+### 17.3 D75-1d 目录/命名/清理
+
+- 新增 `xxt/review.py`（纯逻辑）：
+  - 目录 `xxt_home()/pages/review/<classId>/<workId>/`；
+  - 友好命名 `{学生}_{班级}+{作业}_pNN.ext`（沿用旧代码 `path_utils.build_image_path` 口径）；
+  - `students.json` manifest：course/class/work 名称、studentId/name/workAnswerId、
+    `images[]`（旧命名文件列表）、`comment`（作业批语）、`per_question_comments`（题目批语）、`score`；
+  - `list_review_works` / `review_stats` / `prune_review(months=6)`；防目录穿越 `safe_image_path`。
+- serve：`POST /xxt/review/download`、`POST /xxt/review/probe`（stream job）、
+  `GET /xxt/review/index`、`GET /xxt/review/file/<classId>/<workId>/<fname>`、`POST /xxt/review/prune`；
+- PWA：结果卡每个作业新增「⬇」下载；新增「批阅图片」卡按班级/作业文件夹展示缩略图 +
+  数量/大小/时间 + 「🧹 清理 6 个月前」（**独立于 run 历史清理**）。
+
+### 17.4 验证与真机步骤
+
+- 沙箱 harness：9 个 xxt 测试模块共 **53 项全绿**（新增 review 4 项）；`py_compile` / `lint_bat` /
+  `check-secrets` 通过；`vue-tsc` 0 err；`npm run build` 成功；
+- 全库 `def test_` 计数 **131**，预期 `pytest engine/tests -q` = 131 passed。
+- 真机建议顺序：
+  1. 先 `assist xxt review-probe --course .. --class .. --work .. --sample 1`，
+     查看 `review-probe-*.json` 的 `aborted`（是否需要只读 POST 白名单）与 `details` 字段命中；
+  2. 若 aborted 为空且 details 有图片/批语 → 直接 `review-download`；
+     若 aborted 有只读 AJAX → 用 `--allow-post <子串>` 重跑探针验证，再下载；
+  3. PWA 更新引擎后，结果卡点「⬇」下载，再看「批阅图片」文件夹与清理按钮。
+- 已知边界：`JS_REVIEW_DETAIL` 的选择器沿用旧代码，可能有形态漂移；以 probe 的 `details` 命中为准。

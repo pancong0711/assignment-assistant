@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import json
+import time
 from pathlib import Path
 
 import click
@@ -167,6 +168,73 @@ def register(group: click.Group) -> None:
         _journal("xxt_discover_works", result="fail", error=str(rep.get("error") or "")[:200])
         click.echo(json.dumps(rep, ensure_ascii=False, indent=1))
         raise SystemExit(2)
+
+    @group.command("review-probe")
+    @click.option("--course", "course_id", required=True)
+    @click.option("--class", "class_id", required=True)
+    @click.option("--work", "work_id", required=True)
+    @click.option("--sample", default=1, type=int, help="打开前 N 个学生详情页做侦察")
+    @click.option("--out", "out", default=None, type=click.Path(dir_okay=False))
+    @click.option("--storage", "storage", default=None, type=click.Path(dir_okay=False))
+    @click.option("--fallback", is_flag=True, default=False, help="使用旧版 review 页 URL")
+    @click.option("--allow-post", "allow_post", multiple=True, help="额外放行的只读 POST URL 子串（可多次）")
+    def xxt_review_probe(course_id, class_id, work_id, sample, out, storage, fallback, allow_post):
+        """只读侦察学生作答页：记录被拦截的非 GET 请求与图片/批语字段命中。"""
+        from . import layout
+        from .review_download import probe_review
+        rep = probe_review(storage or default_storage(None), course_id, class_id, work_id,
+                           sample=sample, use_fallback=fallback, allow_post=list(allow_post))
+        out_path = Path(out) if out else (
+            layout.pages_dir() / f"review-probe-{time.strftime('%Y%m%d-%H%M%S')}.json")
+        out_path.parent.mkdir(parents=True, exist_ok=True)
+        out_path.write_text(json.dumps(rep, ensure_ascii=False, indent=1), encoding="utf-8")
+        _journal("xxt_review_probe",
+                 params={"classId": class_id, "workId": work_id,
+                         "students": len(rep.get("students") or []),
+                         "aborted": len(rep.get("aborted") or [])},
+                 result="ok" if rep.get("ok") else "fail",
+                 error=str(rep.get("error") or "")[:200])
+        click.echo(json.dumps({"ok": rep.get("ok"), "out": str(out_path),
+                               "students": len(rep.get("students") or []),
+                               "aborted": rep.get("aborted") or [],
+                               "details": rep.get("details") or [],
+                               "error": rep.get("error")}, ensure_ascii=False, indent=1))
+        raise SystemExit(0 if rep.get("ok") else 2)
+
+    @group.command("review-download")
+    @click.option("--course", "course_id", required=True)
+    @click.option("--class", "class_id", required=True)
+    @click.option("--work", "work_id", required=True)
+    @click.option("--course-name", default="", help="用于友好文件名/报告展示")
+    @click.option("--class-name", default="", help="用于友好文件名/报告展示")
+    @click.option("--work-name", default="", help="用于友好文件名/报告展示")
+    @click.option("--limit", default=0, type=int, help="只下载前 N 个学生（0=全部）")
+    @click.option("--months", default=6, type=int, help="下载后自动清理超过 N 个月的旧批阅图片")
+    @click.option("--allow-post", "allow_post", multiple=True, help="放行的只读 POST URL 子串（可多次）")
+    @click.option("--storage", "storage", default=None, type=click.Path(dir_okay=False))
+    @click.option("--fallback", is_flag=True, default=False, help="使用旧版 review 页 URL")
+    def xxt_review_download(course_id, class_id, work_id, course_name, class_name, work_name,
+                            limit, months, allow_post, storage, fallback):
+        """只读下载作答图片 + 两栏批语（作业批语/题目批语），写 students.json。"""
+        from . import layout
+        from .review_download import download_review
+        home = layout.pages_dir().parent
+        rep = download_review(storage or default_storage(None), home,
+                              course_id, class_id, work_id,
+                              course_name=course_name, class_name=class_name,
+                              work_name=work_name, limit=limit, months=months,
+                              allow_post=list(allow_post), use_fallback=fallback)
+        _journal("xxt_review_download",
+                 params={"classId": class_id, "workId": work_id,
+                         "students": rep.get("students"), "images": rep.get("images"),
+                         "aborted": rep.get("aborted")},
+                 result="ok" if rep.get("ok") else "fail",
+                 error=str(rep.get("error") or "")[:200])
+        click.echo(json.dumps({k: rep.get(k) for k in
+                               ("ok", "classId", "workId", "students", "images",
+                                "aborted", "manifest", "out_dir", "error", "pruned")},
+                              ensure_ascii=False, indent=1))
+        raise SystemExit(0 if rep.get("ok") else 2)
 
     @group.group("run")
     def xxt_run():

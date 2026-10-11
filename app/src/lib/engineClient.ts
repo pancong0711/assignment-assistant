@@ -742,3 +742,73 @@ export async function fetchXxtReviewStudents(
     base, `/xxt/preview/students/${encodeURIComponent(classId)}/${encodeURIComponent(workId)}`,
     token))) as XxtReviewStudents
 }
+
+/* ========== D75-1c/d：批阅图片 + 两栏批语 ========== */
+
+export interface XxtReviewImageWork {
+  classId: string
+  workId: string
+  courseId?: string
+  courseName?: string
+  className?: string
+  workName?: string
+  count?: number
+  students?: number
+  bytes?: number
+  mtime?: number
+  generated_at?: string
+  images?: string[]
+}
+
+export interface XxtReviewIndex {
+  works?: XxtReviewImageWork[]
+  stats?: { works?: number; images?: number; bytes?: number }
+}
+
+export async function startXxtReviewDownload(
+  engineAddr: string, token: string | undefined,
+  opts: { courseId: string; classId: string; workId: string
+    courseName?: string; className?: string; workName?: string; limit?: number },
+): Promise<string> {
+  const base = normalizeEngineAddr(engineAddr)
+  const res = await fetch(engineUrlWithToken(base, '/xxt/review/download', token), {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(opts),
+  })
+  if (!res.ok) {
+    let detail = `HTTP ${res.status}`
+    try {
+      const o = (await res.json()) as { error?: string }
+      if (o?.error) detail = o.error
+    } catch { /* keep status */ }
+    throw new Error(detail)
+  }
+  const o = (await res.json()) as { job_id?: string }
+  if (!o?.job_id) throw new Error('引擎未返回 job_id')
+  return o.job_id
+}
+
+export async function fetchXxtReviewIndex(
+  engineAddr: string, token?: string,
+): Promise<XxtReviewIndex> {
+  const base = normalizeEngineAddr(engineAddr)
+  return (await getJson2(engineUrlWithToken(base, '/xxt/review/index', token))) as XxtReviewIndex
+}
+
+export async function pruneXxtReview(engineAddr: string, token?: string): Promise<number> {
+  const base = normalizeEngineAddr(engineAddr)
+  const res = await fetch(engineUrlWithToken(base, '/xxt/review/prune', token), { method: 'POST' })
+  if (!res.ok) throw new Error(`HTTP ${res.status}`)
+  const o = (await res.json()) as { removed_count?: number }
+  return o.removed_count || 0
+}
+
+export function xxtReviewFileUrl(
+  engineAddr: string, token: string | undefined, classId: string, workId: string, fname: string,
+): string {
+  const base = normalizeEngineAddr(engineAddr)
+  return engineUrlWithToken(
+    base, `/xxt/review/file/${encodeURIComponent(classId)}/${encodeURIComponent(workId)}/${encodeURIComponent(fname)}`,
+    token)
+}
