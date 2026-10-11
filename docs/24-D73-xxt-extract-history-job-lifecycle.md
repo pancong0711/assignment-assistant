@@ -1166,3 +1166,52 @@ REM 4) 重新双击 start.bat（重新下载 engine-main.zip 并安装）
      若 aborted 有只读 AJAX → 用 `--allow-post <子串>` 重跑探针验证，再下载；
   3. PWA 更新引擎后，结果卡点「⬇」下载，再看「批阅图片」文件夹与清理按钮。
 - 已知边界：`JS_REVIEW_DETAIL` 的选择器沿用旧代码，可能有形态漂移；以 probe 的 `details` 命中为准。
+
+---
+
+## 18. D75 第三批实施记录：探针 PWA 化 + 平台未交名单 + 逐生两列预览（2026-10-10）
+
+### 18.1 架构原则（用户拍板）
+
+- **engine/CLI = 核心**：与学习通交互、解析、下载、AI 评阅、上传都在 engine/CLI，可独立测试；
+- **PWA = 操作壳/显示层**：按钮 → `/xxt/*` job → 展示；不重写核心逻辑；
+- 测试分工：engine 纯函数/CLI 集成 + PWA 显示/交互测试；每个功能先 CLI 后 PWA。
+
+### 18.2 D75-1e 探针/下载 PWA 化
+
+- serve 新增：
+  - `GET /xxt/review/probe/latest`（读最近 `review-probe-*.json`）；
+  - `GET /xxt/review/work/<classId>/<workId>`（读 `students.json` manifest）。
+- PWA：
+  - 结果卡每个作业新增「🧪」只读探针按钮 → `POST /xxt/review/probe` job → 轮询 →
+    拉取 latest 展示「学生数 / 图片数 / 作业批语长度 / 题目批语栏数 / 分数」；
+  - `aborted` 非 GET 请求以勾选框列出，勾选后存 `localStorage`，下载自动带 `allowPost`；
+  - 批阅图片卡新增「🔄 刷新本区」；下载 job 持久化（`localStorage` + 进入页面恢复轮询）；
+  - index 增加 0 图诊断：`students_total / students_with_images / zero_image_count / zero_image_students`；
+  - 缩略图与逐生预览见 18.4。
+
+### 18.3 D75-2c 平台未交名单（只读）
+
+- `extractor.py` 新增 `JS_STUDENT_ROWS`（读取所有 `dataBody_td` 行，含无批阅按钮的未交行）
+  与 `platform_unsubmitted(rows)` 纯函数（筛 `未交/未提交`）；
+- `extract_class` 每次读 mark 页时同时收集 `unsubmitted_platform`；
+- `run_extract`：
+  - 有名册基准 → `unsubmitted_names = 名册差集`，`unsubmitted_source='roster_diff'`；
+  - 无名册 → 优先平台名单，`unsubmitted_source='platform'`（无则 `'none'`）。
+- 待真机确认：mark 页 `status=0` 是否包含未交行；若不含，用 probe 找「未交」tab 的 `status=`/AJAX 参数，
+  或改用旧代码 `stat2` 统计页路线（见 docs/27 §3）。
+
+### 18.4 D75-4 逐生两列预览（只读部分）
+
+- 「批阅图片」卡每个作业目录新增「👁 逐生预览/旋转」→ 模态：
+  - 左「学生作答」图片列表（点击切换大图；↺/↻ 旋转）；右「批语/评语」
+    （作业批语 + 题目批语，来自 `students.json`）；
+  - 「← 上一位 / 下一位 →」逐生切换；
+  - 0 图学生显示提示；人工批阅（预览/覆盖/增加/取消）与写回平台仍冻结（D75-5）。
+
+### 18.5 验证与剩余
+
+- 沙箱 harness：9 个 xxt 模块 **54 项全绿**；`py_compile` / `lint_bat` / `check-secrets` 通过；
+  `vue-tsc` 0 err；`npm run build` 成功；全库 `def test_` = **132**（预期 pytest 132 passed）。
+- 未完成：D75-3（AI 两段式 + Aliyun batch + provider/base URL）留待下一批；
+  D75-1c/2c 的选择器与未交路由需真机 probe 确认。

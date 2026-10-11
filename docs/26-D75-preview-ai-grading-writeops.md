@@ -223,7 +223,7 @@ batch 任务可提交/下载；base URL 可切换 Aliyun 与自定义并持久�
 
 ## 第三轮讨论记录（2026-10-10，用户问答）
 
-### D75-1e · 探针/下载的 PWA 化（用户不使用终端）
+### D75-1e · 探针/下载的 PWA 化（已实施，见 docs/24 §18.2）
 
 - 探针不应要求用户敲 CLI；改为 PWA 按钮：
   - 「🧪 只读探针」= `POST /xxt/review/probe` job（serve 已有），PWA 轮询 `/jobs/<id>`；
@@ -238,7 +238,7 @@ batch 任务可提交/下载；base URL 可切换 Aliyun 与自定义并持久�
 - 缩略图点击放大：新增 lightbox（大图 + 旋转 + 上一位/下一位）；当前实现只是普通 `<img>`，
   无点击逻辑（这是「预览逻辑」现状）。
 
-### D75-2c · 未交名单从平台只读提取（替代名册差集）
+### D75-2c · 未交名单从平台只读提取（已实施，见 docs/24 §18.3）
 
 - 现状：`unsubmitted_names` 来自 master roster 差集，无名册时显示「无差集或本班无名册基准」。
 - 目标：直接从平台读未交名单。路线见 `docs/27` §3：
@@ -253,7 +253,7 @@ batch 任务可提交/下载；base URL 可切换 Aliyun 与自定义并持久�
 - 移植旧代码 `transcriber.py`（markdown+quality JSON）与 `evaluator.py`（tag 策略 + Python 算分 + 截断重试）。
 - provider/base URL：Aliyun 默认 + 自定义下拉（见 D75-3c）。
 
-### D75-4 · 人工批阅与覆盖（批阅选项卡内）
+### D75-4 · 人工批阅与覆盖（只读两列预览已实施，见 docs/24 §18.4；编辑/写回待解冻）
 
 - 预览形态（用户设想）：
   - 竖版作业：左「学生作答」/ 右「批语」两列；横版作业：上「作答」/ 下「批语」两行；
@@ -296,3 +296,13 @@ batch 任务可提交/下载；base URL 可切换 Aliyun 与自定义并持久�
 - 落地：`engine/pyproject.toml` version 与 `assist/__init__.py __version__` 同步；
   CI 继续发布 commit SHA；更新提示显示「版本 + commit 短号」；
   在 `docs/24`（或 CHANGELOG）记录「版本 → 批次」对照。
+
+
+### D75-0 · 架构原则（用户拍板 2026-10-10）
+
+- **engine/CLI 是核心**：学习通只读/写交互、解析、下载、AI 评阅、上传都在 engine/CLI 实现并可独立测试；
+- **PWA 是操作壳与显示层**：按钮 → `/xxt/*` job → 展示结果；不在 PWA 重写核心逻辑；
+- 测试分工：
+  - engine 侧：纯函数单测 + CLI/ job 集成（可离线 fixture）；
+  - PWA 侧：显示/交互测试（构建、类型、关键状态）；
+  - 每个新功能先有 CLI 路径，再有 PWA 入口（避免只有 UI 无法批量/复现）。

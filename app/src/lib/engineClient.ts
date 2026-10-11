@@ -758,6 +758,10 @@ export interface XxtReviewImageWork {
   mtime?: number
   generated_at?: string
   images?: string[]
+  students_total?: number
+  students_with_images?: number
+  zero_image_count?: number
+  zero_image_students?: string[]
 }
 
 export interface XxtReviewIndex {
@@ -768,7 +772,8 @@ export interface XxtReviewIndex {
 export async function startXxtReviewDownload(
   engineAddr: string, token: string | undefined,
   opts: { courseId: string; classId: string; workId: string
-    courseName?: string; className?: string; workName?: string; limit?: number },
+    courseName?: string; className?: string; workName?: string; limit?: number
+    allowPost?: string[] },
 ): Promise<string> {
   const base = normalizeEngineAddr(engineAddr)
   const res = await fetch(engineUrlWithToken(base, '/xxt/review/download', token), {
@@ -811,4 +816,85 @@ export function xxtReviewFileUrl(
   return engineUrlWithToken(
     base, `/xxt/review/file/${encodeURIComponent(classId)}/${encodeURIComponent(workId)}/${encodeURIComponent(fname)}`,
     token)
+}
+
+/* ========== D75-1e / D75-4：探针 PWA 化 + 逐生预览 ========== */
+
+export interface XxtReviewProbeDetail {
+  name?: string
+  workAnswerId?: string
+  images?: number
+  comment_len?: number
+  per_question_comments?: number
+  score?: string
+  error?: string
+}
+
+export interface XxtReviewProbe {
+  ok?: boolean
+  students?: { name: string; status?: string; workAnswerId: string }[]
+  details?: XxtReviewProbeDetail[]
+  aborted?: { method?: string; url?: string }[]
+  error?: string
+  hint?: string
+}
+
+export async function startXxtReviewProbe(
+  engineAddr: string, token: string | undefined,
+  opts: { courseId: string; classId: string; workId: string; sample?: number },
+): Promise<string> {
+  const base = normalizeEngineAddr(engineAddr)
+  const res = await fetch(engineUrlWithToken(base, '/xxt/review/probe', token), {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(opts),
+  })
+  if (!res.ok) throw new Error(`HTTP ${res.status}`)
+  const o = (await res.json()) as { job_id?: string }
+  if (!o?.job_id) throw new Error('引擎未返回 job_id')
+  return o.job_id
+}
+
+export async function fetchXxtReviewProbeLatest(
+  engineAddr: string, token?: string,
+): Promise<XxtReviewProbe> {
+  const base = normalizeEngineAddr(engineAddr)
+  const res = await fetch(engineUrlWithToken(base, '/xxt/review/probe/latest', token))
+  if (res.status === 404) return { ok: false, error: 'no probe yet' }
+  if (!res.ok) throw new Error(`HTTP ${res.status}`)
+  return (await res.json()) as XxtReviewProbe
+}
+
+export interface XxtReviewManifestStudent {
+  studentId?: string
+  name: string
+  workAnswerId?: string
+  status?: string
+  images?: string[]
+  comment?: string
+  per_question_comments?: string[]
+  ueditor0?: string
+  score?: string
+  error?: string
+}
+
+export interface XxtReviewManifest {
+  ok?: boolean
+  classId?: string
+  workId?: string
+  courseId?: string
+  courseName?: string
+  className?: string
+  workName?: string
+  generated_at?: string
+  students?: XxtReviewManifestStudent[]
+}
+
+export async function fetchXxtReviewWork(
+  engineAddr: string, token: string | undefined, classId: string, workId: string,
+): Promise<XxtReviewManifest> {
+  const base = normalizeEngineAddr(engineAddr)
+  return (await getJson2(engineUrlWithToken(
+    base, `/xxt/review/work/${encodeURIComponent(classId)}/${encodeURIComponent(workId)}`, token,
+  ))) as XxtReviewManifest
 }

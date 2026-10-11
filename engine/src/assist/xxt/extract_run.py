@@ -210,7 +210,12 @@ def run_extract(targets: "list[dict] | None", storage: "Path | str",
                             w['unsubmitted_names'] = d['unsubmitted_names']
                             w['sub_not_in_roster'] = d['sub_not_in_roster']
                         else:
-                            w['unsubmitted_names'] = []
+                            # D75-2c：优先用平台「未交/未提交」名单；无则空
+                            plat = w.get('unsubmitted_platform') or []
+                            w['unsubmitted_names'] = plat
+                            w['unsubmitted_source'] = 'platform' if plat else 'none'
+                        if roster:
+                            w['unsubmitted_source'] = 'roster_diff'
                         w['anchor'] = anchor_check(w, len(roster) if roster else None)
                     if cls_rec['status'] == 'not_extracted':
                         rep['failures'].append({'scope': 'class', 'ref': class_id,

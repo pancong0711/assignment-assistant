@@ -249,6 +249,37 @@ def review_work_url(course_id: str, class_id: str, work_id: str,
             + f"&workId={work_id}&workAnswerId={work_answer_id}")
 
 
+JS_STUDENT_ROWS = r"""() => {
+  const out=[];
+  document.querySelectorAll('ul.dataBody_td').forEach(ul=>{
+    const ne=ul.querySelector('li.taskBody_name div.py_name');
+    if(!ne) return;
+    const name=(ne.textContent||'').trim();
+    if(!name) return;
+    let status='';
+    ul.querySelectorAll('li').forEach(li=>{
+      const t=(li.textContent||'').trim();
+      if(/未交|未提交|待批阅|已批阅|补交|已交/.test(t)) status=t.slice(0,40);
+    });
+    out.push({name, status});
+  });
+  return out;
+}"""
+
+
+def platform_unsubmitted(rows) -> list:
+    """D75-2c：从批阅列表行里筛出平台标注的未交/未提交学生（纯函数）。"""
+    out = []
+    for r in rows or []:
+        if not isinstance(r, dict):
+            continue
+        name = str(r.get("name") or "").strip()
+        st = str(r.get("status") or "")
+        if name and ("未交" in st or "未提交" in st):
+            out.append(name)
+    return sorted(set(out))
+
+
 JS_CLASSES = r"""() => {
   const out=[];
   document.querySelectorAll('li.classli').forEach(li=>{
@@ -493,9 +524,14 @@ class ReadOnlyExtractor:
             self.page.wait_for_timeout(4000)
             self.archive(f"v2-review-{class_id}-{w['workId']}")
             rows = self.page.evaluate(JS_REVIEW)
+            try:
+                stu_rows = self.page.evaluate(JS_STUDENT_ROWS)
+            except Exception:  # noqa: BLE001
+                stu_rows = []
             self._step("作业批阅页读取", f"{w['name'][:30]}", self.page.title())
             rec["works"].append({**w, "source": "list_wid15",
-                                 "submitted_names": rows})
+                                 "submitted_names": rows,
+                                 "unsubmitted_platform": platform_unsubmitted(stu_rows)})
         return rec
 
     def extract_notices(self, course_id: str, class_id: str, settle_ms: int = 4000) -> list:

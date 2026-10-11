@@ -3,12 +3,14 @@ import { computed, onMounted, onUnmounted, ref } from 'vue'
 import type { XxtTargetsDiff, XxtWork, XxtWorksCourse } from '../lib/engineClient'
 import {
   clearXxtRuns, clearXxtTargetsHistory, deleteXxtRun, fetchXxtLoginJob, fetchXxtRun,
-  fetchXxtFreshness, fetchXxtReviewIndex, fetchXxtReviewStudents, fetchXxtRuns,
-  fetchXxtStatus, fetchXxtStorage, fetchXxtTargets, fetchXxtWorks, importXxtRun,
-  pruneXxtReview, pruneXxtRuns, startXxtDiscover, startXxtDiscoverWorks, startXxtExtract,
-  startXxtExtractTargets, startXxtLogin, startXxtReviewDownload, xxtReviewFileUrl,
+  fetchXxtFreshness, fetchXxtReviewIndex, fetchXxtReviewProbeLatest, fetchXxtReviewStudents,
+  fetchXxtReviewWork, fetchXxtRuns, fetchXxtStatus, fetchXxtStorage, fetchXxtTargets,
+  fetchXxtWorks, importXxtRun, pruneXxtReview, pruneXxtRuns, startXxtDiscover,
+  startXxtDiscoverWorks, startXxtExtract, startXxtExtractTargets, startXxtLogin,
+  startXxtReviewDownload, startXxtReviewProbe, xxtReviewFileUrl,
 } from '../lib/engineClient'
-import type { XxtReviewImageWork, XxtReviewStudent, XxtStorageStats } from '../lib/engineClient'
+import type { XxtReviewImageWork, XxtReviewManifestStudent, XxtReviewProbe,
+  XxtReviewStudent, XxtStorageStats } from '../lib/engineClient'
 import { useSettingsStore } from '../stores/settings'
 import { useXxtJobsStore } from '../stores/xxtJobs'
 import ProcessStreamView from '../components/ProcessStreamView.vue'
@@ -751,9 +753,13 @@ function pollReviewDl(jobId: string) {
         return
       }
       if (job.status === 'done' && (job.returncode ?? 0) === 0) {
+        reviewDlJobId.value = ''
+        try { localStorage.removeItem('xxt-review-dl-job') } catch { /* noop */ }
         await loadReviewIndex()
         reviewDlMsg.value = '下载完成（见下方「批阅图片」文件夹）'
       } else {
+        reviewDlJobId.value = ''
+        try { localStorage.removeItem('xxt-review-dl-job') } catch { /* noop */ }
         reviewDlMsg.value = `下载失败：${(job.lines || []).slice(-1)[0] || job.status}`
       }
     } catch (e) {
@@ -772,7 +778,10 @@ async function downloadReview(c: CourseRow, cl: ClassRow, w: WorkRow) {
     const jobId = await startXxtReviewDownload(engUrl.value, tok.value, {
       courseId: c.courseId, classId: cl.classId, workId: w.workId,
       courseName: c.name, className: cl.name, workName: w.name,
+      allowPost: allowPost.value,
     })
+    reviewDlJobId.value = jobId
+    try { localStorage.setItem('xxt-review-dl-job', jobId) } catch { /* noop */ }
     pollReviewDl(jobId)
   } catch (e) {
     reviewDlMsg.value = `下载启动失败：${String(e)}`
@@ -786,6 +795,103 @@ async function pruneReview() {
     reviewDlMsg.value = `已清理 ${n} 个旧作业目录`
     await loadReviewIndex()
   } catch (e) { reviewDlMsg.value = `清理失败：${String(e)}` }
+}
+
+/* ---------- D75-1e/4：探针 PWA 化 + 逐生两列预览 ---------- */
+const allowPost = ref<string[]>(JSON.parse(localStorage.getItem('xxt-review-allow-post') || '[]') as string[])
+const probeLoading = ref(false)
+const probeMsg = ref('')
+const probeResult = ref<XxtReviewProbe | null>(null)
+const reviewDlJobId = ref<string>(localStorage.getItem('xxt-review-dl-job') || '')
+const reviewWorkOpen = ref(false)
+const reviewWorkTitle = ref('')
+const reviewWorkItem = ref<XxtReviewImageWork | null>(null)
+const reviewWorkStudents = ref<XxtReviewManifestStudent[]>([])
+const reviewWorkIdx = ref(0)
+const reviewWorkImgIdx = ref(0)
+const reviewWorkRotate = ref(0)
+const reviewWorkLoading = ref(false)
+const curStudent = computed<XxtReviewManifestStudent | null>(() =>
+  reviewWorkStudents.value[reviewWorkIdx.value] || null)
+const curImages = computed<string[]>(() => curStudent.value?.images || [])
+
+function persistAllowPost() {
+  try { localStorage.setItem('xxt-review-allow-post', JSON.stringify(allowPost.value)) } catch { /* noop */ }
+}
+function toggleAllowPost(url: string) {
+  if (!url) return
+  allowPost.value = allowPost.value.includes(url)
+    ? allowPost.value.filter(x => x !== url) : [...allowPost.value, url]
+  persistAllowPost()
+}
+async function startProbe(c: CourseRow, cl: ClassRow, w: WorkRow) {
+  if (probeLoading.value) return
+  probeLoading.value = true
+  probeMsg.value = `正在只读探针：${cl.name} · ${w.name}……`
+  probeResult.value = null
+  try {
+    const jobId = await startXxtReviewProbe(engUrl.value, tok.value,
+      { courseId: c.courseId, classId: cl.classId, workId: w.workId, sample: 1 })
+    const tick = async () => {
+      try {
+        const job = await fetchXxtLoginJob(engUrl.value, tok.value, jobId)
+        if (job.status === 'running') {
+          const line = (job.lines || []).slice(-1)[0]
+          probeMsg.value = line ? `探针中：${line.slice(-120)}` : '探针中……'
+          window.setTimeout(tick, 1500)
+          return
+        }
+        probeResult.value = await fetchXxtReviewProbeLatest(engUrl.value, tok.value)
+        probeMsg.value = `探针完成：学生 ${probeResult.value.students?.length || 0} 人，`
+          + `被拦截非 GET ${probeResult.value.aborted?.length || 0} 个`
+      } catch (e) {
+        probeMsg.value = `探针失败：${String(e)}`
+      } finally {
+        probeLoading.value = false
+      }
+    }
+    void tick()
+  } catch (e) {
+    probeMsg.value = `探针启动失败：${String(e)}`
+    probeLoading.value = false
+  }
+}
+async function refreshReviewIndex() {
+  await loadReviewIndex()
+  reviewDlMsg.value = '批阅图片目录已刷新'
+}
+async function openReviewWork(it: XxtReviewImageWork) {
+  reviewWorkOpen.value = true
+  reviewWorkItem.value = it
+  reviewWorkTitle.value = `${it.className || it.classId} · ${it.workName || it.workId}`
+  reviewWorkStudents.value = []
+  reviewWorkIdx.value = 0
+  reviewWorkImgIdx.value = 0
+  reviewWorkRotate.value = 0
+  reviewWorkLoading.value = true
+  try {
+    const m = await fetchXxtReviewWork(engUrl.value, tok.value, it.classId, it.workId)
+    reviewWorkStudents.value = m.students || []
+  } catch (e) {
+    reviewDlMsg.value = `读取批阅清单失败：${String(e)}`
+  } finally {
+    reviewWorkLoading.value = false
+  }
+}
+function closeReviewWork() { reviewWorkOpen.value = false }
+function prevStudent() {
+  if (reviewWorkIdx.value > 0) reviewWorkIdx.value -= 1
+  reviewWorkImgIdx.value = 0; reviewWorkRotate.value = 0
+}
+function nextStudent() {
+  if (reviewWorkIdx.value < reviewWorkStudents.value.length - 1) reviewWorkIdx.value += 1
+  reviewWorkImgIdx.value = 0; reviewWorkRotate.value = 0
+}
+function rotateImage(delta: number) {
+  reviewWorkRotate.value = (reviewWorkRotate.value + delta + 360) % 360
+}
+function curImageUrl(f: string): string {
+  return reviewWorkItem.value ? reviewFileUrl(reviewWorkItem.value, f) : ''
 }
 
 async function deleteCurrentRun() {
@@ -847,6 +953,7 @@ onMounted(() => {
   loadTargets().catch(() => { /* 无历史发现结果时忽略 */ })
   loadWorks().catch(() => { /* 无历史作业清单时忽略 */ })
   loadReviewIndex().catch(() => { /* 无批阅图片目录时忽略 */ })
+  if (reviewDlJobId.value) { reviewDlMsg.value = '检测到未完成的下载任务，继续轮询……'; pollReviewDl(reviewDlJobId.value) }
   // D73：切换 tab 回来后恢复提取 job 轮询
   if (xxtJobs.extractJobId) {
     runMsg.value = xxtJobs.extractMsg || '提取任务进行中……'
@@ -1126,6 +1233,8 @@ onUnmounted(() => { loginSeq += 1; stopLoginPolling(); stopExtractPolling(); sto
                         <td style="padding:2px 4px; text-align:center; white-space:nowrap">
                           <button class="btn" style="padding:2px 8px" @click="openReview(cl, w)">👁 预览</button>
                           <button class="btn" style="padding:2px 8px; margin-left:4px"
+                                  :disabled="probeLoading" @click="startProbe(g.course, cl, w)">🧪</button>
+                          <button class="btn" style="padding:2px 8px; margin-left:4px"
                                   :disabled="reviewDlLoading" @click="downloadReview(g.course, cl, w)">⬇</button>
                         </td>
                       </tr>
@@ -1164,18 +1273,43 @@ onUnmounted(() => { loginSeq += 1; stopLoginPolling(); stopExtractPolling(); sto
     <div class="card" v-if="reviewIndex.length || reviewDlMsg">
       <h3>批阅图片 <small style="font-weight:400;color:var(--c-muted)">按班级/作业分文件夹；图片用「学生_班级+作业_pNN」命名；保留 6 个月，可手动清理</small>
         <button class="btn" style="float:right" @click="pruneReview">🧹 清理 6 个月前</button>
+        <button class="btn" style="float:right; margin-right:8px" @click="refreshReviewIndex">🔄 刷新本区</button>
       </h3>
       <p class="hint">
         共 {{ reviewIndexStats.works ?? 0 }} 个作业目录 / {{ reviewIndexStats.images ?? 0 }} 张图 /
         {{ fmtBytes(reviewIndexStats.bytes) }}
         <span v-if="reviewDlMsg">｜{{ reviewDlMsg }}</span>
       </p>
+      <p v-if="probeMsg" class="hint">{{ probeMsg }}</p>
+      <div v-if="probeResult" class="hint"
+           style="border:1px dashed var(--c-border); border-radius:8px; padding:8px; margin:6px 0">
+        <b>探针结果</b>：学生 {{ probeResult.students?.length || 0 }} 人
+        <div v-for="(d, i) in probeResult.details || []" :key="i">
+          {{ d.name }}：图片 {{ d.images }}，作业批语 {{ d.comment_len }} 字，
+          题目批语 {{ d.per_question_comments }} 栏，分数 {{ d.score || '—' }}
+          <span v-if="d.error" style="color:var(--c-danger,#dc2626)">（{{ d.error }}）</span>
+        </div>
+        <div v-if="(probeResult.aborted || []).length" style="margin-top:6px">
+          <b>被拦截的非 GET 请求（勾选=下次下载放行这些只读请求）：</b>
+          <label v-for="(a, i) in probeResult.aborted" :key="i" style="display:block; margin:2px 0">
+            <input type="checkbox" :checked="allowPost.includes(a.url || '')"
+                   @change="toggleAllowPost(a.url || '')" />
+            {{ a.method }} {{ (a.url || '').slice(0, 110) }}
+          </label>
+        </div>
+        <div v-else style="margin-top:4px">没有非 GET 请求被拦截。</div>
+      </div>
       <div v-for="(it, i) in reviewIndex" :key="i"
            style="border:1px solid var(--c-border); border-radius:8px; padding:8px; margin-bottom:8px">
         <b>{{ it.className || it.classId }}</b> · {{ it.workName || it.workId }}
         <span class="hint" style="color:var(--c-muted)">
-          （{{ it.count }} 图 / {{ it.students }} 人 / {{ fmtBytes(it.bytes) }}<template v-if="it.generated_at"> / {{ it.generated_at }}</template>）
+          （{{ it.count }} 图 / {{ it.students }} 人 / 有图 {{ it.students_with_images ?? 0 }} 人 /
+          {{ it.zero_image_count ?? 0 }} 人 0 图 / {{ fmtBytes(it.bytes) }}<template v-if="it.generated_at"> / {{ it.generated_at }}</template>）
         </span>
+        <button class="btn" style="padding:2px 8px; margin-left:8px" @click="openReviewWork(it)">👁 逐生预览/旋转</button>
+        <div v-if="(it.zero_image_students || []).length" class="hint" style="color:#7a5c00">
+          0 图学生：{{ (it.zero_image_students || []).join('、') }}
+        </div>
         <div style="display:flex; flex-wrap:wrap; gap:6px; margin-top:6px">
           <img v-for="f in it.images" :key="f" :src="reviewFileUrl(it, f)" :alt="f"
                style="width:96px; height:72px; object-fit:cover; border:1px solid var(--c-border); border-radius:4px" />
@@ -1258,6 +1392,63 @@ onUnmounted(() => { loginSeq += 1; stopLoginPolling(); stopExtractPolling(); sto
           </tbody>
         </table>
         <p v-else class="hint">没有可显示的学生行。</p>
+      </div>
+    </div>
+    <!-- D75-4 逐生两列预览：作答 | 批语；旋转 / 上一位 / 下一位（只读） -->
+    <div v-if="reviewWorkOpen" @click.self="closeReviewWork"
+         style="position:fixed; inset:0; background:rgba(15,23,42,.5); z-index:85; display:flex; align-items:center; justify-content:center">
+      <div style="background:var(--c-card,#fff); border-radius:12px; max-width:min(1100px,96vw); max-height:90vh; overflow:auto; padding:16px">
+        <h3 style="margin-top:0">逐生预览：{{ reviewWorkTitle }}
+          <span class="hint" style="font-weight:400">（第 {{ reviewWorkIdx + 1 }} / {{ reviewWorkStudents.length }} 位）</span>
+          <button class="btn" style="float:right" @click="closeReviewWork">关闭</button>
+        </h3>
+        <p>
+          <button class="btn" :disabled="reviewWorkIdx <= 0" @click="prevStudent">← 上一位</button>
+          <button class="btn" style="margin-left:6px"
+                  :disabled="reviewWorkIdx >= reviewWorkStudents.length - 1" @click="nextStudent">下一位 →</button>
+          <button class="btn" style="margin-left:12px" @click="rotateImage(-90)">↺ 左旋</button>
+          <button class="btn" style="margin-left:6px" @click="rotateImage(90)">↻ 右旋</button>
+          <span class="hint" style="margin-left:8px">
+            当前学生：{{ curStudent?.name || '—' }} · 分数 {{ curStudent?.score || '—' }}
+          </span>
+        </p>
+        <div v-if="reviewWorkLoading" class="hint">读取中…</div>
+        <div v-else-if="curStudent" style="display:flex; gap:14px; align-items:flex-start; flex-wrap:wrap">
+          <div style="flex:1.2; min-width:280px">
+            <h4>学生作答（{{ curImages.length }} 张）</h4>
+            <div style="display:flex; gap:8px; overflow:auto; border:1px solid var(--c-border); border-radius:8px; padding:6px; align-items:center">
+              <img v-for="(f, i) in curImages" :key="f" :src="curImageUrl(f)" :alt="f"
+                   @click="reviewWorkImgIdx = i"
+                   :style="{ width: reviewWorkImgIdx === i ? '360px' : '110px',
+                             height: reviewWorkImgIdx === i ? 'auto' : '86px',
+                             objectFit: 'contain',
+                             border: reviewWorkImgIdx === i ? '2px solid var(--c-primary,#1d4ed8)' : '1px solid var(--c-border)',
+                             borderRadius: '6px',
+                             transform: `rotate(${reviewWorkRotate}deg)`,
+                             cursor: 'pointer' }" />
+              <span v-if="!curImages.length" class="hint" style="color:#7a5c00">
+                该生 0 图（可用 🧪 探针查看是否被拦截/懒加载）
+              </span>
+            </div>
+          </div>
+          <div style="flex:1; min-width:280px">
+            <h4>批语 / 评语</h4>
+            <div style="border:1px solid var(--c-border); border-radius:8px; padding:8px; min-height:180px">
+              <div><b>作业批语：</b></div>
+              <div style="white-space:pre-wrap; word-break:break-word">{{ curStudent.comment || '（空）' }}</div>
+              <div style="margin-top:8px"><b>题目批语：</b></div>
+              <div v-for="(t, i) in (curStudent.per_question_comments || [])" :key="i"
+                   style="white-space:pre-wrap; word-break:break-word">
+                第 {{ i + 1 }} 题：{{ t || '（空）' }}
+              </div>
+              <div v-if="!(curStudent.per_question_comments || []).length" class="hint">（空）</div>
+            </div>
+            <p class="hint" style="color:var(--c-muted)">
+              人工批阅（预览/覆盖/增加/取消）需写回平台，属写操作；当前冻结，先完成只读预览/审核。
+            </p>
+          </div>
+        </div>
+        <p v-else class="hint">没有学生记录。</p>
       </div>
     </div>
   </section>

@@ -1024,6 +1024,23 @@ class Handler(BaseHTTPRequestHandler):
             self.end_headers()
             self.wfile.write(body)
             return
+        elif u.path == "/xxt/review/probe/latest":
+            from .xxt import review as _review
+            data = _review.latest_probe(_xxt_home())
+            if data is None:
+                self._json({"ok": False, "error": "no probe yet",
+                            "hint": "先点击「🧪 只读探针」"}, 404)
+                return
+            self._json({"ok": True, **data})
+            return
+        elif (m_rw := re.fullmatch(r"/xxt/review/work/([0-9A-Za-z\-_]{1,40})/([0-9A-Za-z\-_]{1,40})", u.path)):
+            from .xxt import review as _review
+            data = _review.read_manifest(_xxt_home(), m_rw.group(1), m_rw.group(2))
+            if data is None:
+                self._json({"ok": False, "error": "no manifest"}, 404)
+                return
+            self._json({"ok": True, **data})
+            return
         elif u.path == "/xxt/review/index":
             from .xxt import review as _review
             self._json({"ok": True, "works": _review.list_review_works(_xxt_home()),

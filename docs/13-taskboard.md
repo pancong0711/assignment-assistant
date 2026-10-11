@@ -1233,3 +1233,15 @@ applyManualTranslation/setTranslationRatio 中 setTranslationRatio 保留——�
 - D75-4 人工批阅：批阅页逐生两列/两行预览 + 旋转 + 上一位/下一位 + 预览/覆盖/增加/取消；
 - D75-5 覆盖写操作：清空原批语 + 双栏各写一次 + 快照/回滚；
 - D75-6 引擎版本号策略：按批次 SemVer（0.2.0 只读接入 / 0.3.0 AI 评阅 / 0.4.0 写操作）。
+
+
+---
+
+## D75 第三批 · 探针 PWA 化 / 平台未交 / 逐生两列预览（2026-10-10 实施）
+
+- 架构原则：engine/CLI 核心 + PWA 显示壳（docs/24 §18.1）；
+- D75-1e 探针/下载 PWA 化 + 批阅图片刷新/0 图诊断 + 下载 job 持久化（§18.2）；
+- D75-2c 平台未交名单（`JS_STUDENT_ROWS` + `platform_unsubmitted` + `unsubmitted_source`）（§18.3）；
+- D75-4 逐生两列预览/旋转/上一位下一位（只读）（§18.4）；
+- 剩余：D75-3 AI 两段式/batch/base URL；人工批阅写回（冻结）。
+- 状态：**第三批已实施；待真机验证选择器与未交路由**。

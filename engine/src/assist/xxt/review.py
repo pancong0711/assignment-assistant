@@ -92,6 +92,8 @@ def list_review_works(home=None) -> list[dict]:
                             if p.is_file() and p.suffix.lower() in IMAGE_EXTS)
             total = sum(p.stat().st_size for p in wd.rglob("*") if p.is_file())
             students = manifest.get("students") or []
+            with_img = [s for s in students if s.get("images")]
+            zero = [s.get("name") or s.get("studentId") or "?" for s in students if not s.get("images")]
             out.append({
                 "classId": cd.name, "workId": wd.name,
                 "courseId": str(manifest.get("courseId") or ""),
@@ -102,6 +104,11 @@ def list_review_works(home=None) -> list[dict]:
                 "mtime": wd.stat().st_mtime,
                 "generated_at": manifest.get("generated_at") or "",
                 "images": images,
+                # D75-1e：0 图诊断
+                "students_total": len(students),
+                "students_with_images": len(with_img),
+                "zero_image_count": len(zero),
+                "zero_image_students": zero[:20],
             })
     return sorted(out, key=lambda x: x["mtime"], reverse=True)
 
@@ -133,3 +140,22 @@ def prune_review(home=None, months: int = 6) -> dict:
                     pass
     return {"removed": removed, "removed_count": len(removed),
             "months": months, "stats": review_stats(home)}
+
+
+def latest_probe(home=None) -> "dict | None":
+    """D75-1e：最近一次 review-probe JSON（供 PWA 读取，无需 terminal）。"""
+    from . import layout
+    d = layout.pages_dir(home)
+    if not d.is_dir():
+        return None
+    files = sorted(d.glob("review-probe-*.json"), key=lambda p: p.stat().st_mtime)
+    if not files:
+        return None
+    try:
+        data = json.loads(files[-1].read_text(encoding="utf-8"))
+        if isinstance(data, dict):
+            data["_file"] = str(files[-1])
+            return data
+    except Exception:  # noqa: BLE001
+        return None
+    return None
