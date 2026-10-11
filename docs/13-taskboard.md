@@ -1288,3 +1288,12 @@ applyManualTranslation/setTranslationRatio 中 setTranslationRatio 保留——�
 
 - 6 个月清理 = 删图片、留 students.json 清单（prune_review 调 delete_work_images）；
 - 新增「彻底删除（含清单）」：`purge_review_work` + `/xxt/review/work/<class>/<work>/purge` + PWA 双确认按钮。
+
+
+---
+
+## D75 收尾 · 逐生预览并入发现作业弹窗（2026-10-10）
+
+- 「发现作业」👁 弹窗内新增每生「逐生预览」按钮；已下载直接进入两列模态并定位该生；
+- 未下载则提示先下载；批阅图片卡仍可打开同一模态；
+- 纯 PWA 改动，engine 无变化。

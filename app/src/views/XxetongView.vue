@@ -695,6 +695,7 @@ const reviewStudents = ref<XxtReviewStudent[]>([])
 const reviewScored = ref(0)
 const reviewLoading = ref(false)
 const reviewMsg = ref('')
+const reviewWorkRef = ref<XxtReviewImageWork | null>(null)
 
 async function openReview(cl: ClassRow, w: WorkRow) {
   reviewOpen.value = true
@@ -703,6 +704,8 @@ async function openReview(cl: ClassRow, w: WorkRow) {
   reviewScored.value = 0
   reviewLoading.value = true
   reviewMsg.value = ''
+  reviewWorkRef.value = reviewIndex.value.find(
+    it => it.classId === cl.classId && it.workId === w.workId) || null
   try {
     const r = await fetchXxtReviewStudents(engUrl.value, tok.value, cl.classId, w.workId)
     if (!r.ok) {
@@ -720,6 +723,17 @@ async function openReview(cl: ClassRow, w: WorkRow) {
     reviewLoading.value = false
   }
 }
+async function openStudentPreview(idx: number) {
+  if (!reviewWorkRef.value) {
+    reviewMsg.value = '该作业尚未下载图片/批语：请先点该行的「⬇」下载，再逐生预览。'
+    return
+  }
+  await openReviewWork(reviewWorkRef.value)
+  reviewWorkIdx.value = idx
+  reviewImgIdxReset()
+}
+function reviewImgIdxReset() { reviewWorkImgIdx.value = 0; reviewWorkRotate.value = 0 }
+
 function closeReview() { reviewOpen.value = false }
 
 /* ---------- D75-1c/d：批阅图片（按班级/作业文件夹） ---------- */
@@ -1439,7 +1453,11 @@ onUnmounted(() => { loginSeq += 1; stopLoginPolling(); stopExtractPolling(); sto
         <h3 style="margin-top:0">批阅列表预览：{{ reviewTitle }}
           <button class="btn" style="float:right" @click="closeReview">关闭</button>
         </h3>
-        <p class="hint">{{ reviewMsg }}（数据=本机 review 列表存档；学生照片/评语将在「下载批阅详情」后展示）</p>
+        <p class="hint">
+          {{ reviewMsg }}
+          <template v-if="reviewWorkRef">（已下载图片/批语，可点「逐生预览」查看两列内容）</template>
+          <template v-else>（本机未下载该作业图片/批语；请先点该行「⬇」下载，再逐生预览）</template>
+        </p>
         <div v-if="reviewLoading" class="hint">读取中…</div>
         <table v-else-if="reviewStudents.length" style="width:100%; border-collapse:collapse">
           <thead>
@@ -1447,14 +1465,18 @@ onUnmounted(() => { loginSeq += 1; stopLoginPolling(); stopExtractPolling(); sto
               <th style="text-align:left; padding:6px 8px">学生</th>
               <th style="padding:6px 8px">分数</th>
               <th style="padding:6px 8px">状态</th>
+              <th style="padding:6px 8px">操作</th>
             </tr>
           </thead>
           <tbody>
-            <tr v-for="s in reviewStudents" :key="s.studentId || s.name">
+            <tr v-for="(s, i) in reviewStudents" :key="s.studentId || s.name">
               <td style="padding:5px 8px">{{ s.name }}</td>
               <td style="padding:5px 8px; text-align:center">{{ s.score || '—' }}</td>
               <td style="padding:5px 8px; text-align:center"
-                  :style="{ color: s.graded ? 'var(--c-ok, #16a34a)' : '#7a5c00' }">{{ s.status }}</td>
+                  :style="{ color: s.graded ? 'var(--c-ok, #16a34a)': '#7a5c00' }">{{ s.status }}</td>
+              <td style="padding:5px 8px; text-align:center">
+                <button class="btn" style="padding:2px 8px" @click="openStudentPreview(i)">逐生预览</button>
+              </td>
             </tr>
           </tbody>
         </table>
