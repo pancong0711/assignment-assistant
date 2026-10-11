@@ -1201,3 +1201,19 @@ applyManualTranslation/setTranslationRatio 中 setTranslationRatio 保留——�
   - D74-8 操作前置新鲜度预判（写操作/提取前提示刷新）；
   - D74-9 操作记录/审计日志 + 时间范围导出（JSONL journal，可 replay）。
 - 状态：**已实施（2026-10-10，实施记录 docs/24 §15）**。
+
+
+---
+
+## D75 · 真实预览 + 发现作业 UI + AI 辅助评阅 + 写操作解冻方案（2026-10-10）
+
+- 主任务单：`docs/26-D75-preview-ai-grading-writeops.md`；
+- 背景：D74 真机验收通过（发现课程/班级、发现作业、历史 run、Playwright 历史、操作记录、整页滚动均正常）；
+- 任务：
+  - D75-1 真实预览（D72-5 收尾）：用本机环班 review 存档做样本，作业纸/批阅报告/评分「所见即所发」；
+  - D75-2 发现作业 UI：数字 21/21/3 = 待批/已交/未交；跨课程列对齐 + 多行显示；
+  - D75-3 AI 辅助评阅：转写 markdown + 评阅两段式；token 节省；Aliyun batch 调用；
+    base URL 下拉（Aliyun 默认 + 用户自定义）；
+  - D75-4 CLI 直跑 journal（已实施，待真机确认）；
+  - D75-5 写操作解冻方案：dry-run + 最小权限白名单 + 快照 + 双确认 + 幂等/回滚 + 测试班分阶段。
+- 状态：**需求已整理，按 §建议顺序实施**。

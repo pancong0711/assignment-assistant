@@ -123,6 +123,8 @@ def _xxt_env(home: "Path | str") -> dict:
         "XXT_HOME": str(home),
         "XXT_STORAGE": str(home / "xxt-storage.json"),
         "ASSIST_WORKSPACE": str(_ws()),
+        # D74-9：serve 已记录 job 级 journal；子进程 CLI 不再重复记录
+        "ASSIST_NO_JOURNAL": "1",
     }
     src = _ENGINE_ROOT / "src"
     if src.is_dir():

@@ -13,6 +13,18 @@ def default_storage(ctx) -> Path:
     return resolve_storage_path(None)
 
 
+def _journal(kind: str, *, params=None, result: str = "ok", error: str = "") -> None:
+    """D74-9：CLI 直跑也写全局操作记录；被 serve 套壳时跳过，避免 PWA 侧重复记。"""
+    import os
+    if os.environ.get("ASSIST_NO_JOURNAL"):
+        return
+    try:
+        from . import journal
+        journal.log_event(kind, source="cli", params=params or {}, result=result, error=error)
+    except Exception:  # noqa: BLE001
+        pass
+
+
 def register(group: click.Group) -> None:
     @group.command("install")
     def xxt_install():
@@ -32,6 +44,8 @@ def register(group: click.Group) -> None:
         """会话体检：三信号判活；alive 则 storage_state 回写续期。退出码 0=alive 2=dead。"""
         from .session import check_session
         rep = check_session(storage or default_storage(None), json_out, html_out)
+        _journal("xxt_check", result="ok" if rep.get("verdict") == "alive" else "fail",
+                 error=str(rep.get("verdict") or "unknown"))
         click.echo(json.dumps({k: v for k, v in rep.items() if k != "markers"} |
                               {"markers": rep.get("markers")}, ensure_ascii=False, indent=1))
         raise SystemExit(0 if rep.get("verdict") == "alive" else 2)
@@ -75,6 +89,13 @@ def register(group: click.Group) -> None:
                    'classes': sum(len(c.get('classes', [])) for c in rep.get('courses', [])),
                    'works': sum(len(c2.get('works', [])) for c in rep.get('courses', [])
                                 for c2 in c.get('classes', []))}
+        _journal("xxt_extract",
+                 params={"mode": "all" if extract_all else "targets",
+                         "run_id": summary['run_id'], "classes": summary['classes'],
+                         "works": summary['works'],
+                         "failures": len(summary['failures'] or [])},
+                 result="ok" if not summary['failures'] else "fail",
+                 error=str((summary['failures'] or [{}])[0].get('detail', ''))[:200])
         click.echo(_json.dumps(summary, ensure_ascii=False, indent=1))
         click.echo(f"out={rep.get('out', '(failed)')}")
         raise SystemExit(0 if not rep.get('failures') else 1)
@@ -98,14 +119,18 @@ def register(group: click.Group) -> None:
             _targets.archive_current(keep=5)
         out_path.write_text(json.dumps(rep, ensure_ascii=False, indent=1), encoding="utf-8")
         if rep.get("ok"):
-            click.echo(json.dumps({
+            summary = {
                 "ok": True,
                 "discovered_at": rep.get("discovered_at"),
                 "courses": len(rep.get("courses") or []),
                 "classes": sum(len(c.get("classes") or []) for c in rep.get("courses") or []),
                 "out": str(out_path),
-            }, ensure_ascii=False, indent=1))
+            }
+            _journal("xxt_discover", params={"courses": summary["courses"],
+                                             "classes": summary["classes"]})
+            click.echo(json.dumps(summary, ensure_ascii=False, indent=1))
             raise SystemExit(0)
+        _journal("xxt_discover", result="fail", error=str(rep.get("error") or "")[:200])
         click.echo(json.dumps(rep, ensure_ascii=False, indent=1))
         raise SystemExit(2)
 
@@ -126,7 +151,7 @@ def register(group: click.Group) -> None:
         out_path.parent.mkdir(parents=True, exist_ok=True)
         out_path.write_text(json.dumps(rep, ensure_ascii=False, indent=1), encoding="utf-8")
         if rep.get("ok"):
-            click.echo(json.dumps({
+            summary = {
                 "ok": True,
                 "discovered_at": rep.get("discovered_at"),
                 "courses": len(rep.get("courses") or []),
@@ -134,8 +159,12 @@ def register(group: click.Group) -> None:
                 "works": sum(len(cl.get("works") or []) for c in rep.get("courses") or []
                              for cl in c.get("classes") or []),
                 "out": str(out_path),
-            }, ensure_ascii=False, indent=1))
+            }
+            _journal("xxt_discover_works", params={"classes": summary["classes"],
+                                                   "works": summary["works"]})
+            click.echo(json.dumps(summary, ensure_ascii=False, indent=1))
             raise SystemExit(0)
+        _journal("xxt_discover_works", result="fail", error=str(rep.get("error") or "")[:200])
         click.echo(json.dumps(rep, ensure_ascii=False, indent=1))
         raise SystemExit(2)
 
@@ -167,6 +196,10 @@ def register(group: click.Group) -> None:
                 results.append(import_run_file(f))
             except Exception as e:  # noqa: BLE001
                 failed.append({"file": str(f), "error": str(e)[:200]})
+        _journal("xxt_run_import",
+                 params={"files": len(ordered), "imported": len(results), "failed": len(failed)},
+                 result="ok" if not failed else "fail",
+                 error=(failed[0]["error"] if failed else ""))
         click.echo(json.dumps({"ok": not failed, "imported": results, "failed": failed},
                               ensure_ascii=False, indent=1))
         raise SystemExit(1 if failed else 0)
@@ -210,4 +243,6 @@ def register(group: click.Group) -> None:
             rep2 = check_session(storage_path)
             click.echo(json.dumps({"post_login_check": rep2}, ensure_ascii=False, indent=1))
             ok = rep2.get("verdict") == "alive"
+        _journal("xxt_login", result="ok" if ok else "fail",
+                 error=str(rep.get("verdict") or rep.get("stage") or "")[:200])
         raise SystemExit(0 if ok else 2)
