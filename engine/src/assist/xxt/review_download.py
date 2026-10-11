@@ -11,6 +11,8 @@ import time
 from pathlib import Path
 from urllib.parse import urlparse
 
+from .extractor import extract_image_urls_from_html, html_to_text
+
 
 def _install_route(ctx, aborted: list, allow_post: "list[str] | None" = None):
     allow = tuple(allow_post or ())
@@ -45,7 +47,12 @@ def _detail_summary(detail: dict) -> dict:
     return {
         "images": len(detail.get("images") or []),
         "comment_len": len(detail.get("comment") or ""),
+        "comment_images": len(extract_image_urls_from_html(detail.get("comment") or "")
+                             + extract_image_urls_from_html(detail.get("ueditor0") or "")),
         "per_question_comments": len(detail.get("per_question_comments") or []),
+        "per_question_comment_images": sum(
+            len(extract_image_urls_from_html(t or ""))
+            for t in (detail.get("per_question_comments") or [])),
         "score": detail.get("score") or "",
         "error": detail.get("error") or "",
     }
@@ -132,19 +139,49 @@ def download_review(storage, home, course_id: str, class_id: str, work_id: str, 
                         wait_until="load", timeout=60000)
                 sp.wait_for_timeout(2000)
                 detail = sp.evaluate(JS_REVIEW_DETAIL) or {}
-                for n, url in enumerate(detail.get("images") or [], 1):
+                def _save(url: str, idx: int, kind: str, qidx=None):
+                    nonlocal total_images
                     try:
                         resp = ctx.request.get(url, timeout=30000)
                         if not resp.ok:
-                            continue
+                            return ""
                         ext = os.path.splitext(urlparse(url).path)[1] or ".jpg"
-                        fn = review_store.image_filename(
-                            s["name"], class_name or class_id, work_name or work_id, n, ext)
+                        if kind == "comment":
+                            fn = review_store.comment_image_filename(
+                                s["name"], class_name or class_id, work_name or work_id,
+                                idx, ext, qidx=qidx)
+                        else:
+                            fn = review_store.image_filename(
+                                s["name"], class_name or class_id, work_name or work_id, idx, ext)
                         (wdir / fn).write_bytes(resp.body())
-                        imgs.append(fn)
                         total_images += 1
+                        return fn
                     except Exception:  # noqa: BLE001
+                        return ""
+
+                for n, url in enumerate(detail.get("images") or [], 1):
+                    fn = _save(url, n, "answer")
+                    if fn:
+                        imgs.append(fn)
+                comment_urls = (extract_image_urls_from_html(detail.get("comment") or "")
+                                + extract_image_urls_from_html(detail.get("ueditor0") or ""))
+                comment_imgs = []
+                seen_c = set()
+                for n, url in enumerate(comment_urls, 1):
+                    if url in seen_c:
                         continue
+                    seen_c.add(url)
+                    fn = _save(url, len(comment_imgs) + 1, "comment")
+                    if fn:
+                        comment_imgs.append(fn)
+                q_imgs: list = []
+                for qi, txt in enumerate(detail.get("per_question_comments") or [], 1):
+                    one = []
+                    for url in extract_image_urls_from_html(txt or ""):
+                        fn = _save(url, len(one) + 1, "comment", qidx=qi)
+                        if fn:
+                            one.append(fn)
+                    q_imgs.append(one)
                 steps.append({"action": "下载学生作答",
                               "detail": f'{s["name"]}: {len(imgs)} 张图',
                               "ts": time.strftime("%H:%M:%S")})
@@ -161,7 +198,12 @@ def download_review(storage, home, course_id: str, class_id: str, work_id: str, 
                 "status": s.get("status") or "",
                 "images": imgs,
                 "comment": detail.get("comment") or "",
+                "comment_text": html_to_text(detail.get("comment") or ""),
+                "comment_images": comment_imgs,
                 "per_question_comments": detail.get("per_question_comments") or [],
+                "per_question_comment_texts": [html_to_text(t or "")
+                                               for t in (detail.get("per_question_comments") or [])],
+                "per_question_comment_images": q_imgs,
                 "ueditor0": detail.get("ueditor0") or "",
                 "score": detail.get("score") or "",
                 "error": detail.get("error") or "",
@@ -181,5 +223,8 @@ def download_review(storage, home, course_id: str, class_id: str, work_id: str, 
         pruned = None
     return {"ok": True, "classId": str(class_id), "workId": str(work_id),
             "students": len(students_out), "images": total_images,
+            "comment_images": sum(len(s.get("comment_images") or [])
+                                  + sum(len(x) for x in (s.get("per_question_comment_images") or []))
+                                  for s in students_out),
             "aborted": len(aborted), "manifest": str(mp), "out_dir": str(wdir),
             "steps": steps, "pruned": pruned}

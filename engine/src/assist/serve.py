@@ -861,6 +861,21 @@ class Handler(BaseHTTPRequestHandler):
                 pass
             self._json({"ok": True, "imported": summary})
             return
+        if (m_rwd := re.fullmatch(r"/xxt/review/work/([0-9A-Za-z\-_]{1,40})/([0-9A-Za-z\-_]{1,40})/delete", u.path)):
+            from .xxt import review as _review
+            res = _review.delete_work_images(_xxt_home(), m_rwd.group(1), m_rwd.group(2))
+            try:
+                from .xxt import journal as _journal
+                _journal.log_event("xxt_review_delete_images", home=_xxt_home(), source="pwa",
+                                   params={"classId": m_rwd.group(1), "workId": m_rwd.group(2),
+                                           "answer": res.get("deleted_answer"),
+                                           "comment": res.get("deleted_comment")},
+                                   result="ok" if res.get("ok") else "fail",
+                                   error=str(res.get("error") or ""))
+            except Exception:  # noqa: BLE001
+                pass
+            self._json(res if res.get("ok") else {**res, "ok": False}, 200 if res.get("ok") else 404)
+            return
         if u.path == "/xxt/review/prune":
             from .xxt import review as _review
             res = _review.prune_review(_xxt_home(), months=6)

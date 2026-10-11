@@ -7,7 +7,7 @@ import {
   fetchXxtReviewWork, fetchXxtRuns, fetchXxtStatus, fetchXxtStorage, fetchXxtTargets,
   fetchXxtWorks, importXxtRun, pruneXxtReview, pruneXxtRuns, startXxtDiscover,
   startXxtDiscoverWorks, startXxtExtract, startXxtExtractTargets, startXxtLogin,
-  startXxtReviewDownload, startXxtReviewProbe, xxtReviewFileUrl,
+  deleteXxtReviewWork, startXxtReviewDownload, startXxtReviewProbe, xxtReviewFileUrl,
 } from '../lib/engineClient'
 import type { XxtReviewImageWork, XxtReviewManifestStudent, XxtReviewProbe,
   XxtReviewStudent, XxtStorageStats } from '../lib/engineClient'
@@ -815,6 +815,46 @@ const curStudent = computed<XxtReviewManifestStudent | null>(() =>
   reviewWorkStudents.value[reviewWorkIdx.value] || null)
 const curImages = computed<string[]>(() => curStudent.value?.images || [])
 
+const reviewByClass = computed<Record<string, XxtReviewImageWork[]>>(() => {
+  const out: Record<string, XxtReviewImageWork[]> = {}
+  for (const it of reviewIndex.value) {
+    const k = it.classId || '?'
+    if (!out[k]) out[k] = []
+    out[k].push(it)
+  }
+  return out
+})
+const reviewLayout = ref<'cols' | 'rows'>('cols')
+const reviewSearch = ref('')
+function layoutKey(it: XxtReviewImageWork): string {
+  return `xxt-review-layout:${it.classId}:${it.workId}`
+}
+function applyLayout(it: XxtReviewImageWork) {
+  try { reviewLayout.value = localStorage.getItem(layoutKey(it)) === 'rows' ? 'rows' : 'cols' } catch { reviewLayout.value = 'cols' }
+}
+function toggleLayout(it: XxtReviewImageWork) {
+  reviewLayout.value = reviewLayout.value === 'cols' ? 'rows' : 'cols'
+  try { localStorage.setItem(layoutKey(it), reviewLayout.value) } catch { /* noop */ }
+}
+function toggleCurrentLayout() {
+  if (reviewWorkItem.value) toggleLayout(reviewWorkItem.value)
+}
+function searchStudent() {
+  const q = reviewSearch.value.trim()
+  if (!q) return
+  const i = reviewWorkStudents.value.findIndex(st => (st.name || '').includes(q))
+  if (i >= 0) { reviewWorkIdx.value = i; reviewWorkImgIdx.value = 0; reviewWorkRotate.value = 0 }
+}
+async function deleteReviewWork(it: XxtReviewImageWork) {
+  if (!confirm(`删除 ${it.className || it.classId} · ${it.workName || it.workId} 的图片？`
+    + `将删除作答/评语图片，保留 students.json 清单与批语文字记录。`)) return
+  try {
+    const r = await deleteXxtReviewWork(engUrl.value, tok.value, it.classId, it.workId)
+    reviewDlMsg.value = `已删除该次作业图片（作答 ${r.deleted_answer || 0} / 评语 ${r.deleted_comment || 0}，清单保留）`
+    await loadReviewIndex()
+  } catch (e) { reviewDlMsg.value = `删除失败：${String(e)}` }
+}
+
 function persistAllowPost() {
   try { localStorage.setItem('xxt-review-allow-post', JSON.stringify(allowPost.value)) } catch { /* noop */ }
 }
@@ -868,6 +908,8 @@ async function openReviewWork(it: XxtReviewImageWork) {
   reviewWorkIdx.value = 0
   reviewWorkImgIdx.value = 0
   reviewWorkRotate.value = 0
+  reviewSearch.value = ''
+  applyLayout(it)
   reviewWorkLoading.value = true
   try {
     const m = await fetchXxtReviewWork(engUrl.value, tok.value, it.classId, it.workId)
@@ -1299,22 +1341,34 @@ onUnmounted(() => { loginSeq += 1; stopLoginPolling(); stopExtractPolling(); sto
         </div>
         <div v-else style="margin-top:4px">没有非 GET 请求被拦截。</div>
       </div>
-      <div v-for="(it, i) in reviewIndex" :key="i"
-           style="border:1px solid var(--c-border); border-radius:8px; padding:8px; margin-bottom:8px">
-        <b>{{ it.className || it.classId }}</b> · {{ it.workName || it.workId }}
-        <span class="hint" style="color:var(--c-muted)">
-          （{{ it.count }} 图 / {{ it.students }} 人 / 有图 {{ it.students_with_images ?? 0 }} 人 /
-          {{ it.zero_image_count ?? 0 }} 人 0 图 / {{ fmtBytes(it.bytes) }}<template v-if="it.generated_at"> / {{ it.generated_at }}</template>）
-        </span>
-        <button class="btn" style="padding:2px 8px; margin-left:8px" @click="openReviewWork(it)">👁 逐生预览/旋转</button>
-        <div v-if="(it.zero_image_students || []).length" class="hint" style="color:#7a5c00">
-          0 图学生：{{ (it.zero_image_students || []).join('、') }}
+      <details v-for="(items, cid) in reviewByClass" :key="cid"
+               style="border:1px solid var(--c-border); border-radius:8px; margin-bottom:8px">
+        <summary style="cursor:pointer; padding:8px; font-weight:600">
+          {{ items[0]?.className || cid }}
+          <span class="hint" style="color:var(--c-muted)">（{{ items.length }} 次作业）</span>
+        </summary>
+        <div style="padding:0 8px 8px">
+          <div v-for="(it, i) in items" :key="i" style="border-top:1px solid var(--c-border); padding:8px 0">
+            <b>{{ it.workName || it.workId }}</b>
+            <span class="hint" style="color:var(--c-muted)">
+              （作答 {{ it.count }} / 评语 {{ it.comment_count || 0 }} 图 / {{ it.students }} 人 /
+              {{ it.zero_image_count ?? 0 }} 人 0 作答图 / {{ fmtBytes(it.bytes) }}<template v-if="it.generated_at"> / {{ it.generated_at }}</template>）
+            </span>
+            <span v-if="it.images_deleted" class="tag"
+                  style="background:#fee2e2;color:#991b1b;padding:1px 6px;border-radius:6px;margin-left:6px">图片已删除（保留清单）</span>
+            <button class="btn" style="padding:2px 8px; margin-left:8px" @click="openReviewWork(it)">👁 打开预览</button>
+            <button class="btn" style="padding:2px 8px; margin-left:4px" @click="deleteReviewWork(it)">🗑 删除图片</button>
+            <div v-if="!it.images_deleted && (it.zero_image_students || []).length"
+                 class="hint" style="color:#7a5c00">
+              0 图学生：{{ (it.zero_image_students || []).join('、') }}
+            </div>
+            <div v-if="!it.images_deleted" style="display:flex; flex-wrap:wrap; gap:6px; margin-top:6px">
+              <img v-for="f in it.images" :key="f" :src="reviewFileUrl(it, f)" :alt="f"
+                   style="width:96px; height:72px; object-fit:cover; border:1px solid var(--c-border); border-radius:4px" />
+            </div>
+          </div>
         </div>
-        <div style="display:flex; flex-wrap:wrap; gap:6px; margin-top:6px">
-          <img v-for="f in it.images" :key="f" :src="reviewFileUrl(it, f)" :alt="f"
-               style="width:96px; height:72px; object-fit:cover; border:1px solid var(--c-border); border-radius:4px" />
-        </div>
-      </div>
+      </details>
     </div>
 
     <!-- D73-11 历史 run 管理：时间/班级/作业/失败数 + 单删/清空（含 run 级 HTML 存档） -->
@@ -1408,40 +1462,56 @@ onUnmounted(() => { loginSeq += 1; stopLoginPolling(); stopExtractPolling(); sto
                   :disabled="reviewWorkIdx >= reviewWorkStudents.length - 1" @click="nextStudent">下一位 →</button>
           <button class="btn" style="margin-left:12px" @click="rotateImage(-90)">↺ 左旋</button>
           <button class="btn" style="margin-left:6px" @click="rotateImage(90)">↻ 右旋</button>
+          <label class="field" style="margin-left:12px">搜索学生：
+            <input v-model="reviewSearch" @keyup.enter="searchStudent" placeholder="姓名" style="width:120px" />
+          </label>
+          <button class="btn" style="margin-left:6px" @click="searchStudent">🔍</button>
+          <button class="btn" style="margin-left:12px" @click="toggleCurrentLayout">
+            {{ reviewLayout === 'cols' ? '⇵ 上下布局' : '⇋ 左右布局' }}
+          </button>
           <span class="hint" style="margin-left:8px">
             当前学生：{{ curStudent?.name || '—' }} · 分数 {{ curStudent?.score || '—' }}
           </span>
         </p>
         <div v-if="reviewWorkLoading" class="hint">读取中…</div>
-        <div v-else-if="curStudent" style="display:flex; gap:14px; align-items:flex-start; flex-wrap:wrap">
-          <div style="flex:1.2; min-width:280px">
+        <div v-else-if="curStudent"
+             :style="{ display: 'flex', gap: '14px', alignItems: 'flex-start', flexWrap: 'wrap',
+                       flexDirection: reviewLayout === 'rows' ? 'column' : 'row' }">
+          <div :style="{ flex: reviewLayout === 'rows' ? 'none' : '1.2', width: reviewLayout === 'rows' ? '100%' : 'auto', minWidth: '280px' }">
             <h4>学生作答（{{ curImages.length }} 张）</h4>
-            <div style="display:flex; gap:8px; overflow:auto; border:1px solid var(--c-border); border-radius:8px; padding:6px; align-items:center">
+            <div style="display:flex; flex-direction:column; gap:8px; overflow:auto; max-height:64vh;
+                        border:1px solid var(--c-border); border-radius:8px; padding:6px">
               <img v-for="(f, i) in curImages" :key="f" :src="curImageUrl(f)" :alt="f"
                    @click="reviewWorkImgIdx = i"
-                   :style="{ width: reviewWorkImgIdx === i ? '360px' : '110px',
-                             height: reviewWorkImgIdx === i ? 'auto' : '86px',
-                             objectFit: 'contain',
+                   :style="{ width: '100%', height: 'auto', objectFit: 'contain',
                              border: reviewWorkImgIdx === i ? '2px solid var(--c-primary,#1d4ed8)' : '1px solid var(--c-border)',
                              borderRadius: '6px',
                              transform: `rotate(${reviewWorkRotate}deg)`,
                              cursor: 'pointer' }" />
               <span v-if="!curImages.length" class="hint" style="color:#7a5c00">
-                该生 0 图（可用 🧪 探针查看是否被拦截/懒加载）
+                该生 0 作答图（补交/教师代传时评语里通常有报告图片，见右侧）
               </span>
             </div>
           </div>
-          <div style="flex:1; min-width:280px">
+          <div :style="{ flex: reviewLayout === 'rows' ? 'none' : '1', width: reviewLayout === 'rows' ? '100%' : 'auto', minWidth: '280px' }">
             <h4>批语 / 评语</h4>
             <div style="border:1px solid var(--c-border); border-radius:8px; padding:8px; min-height:180px">
               <div><b>作业批语：</b></div>
-              <div style="white-space:pre-wrap; word-break:break-word">{{ curStudent.comment || '（空）' }}</div>
-              <div style="margin-top:8px"><b>题目批语：</b></div>
-              <div v-for="(t, i) in (curStudent.per_question_comments || [])" :key="i"
-                   style="white-space:pre-wrap; word-break:break-word">
-                第 {{ i + 1 }} 题：{{ t || '（空）' }}
+              <div style="white-space:pre-wrap; word-break:break-word">
+                {{ curStudent.comment_text || curStudent.comment || '（空）' }}
               </div>
-              <div v-if="!(curStudent.per_question_comments || []).length" class="hint">（空）</div>
+              <img v-for="f in (curStudent.comment_images || [])" :key="f" :src="curImageUrl(f)" :alt="f"
+                   style="max-width:100%; margin-top:6px; border:1px solid var(--c-border); border-radius:6px" />
+              <div style="margin-top:8px"><b>题目批语：</b></div>
+              <div v-for="(t, i) in (curStudent.per_question_comment_texts || curStudent.per_question_comments || [])"
+                   :key="i" style="white-space:pre-wrap; word-break:break-word; margin-top:4px">
+                第 {{ i + 1 }} 题：{{ t || '（空）' }}
+                <img v-for="f in ((curStudent.per_question_comment_images || [])[i] || [])" :key="f"
+                     :src="curImageUrl(f)" :alt="f"
+                     style="max-width:100%; display:block; margin-top:4px; border:1px solid var(--c-border); border-radius:6px" />
+              </div>
+              <div v-if="!(curStudent.per_question_comment_texts || curStudent.per_question_comments || []).length"
+                   class="hint">（空）</div>
             </div>
             <p class="hint" style="color:var(--c-muted)">
               人工批阅（预览/覆盖/增加/取消）需写回平台，属写操作；当前冻结，先完成只读预览/审核。

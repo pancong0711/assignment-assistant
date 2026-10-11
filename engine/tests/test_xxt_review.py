@@ -51,3 +51,26 @@ def test_prune_review_by_months(tmp_path):
     assert res["removed_count"] == 1
     assert not old.exists() and new.exists()
     assert review.review_stats(tmp_path)["works"] == 0 or not review.work_dir(tmp_path, "11", "old").exists()
+
+
+def test_comment_image_filename():
+    a = review.comment_image_filename("张三", "示例班", "作业A", 2, ".jpg")
+    assert a == "张三_示例班+作业A_comment_p02.jpg"
+    b = review.comment_image_filename("张三", "示例班", "作业A", 1, ".png", qidx=3)
+    assert b == "张三_示例班+作业A_comment_q3_p01.png"
+
+
+def test_delete_work_images_keeps_manifest(tmp_path):
+    d = review.work_dir(tmp_path, "11", "22"); d.mkdir(parents=True)
+    (d / review.image_filename("张三", "示例班", "作业A", 1)).write_bytes(b"a")
+    (d / review.comment_image_filename("张三", "示例班", "作业A", 1)).write_bytes(b"c")
+    review.write_manifest(tmp_path, "11", "22", {
+        "classId": "11", "workId": "22", "className": "示例班", "workName": "作业A",
+        "students": [{"name": "张三", "images": ["x.jpg"], "comment_images": ["c.jpg"]}],
+    })
+    res = review.delete_work_images(tmp_path, "11", "22")
+    assert res["ok"] and res["deleted_answer"] == 1 and res["deleted_comment"] == 1
+    m = review.read_manifest(tmp_path, "11", "22")
+    assert m["images_deleted"] is True and m["students"][0]["images"] == []
+    assert m["students"][0]["deleted_images"] == ["x.jpg"]
+    assert (d / "students.json").is_file()

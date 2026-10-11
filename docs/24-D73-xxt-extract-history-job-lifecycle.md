@@ -1215,3 +1215,48 @@ REM 4) 重新双击 start.bat（重新下载 engine-main.zip 并安装）
   `vue-tsc` 0 err；`npm run build` 成功；全库 `def test_` = **132**（预期 pytest 132 passed）。
 - 未完成：D75-3（AI 两段式 + Aliyun batch + provider/base URL）留待下一批；
   D75-1c/2c 的选择器与未交路由需真机 probe 确认。
+
+---
+
+## 19. D75 第四批实施记录：评语图片 + 纵向/搜索 + 布局切换 + 折叠删除（2026-10-10）
+
+### 19.1 D75-7 评语 HTML 抽图并下载
+
+- `extractor.py` 新增纯函数 `extract_image_urls_from_html()`、`html_to_text()`；
+- `review_download.py`：
+  - 下载作答图片之外，解析 `comment` / `ueditor0` / `per_question_comments` 的 HTML，
+    抽取 `<img src>` 并用会话下载；
+  - 命名 `{学生}_{班级}+{作业}_comment_pNN.ext`、`..._comment_q{n}_pNN.ext`（`review.comment_image_filename`）；
+  - `students.json` 增补 `comment_text`、`comment_images`、`per_question_comment_texts`、
+    `per_question_comment_images`（保留原 HTML `comment` 供以后覆盖/回滚）；
+- PWA 逐生预览右栏改为「文本 + 评语图片」；0 作答图的补交/代传学生可看到报告图片；
+- 探针 `_detail_summary` 增加 `comment_images` / `per_question_comment_images` 计数。
+
+### 19.2 D75-7b 多图纵向滚动 + 学生搜索
+
+- 逐生预览左栏改为**纵向列表**（`flex-direction:column; max-height:64vh; overflow:auto`），
+  鼠标滚轮可直接下拉；右栏评语图片同样纵向；
+- 工具栏增加「搜索学生」输入 + 🔍（按姓名定位到该生）。
+
+### 19.3 D75-4b 默认左右两列 + 横/竖切换
+
+- 默认左右布局；工具栏「⇵ 上下布局 / ⇋ 左右布局」切换；
+- 记忆粒度**按作业**（`localStorage: xxt-review-layout:<classId>:<workId>`）。
+
+### 19.4 D75-10/11 预览入口与管理视图
+
+- 「批阅图片」卡改为**按班级折叠**（`<details>`），每个作业一行：
+  作答图数 / 评语图数 / 人数 / 0 作答图人数 / 大小 / 时间；行内「👁 打开预览」「🗑 删除图片」；
+- 「👁」打开富预览模态（工具条：上一位/下一位、旋转、布局切换、搜索）；
+- `review.delete_work_images()` + `POST /xxt/review/work/<class>/<work>/delete`：
+  - 删除作答/评语图片与子目录；
+  - **保留 `students.json`**，并把文件名移入 `deleted_images/deleted_comment_images/...`，
+    追加 `images_deleted / images_deleted_at / deleted_answer_images / deleted_comment_images / delete_note`；
+  - 列表显示「图片已删除（保留清单）」。
+
+### 19.5 验证与剩余
+
+- 沙箱 harness：9 个 xxt 模块 **57 项全绿**；`py_compile` / `lint_bat` / `check-secrets` 通过；
+  `vue-tsc` 0 err；`npm run build` 成功；全库 `def test_` = **135**（预期 pytest 135 passed）。
+- 剩余：D75-9（AI 设置/拉作业纸包/开始批阅）、D75-3（两段式 + Aliyun batch）、
+  D75-5b（本地批阅后统一上传）、发公告写操作（明天现场测试）。

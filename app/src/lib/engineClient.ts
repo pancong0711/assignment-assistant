@@ -758,6 +758,8 @@ export interface XxtReviewImageWork {
   mtime?: number
   generated_at?: string
   images?: string[]
+  comment_count?: number
+  images_deleted?: boolean
   students_total?: number
   students_with_images?: number
   zero_image_count?: number
@@ -872,7 +874,11 @@ export interface XxtReviewManifestStudent {
   status?: string
   images?: string[]
   comment?: string
+  comment_text?: string
+  comment_images?: string[]
   per_question_comments?: string[]
+  per_question_comment_texts?: string[]
+  per_question_comment_images?: string[][]
   ueditor0?: string
   score?: string
   error?: string
@@ -897,4 +903,17 @@ export async function fetchXxtReviewWork(
   return (await getJson2(engineUrlWithToken(
     base, `/xxt/review/work/${encodeURIComponent(classId)}/${encodeURIComponent(workId)}`, token,
   ))) as XxtReviewManifest
+}
+
+
+/** POST /xxt/review/work/<class>/<work>/delete：删除该次作业图片，保留 students.json 清单。 */
+export async function deleteXxtReviewWork(
+  engineAddr: string, token: string | undefined, classId: string, workId: string,
+): Promise<{ deleted_answer?: number; deleted_comment?: number }> {
+  const base = normalizeEngineAddr(engineAddr)
+  const res = await fetch(engineUrlWithToken(
+    base, `/xxt/review/work/${encodeURIComponent(classId)}/${encodeURIComponent(workId)}/delete`, token),
+    { method: 'POST' })
+  if (!res.ok) throw new Error(`HTTP ${res.status}`)
+  return (await res.json()) as { deleted_answer?: number; deleted_comment?: number }
 }

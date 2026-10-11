@@ -231,6 +231,47 @@ JS_REVIEW_DETAIL = r"""() => {
 }"""
 
 
+def extract_image_urls_from_html(html: str, origin: str = "https://mooc2-ans.chaoxing.com") -> list:
+    """D75-7：从 UEditor/评语 HTML 中抽取图片 URL（纯函数）。
+
+    学习通批语栏 value 是 HTML，上传的报告就是其中的 <img src>。
+    优先 data-original/src；相对路径按 origin 补全；去重。
+    """
+    import html as _html
+    if not html:
+        return []
+    out: list[str] = []
+    for m in re.finditer(r"<img\b[^>]*>", html or "", re.I):
+        tag = m.group(0)
+        src = ""
+        for attr in ("data-original", "src"):
+            am = re.search(attr + r"\s*=\s*[\"']([^\"']+)[\"']", tag, re.I)
+            if am:
+                src = am.group(1)
+                break
+        if not src:
+            continue
+        src = _html.unescape(src).strip()
+        if src.startswith("//"):
+            src = "https:" + src
+        elif src.startswith("/") and origin:
+            src = origin.rstrip("/") + src
+        if src and src not in out:
+            out.append(src)
+    return out
+
+
+def html_to_text(html: str) -> str:
+    """把批语 HTML 变成可读纯文本（纯函数）。"""
+    import html as _html
+    if not html:
+        return ""
+    text = re.sub(r"<br\s*/?>", "\n", html, flags=re.I)
+    text = re.sub(r"</p\s*>", "\n", text, flags=re.I)
+    text = re.sub(r"<[^>]+>", "", text)
+    return _html.unescape(text).strip()
+
+
 def parse_work_answer_id(review_path: str) -> str:
     """从 review_path / cz_py data 中解析 workAnswerId（纯函数）。"""
     m = re.search(r"workAnswerId=(\d+)", review_path or "")

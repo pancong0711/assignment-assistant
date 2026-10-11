@@ -38,6 +38,18 @@ def image_filename(student_name: str, class_name: str, work_name: str,
             f"{sanitize_filename(class_name)}+{sanitize_filename(work_name)}_p{page:02d}{ext}")
 
 
+def comment_image_filename(student_name: str, class_name: str, work_name: str,
+                           page: int, ext: str = ".jpg", qidx: "int | None" = None) -> str:
+    """D75-7：评语图片命名（与学生作答同口径，带 comment / q{n} 标记）。"""
+    ext = ext if str(ext).startswith(".") else "." + str(ext)
+    if ext.lower() not in IMAGE_EXTS:
+        ext = ".jpg"
+    mid = f"_q{qidx}" if qidx else ""
+    return (f"{sanitize_filename(student_name)}_"
+            f"{sanitize_filename(class_name)}+{sanitize_filename(work_name)}"
+            f"_comment{mid}_p{page:02d}{ext}")
+
+
 def safe_work_dir(home, class_id: str, work_id: str) -> "Path | None":
     """防目录穿越：classId/workId 只允许数字/字母/-/_。"""
     for v in (str(class_id), str(work_id)):
@@ -90,6 +102,8 @@ def list_review_works(home=None) -> list[dict]:
             manifest = read_manifest(home, cd.name, wd.name) or {}
             images = sorted(p.name for p in wd.iterdir()
                             if p.is_file() and p.suffix.lower() in IMAGE_EXTS)
+            comment_images = [n for n in images if "_comment" in n]
+            answer_images = [n for n in images if "_comment" not in n]
             total = sum(p.stat().st_size for p in wd.rglob("*") if p.is_file())
             students = manifest.get("students") or []
             with_img = [s for s in students if s.get("images")]
@@ -100,7 +114,9 @@ def list_review_works(home=None) -> list[dict]:
                 "courseName": str(manifest.get("courseName") or ""),
                 "className": str(manifest.get("className") or ""),
                 "workName": str(manifest.get("workName") or ""),
-                "count": len(images), "students": len(students), "bytes": total,
+                "count": len(answer_images), "comment_count": len(comment_images),
+                "students": len(students), "bytes": total,
+                "images_deleted": bool(manifest.get("images_deleted")),
                 "mtime": wd.stat().st_mtime,
                 "generated_at": manifest.get("generated_at") or "",
                 "images": images,
@@ -115,7 +131,9 @@ def list_review_works(home=None) -> list[dict]:
 
 def review_stats(home=None) -> dict:
     items = list_review_works(home)
-    return {"works": len(items), "images": sum(i["count"] for i in items),
+    return {"works": len(items),
+            "images": sum(i["count"] for i in items),
+            "comment_images": sum(i.get("comment_count", 0) for i in items),
             "bytes": sum(i["bytes"] for i in items)}
 
 
@@ -159,3 +177,47 @@ def latest_probe(home=None) -> "dict | None":
     except Exception:  # noqa: BLE001
         return None
     return None
+
+
+# ============ D75-11：删除某次作业的图片（保留 students.json 清单） ============
+
+def delete_work_images(home, class_id: str, work_id: str) -> dict:
+    """删除该次作业的作答/评语图片与子目录；保留 students.json 并追加删除记录。"""
+    d = safe_work_dir(home, class_id, work_id)
+    if d is None or not d.is_dir():
+        return {"ok": False, "error": "no such work"}
+    manifest = read_manifest(home, class_id, work_id) or {}
+    ans = com = 0
+    for p in list(d.iterdir()):
+        if p.is_file() and p.name != "students.json" and p.suffix.lower() in IMAGE_EXTS:
+            if "_comment_" in p.name or re.search(r"_q\d+_p\d+", p.name):
+                com += 1
+            else:
+                ans += 1
+            try:
+                p.unlink()
+            except Exception:  # noqa: BLE001
+                pass
+        elif p.is_dir():
+            shutil.rmtree(p, ignore_errors=True)
+    for stu in manifest.get("students") or []:
+        if isinstance(stu, dict):
+            if stu.get("images"):
+                stu["deleted_images"] = list(stu.get("images") or [])
+                stu["images"] = []
+            if stu.get("comment_images"):
+                stu["deleted_comment_images"] = list(stu.get("comment_images") or [])
+                stu["comment_images"] = []
+            if stu.get("per_question_comment_images"):
+                stu["deleted_per_question_comment_images"] = list(stu.get("per_question_comment_images") or [])
+                stu["per_question_comment_images"] = []
+    manifest.update({
+        "images_deleted": True,
+        "images_deleted_at": time.strftime("%Y-%m-%d %H:%M:%S"),
+        "deleted_answer_images": ans,
+        "deleted_comment_images": com,
+        "delete_note": "手工删除该次作业图片（保留清单）",
+    })
+    write_manifest(home, class_id, work_id, manifest)
+    return {"ok": True, "classId": str(class_id), "workId": str(work_id),
+            "deleted_answer": ans, "deleted_comment": com}
