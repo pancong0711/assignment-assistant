@@ -138,26 +138,31 @@ def review_stats(home=None) -> dict:
 
 
 def prune_review(home=None, months: int = 6) -> dict:
-    """按作业目录 mtime 清理超过 months 个月的批阅图片（独立于 run 历史）。"""
-    root = review_root(home)
+    """按作业 mtime 清理超过 months 个月的批阅图片：删图片、留 students.json 清单。"""
     cutoff = time.time() - max(0, int(months)) * 30 * 24 * 3600
     removed: list[str] = []
+    images = 0
     for item in list_review_works(home):
         if item["mtime"] >= cutoff:
             continue
-        d = work_dir(home, item["classId"], item["workId"])
-        shutil.rmtree(d, ignore_errors=True)
-        removed.append(f'{item["classId"]}/{item["workId"]}')
-    # 顺手删空的班级目录
-    if root.is_dir():
-        for cd in list(root.iterdir()):
-            if cd.is_dir() and not any(cd.iterdir()):
-                try:
-                    cd.rmdir()
-                except Exception:  # noqa: BLE001
-                    pass
-    return {"removed": removed, "removed_count": len(removed),
+        res = delete_work_images(home, item["classId"], item["workId"])
+        if res.get("ok"):
+            removed.append(f'{item["classId"]}/{item["workId"]}')
+            images += int(res.get("deleted_answer") or 0) + int(res.get("deleted_comment") or 0)
+    return {"removed": removed, "removed_count": len(removed), "deleted_images": images,
             "months": months, "stats": review_stats(home)}
+
+
+def purge_review_work(home, class_id: str, work_id: str) -> dict:
+    """彻底删除某次作业批阅目录（含 students.json 清单）。"""
+    d = safe_work_dir(home, class_id, work_id)
+    if d is None or not d.is_dir():
+        return {"ok": False, "error": "no such work"}
+    had_manifest = (d / "students.json").is_file()
+    shutil.rmtree(d, ignore_errors=True)
+    return {"ok": True, "classId": str(class_id), "workId": str(work_id),
+            "purged": True, "had_manifest": had_manifest}
+
 
 
 def latest_probe(home=None) -> "dict | None":

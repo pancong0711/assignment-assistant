@@ -40,7 +40,7 @@ def test_safe_image_path_blocks_traversal(tmp_path):
     assert review.safe_image_path(tmp_path, "11", "22", "../x.jpg") is None
 
 
-def test_prune_review_by_months(tmp_path):
+def test_prune_review_keeps_manifest(tmp_path):
     old = review.work_dir(tmp_path, "11", "old")
     new = review.work_dir(tmp_path, "11", "new")
     old.mkdir(parents=True); new.mkdir(parents=True)
@@ -48,9 +48,12 @@ def test_prune_review_by_months(tmp_path):
     old_ts = time.time() - 200 * 24 * 3600
     os.utime(old, (old_ts, old_ts))
     res = review.prune_review(tmp_path, months=6)
-    assert res["removed_count"] == 1
-    assert not old.exists() and new.exists()
-    assert review.review_stats(tmp_path)["works"] == 0 or not review.work_dir(tmp_path, "11", "old").exists()
+    assert res["removed_count"] == 1 and res["deleted_images"] == 1
+    assert old.exists() and (old / "students.json").is_file()   # 删图片、留清单
+    assert not (old / "a_p01.jpg").exists()
+    assert new.exists()
+    purged = review.purge_review_work(tmp_path, "11", "old")
+    assert purged["ok"] and not old.exists()
 
 
 def test_comment_image_filename():

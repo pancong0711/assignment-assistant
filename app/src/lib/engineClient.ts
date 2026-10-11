@@ -917,3 +917,15 @@ export async function deleteXxtReviewWork(
   if (!res.ok) throw new Error(`HTTP ${res.status}`)
   return (await res.json()) as { deleted_answer?: number; deleted_comment?: number }
 }
+
+/** POST /xxt/review/work/<class>/<work>/purge：彻底删除该次作业目录（含 students.json）。 */
+export async function purgeXxtReviewWork(
+  engineAddr: string, token: string | undefined, classId: string, workId: string,
+): Promise<{ purged?: boolean }> {
+  const base = normalizeEngineAddr(engineAddr)
+  const res = await fetch(engineUrlWithToken(
+    base, `/xxt/review/work/${encodeURIComponent(classId)}/${encodeURIComponent(workId)}/purge`, token),
+    { method: 'POST' })
+  if (!res.ok) throw new Error(`HTTP ${res.status}`)
+  return (await res.json()) as { purged?: boolean }
+}

@@ -7,7 +7,8 @@ import {
   fetchXxtReviewWork, fetchXxtRuns, fetchXxtStatus, fetchXxtStorage, fetchXxtTargets,
   fetchXxtWorks, importXxtRun, pruneXxtReview, pruneXxtRuns, startXxtDiscover,
   startXxtDiscoverWorks, startXxtExtract, startXxtExtractTargets, startXxtLogin,
-  deleteXxtReviewWork, startXxtReviewDownload, startXxtReviewProbe, xxtReviewFileUrl,
+  deleteXxtReviewWork, purgeXxtReviewWork, startXxtReviewDownload, startXxtReviewProbe,
+  xxtReviewFileUrl,
 } from '../lib/engineClient'
 import type { XxtReviewImageWork, XxtReviewManifestStudent, XxtReviewProbe,
   XxtReviewStudent, XxtStorageStats } from '../lib/engineClient'
@@ -845,6 +846,17 @@ function searchStudent() {
   const i = reviewWorkStudents.value.findIndex(st => (st.name || '').includes(q))
   if (i >= 0) { reviewWorkIdx.value = i; reviewWorkImgIdx.value = 0; reviewWorkRotate.value = 0 }
 }
+async function purgeReviewWork(it: XxtReviewImageWork) {
+  const label = `${it.className || it.classId} · ${it.workName || it.workId}`
+  if (!confirm(`彻底删除「${label}」？将删除图片 + students.json 清单，不可恢复。`)) return
+  if (!confirm('再次确认：彻底删除该次作业的全部本地批阅数据？')) return
+  try {
+    await purgeXxtReviewWork(engUrl.value, tok.value, it.classId, it.workId)
+    reviewDlMsg.value = `已彻底删除 ${label}`
+    await loadReviewIndex()
+  } catch (e) { reviewDlMsg.value = `彻底删除失败：${String(e)}` }
+}
+
 async function deleteReviewWork(it: XxtReviewImageWork) {
   if (!confirm(`删除 ${it.className || it.classId} · ${it.workName || it.workId} 的图片？`
     + `将删除作答/评语图片，保留 students.json 清单与批语文字记录。`)) return
@@ -1358,6 +1370,7 @@ onUnmounted(() => { loginSeq += 1; stopLoginPolling(); stopExtractPolling(); sto
                   style="background:#fee2e2;color:#991b1b;padding:1px 6px;border-radius:6px;margin-left:6px">图片已删除（保留清单）</span>
             <button class="btn" style="padding:2px 8px; margin-left:8px" @click="openReviewWork(it)">👁 打开预览</button>
             <button class="btn" style="padding:2px 8px; margin-left:4px" @click="deleteReviewWork(it)">🗑 删除图片</button>
+            <button class="btn" style="padding:2px 8px; margin-left:4px" @click="purgeReviewWork(it)">🗑 彻底删除</button>
             <div v-if="!it.images_deleted && (it.zero_image_students || []).length"
                  class="hint" style="color:#7a5c00">
               0 图学生：{{ (it.zero_image_students || []).join('、') }}

@@ -1280,3 +1280,11 @@ applyManualTranslation/setTranslationRatio 中 setTranslationRatio 保留——�
 - D75-4b 默认左右两列 + 按作业记忆的横/竖切换；
 - D75-10/11 批阅图片按班级折叠 + 作业行删除（删图片、保清单并记删除记录）；
 - 剩余：D75-9 AI 设置/拉包/开始批阅、D75-3 两段式 + batch、D75-5b 本地批阅后上传、发公告写操作。
+
+
+---
+
+## D75 收尾 · 图片清理语义（2026-10-10 用户拍板）
+
+- 6 个月清理 = 删图片、留 students.json 清单（prune_review 调 delete_work_images）；
+- 新增「彻底删除（含清单）」：`purge_review_work` + `/xxt/review/work/<class>/<work>/purge` + PWA 双确认按钮。

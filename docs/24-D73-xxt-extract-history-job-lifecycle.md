@@ -1260,3 +1260,10 @@ REM 4) 重新双击 start.bat（重新下载 engine-main.zip 并安装）
   `vue-tsc` 0 err；`npm run build` 成功；全库 `def test_` = **135**（预期 pytest 135 passed）。
 - 剩余：D75-9（AI 设置/拉作业纸包/开始批阅）、D75-3（两段式 + Aliyun batch）、
   D75-5b（本地批阅后统一上传）、发公告写操作（明天现场测试）。
+
+### 19.6 清理语义修订（用户拍板）
+
+- **6 个月时长清理**：改为「删图片、留 `students.json` 清单」——`prune_review()` 现在调用
+  `delete_work_images()`，只删作答/评语图片并追加删除记录，保留清单便于查看历史；
+- **彻底删除**：新增 `purge_review_work()` + `POST /xxt/review/work/<class>/<work>/purge`；
+  PWA 作业行新增「🗑 彻底删除」（双确认，删除图片 + `students.json`）。
