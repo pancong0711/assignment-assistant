@@ -3,11 +3,11 @@ import { computed, onMounted, onUnmounted, ref } from 'vue'
 import type { XxtTargetsDiff, XxtWork, XxtWorksCourse } from '../lib/engineClient'
 import {
   clearXxtRuns, clearXxtTargetsHistory, deleteXxtRun, fetchXxtLoginJob, fetchXxtRun,
-  fetchXxtFreshness, fetchXxtRuns, fetchXxtStatus, fetchXxtStorage, fetchXxtTargets,
-  fetchXxtWorks, importXxtRun, pruneXxtRuns, startXxtDiscover, startXxtDiscoverWorks,
-  startXxtExtract, startXxtExtractTargets, startXxtLogin,
+  fetchXxtFreshness, fetchXxtReviewStudents, fetchXxtRuns, fetchXxtStatus, fetchXxtStorage,
+  fetchXxtTargets, fetchXxtWorks, importXxtRun, pruneXxtRuns, startXxtDiscover,
+  startXxtDiscoverWorks, startXxtExtract, startXxtExtractTargets, startXxtLogin,
 } from '../lib/engineClient'
-import type { XxtStorageStats } from '../lib/engineClient'
+import type { XxtReviewStudent, XxtStorageStats } from '../lib/engineClient'
 import { useSettingsStore } from '../stores/settings'
 import { useXxtJobsStore } from '../stores/xxtJobs'
 import ProcessStreamView from '../components/ProcessStreamView.vue'
@@ -684,6 +684,40 @@ function extractionTargets(): TargetCourse[] {
   return out
 }
 
+/* ---------- D75-1：真实批阅列表预览（本地 review 存档） ---------- */
+const reviewOpen = ref(false)
+const reviewTitle = ref('')
+const reviewStudents = ref<XxtReviewStudent[]>([])
+const reviewScored = ref(0)
+const reviewLoading = ref(false)
+const reviewMsg = ref('')
+
+async function openReview(cl: ClassRow, w: WorkRow) {
+  reviewOpen.value = true
+  reviewTitle.value = `${cl.name} · ${w.name}`
+  reviewStudents.value = []
+  reviewScored.value = 0
+  reviewLoading.value = true
+  reviewMsg.value = ''
+  try {
+    const r = await fetchXxtReviewStudents(engUrl.value, tok.value, cl.classId, w.workId)
+    if (!r.ok) {
+      reviewMsg.value = r.error === 'no archived review list'
+        ? '本机没有该作业的 review 列表存档；请先执行一次「📥 提取账户数据」生成存档。'
+        : `读取失败：${r.error || ''}`
+    } else {
+      reviewStudents.value = r.students || []
+      reviewScored.value = r.scored || 0
+      reviewMsg.value = `共 ${r.count || 0} 人，已有分数 ${r.scored || 0} 人`
+    }
+  } catch (e) {
+    reviewMsg.value = `读取失败：${String(e)}`
+  } finally {
+    reviewLoading.value = false
+  }
+}
+function closeReview() { reviewOpen.value = false }
+
 async function deleteCurrentRun() {
   if (!curRun.value) return
   const id = curRun.value
@@ -926,7 +960,7 @@ onUnmounted(() => { loginSeq += 1; stopLoginPolling(); stopExtractPolling(); sto
                 <label v-for="w in worksOf(c, k)" :key="w.workId" class="hint">
                   <input type="checkbox" :checked="isWorkSel(c, k, w)" @change="onWorkToggle(c, k, w, $event)" />
                   {{ w.name }}
-                  <span style="color:var(--c-muted)">{{ w.pending ?? '-' }}/{{ w.submitted ?? '-' }}/{{ w.unsubmitted ?? '-' }}</span>
+                  <span style="color:var(--c-muted)">待批 {{ w.pending ?? '-' }} / 已交 {{ w.submitted ?? '-' }} / 未交 {{ w.unsubmitted ?? '-' }}</span>
                 </label>
                 <span v-if="!worksOf(c, k).length" class="hint" style="color:var(--c-muted)">（该班未发现作业）</span>
               </div>
@@ -973,71 +1007,81 @@ onUnmounted(() => { loginSeq += 1; stopLoginPolling(); stopExtractPolling(); sto
         </select>
       </p>
 
-      <div v-if="grouped.length" style="display:flex; flex-direction:column; gap:16px">
-        <div v-for="g in grouped" :key="g.course.courseId" class="course-group">
-          <div class="group-head" style="position:sticky; top:0; z-index:5; background:var(--c-bg,#f7f7f9); padding:6px 0; border-bottom:1px solid var(--c-border)">
-            <b>{{ g.course.name }}</b>
-            <span class="hint" style="margin-left:8px; color:var(--c-muted)">courseId {{ g.course.courseId }} · {{ g.pinnedRows.length + g.normal.length }} 班</span>
-          </div>
-          <div class="class-scroll" style="border:1px solid var(--c-border); border-radius:8px">
-            <table style="width:100%; border-collapse:collapse">
-              <thead>
-                <tr style="background:var(--c-surface,#fff)">
-                  <th style="text-align:left; padding:6px 8px">班级</th>
-                  <th style="padding:6px 8px">作业</th>
-                  <th style="padding:6px 8px">状态</th>
-                  <th style="padding:6px 8px">操作</th>
-                </tr>
-              </thead>
-              <tbody>
-                <tr v-for="cl in [...g.pinnedRows, ...g.normal]" :key="cl.classId"
-                    :style="isPinned(cl) ? 'background:var(--c-pin-bg,#fffbe8)' : ''">
-                  <td style="padding:6px 8px">
-                    {{ cl.name }}{{ isPinned(cl) ? ' 📌' : '' }}
-                  </td>
-                  <td style="padding:6px 8px; text-align:center">
-                    <span v-if="!cl.works.length">–</span>
-                    <details v-else>
-                      <summary>{{ cl.works.length }} 份</summary>
-                      <table style="border-collapse:collapse; margin-top:4px">
-                        <tbody>
-                          <tr v-for="w in cl.works" :key="w.workId">
-                            <td style="padding:2px 6px">{{ w.name }}</td>
-                            <td style="padding:2px 6px">{{ w.pending ?? '-' }}/{{ w.submitted ?? '-' }}/{{ w.unsubmitted ?? '-' }}</td>
-                            <td style="padding:2px 6px">
-                              <span v-if="w.anchor?.roster_delta != null && Math.abs(w.anchor?.roster_delta||0) > 2" class="hint" style="color:#7a5c00">
-                                差值{{ w.anchor?.roster_delta }}（含发布人/未入班，灰注）
-                              </span>
-                            </td>
-                          </tr>
-                        </tbody>
-                      </table>
-                      <div style="margin-top:6px">
-                        <details>
-                          <summary class="hint">未交名单 / 白名单（仅本机教师端可见）</summary>
-                          <div v-for="w in cl.works" :key="'n'+w.workId" style="margin:4px 0; font-size:12px">
-                            <b>{{ w.name }}</b>：
-                            <span>未交（{{ (w.unsubmitted_names || []).length }}）：</span>
-                            <span style="word-break:break-all">{{ (w.unsubmitted_names || []).join('、') || '（无差集或本班无名册基准）' }}</span>
-                            <span v-if="(w.sub_not_in_roster || []).length "> ｜ 提交但不在名册（白名单）：</span>
-                            <span v-if="(w.sub_not_in_roster || []).length" style="word-break:break-all">{{ (w.sub_not_in_roster || []).join('、') }}</span>
-                          </div>
-                        </details>
+      <div v-if="grouped.length" style="border:1px solid var(--c-border); border-radius:8px; overflow:auto">
+        <table style="width:100%; border-collapse:collapse; table-layout:fixed">
+          <colgroup>
+            <col style="width:22%" /><col style="width:44%" /><col style="width:12%" /><col style="width:22%" />
+          </colgroup>
+          <thead>
+            <tr style="position:sticky; top:0; z-index:3; background:var(--c-surface,#fff)">
+              <th style="text-align:left; padding:6px 8px">班级</th>
+              <th style="padding:6px 8px">作业（待批 / 已交 / 未交）</th>
+              <th style="padding:6px 8px">状态</th>
+              <th style="padding:6px 8px">操作</th>
+            </tr>
+          </thead>
+          <tbody v-for="g in grouped" :key="g.course.courseId">
+            <tr>
+              <td colspan="4" style="padding:6px 8px; background:var(--c-bg,#f7f7f9); border-top:1px solid var(--c-border)">
+                <b>{{ g.course.name }}</b>
+                <span class="hint" style="margin-left:8px; color:var(--c-muted)">courseId {{ g.course.courseId }} · {{ g.pinnedRows.length + g.normal.length }} 班</span>
+              </td>
+            </tr>
+            <tr v-for="cl in [...g.pinnedRows, ...g.normal]" :key="cl.classId"
+                :style="isPinned(cl) ? 'background:var(--c-pin-bg,#fffbe8)' : ''">
+              <td style="padding:6px 8px; white-space:normal; word-break:break-word">
+                {{ cl.name }}{{ isPinned(cl) ? ' 📌' : '' }}
+              </td>
+              <td style="padding:6px 8px; white-space:normal; word-break:break-word">
+                <span v-if="!cl.works.length">–</span>
+                <details v-else>
+                  <summary>{{ cl.works.length }} 份</summary>
+                  <table style="width:100%; border-collapse:collapse; margin-top:4px">
+                    <thead>
+                      <tr class="hint" style="color:var(--c-muted); font-size:12px">
+                        <th style="text-align:left; padding:2px 4px">作业</th>
+                        <th style="padding:2px 4px">待批</th>
+                        <th style="padding:2px 4px">已交</th>
+                        <th style="padding:2px 4px">未交</th>
+                        <th style="padding:2px 4px">预览</th>
+                      </tr>
+                    </thead>
+                    <tbody>
+                      <tr v-for="w in cl.works" :key="w.workId">
+                        <td style="padding:2px 4px; white-space:normal; word-break:break-word">{{ w.name }}</td>
+                        <td style="padding:2px 4px; text-align:center">{{ w.pending ?? '-' }}</td>
+                        <td style="padding:2px 4px; text-align:center">{{ w.submitted ?? '-' }}</td>
+                        <td style="padding:2px 4px; text-align:center">{{ w.unsubmitted ?? '-' }}</td>
+                        <td style="padding:2px 4px; text-align:center">
+                          <button class="btn" style="padding:2px 8px" @click="openReview(cl, w)">👁 预览</button>
+                        </td>
+                      </tr>
+                    </tbody>
+                  </table>
+                  <div style="margin-top:6px">
+                    <details>
+                      <summary class="hint">未交名单 / 白名单（仅本机教师端可见）</summary>
+                      <div v-for="w in cl.works" :key="'n' + w.workId" style="margin:4px 0; font-size:12px">
+                        <b>{{ w.name }}</b>：
+                        <span>未交（{{ (w.unsubmitted_names || []).length }}）：</span>
+                        <span style="word-break:break-all">{{ (w.unsubmitted_names || []).join('、') || '（无差集或本班无名册基准）' }}</span>
+                        <span v-if="(w.sub_not_in_roster || []).length "> ｜ 提交但不在名册（白名单）：</span>
+                        <span v-if="(w.sub_not_in_roster || []).length" style="word-break:break-all">{{ (w.sub_not_in_roster || []).join('、') }}</span>
                       </div>
                     </details>
-                  </td>
-                  <td style="padding:6px 8px; text-align:center">
-                    {{ cl.status === 'extracted' ? '✅' : (cl.status === 'empty_confirmed' ? '∅0' : '⚠ 未提取') }}
-                  </td>
-                  <td style="padding:6px 8px; text-align:center; white-space:nowrap">
-                    <button class="btn" @click="togglePin(cl)">{{ isPinned(cl) ? '取消置顶' : '📌 置顶' }}</button>
-                    <button class="btn" style="margin-left:4px" @click="removeRow(cl)">✕ 移出</button>
-                  </td>
-                </tr>
-              </tbody>
-            </table>
-          </div>
-        </div>
+                  </div>
+                </details>
+              </td>
+              <td style="padding:6px 8px; text-align:center">
+                {{ cl.status === 'extracted' ? '✅' : (cl.status === 'empty_confirmed' ? '∅0' : '⚠ 未提取') }}
+              </td>
+              <td style="padding:6px 8px; text-align:center; white-space:normal">
+                <button class="btn" @click="togglePin(cl)">{{ isPinned(cl) ? '取消置顶' : '📌 置顶' }}</button>
+                <button class="btn" style="margin-left:4px" @click="removeRow(cl)">✕ 移出</button>
+              </td>
+            </tr>
+          </tbody>
+        </table>
       </div>
       <p v-else class="hint" style="color:var(--c-muted)">
         暂无列表数据：引擎侧先运行 <code>assist xxt extract --targets …</code> 或在 .scratch 放置 run JSON。
@@ -1091,5 +1135,34 @@ onUnmounted(() => { loginSeq += 1; stopLoginPolling(); stopExtractPolling(); sto
       <ProcessStreamView :run-id="curRun || ''" :steps="loadSteps" :engine-addr="engUrl" :token="tok" />
     </div>
 
+    <!-- D75-1 真实批阅列表预览（本机 review 存档，只读） -->
+    <div v-if="reviewOpen" @click.self="closeReview"
+         style="position:fixed; inset:0; background:rgba(15,23,42,.45); z-index:80; display:flex; align-items:center; justify-content:center">
+      <div style="background:var(--c-card,#fff); border-radius:12px; max-width:min(920px,94vw); max-height:88vh; overflow:auto; padding:16px">
+        <h3 style="margin-top:0">批阅列表预览：{{ reviewTitle }}
+          <button class="btn" style="float:right" @click="closeReview">关闭</button>
+        </h3>
+        <p class="hint">{{ reviewMsg }}（数据=本机 review 列表存档；学生照片/评语将在「下载批阅详情」后展示）</p>
+        <div v-if="reviewLoading" class="hint">读取中…</div>
+        <table v-else-if="reviewStudents.length" style="width:100%; border-collapse:collapse">
+          <thead>
+            <tr style="background:var(--c-bg,#f7f7f9)">
+              <th style="text-align:left; padding:6px 8px">学生</th>
+              <th style="padding:6px 8px">分数</th>
+              <th style="padding:6px 8px">状态</th>
+            </tr>
+          </thead>
+          <tbody>
+            <tr v-for="s in reviewStudents" :key="s.studentId || s.name">
+              <td style="padding:5px 8px">{{ s.name }}</td>
+              <td style="padding:5px 8px; text-align:center">{{ s.score || '—' }}</td>
+              <td style="padding:5px 8px; text-align:center"
+                  :style="{ color: s.graded ? 'var(--c-ok, #16a34a)' : '#7a5c00' }">{{ s.status }}</td>
+            </tr>
+          </tbody>
+        </table>
+        <p v-else class="hint">没有可显示的学生行。</p>
+      </div>
+    </div>
   </section>
 </template>

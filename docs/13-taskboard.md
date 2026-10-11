@@ -1216,4 +1216,4 @@ applyManualTranslation/setTranslationRatio 中 setTranslationRatio 保留——�
     base URL 下拉（Aliyun 默认 + 用户自定义）；
   - D75-4 CLI 直跑 journal（已实施，待真机确认）；
   - D75-5 写操作解冻方案：dry-run + 最小权限白名单 + 快照 + 双确认 + 幂等/回滚 + 测试班分阶段。
-- 状态：**需求已整理，按 §建议顺序实施**。
+- 状态：**D75-2 与 D75-1a 已实施（docs/24 §16）；D75-1b/3/4/5 待继续**。

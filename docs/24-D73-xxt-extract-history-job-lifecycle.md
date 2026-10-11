@@ -1075,3 +1075,44 @@ REM 4) 重新双击 start.bat（重新下载 engine-main.zip 并安装）
 - `lint_bat` 3 脚本通过；`vue-tsc` 0 err；`npm run build` 成功；
 - 预期完整 `pytest engine/tests -q` = **123 passed**（`grep "def test_"` 实测计数）；
 - 边界不变：只读；写操作仍冻结；journal/快照/runs 全部本机、不入库。
+
+---
+
+## 16. D75 第一批实施记录：发现作业 UI + 真实批阅列表预览（2026-10-10）
+
+### 16.1 D75-2 发现作业 UI
+
+- **数字含义**：列表显示的 `待批/已交/未交` 现在带中文标签，不再是无说明的 `21/21/3`；
+- **跨课程对齐**：结果卡从「每课程一张独立表」改为**单张表 + 课程分组行**，
+  `table-layout: fixed` + `<colgroup>` 固定列宽（22%/44%/12%/22%），跨课程严格对齐；
+- **多行显示**：班级/作业单元格 `white-space: normal; word-break: break-word`，
+  长作业名自动换行；操作按钮允许换行；
+- 每个作业行新增 **「👁 预览」** 按钮。
+
+### 16.2 D75-1a 真实批阅列表预览（已实施）
+
+- 新增 `engine/src/assist/xxt/preview.py`（纯函数，不触网）：
+  - `list_review_archives(home)`：扫描 `pages/` 与旧 `xxt-pages/` 下的 `v2-review-<classId>-<workId>.html`；
+  - `parse_review_list(html)`：解析 `dataBody_td` 学生行（姓名、分数、评阅链接；无分数时推断「待批阅」）；
+  - `preview_students(home, classId, workId)`：返回学生列表/已评分人数。
+- serve 新增 `GET /xxt/preview/archives`、`GET /xxt/preview/students/<classId>/<workId>`；
+- PWA：结果卡每个作业「👁 预览」→ 模态展示真实学生列表（姓名/分数/已批阅状态）；
+- 本机真实存档验证：`.scratch/xxt-pages/v2-review-*` 共 106 份；样例班 39 人、39 人有分、评阅链接完整。
+- 单测：`engine/tests/test_xxt_preview.py`（合成 fixture 2 条）。
+
+### 16.3 D75-1b 下一步：单生照片/评语预览
+
+- 现状：review **列表页**只有姓名/分数/评阅链接；学生上传照片与评语在**单生 review-work 详情页**，
+  需带会话逐生打开下载（只读）。
+- 计划：
+  1. 先抓一份单生 `review-work` 页面样本（新增一个只读 CLI 或由教师浏览器另存 HTML）；
+  2. 按样本实现 `assist xxt review-download --work <id>`：逐生打开详情页 → 保存图片/评语/评分到
+     `pages/review/<classId>/<workId>/`；
+  3. PWA 预览模态接入图片缩略图与评语，并作为 D75-3 AI 评阅的输入。
+- 在详情页样本到手前不盲写解析器。
+
+### 16.4 验证
+
+- 沙箱 harness：上述纯函数测试 + 既有 xxt 模块共 **49 项全绿**；
+- `py_compile` / `lint_bat` / `check-secrets` 通过；`vue-tsc` 0 err；`npm run build` 成功；
+- 全库 `def test_` 计数 **127**，预期 `pytest engine/tests -q` = 127 passed。

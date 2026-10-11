@@ -712,3 +712,33 @@ export async function pruneXxtRuns(
   if (!res.ok) throw new Error(`HTTP ${res.status}`)
   return (await res.json()) as { removed_count?: number; stats?: XxtStorageStats }
 }
+
+/* ========== D75-1：真实批阅列表预览 ========== */
+
+export interface XxtReviewStudent {
+  studentId?: string
+  name: string
+  score?: string
+  status?: string
+  graded?: boolean
+  review_path?: string
+}
+
+export interface XxtReviewStudents {
+  ok?: boolean
+  count?: number
+  scored?: number
+  students?: XxtReviewStudent[]
+  error?: string
+  hint?: string
+}
+
+/** GET /xxt/preview/students/<classId>/<workId>：解析本地 review 列表存档。 */
+export async function fetchXxtReviewStudents(
+  engineAddr: string, token: string | undefined, classId: string, workId: string,
+): Promise<XxtReviewStudents> {
+  const base = normalizeEngineAddr(engineAddr)
+  return (await getJson2(engineUrlWithToken(
+    base, `/xxt/preview/students/${encodeURIComponent(classId)}/${encodeURIComponent(workId)}`,
+    token))) as XxtReviewStudents
+}

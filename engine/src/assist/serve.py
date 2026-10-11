@@ -967,6 +967,15 @@ class Handler(BaseHTTPRequestHandler):
             self.end_headers()
             self.wfile.write(body)
             return
+        elif u.path == "/xxt/preview/archives":
+            from .xxt import preview as _preview
+            self._json({"ok": True, "items": _preview.list_review_archives(_xxt_home())})
+            return
+        elif (m_prev := re.fullmatch(r"/xxt/preview/students/(\d+)/(\d+)", u.path)):
+            from .xxt import preview as _preview
+            self._json(_preview.preview_students(
+                _xxt_home(), m_prev.group(1), m_prev.group(2)))
+            return
         elif u.path == "/xxt/works":
             wp = xxt_layout.works_json(_xxt_home())
             if not wp.is_file():
