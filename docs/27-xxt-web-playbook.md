@@ -94,3 +94,17 @@
 | review-work 上传/两栏批语 | `_legacy/2601playwright/src/uploader.py`、`src/submit_v2/v3.py` |
 | 未交扫描（stat2） | `_legacy/2601playwright/src/submit_v3.py::scan_unsubmitted` |
 | 本项目只读边界/通知页教训 | `docs/16` §23–24；`docs/24` §15–17 |
+
+
+## 9. 批语字段的真实形态（重点）
+
+- `textarea[name="comment"].value` 是 **UEditor 的 HTML**，上传的批阅报告是其中的 `<img src>`；
+  读取时不能当纯文本，需解析 HTML 抽 `<img src>` 并下载（与学生作答图片同法）。
+- 题目批语同理：`textarea[id^="answer"].value` / `#ueditor_0` body 也是 HTML。
+- 因此 D75-7 要：HTML → 文本 + 图片清单 → 下载图片 → 存 `students.json`，PWA 文本+图片渲染。
+
+## 10. API key / 本机设置安全
+
+- `settings.local.json` 放 LLM base_url/api_key；**必须 gitignore + check-secrets 红名单**（已修）。
+- PWA 输入 type=password；引擎写入本地文件（0600）；只回显掩码；日志只记 provider/host。
+- 提供清除 key 与「是否存在」体检；进阶用环境变量/系统凭据。

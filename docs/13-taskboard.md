@@ -1245,3 +1245,15 @@ applyManualTranslation/setTranslationRatio 中 setTranslationRatio 保留——�
 - D75-4 逐生两列预览/旋转/上一位下一位（只读）（§18.4）；
 - 剩余：D75-3 AI 两段式/batch/base URL；人工批阅写回（冻结）。
 - 状态：**第三批已实施；待真机验证选择器与未交路由**。
+
+
+---
+
+## D75 第四批 · 评语图片/多图滚动/探针语义/AI 设置与 key 安全（2026-10-10 讨论）
+
+- D75-7 评语 HTML 抽图片并下载（`comment_text`/`comment_images`），0 图补交学生也能看到报告图片；
+- D75-7b 逐生预览多图纵向滚动 + 学生搜索；
+- D75-8 探针=诊断不下载、下载=全量+manifest；aborted 含义与「智能下载」；
+- D75-9 AI 批阅 UI：拉取作业纸包 + 开始批阅放批阅页；批阅页改 AI 设置；
+  API key 掩码/本机存储/清除；`settings.local.json` 已 gitignore + check-secrets 红名单；
+- D75-4 更新：人工批阅分数可改、LaTeX→PDF/PNG、双栏各写一次。
