@@ -1257,3 +1257,15 @@ applyManualTranslation/setTranslationRatio 中 setTranslationRatio 保留——�
 - D75-9 AI 批阅 UI：拉取作业纸包 + 开始批阅放批阅页；批阅页改 AI 设置；
   API key 掩码/本机存储/清除；`settings.local.json` 已 gitignore + check-secrets 红名单；
 - D75-4 更新：人工批阅分数可改、LaTeX→PDF/PNG、双栏各写一次。
+
+
+---
+
+## D75 第五批 · 预览布局/信息架构/删除语义/本地批阅后上传（2026-10-10 讨论）
+
+- D75-4b 预览默认左右两列，横版手动切上下；工具栏加「⇋/⇵」；
+- D75-10 预览入口收敛：富预览模态（搜索/布局切换/旋转/上下一位）；批阅图片卡只做管理；
+- D75-11 批阅图片按班级折叠 + 作业行「删除图片（保留 students.json 清单并记删除记录）」；
+- D75-5b 本地先批阅、后一键/定时上传（评语 + 分数），失败列出并重试；上传走 engine/CLI；
+- D75-12 上传前把 LaTeX 渲染成 PNG（评语/报告），不传原文；
+- D75-9b AI 草稿 + 人工审核，统一本地队列出口。
