@@ -1278,3 +1278,10 @@ REM 4) 重新双击 start.bat（重新下载 engine-main.zip 并安装）
 - 页面顺序保持：发现课程/班级 → 发现作业 → 批阅图片 → 历史 run 管理 → Playwright 历史
   （图片与历史缩略图都在下半部）。
 - 纯 PWA 改动（engine 已有 `/xxt/preview/students` 与 `/xxt/review/work`），无 CLI 变化。
+
+### 19.8 相邻班级行斑马纹 + 展开保持底色（用户拍板 2026-10-10）
+
+- 「发现作业」结果表：班级行按显示顺序交替底色（`--c-zebra`，置顶行仍用置顶色）；
+- 展开 `<details>`（作业/未交名单）内部表格与 summary 设为透明，继承行底色，展开后背景连续；
+- 「发现课程/班级」勾选树的班级行同样加交替底色；
+- 纯 PWA 改动（`XxetongView.vue` + `styles.css` 增加 `--c-zebra`）。

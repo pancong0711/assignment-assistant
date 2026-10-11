@@ -211,6 +211,10 @@ const pinned = ref<string[]>(JSON.parse(localStorage.getItem('xxt-pinned') || '[
 const pinCap = ref(Number(localStorage.getItem('xxt-pinCap') || 10) || 10)
 const removed = ref<string[]>(JSON.parse(localStorage.getItem('xxt-removed') || '[]') as string[])
 
+function rowBg(cl: ClassRow, idx: number): string {
+  if (isPinned(cl)) return 'var(--c-pin-bg, #fffbe8)'
+  return idx % 2 === 1 ? 'var(--c-zebra, #f7f9fc)' : 'transparent'
+}
 function key(cl: ClassRow): string { return `${cl.classId}` }
 function isPinned(cl: ClassRow): boolean { return pinned.value.includes(cl.classId) }
 function isRemoved(cl: ClassRow): boolean { return removed.value.includes(key(cl)) }
@@ -1194,7 +1198,9 @@ onUnmounted(() => { loginSeq += 1; stopLoginPolling(); stopExtractPolling(); sto
             <span class="hint" style="color:var(--c-muted)">courseId {{ c.courseId }} · {{ c.classes.length }} 班</span>
           </label>
           <div style="margin:6px 0 0 22px">
-            <div v-for="k in c.classes" :key="k.classId" style="margin-bottom:8px">
+            <div v-for="(k, ki) in c.classes" :key="k.classId"
+                 :style="{ marginBottom: '8px', padding: '2px 4px', borderRadius: '6px',
+                           background: ki % 2 === 1 ? 'var(--c-zebra, #f7f9fc)' : 'transparent' }">
               <label>
                 <input type="checkbox" :checked="isSel(c, k)" @change="onClassToggle(c, k, $event)" />
                 {{ k.name }}
@@ -1273,16 +1279,16 @@ onUnmounted(() => { loginSeq += 1; stopLoginPolling(); stopExtractPolling(); sto
                 <span class="hint" style="margin-left:8px; color:var(--c-muted)">courseId {{ g.course.courseId }} · {{ g.pinnedRows.length + g.normal.length }} 班</span>
               </td>
             </tr>
-            <tr v-for="cl in [...g.pinnedRows, ...g.normal]" :key="cl.classId"
-                :style="isPinned(cl) ? 'background:var(--c-pin-bg,#fffbe8)' : ''">
+            <tr v-for="(cl, ri) in [...g.pinnedRows, ...g.normal]" :key="cl.classId"
+                :style="{ background: rowBg(cl, ri) }">
               <td style="padding:6px 8px; white-space:normal; word-break:break-word">
                 {{ cl.name }}{{ isPinned(cl) ? ' 📌' : '' }}
               </td>
               <td style="padding:6px 8px; white-space:normal; word-break:break-word">
                 <span v-if="!cl.works.length">–</span>
                 <details v-else>
-                  <summary>{{ cl.works.length }} 份</summary>
-                  <table style="width:100%; border-collapse:collapse; margin-top:4px">
+                  <summary style="background:transparent">{{ cl.works.length }} 份</summary>
+                  <table style="width:100%; border-collapse:collapse; margin-top:4px; background:transparent">
                     <thead>
                       <tr class="hint" style="color:var(--c-muted); font-size:12px">
                         <th style="text-align:left; padding:2px 4px">作业</th>
@@ -1308,9 +1314,9 @@ onUnmounted(() => { loginSeq += 1; stopLoginPolling(); stopExtractPolling(); sto
                       </tr>
                     </tbody>
                   </table>
-                  <div style="margin-top:6px">
-                    <details>
-                      <summary class="hint">未交名单 / 白名单（仅本机教师端可见）</summary>
+                  <div style="margin-top:6px; background:transparent">
+                    <details style="background:transparent">
+                      <summary class="hint" style="background:transparent">未交名单 / 白名单（仅本机教师端可见）</summary>
                       <div v-for="w in cl.works" :key="'n' + w.workId" style="margin:4px 0; font-size:12px">
                         <b>{{ w.name }}</b>：
                         <span>未交（{{ (w.unsubmitted_names || []).length }}）：</span>
