@@ -1285,3 +1285,17 @@ REM 4) 重新双击 start.bat（重新下载 engine-main.zip 并安装）
 - 展开 `<details>`（作业/未交名单）内部表格与 summary 设为透明，继承行底色，展开后背景连续；
 - 「发现课程/班级」勾选树的班级行同样加交替底色；
 - 纯 PWA 改动（`XxetongView.vue` + `styles.css` 增加 `--c-zebra`）。
+
+### 19.9 修复：转义 HTML 导致评语图片未抽取、仍显示 HTML
+
+- 现象：逐生预览里批语仍显示 `<img ...>` 文本，没有图片。
+- 根因：学习通 `textarea[name=comment].value` 可能是**转义 HTML**（`&lt;img ...&gt;`）；
+  `extract_image_urls_from_html()` 未先反转义 → 匹配不到图片；
+  `html_to_text()` 末尾反转义又把标签还原成可见文本。
+- 修复：
+  - `extract_image_urls_from_html` 先 `html.unescape` 再匹配，支持 `data-ke-src/data-original/src`；
+  - `html_to_text` 先反转义再剥标签（兼容双重转义）；
+  - `review_download._save` 支持 `data:image/...;base64` 内联图，并带 `Referer` 请求；
+  - PWA 对旧 manifest 兜底：`stripHtml()` 显示纯文本 + `curCommentStale` 提示「旧版下载，请重新 ⬇」。
+- 测试：`test_extract_image_urls_from_escaped_html`。
+- 现场操作：升级引擎后，对该作业重新点「⬇」（旧数据不会自动补评语图片）。

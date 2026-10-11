@@ -77,3 +77,12 @@ def test_extract_image_urls_from_html():
         "https://cdn.example.com/a.jpg",
     ]
     assert html_to_text("<p>很好</p><br>继续").replace("\n\n", "\n") == "很好\n继续"
+
+
+def test_extract_image_urls_from_escaped_html():
+    """D75-7：批语 value 可能是转义 HTML（&lt;img&gt;），必须先反转义再匹配。"""
+    esc = '&lt;p&gt;很好&lt;/p&gt;&lt;img src="/star3/x.png"&gt;'
+    assert extract_image_urls_from_html(esc) == ["https://mooc2-ans.chaoxing.com/star3/x.png"]
+    assert html_to_text(esc).replace("\n\n", "\n") == "很好"
+    assert extract_image_urls_from_html(
+        '<img data-ke-src="//cdn.example.com/a.jpg">') == ["https://cdn.example.com/a.jpg"]

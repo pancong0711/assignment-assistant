@@ -885,6 +885,37 @@ async function deleteReviewWork(it: XxtReviewImageWork) {
   } catch (e) { reviewDlMsg.value = `删除失败：${String(e)}` }
 }
 
+function unescapeHtml(input?: string): string {
+  return (input || '')
+    .replace(/&lt;/gi, '<').replace(/&gt;/gi, '>')
+    .replace(/&quot;/gi, '"').replace(/&#39;/g, "'")
+    .replace(/&nbsp;/gi, ' ').replace(/&amp;/gi, '&')
+}
+function stripHtml(input?: string): string {
+  const raw = unescapeHtml(input)
+  return raw.replace(/<\s*br\s*\/?>/gi, '\n').replace(/<\/p\s*>/gi, '\n')
+    .replace(/<[^>]+>/g, '').replace(/\n{3,}/g, '\n\n').trim()
+}
+function htmlHasImg(input?: string): boolean {
+  return /<img\b/i.test(unescapeHtml(input))
+}
+const curCommentText = computed(() => {
+  const st = curStudent.value
+  if (!st) return ''
+  return st.comment_text || stripHtml(st.comment)
+})
+const curCommentStale = computed(() => {
+  const st = curStudent.value
+  if (!st) return false
+  return !st.comment_text && !!st.comment && htmlHasImg(st.comment)
+    && !(st.comment_images || []).length
+})
+const curPQTexts = computed(() => {
+  const st = curStudent.value
+  if (!st) return []
+  if (st.per_question_comment_texts?.length) return st.per_question_comment_texts
+  return (st.per_question_comments || []).map(t => stripHtml(t))
+})
 function persistAllowPost() {
   try { localStorage.setItem('xxt-review-allow-post', JSON.stringify(allowPost.value)) } catch { /* noop */ }
 }
@@ -1539,20 +1570,22 @@ onUnmounted(() => { loginSeq += 1; stopLoginPolling(); stopExtractPolling(); sto
             <div style="border:1px solid var(--c-border); border-radius:8px; padding:8px; min-height:180px">
               <div><b>作业批语：</b></div>
               <div style="white-space:pre-wrap; word-break:break-word">
-                {{ curStudent.comment_text || curStudent.comment || '（空）' }}
+                {{ curCommentText || '（空）' }}
               </div>
               <img v-for="f in (curStudent.comment_images || [])" :key="f" :src="curImageUrl(f)" :alt="f"
                    style="max-width:100%; margin-top:6px; border:1px solid var(--c-border); border-radius:6px" />
+              <p v-if="curCommentStale" class="hint" style="color:#7a5c00">
+                ⚠ 该作业是旧版下载：评语图片未本地化（当前只显示文字）。请关闭弹窗后点该行「⬇」重新下载一次。
+              </p>
               <div style="margin-top:8px"><b>题目批语：</b></div>
-              <div v-for="(t, i) in (curStudent.per_question_comment_texts || curStudent.per_question_comments || [])"
+              <div v-for="(t, i) in curPQTexts"
                    :key="i" style="white-space:pre-wrap; word-break:break-word; margin-top:4px">
                 第 {{ i + 1 }} 题：{{ t || '（空）' }}
                 <img v-for="f in ((curStudent.per_question_comment_images || [])[i] || [])" :key="f"
                      :src="curImageUrl(f)" :alt="f"
                      style="max-width:100%; display:block; margin-top:4px; border:1px solid var(--c-border); border-radius:6px" />
               </div>
-              <div v-if="!(curStudent.per_question_comment_texts || curStudent.per_question_comments || []).length"
-                   class="hint">（空）</div>
+              <div v-if="!curPQTexts.length" class="hint">（空）</div>
             </div>
             <p class="hint" style="color:var(--c-muted)">
               人工批阅（预览/覆盖/增加/取消）需写回平台，属写操作；当前冻结，先完成只读预览/审核。

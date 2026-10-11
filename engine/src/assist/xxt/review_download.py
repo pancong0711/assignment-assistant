@@ -142,10 +142,22 @@ def download_review(storage, home, course_id: str, class_id: str, work_id: str, 
                 def _save(url: str, idx: int, kind: str, qidx=None):
                     nonlocal total_images
                     try:
-                        resp = ctx.request.get(url, timeout=30000)
-                        if not resp.ok:
-                            return ""
                         ext = os.path.splitext(urlparse(url).path)[1] or ".jpg"
+                        if url.startswith("data:image/"):
+                            import base64 as _b64
+                            import re as _re
+                            m = _re.match(r"data:image/([a-zA-Z0-9.+-]+);base64,(.*)", url, _re.S)
+                            if not m:
+                                return ""
+                            raw_ext = m.group(1).lower()
+                            ext = "." + ("jpg" if raw_ext in ("jpeg", "jpg") else raw_ext)
+                            body = _b64.b64decode(m.group(2))
+                        else:
+                            resp = ctx.request.get(url, timeout=30000,
+                                                   headers={"Referer": sp.url})
+                            if not resp.ok:
+                                return ""
+                            body = resp.body()
                         if kind == "comment":
                             fn = review_store.comment_image_filename(
                                 s["name"], class_name or class_id, work_name or work_id,
@@ -153,7 +165,7 @@ def download_review(storage, home, course_id: str, class_id: str, work_id: str, 
                         else:
                             fn = review_store.image_filename(
                                 s["name"], class_name or class_id, work_name or work_id, idx, ext)
-                        (wdir / fn).write_bytes(resp.body())
+                        (wdir / fn).write_bytes(body)
                         total_images += 1
                         return fn
                     except Exception:  # noqa: BLE001

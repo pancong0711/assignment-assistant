@@ -234,17 +234,18 @@ JS_REVIEW_DETAIL = r"""() => {
 def extract_image_urls_from_html(html: str, origin: str = "https://mooc2-ans.chaoxing.com") -> list:
     """D75-7：从 UEditor/评语 HTML 中抽取图片 URL（纯函数）。
 
-    学习通批语栏 value 是 HTML，上传的报告就是其中的 <img src>。
-    优先 data-original/src；相对路径按 origin 补全；去重。
+    兼容两种形态：正常 HTML 与**转义过的 HTML**（`&lt;img ...&gt;`）。
+    属性优先 data-ke-src / data-original / src；相对路径按 origin 补全；去重。
     """
     import html as _html
-    if not html:
+    raw = _html.unescape(html or "")
+    if not raw:
         return []
     out: list[str] = []
-    for m in re.finditer(r"<img\b[^>]*>", html or "", re.I):
+    for m in re.finditer(r"<img\b[^>]*>", raw, re.I):
         tag = m.group(0)
         src = ""
-        for attr in ("data-original", "src"):
+        for attr in ("data-ke-src", "data-original", "src"):
             am = re.search(attr + r"\s*=\s*[\"']([^\"']+)[\"']", tag, re.I)
             if am:
                 src = am.group(1)
@@ -252,7 +253,9 @@ def extract_image_urls_from_html(html: str, origin: str = "https://mooc2-ans.cha
         if not src:
             continue
         src = _html.unescape(src).strip()
-        if src.startswith("//"):
+        if src.startswith("data:"):
+            pass
+        elif src.startswith("//"):
             src = "https:" + src
         elif src.startswith("/") and origin:
             src = origin.rstrip("/") + src
@@ -262,14 +265,15 @@ def extract_image_urls_from_html(html: str, origin: str = "https://mooc2-ans.cha
 
 
 def html_to_text(html: str) -> str:
-    """把批语 HTML 变成可读纯文本（纯函数）。"""
+    """把批语 HTML 变成可读纯文本（兼容转义 HTML；纯函数）。"""
     import html as _html
-    if not html:
+    raw = _html.unescape(html or "")
+    if not raw:
         return ""
-    text = re.sub(r"<br\s*/?>", "\n", html, flags=re.I)
-    text = re.sub(r"</p\s*>", "\n", text, flags=re.I)
-    text = re.sub(r"<[^>]+>", "", text)
-    return _html.unescape(text).strip()
+    raw = re.sub(r"<br\s*/?>", "\n", raw, flags=re.I)
+    raw = re.sub(r"</p\s*>", "\n", raw, flags=re.I)
+    raw = re.sub(r"<[^>]+>", "", raw)
+    return _html.unescape(raw).strip()
 
 
 def parse_work_answer_id(review_path: str) -> str:
