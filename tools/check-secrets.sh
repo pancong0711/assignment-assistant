@@ -9,7 +9,7 @@ log() { echo -e "\033[31m[脱敏失败] $*\033[0m"; fail=1; }
 
 # 1) 红名单：绝不入库的路径（与 .gitignore 互补，防误 add 例外规则）
 # grading/ 是学生数据目录红线；engine/src/assist/grading/ 是引擎源码包（代码，允许）
-banned_regex='(^|/)(_legacy|roster|exports|handwriting|submissions|作业)/|(^|/)kb/[^/]+\.xlsx$|\.env$'
+banned_regex='(^|/)(_legacy|roster|exports|handwriting|submissions|作业)/|(^|/)kb/[^/]+\.xlsx$|(^|/)settings\.local[^/]*\.json$|\.env$'
 while IFS= read -r f; do
   [[ -e "$f" ]] || continue
   if echo "$f" | grep -Eq "$banned_regex"; then

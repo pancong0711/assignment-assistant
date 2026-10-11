@@ -22,6 +22,9 @@ submissions/
 !.env.example
 config.json
 config.local.json
+# 本机设置（含 LLM base_url/api_key 等敏感信息，绝不入库）
+settings.local.json
+settings.local.*.json
 state.json
 *xuexitong*ids*.json
 *.token
