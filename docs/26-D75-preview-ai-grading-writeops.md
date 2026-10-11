@@ -217,3 +217,82 @@ batch 任务可提交/下载；base URL 可切换 Aliyun 与自定义并持久�
 - 不一次性放开写权限；
 - 不自动后台发现/自动提交；
 - 不把 API key、学生数据、run 存档入库或上传。
+
+
+---
+
+## 第三轮讨论记录（2026-10-10，用户问答）
+
+### D75-1e · 探针/下载的 PWA 化（用户不使用终端）
+
+- 探针不应要求用户敲 CLI；改为 PWA 按钮：
+  - 「🧪 只读探针」= `POST /xxt/review/probe` job（serve 已有），PWA 轮询 `/jobs/<id>`；
+  - 新增 `GET /xxt/review/probe/latest` 读取最近 probe JSON，PWA 展示：
+    学生数、`details`（图片数/作业批语长度/题目批语数/分数）、`aborted` 列表；
+  - 若 `aborted` 非空：PWA 提供「放行这些只读 POST」勾选，把 URL 子串存入本机设置，
+    下载时自动带上 `--allow-post`，用户无需输入命令；
+  - 一键「⬇ 下载图片/批语」同样走 job，无需 CLI。
+- 批阅图片卡新增「🔄 刷新本区」按钮；下载 job 持久化（跨 tab 恢复，参照 `xxtJobs`）。
+- 诊断：index 增加 `students_total / students_with_images / zero_image_students`，
+  直接看出「57 图 / 59 人」里哪些学生 0 图；每生 manifest 记录 `error` 与 `images[]`。
+- 缩略图点击放大：新增 lightbox（大图 + 旋转 + 上一位/下一位）；当前实现只是普通 `<img>`，
+  无点击逻辑（这是「预览逻辑」现状）。
+
+### D75-2c · 未交名单从平台只读提取（替代名册差集）
+
+- 现状：`unsubmitted_names` 来自 master roster 差集，无名册时显示「无差集或本班无名册基准」。
+- 目标：直接从平台读未交名单。路线见 `docs/27` §3：
+  - A. `stat2` 统计页（旧代码已验证，得到每生缺交 + personId）；
+  - B. mark 页「未交」选项卡（推荐先用探针确认 `status=`/AJAX 参数）。
+- 落点：run JSON 的 `works[].unsubmitted_platform`（平台未交）与 `unsubmitted_names`（名册差集）并存，
+  PWA 优先显示平台未交，并标注来源。
+
+### D75-3 调整 · 两段式与 batch
+
+- 转写（图片输入）实时多模态；评阅（纯文本）走 Aliyun batch（待核实多模态 batch 支持）。
+- 移植旧代码 `transcriber.py`（markdown+quality JSON）与 `evaluator.py`（tag 策略 + Python 算分 + 截断重试）。
+- provider/base URL：Aliyun 默认 + 自定义下拉（见 D75-3c）。
+
+### D75-4 · 人工批阅与覆盖（批阅选项卡内）
+
+- 预览形态（用户设想）：
+  - 竖版作业：左「学生作答」/ 右「批语」两列；横版作业：上「作答」/ 下「批语」两行；
+  - 支持**旋转图片**（学生上传可能颠倒）；
+  - 「上一位 / 下一位」学生切换；先在批阅页选择「班级 + 某次作业」。
+- 批语列功能键：点击展开输入面板，面板下方四个键：
+  - **预览**：LaTeX 渲染预览（KaTeX）；
+  - **覆盖**：先删除原有批语（文字或图片），再写入人工批语/图片，保存并上传覆盖平台；
+  - **增加**：在现有批语基础上追加；
+  - **取消**：关闭面板。
+- 平台写入机制（旧代码已确认）：
+  - 作业批语 `textarea[name=comment]` + UEditor `edui1`；
+  - 题目批语 `textarea[id^=answer]` + `#ueditor_0` iframe；
+  - 本项目只有 1 道学习通题 → 批语/评语等价，但需**两个栏各写一次**（报告上传两次）；
+  - 覆盖 = 清空 textarea + 同步 iframe body → 插入新内容 → 提交；删除原报告即清空对应栏。
+- 数据/代码边界：
+  - 数据已下载到 `pages/review/`，两列预览/旋转/切换/人工输入**主要是 PWA 代码**；
+  - 覆盖/增加/取消里的「上传平台」需要 engine/CLI 写会话（写操作，冻结；见 D75-5）。
+- 与「发现作业」预览的关系：
+  - 学习通页 = 数据管理/总览（列表、下载、文件夹、缩略图）；
+  - 批阅页 = 逐生审核（两列、AI 结果复核、人工批阅、上一位/下一位）；
+  - 二者不重复：前者管「有哪些/下载没下载」，后者管「每个学生看得对不对/改不改」。
+
+### D75-5 更新 · 写操作覆盖语义
+
+- 覆盖批语属于写操作：需 dry-run → 测试班 → 单生 → 批量；
+- 覆盖前必须快照原批语（journal + 本地），支持回滚；
+- 上传报告图片走 UEditor/webuploader + 上传 CDN 白名单；「删除原报告」= 清空对应栏后再插入；
+- 双栏各写一次（作业批语 + 题目批语）。
+
+### D75-6 · 引擎版本号策略
+
+- 现状：`engine_version` 长期 `0.1.0`；更新检测实际用 `engine-version.json` 的 **commit SHA**，
+  所以版本号只是人类可读标识，不必每 commit 一改。
+- 建议：按**批次**递增（SemVer）：
+  - `0.2.0`：学习通只读接入（D63–D74：发现/提取/历史/操作记录/批阅图片下载）；
+  - `0.3.0`：AI 辅助评阅（D75-3）；
+  - `0.4.0`：写操作（公告/上传/覆盖/打分，D75-5）；
+  - 修补批次：`0.2.x` patch。
+- 落地：`engine/pyproject.toml` version 与 `assist/__init__.py __version__` 同步；
+  CI 继续发布 commit SHA；更新提示显示「版本 + commit 短号」；
+  在 `docs/24`（或 CHANGELOG）记录「版本 → 批次」对照。

@@ -1220,3 +1220,16 @@ applyManualTranslation/setTranslationRatio 中 setTranslationRatio 保留——�
   - D75-1c review-download：友好命名 `学生_班级+作业_pNN.jpg` + `students.json`（图片旧名映射 + 两栏批语）；
   - D75-1d 批阅图片目录浏览 + 按 6 个月时长清理（独立于 run 历史）；
 - 状态：**D75-2/1a/1b/1c/1d 已实施（docs/24 §16/§17）；待真机跑 review-probe → review-download 验证**。
+
+
+---
+
+## D75 增补 · 探针 PWA 化 / 未交名单 / 人工批阅 / 版本号（2026-10-10 讨论）
+
+- 经验手册：`docs/27-xxt-web-playbook.md`（学习通网页操作 Playbook，含未交名单两条路线、两栏批语、UEditor 写入、探针方法论）；
+- D75-1e 探针与下载 PWA 化（按钮 + 最新结果接口 + allow-post 勾选 + 批阅图片刷新/持久化/lightbox/0 图诊断）；
+- D75-2c 未交名单从平台只读提取（mark 未交 tab 或 stat2，替代名册差集）；
+- D75-3 两段式 + Aliyun batch（转写实时 / 评阅 batch）；
+- D75-4 人工批阅：批阅页逐生两列/两行预览 + 旋转 + 上一位/下一位 + 预览/覆盖/增加/取消；
+- D75-5 覆盖写操作：清空原批语 + 双栏各写一次 + 快照/回滚；
+- D75-6 引擎版本号策略：按批次 SemVer（0.2.0 只读接入 / 0.3.0 AI 评阅 / 0.4.0 写操作）。
