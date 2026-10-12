@@ -1320,3 +1320,15 @@ applyManualTranslation/setTranslationRatio 中 setTranslationRatio 保留——�
   - D76-4 修复 run 级存档预览路径：扫描 `pages/runs/*/`、支持 `?run_id=`、
     回退 `students.json` manifest；
 - 状态：**已实施（2026-10-11）**。
+
+---
+
+## D78 · PWA 课程通知发布（CLI 套壳 + 附件上传 + 白名单）（2026-10-12）
+
+- 主任务单/实施记录：`docs/30-D78-pwa-notice-publish.md`；
+- 真机确认学习通附件链路：WebUploader 通用 hidden input → pan-yz upload/v2 → UEditor insertCloud iframe；
+- engine：`assist xxt notice-send`（默认 dry-run）/`notice-attachments`；serve 新增 `/xxt/notice/send`、`/xxt/notice/attachments`；
+- PWA：发公告卡解除占位，已提取班多选 + 默认标题正文 + PDF 附件勾选 + 预检/二次确认发布；
+- 白名单：当前仅开放 `217801417/40009084`（大学物理知识点拾遗（by pc）/默认班级）；
+- engine 版本 0.1.0→0.4.0，`/status` 增加 short commit；
+- 状态：**已实施并真机验证（附件通知实际发布成功）**。

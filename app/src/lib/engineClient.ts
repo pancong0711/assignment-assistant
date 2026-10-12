@@ -99,6 +99,8 @@ export interface DoctorResult {
 export interface EngineStatus {
   name: string
   version: string
+  /** D77：短 commit；旧引擎可能没有。 */
+  commit?: string
   workspace: boolean
   /** D67：同一进程的实例身份；PWA 重启后必须看到它变化。 */
   pid?: number
@@ -171,6 +173,7 @@ export async function fetchEngineStatus(engineAddr: string, token?: string): Pro
       status: {
         name: String(o.name ?? ''),
         version: String(o.version ?? ''),
+        commit: o.commit === undefined || o.commit === null ? undefined : String(o.commit),
         workspace: Boolean(o.workspace),
         pid: typeof o.pid === 'number' ? o.pid : undefined,
         instance_id: o.instance_id === undefined || o.instance_id === null
@@ -744,6 +747,42 @@ export async function fetchXxtReviewStudents(
   const path = `/xxt/preview/students/${encodeURIComponent(classId)}/${encodeURIComponent(workId)}`
     + (runId ? `?run_id=${encodeURIComponent(runId)}` : '')
   return (await getJson2(engineUrlWithToken(base, path, token))) as XxtReviewStudents
+}
+
+/* ========== D77：课程通知发布（写操作，engine CLI 套壳） ========== */
+
+export interface XxtNoticeTargetClass { classId: string; name?: string }
+export interface XxtNoticeTargetCourse { courseId: string; courseName?: string; classes: XxtNoticeTargetClass[] }
+export interface XxtNoticeAttachment { name: string; path: string; rel: string; size: number; mtime: number; generated_at?: string }
+
+/** GET /xxt/notice/attachments：列出 workspace 下 classes/sheets 目录中的 PDF。 */
+export async function fetchXxtNoticeAttachments(
+  engineAddr: string, token?: string, limit = 200,
+): Promise<XxtNoticeAttachment[]> {
+  const base = normalizeEngineAddr(engineAddr)
+  const raw = await getJson2(engineUrlWithToken(base, `/xxt/notice/attachments?limit=${encodeURIComponent(String(limit))}`, token))
+  const o = raw as Record<string, unknown>
+  return Array.isArray(o.items) ? (o.items as XxtNoticeAttachment[]) : []
+}
+
+/** POST /xxt/notice/send：发起 dry-run 或真正发送 job。 */
+export async function startXxtNoticeSend(
+  engineAddr: string, token: string | undefined,
+  payload: { targets: XxtNoticeTargetCourse[]; title: string; bodyHtml: string; attachments: string[]; send: boolean },
+): Promise<{ jobId: string; mode: string }> {
+  const base = normalizeEngineAddr(engineAddr)
+  const res = await fetch(engineUrlWithToken(base, '/xxt/notice/send', token), {
+    method: 'POST', headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(payload),
+  })
+  if (!res.ok) {
+    let detail = `HTTP ${res.status}`
+    try { const o = (await res.json()) as { error?: string }; if (o?.error) detail = o.error } catch {}
+    throw new Error(detail)
+  }
+  const o = (await res.json()) as { job_id?: string; mode?: string }
+  if (!o?.job_id) throw new Error('引擎未返回 job_id')
+  return { jobId: o.job_id, mode: String(o.mode || (payload.send ? 'send' : 'dry-run')) }
 }
 
 /* ========== D75-1c/d：批阅图片 + 两栏批语 ========== */

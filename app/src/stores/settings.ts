@@ -139,6 +139,7 @@ export const useSettingsStore = defineStore('settings', {
     /** 引擎在线检测 chip（/status）：online + 版本 */
     engineOnline: false as boolean,
     engineVersion: '' as string,
+    engineCommit: '' as string,
     engineStatusError: '' as string,
     /** D67：重启前后实例身份（/status 返回） */
     engineInstanceId: '' as string,
@@ -205,6 +206,7 @@ export const useSettingsStore = defineStore('settings', {
       const r = await fetchEngineStatus(this.engineUrl, this.engineToken)
       this.engineOnline = r.online
       this.engineVersion = r.status?.version ?? ''
+      this.engineCommit = r.status?.commit ?? ''
       this.engineInstanceId = r.status?.instance_id ?? ''
       this.enginePid = r.status?.pid ?? 0
       this.engineSupervised = Boolean(r.status?.supervised)

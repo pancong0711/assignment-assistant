@@ -824,6 +824,56 @@ class Handler(BaseHTTPRequestHandler):
                                    journal_params={"classId": ids["classId"], "workId": ids["workId"]})
             self._json({"ok": True, "job_id": job_id})
             return
+        if u.path == "/xxt/notice/send":
+            payload: dict = {}
+            try:
+                length = int(self.headers.get("Content-Length") or 0)
+                if length:
+                    if length > 5 * 1024 * 1024:
+                        self._json({"ok": False, "error": "payload too large"}, 413)
+                        return
+                    payload = json.loads(self.rfile.read(length).decode("utf-8")) or {}
+            except Exception as exc:  # noqa: BLE001
+                self._json({"ok": False, "error": f"bad json: {exc}"}, 400)
+                return
+            from .xxt.notice import normalize_targets, validate_targets
+            targets = normalize_targets(payload.get("targets"))
+            err = validate_targets(targets)
+            if err:
+                self._json({"ok": False, "error": err}, 400)
+                return
+            spec = {
+                "targets": targets,
+                "title": str(payload.get("title") or "")[:128],
+                "bodyHtml": str(payload.get("bodyHtml") or payload.get("body") or ""),
+                "attachments": [str(x) for x in (payload.get("attachments") or [])[:20]],
+            }
+            home = _xxt_home()
+            env = _xxt_env(home)
+            cwd = str(_ws())
+            ok, detail = _xxt_preflight(cwd, env)
+            if not ok:
+                self._json({"ok": False, "error": "engine 无法 import assist.cli",
+                            "detail": detail}, 500)
+                return
+            spec_path = xxt_layout.notice_spec_json(home)
+            try:
+                spec_path.parent.mkdir(parents=True, exist_ok=True)
+                spec_path.write_text(json.dumps(spec, ensure_ascii=False), encoding="utf-8")
+            except Exception as exc:  # noqa: BLE001
+                self._json({"ok": False, "error": f"write notice spec failed: {exc}"}, 500)
+                return
+            args = ["xxt", "notice-send", "--spec", str(spec_path)]
+            if bool(payload.get("send")):
+                args.append("--send")
+            job_id = secrets.token_urlsafe(6)
+            self._start_stream_job(job_id, _xxt_cli_cmd(args), env, "xxt_notice_send",
+                                   "xxt-notice", cwd, journal_kind="xxt_notice_send",
+                                   journal_params={"mode": "send" if bool(payload.get("send")) else "dry-run",
+                                                   "courses": len(targets),
+                                                   "classes": sum(len(c.get("classes") or []) for c in targets)})
+            self._json({"ok": True, "job_id": job_id, "mode": "send" if bool(payload.get("send")) else "dry-run"})
+            return
         if u.path == "/xxt/run/import":
             payload: dict = {}
             try:
@@ -1092,6 +1142,12 @@ class Handler(BaseHTTPRequestHandler):
             self.end_headers()
             self.wfile.write(body)
             return
+        elif u.path == "/xxt/notice/attachments":
+            from .xxt.notice import list_notice_attachments
+            q = urllib.parse.parse_qs(u.query)
+            limit = int((q.get("limit") or ["200"])[0] or 200)
+            self._json({"ok": True, "items": list_notice_attachments(Path(self.ws).resolve(), limit=max(1, min(limit, 500)))})
+            return
         elif u.path == "/xxt/preview/archives":
             from .xxt import preview as _preview
             self._json({"ok": True, "items": _preview.list_review_archives(_xxt_home())})
@@ -1197,9 +1253,11 @@ class Handler(BaseHTTPRequestHandler):
                                           "python_dl": os.environ.get('UV_PYTHON_INSTALL_MIRROR') or 'official',
                                           "official": os.environ.get('CN_OFFICIAL') == 'official'}})
         elif u.path == "/status":
+            from . import get_commit
             self._json({
                 "name": "assist-engine",
                 "version": __version__,
+                "commit": get_commit(),
                 "workspace": True,
                 "ws": str(self.ws),
                 # D67：重启前后实例身份；PWA 必须等 instance_id 变化才算重启成功。

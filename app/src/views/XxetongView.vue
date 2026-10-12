@@ -2,15 +2,16 @@
 import { computed, onMounted, onUnmounted, ref } from 'vue'
 import type { XxtTargetsDiff, XxtWork, XxtWorksCourse } from '../lib/engineClient'
 import {
-  clearXxtRuns, clearXxtTargetsHistory, deleteXxtRun, fetchXxtLoginJob, fetchXxtRun,
+  clearXxtRuns, clearXxtTargetsHistory, deleteXxtRun, fetchXxtLoginJob, fetchXxtNoticeAttachments,
   fetchXxtFreshness, fetchXxtReviewIndex, fetchXxtReviewProbeLatest, fetchXxtReviewStudents,
-  fetchXxtReviewWork, fetchXxtRuns, fetchXxtStatus, fetchXxtStorage, fetchXxtTargets,
+  fetchXxtReviewWork, fetchXxtRun, fetchXxtRuns, fetchXxtStatus, fetchXxtStorage, fetchXxtTargets,
   fetchXxtWorks, importXxtRun, pruneXxtReview, pruneXxtRuns, startXxtDiscover,
   startXxtDiscoverWorks, startXxtExtract, startXxtExtractTargets, startXxtLogin,
+  startXxtNoticeSend,
   deleteXxtReviewWork, purgeXxtReviewWork, startXxtReviewDownload, startXxtReviewProbe,
   xxtReviewFileUrl,
 } from '../lib/engineClient'
-import type { XxtReviewImageWork, XxtReviewManifestStudent, XxtReviewProbe,
+import type { XxtNoticeAttachment, XxtNoticeTargetCourse, XxtReviewImageWork, XxtReviewManifestStudent, XxtReviewProbe,
   XxtReviewStudent, XxtStorageStats } from '../lib/engineClient'
 import { useSettingsStore } from '../stores/settings'
 import { useXxtJobsStore } from '../stores/xxtJobs'
@@ -20,7 +21,7 @@ import ProcessStreamView from '../components/ProcessStreamView.vue'
  * - 登录卡：QR 框（/xxt/qr）↔ 头像（verdict=alive 时 data-URL）；
  * - 列表：/xxt/runs 最新 run 的 全 course 分组列表，组头 sticky、每列表独立滚动；
  * - 行操作：置顶(≤10 可调)/移出/刷新/从学习通恢复（恢复=仅回放最近 run JSON，零网络）。
- * 写操作（公告发布/批阅回传）维持 D62 冻结——本页不提供任何写按钮。   */
+ * 写操作：D77 起发公告白名单开放；批阅回传仍冻结。   */
 
 const settings = useSettingsStore()
 const xxtJobs = useXxtJobsStore()
@@ -1151,10 +1152,166 @@ const grouped = computed(() => courses.value.map(c => {
 }))
 
 
+/* ---------- D77：课程通知发布（写操作；白名单测试） ---------- */
+const NOTICE_ALLOWLIST = new Set(['217801417:40009084'])
+const NOTICE_DEFAULT_TITLE = '大学物理课作业通知'
+const NOTICE_DEFAULT_BODY = '作业纸见附件，请各位同学打印自己的那一张并手写完成、拍照上传到学习通作业里面。'
+const noticeSel = ref<Record<string, boolean>>({})
+const noticeTitle = ref(NOTICE_DEFAULT_TITLE)
+const noticeBody = ref(NOTICE_DEFAULT_BODY)
+const noticeAttachments = ref<XxtNoticeAttachment[]>([])
+const noticeAttSel = ref<Record<string, boolean>>({})
+const noticeMsg = ref('')
+const noticeConfirm = ref(false)
+const noticeLoading = ref(false)
+let noticeTimer: number | undefined
+
+function nkey(courseId: string, classId: string): string { return `${courseId}:${classId}` }
+function noticeAllowed(courseId: string, classId: string): boolean {
+  return NOTICE_ALLOWLIST.has(nkey(courseId, classId))
+}
+function isNoticeSel(courseId: string, classId: string): boolean {
+  return noticeSel.value[nkey(courseId, classId)] === true
+}
+function onNoticeClassToggle(courseId: string, classId: string, ev: Event) {
+  if (!noticeAllowed(courseId, classId)) return
+  const checked = (ev.target as HTMLInputElement).checked
+  if (checked) noticeSel.value = { ...noticeSel.value, [nkey(courseId, classId)]: true }
+  else {
+    const next = { ...noticeSel.value }
+    delete next[nkey(courseId, classId)]
+    noticeSel.value = next
+  }
+  applyNoticeAttachmentsToContent()
+}
+function selectedNoticeTargets(): XxtNoticeTargetCourse[] {
+  const out: XxtNoticeTargetCourse[] = []
+  for (const c of courses.value) {
+    const classes = c.classes.filter(k => isNoticeSel(c.courseId, k.classId)).map(k => ({ classId: k.classId, name: k.name }))
+    if (classes.length) out.push({ courseId: c.courseId, courseName: c.name, classes })
+  }
+  return out
+}
+function selectedNoticeCount(): number {
+  return selectedNoticeTargets().reduce((a, c) => a + c.classes.length, 0)
+}
+function selectedAttachmentNames(): string[] {
+  return Object.keys(noticeAttSel.value).filter(k => noticeAttSel.value[k])
+    .map(p => noticeAttachments.value.find(a => a.path === p)?.name || String(p).split(/[\/]/).pop() || String(p))
+}
+function attachmentLine(names: string[]): string {
+  return names.length ? `附件文件名：${names.join('、')}` : ''
+}
+function applyNoticeAttachmentsToContent() {
+  const names = selectedAttachmentNames()
+  const line = attachmentLine(names)
+  // title suffix: only when title still starts with default or already has our suffix
+  const suffix = names.length ? `（附件：${names.slice(0, 2).join('、')}${names.length > 2 ? '等' : ''}）` : ''
+  let t = noticeTitle.value.trim()
+  const baseTitle = t.startsWith(NOTICE_DEFAULT_TITLE) ? NOTICE_DEFAULT_TITLE : (t.includes('（附件：') ? NOTICE_DEFAULT_TITLE : t)
+  const maxLen = 128
+  let nt = suffix ? `${baseTitle}${suffix}` : baseTitle
+  if (nt.length > maxLen) nt = nt.slice(0, maxLen)
+  noticeTitle.value = nt
+  // body: keep user text but replace/update the attachment filename line at the end
+  let b = noticeBody.value.trim()
+  if (!b) b = NOTICE_DEFAULT_BODY
+  const withoutAtt = b.split('\n').filter(x => !x.startsWith('附件文件名：')).join('\n').trim()
+  noticeBody.value = line ? `${withoutAtt}\n\n${line}` : withoutAtt
+}
+async function loadNoticeAttachments() {
+  try {
+    noticeAttachments.value = await fetchXxtNoticeAttachments(engUrl.value, tok.value, 200)
+    // drop stale selections
+    const valid = new Set(noticeAttachments.value.map(a => a.path))
+    const next: Record<string, boolean> = {}
+    for (const [k, v] of Object.entries(noticeAttSel.value)) if (v && valid.has(k)) next[k] = true
+    noticeAttSel.value = next
+  } catch (e) {
+    noticeMsg.value = `附件清单读取失败：${String(e)}`
+  }
+}
+function onNoticeAttachToggle(path: string, ev: Event) {
+  const checked = (ev.target as HTMLInputElement).checked
+  if (checked) noticeAttSel.value = { ...noticeAttSel.value, [path]: true }
+  else {
+    const next = { ...noticeAttSel.value }
+    delete next[path]
+    noticeAttSel.value = next
+  }
+  applyNoticeAttachmentsToContent()
+}
+function stopNoticePolling() {
+  if (noticeTimer !== undefined) { window.clearTimeout(noticeTimer); noticeTimer = undefined }
+}
+function pollNoticeJob(jobId: string, send: boolean) {
+  stopNoticePolling()
+  const tick = async () => {
+    try {
+      const job = await fetchXxtLoginJob(engUrl.value, tok.value, jobId)
+      if (job.status === 'running') {
+        const line = (job.lines || []).slice(-1)[0]
+        noticeMsg.value = `${send ? '发送中' : '预检中'}：${line ? line.slice(-160) : '……'}`
+        noticeTimer = window.setTimeout(tick, 1500)
+        return
+      }
+      noticeLoading.value = false
+      const tail = (job.lines || []).slice(-8).join('\n')
+      if (job.status === 'done' && (job.returncode ?? 0) === 0) {
+        noticeMsg.value = send
+          ? `发布完成。请在学习通网页查看；本地 receipt 已保存。
+${tail}`
+          : `预检完成（未发布）。本地 receipt/截图已保存。
+${tail}`
+      } else {
+        noticeMsg.value = `${send ? '发布' : '预检'}失败：${tail || job.status}`
+      }
+    } catch (e) {
+      noticeLoading.value = false
+      noticeMsg.value = `任务状态查询失败：${String(e)}`
+    }
+  }
+  void tick()
+}
+async function runNoticeSend(send: boolean) {
+  if (noticeLoading.value) return
+  const targets = selectedNoticeTargets()
+  if (!targets.length) { noticeMsg.value = '请先勾选允许发布的班级'; return }
+  if (!noticeTitle.value.trim()) { noticeMsg.value = '标题不能为空'; return }
+  if (!noticeBody.value.trim()) { noticeMsg.value = '正文不能为空'; return }
+  if (send && !noticeConfirm.value) { noticeMsg.value = '请先勾选“我已确认发送对象与内容”'; return }
+  if (send) {
+    const names = selectedAttachmentNames()
+    const ok = window.confirm(`即将真正发布通知：
+标题：${noticeTitle.value}
+目标：${targets.map(c => `${c.courseName || c.courseId}/${c.classes.map(k => k.name || k.classId).join('+')}`).join('; ')}
+附件：${names.join('、') || '无'}
+
+确定发送？`)
+    if (!ok) { noticeMsg.value = '已取消发布。'; return }
+  }
+  noticeLoading.value = true
+  noticeMsg.value = send ? '正在提交发布任务……' : '正在提交预检任务……'
+  try {
+    const r = await startXxtNoticeSend(engUrl.value, tok.value, {
+      targets,
+      title: noticeTitle.value.trim(),
+      bodyHtml: noticeBody.value.trim(),
+      attachments: Object.keys(noticeAttSel.value).filter(k => noticeAttSel.value[k]),
+      send,
+    })
+    pollNoticeJob(r.jobId, send)
+  } catch (e) {
+    noticeLoading.value = false
+    noticeMsg.value = `启动失败：${String(e)}`
+  }
+}
+
 onMounted(() => {
   refreshStatus()
   refreshRuns()
   loadTargets().catch(() => { /* 无历史发现结果时忽略 */ })
+  loadNoticeAttachments().catch(() => { /* 引擎离线或无附件时忽略 */ })
   loadWorks().catch(() => { /* 无历史作业清单时忽略 */ })
   loadReviewIndex().catch(() => { /* 无批阅图片目录时忽略 */ })
   if (reviewDlJobId.value) { reviewDlMsg.value = '检测到未完成的下载任务，继续轮询……'; pollReviewDl(reviewDlJobId.value) }
@@ -1230,35 +1387,70 @@ onUnmounted(() => { loginSeq += 1; stopLoginPolling(); stopExtractPolling(); sto
       </div>
     </div>
 
-    <!-- §23.3 发公告向导卡（占位 disabled；T10 冻结——表单形态预览，无任何提交逻辑） -->
+    <!-- D77 发公告向导卡：engine CLI 写操作套壳；当前白名单仅开放已真机验证班级 -->
     <div class="card">
-      <h3>发公告 <small style="font-weight:400;color:var(--c-muted)">占位（T10 冻结；表单按 §23.3 设计预置，解冻后接引擎写会话）</small>
-        <span class="tag" style="background:#fff3cd; color:#7a5c00; padding:2px 8px; border-radius:6px; font-size:12px">🔒 写操作冻结</span></h3>
-      <fieldset :disabled="true" style="border:none; opacity:.65">
-        <p>
-          <label class="field">发布班级（多选，来自已提取班）：
-            <select multiple disabled style="width:260px" size="3">
-              <option v-for="c in courses" :key="c.courseId" disabled>{{ c.name }}</option>
-            </select>
-          </label>
-        </p>
-        <p><label class="field">标题（≤128 字）：
-          <input type="text" maxlength="128" disabled placeholder="第X章作业说明（占位）" style="width:320px" />
-        </label></p>
-        <p><label class="field" style="vertical-align:top">正文：
-          <textarea rows="3" disabled placeholder="公告正文（占位；解冻后为富文本/纯文本）" style="width:min(480px,90%); vertical-align:middle"></textarea>
-        </label></p>
-        <p><label class="btn as-label btn-file" disabled title="占位：选择「输出与交付」生成的作业纸 PDF">附件（作业纸 PDF）选择器…</label>
-          <span class="hint" style="margin-left:8px">尚未选择（占位）</span></p>
-        <p class="hint">定时发送 / 提醒渠道：占位（缺省关闭，§23.1 侦察对应 .scheduledSend 与四渠道提醒）</p>
-        <p>
-          <button class="btn" disabled>👁 发送前预览（占位）</button>
-          <button class="btn primary" disabled style="margin-left:8px">📢 发布（占位·双确认后启用）</button>
-        </p>
-      </fieldset>
+      <h3>发公告 <small style="font-weight:400;color:var(--c-muted)">从“已提取班”中选择发布对象；当前测试白名单仅开放「大学物理知识点拾遗（by pc）/默认班级」</small>
+        <span class="tag" style="background:#fff3cd; color:#7a5c00; padding:2px 8px; border-radius:6px; font-size:12px">🔒 白名单写操作</span></h3>
+      <p class="hint">
+        数据源=最近一次提取 run 的班级列表。未勾选或白名单外班级不可选；真正发送前会二次确认，并由 engine CLI 执行。
+      </p>
+      <div v-if="!courses.length" class="hint" style="color:var(--c-muted)">
+        暂无已提取班级：请先在「发现课程/班级」中勾选并「提取所选」。
+      </div>
+      <div v-else style="max-height:220px; overflow:auto; border:1px solid var(--c-border); border-radius:8px; padding:8px; margin-bottom:8px">
+        <div v-for="c in courses" :key="'notice-' + c.courseId" style="margin-bottom:8px">
+          <b>{{ c.name }}</b>
+          <span class="hint" style="color:var(--c-muted)">courseId {{ c.courseId }} · {{ c.classes.length }} 班</span>
+          <div style="margin:4px 0 0 22px; display:flex; flex-wrap:wrap; gap:12px">
+            <label v-for="k in c.classes" :key="k.classId"
+                   :style="{ color: noticeAllowed(c.courseId, k.classId) ? '' : 'var(--c-muted)' }">
+              <input type="checkbox" :checked="isNoticeSel(c.courseId, k.classId)"
+                     :disabled="!noticeAllowed(c.courseId, k.classId)"
+                     @change="onNoticeClassToggle(c.courseId, k.classId, $event)" />
+              {{ k.name }}
+              <span v-if="!noticeAllowed(c.courseId, k.classId)" class="hint">（白名单外）</span>
+            </label>
+          </div>
+        </div>
+      </div>
+      <p><label class="field">标题（≤128 字）：
+        <input v-model="noticeTitle" type="text" maxlength="128" placeholder="大学物理课作业通知" style="width:min(520px,90%)" />
+      </label></p>
+      <p><label class="field" style="vertical-align:top">正文：
+        <textarea v-model="noticeBody" rows="4" placeholder="作业纸见附件，请各位同学打印自己的那一张并手写完成、拍照上传到学习通作业里面。" style="width:min(640px,92%); vertical-align:middle"></textarea>
+      </label></p>
+      <p>
+        <button class="btn small" :disabled="noticeLoading" @click="loadNoticeAttachments">🔄 刷新附件清单</button>
+        <span class="hint" style="margin-left:8px">共 {{ noticeAttachments.length }} 个可发布的作业纸 PDF；勾选后文件名会自动进入标题/正文。</span>
+      </p>
+      <div v-if="noticeAttachments.length" style="max-height:180px; overflow:auto; border:1px solid var(--c-border); border-radius:8px; padding:8px; margin-bottom:8px">
+        <label v-for="a in noticeAttachments" :key="a.path" style="display:block; margin:3px 0">
+          <input type="checkbox" :checked="!!noticeAttSel[a.path]" @change="onNoticeAttachToggle(a.path, $event)" />
+          {{ a.name }}
+          <span class="hint" style="color:var(--c-muted)">{{ a.generated_at || '' }} · {{ fmtBytes(a.size) }}</span>
+        </label>
+      </div>
+      <p class="hint">定时发送 / 提醒渠道：本轮保持缺省关闭；附件走学习通 WebUploader（PDF/DOC/DOCX）。</p>
+      <p>
+        <label>
+          <input v-model="noticeConfirm" type="checkbox" />
+          我已确认发送对象与内容
+        </label>
+      </p>
+      <p>
+        <button class="btn" :disabled="!selectedNoticeCount() || noticeLoading" @click="runNoticeSend(false)">
+          {{ noticeLoading ? '任务中…' : '🧪 预检/试运行（不发布）' }}
+        </button>
+        <button class="btn primary" style="margin-left:8px"
+                :disabled="!selectedNoticeCount() || !noticeConfirm || noticeLoading"
+                @click="runNoticeSend(true)">
+          📢 发布通知（二次确认）
+        </button>
+        <span class="hint" style="margin-left:8px">已选 {{ selectedNoticeCount() }} 个班 / {{ selectedAttachmentNames().length }} 个附件</span>
+      </p>
+      <p v-if="noticeMsg" class="hint" style="white-space:pre-wrap">{{ noticeMsg }}</p>
       <p class="hint" style="color:var(--c-muted)">
-        解冻流程（docs/16 §23.2）：教师确认测试班 → 引擎写会话（route 白名单仅公告域+上传 CDN）→
-        发送前快照存档 → 二次确认 → 提交；本卡所有控件 disabled，不含任何提交逻辑。
+        流程：PWA → POST /xxt/notice/send → assist xxt notice-send --spec → Playwright 打开新建通知页 → 注入收件人/填标题正文/上传附件 → dry-run 截图或点击发送。receipt 写入本机 xxt_home()/notice-sends/。
       </p>
     </div>
 

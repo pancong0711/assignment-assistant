@@ -12,6 +12,8 @@ from pathlib import Path
 import click
 from loguru import logger
 
+from . import __version__
+
 
 def _setup(verbose: bool, ws: "Path | str | None" = None):
     """workspace 归一（兼容 Path/str —— S2a 联调发现的预存在 str bug）。"""
@@ -25,7 +27,7 @@ def _setup(verbose: bool, ws: "Path | str | None" = None):
 
 @click.group()
 @click.help_option("-h", "--help")
-@click.version_option(None, "--version")
+@click.version_option(__version__, "--version", prog_name="assist")
 @click.option("--verbose", is_flag=True, help="DEBUG 级日志")
 @click.pass_context
 def cli(ctx, verbose):

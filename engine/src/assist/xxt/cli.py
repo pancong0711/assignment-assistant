@@ -236,6 +236,62 @@ def register(group: click.Group) -> None:
                               ensure_ascii=False, indent=1))
         raise SystemExit(0 if rep.get("ok") else 2)
 
+    @group.command("notice-attachments")
+    @click.option("--limit", default=200, type=int)
+    def xxt_notice_attachments(limit):
+        """列出可发布为通知附件的作业纸 PDF（workspace/classes/**/sheets/**/*.pdf）。"""
+        from .notice import list_notice_attachments
+        rows = list_notice_attachments(None, limit=limit)
+        click.echo(json.dumps({"ok": True, "items": rows}, ensure_ascii=False, indent=1))
+
+    @group.command("notice-send")
+    @click.option("--spec", "spec_path", default=None, type=click.Path(exists=True, dir_okay=False),
+                  help="JSON spec：targets/title/bodyHtml/attachments；适合 serve/PWA 套壳")
+    @click.option("--target", "target_pairs", multiple=True,
+                  help="courseId:classId[:className]，可多次；与 --spec 二选一")
+    @click.option("--title", default="", help="通知标题")
+    @click.option("--body", default="", help="通知正文（纯文本自动转段落）")
+    @click.option("--body-html", default="", help="通知正文 HTML")
+    @click.option("--attachment", "attachments", multiple=True,
+                  help="workspace 下 pdf/doc/docx 路径，可多次")
+    @click.option("--send", is_flag=True, default=False,
+                  help="真正发送；缺省为 dry-run（只填表/上传附件并截图）")
+    @click.option("--storage", "storage", default=None, type=click.Path(dir_okay=False))
+    def xxt_notice_send(spec_path, target_pairs, title, body, body_html, attachments, send, storage):
+        """发布学习通课程通知（D77 写操作；默认 dry-run，白名单限制）。"""
+        from .notice import normalize_targets, send_notice_from_spec
+        if spec_path:
+            spec = json.loads(Path(spec_path).read_text(encoding="utf-8"))
+        else:
+            targets = []
+            for pair in target_pairs:
+                parts = str(pair).split(":", 2)
+                if len(parts) < 2:
+                    raise click.UsageError("--target 格式应为 courseId:classId[:className]")
+                cid, kid = parts[0].strip(), parts[1].strip()
+                cname = parts[2].strip() if len(parts) > 2 else ""
+                kname = kid
+                found = False
+                for c in targets:
+                    if c["courseId"] == cid:
+                        c["classes"].append({"classId": kid, "name": kname})
+                        found = True
+                        break
+                if not found:
+                    targets.append({"courseId": cid, "courseName": cname,
+                                    "classes": [{"classId": kid, "name": kname}]})
+            spec = {"targets": targets, "title": title,
+                    "bodyHtml": body_html or body, "attachments": list(attachments)}
+        rep = send_notice_from_spec(spec, send=bool(send), storage=storage)
+        _journal("xxt_notice_send",
+                 params={"mode": rep.get("mode"), "sent": rep.get("sent"),
+                         "courses": rep.get("courses"), "classes": rep.get("classes"),
+                         "attachments": rep.get("attachments"), "receipt": rep.get("receipt")},
+                 result="ok" if rep.get("ok") else "fail",
+                 error=str(rep.get("error") or "")[:200])
+        click.echo(json.dumps(rep, ensure_ascii=False, indent=1))
+        raise SystemExit(0 if rep.get("ok") else 2)
+
     @group.group("run")
     def xxt_run():
         """run 管理（D73-9）：导入旧 run JSON，使其在 PWA 可见。"""

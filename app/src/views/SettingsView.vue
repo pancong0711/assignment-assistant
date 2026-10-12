@@ -350,7 +350,7 @@ onMounted(() => {
         <p class="hint" style="margin-bottom:4px">
           引擎状态：
           <span class="engine-chip" :class="doctorOnline ? 'on' : 'off'">
-            <span class="engine-chip-dot"></span>{{ doctorOnline ? '在线' : '离线' }}<template v-if="doctorOnline && settings.engineVersion"> · v{{ settings.engineVersion }}</template>
+            <span class="engine-chip-dot"></span>{{ doctorOnline ? '在线' : '离线' }}<template v-if="doctorOnline && settings.engineVersion"> · v{{ settings.engineVersion }}<template v-if="settings.engineCommit"> {{ settings.engineCommit }}</template></template>
           </span>
           <button class="btn small clip-btn" style="margin-left:8px" @click="settings.pingEngine(); statusHint = ''">重新检测</button>
         </p>
@@ -399,7 +399,7 @@ onMounted(() => {
 
     <!-- 常规设置中心 -->
     <div class="card">
-      <h2>引擎地址 / 凭据 <span class="engine-chip" :class="settings.engineOnline ? 'on' : 'off'" style="margin-left:8px"><span class="engine-chip-dot"></span>{{ settings.engineOnline ? '在线' : '离线' }}<template v-if="settings.engineOnline && settings.engineVersion"> · v{{ settings.engineVersion }}</template></span></h2>
+      <h2>引擎地址 / 凭据 <span class="engine-chip" :class="settings.engineOnline ? 'on' : 'off'" style="margin-left:8px"><span class="engine-chip-dot"></span>{{ settings.engineOnline ? '在线' : '离线' }}<template v-if="settings.engineOnline && settings.engineVersion"> · v{{ settings.engineVersion }}<template v-if="settings.engineCommit"> {{ settings.engineCommit }}</template></template></span></h2>
       <p class="hint">
         引擎（程序）与 workspace（数据）分离（docs/05-D13/D14）。引擎地址存于本浏览器 localStorage，
         与 workspace 落盘的 <code>settings.local.json</code> 的 <code>engine_addr</code> 同名对应（默认

@@ -35,6 +35,8 @@
 - `docs/23-D72-pwa-extract-preview.md` — **D72 PWA 一键提取账户信息 + 作业纸/批阅报告/过程预览整合**
 - `docs/24-D73-xxt-extract-history-job-lifecycle.md` — **D73 提取任务跨 tab 恢复 + Playwright 浏览器操作历史 + assist.cli 导入修复**
 - `docs/28-D76-selection-folding-merge-preview.md` — **D76 发现结果默认不选/课程折叠/提取入口合并/预览回退**
+- `docs/29-D77-feishu4dsh-long-reply-thread-loss.md` — **D77 feishu4dsh 长回复分片落到话题外诊断**
+- `docs/30-D78-pwa-notice-publish.md` — **D78 PWA 课程通知发布（CLI 套壳 + 附件上传 + 白名单）**
 - `docs/16-xuexitong-integration.md` — **阶段6 学习通整合任务需求单**（登录/读取/下载/上传/发布）
 - `_legacy/` — 原始两项目解档（仅本地参考，已被 gitignore，永不推送）
 

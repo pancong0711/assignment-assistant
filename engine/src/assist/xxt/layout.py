@@ -44,6 +44,18 @@ def works_spec_json(home: "Path | str | None" = None) -> Path:
     return _home(home) / "targets" / "works-spec.json"
 
 
+def notice_spec_json(home: "Path | str | None" = None) -> Path:
+    """D77：通知发布 spec（PWA → CLI 子进程）。"""
+    return _home(home) / "targets" / "notice-spec.json"
+
+
+def notice_sends_dir(home: "Path | str | None" = None) -> Path:
+    from .session import xxt_home
+    d = _home(home) / "notice-sends"
+    d.mkdir(parents=True, exist_ok=True)
+    return d
+
+
 def works_json(home: "Path | str | None" = None) -> Path:
     """D74-4：最近一次班级作业清单发现结果。"""
     return _home(home) / "targets" / "works.json"

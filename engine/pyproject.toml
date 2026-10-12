@@ -1,6 +1,6 @@
 [project]
 name = "assist-engine"
-version = "0.1.0"
+version = "0.4.0"
 description = "assignment-assistant engine: 作业纸设计 + AI 批阅 (CLI / Companion 本地引擎)"
 requires-python = ">=3.11"
 dependencies = [

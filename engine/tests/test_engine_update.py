@@ -107,6 +107,11 @@ def test_update_engine_stages_without_touching_active_engine(monkeypatch, tmp_pa
         with zipfile.ZipFile(dest, "w") as z:
             z.writestr("engine/pyproject.toml", "[project]\nname=\"x\"\n")
             z.writestr("engine/run_engine.bat", "@echo off\n")
+            # 关键文件完整性校验（update_engine 的 preflight）需要这三份存在
+            z.writestr("engine/src/assist/cli.py", "def main():\n    return 0\n")
+            z.writestr("engine/src/assist/serve.py", "def serve():\n    return 0\n")
+            z.writestr("engine/src/assist/xxt/__init__.py", "")
+            z.writestr("engine/src/assist/xxt/session.py", "def xxt_home():\n    return None\n")
 
     monkeypatch.setattr(eu, "_download_zip", fake_download)
     lines: list[str] = []
