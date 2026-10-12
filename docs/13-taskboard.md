@@ -1305,3 +1305,18 @@ applyManualTranslation/setTranslationRatio 中 setTranslationRatio 保留——�
 
 - 结果表班级行交替底色（置顶行保留置顶色）；展开 details 内部透明继承行底色；
 - 发现课程/班级勾选树的班级行同样交替底色；新增 `--c-zebra`。
+
+---
+
+## D76 · 发现结果默认不选 + 课程折叠 + 提取入口合并 + 预览回退（2026-10-11）
+
+- 主任务单/实施记录：`docs/28-D76-selection-folding-merge-preview.md`；
+- 来源：用户 PWA 使用反馈三问（默认全选、课程折叠、两个提取键是否重复）；
+- 实施：
+  - D76-1 课程/班级与作业清单默认不选，按 ID 记忆选择；
+  - D76-2 课程折叠/展开全部/搜索，展开状态本机记忆；
+  - D76-3 删除「发现作业」卡里的「提取账户数据」主按钮，只保留「提取所选」；
+    全量提取降级为高级折叠项，等价 CLI `assist xxt extract --all`；
+  - D76-4 修复 run 级存档预览路径：扫描 `pages/runs/*/`、支持 `?run_id=`、
+    回退 `students.json` manifest；
+- 状态：**已实施（2026-10-11）**。

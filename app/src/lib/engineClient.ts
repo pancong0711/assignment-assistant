@@ -729,18 +729,21 @@ export interface XxtReviewStudents {
   count?: number
   scored?: number
   students?: XxtReviewStudent[]
+  source?: string
   error?: string
   hint?: string
 }
 
-/** GET /xxt/preview/students/<classId>/<workId>：解析本地 review 列表存档。 */
+/** GET /xxt/preview/students/<classId>/<workId>[?run_id=]：
+ *  解析本地 review 列表存档；无存档时引擎会回退到 students.json manifest。 */
 export async function fetchXxtReviewStudents(
-  engineAddr: string, token: string | undefined, classId: string, workId: string,
+  engineAddr: string, token: string | undefined,
+  classId: string, workId: string, runId?: string,
 ): Promise<XxtReviewStudents> {
   const base = normalizeEngineAddr(engineAddr)
-  return (await getJson2(engineUrlWithToken(
-    base, `/xxt/preview/students/${encodeURIComponent(classId)}/${encodeURIComponent(workId)}`,
-    token))) as XxtReviewStudents
+  const path = `/xxt/preview/students/${encodeURIComponent(classId)}/${encodeURIComponent(workId)}`
+    + (runId ? `?run_id=${encodeURIComponent(runId)}` : '')
+  return (await getJson2(engineUrlWithToken(base, path, token))) as XxtReviewStudents
 }
 
 /* ========== D75-1c/d：批阅图片 + 两栏批语 ========== */

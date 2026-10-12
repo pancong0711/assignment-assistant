@@ -1096,10 +1096,13 @@ class Handler(BaseHTTPRequestHandler):
             from .xxt import preview as _preview
             self._json({"ok": True, "items": _preview.list_review_archives(_xxt_home())})
             return
-        elif (m_prev := re.fullmatch(r"/xxt/preview/students/(\d+)/(\d+)", u.path)):
+        elif (m_prev := re.fullmatch(
+                r"/xxt/preview/students/([0-9A-Za-z\-_]{1,40})/([0-9A-Za-z\-_]{1,40})", u.path)):
             from .xxt import preview as _preview
+            q = urllib.parse.parse_qs(u.query)
+            run_id = (q.get("run_id") or [None])[0]
             self._json(_preview.preview_students(
-                _xxt_home(), m_prev.group(1), m_prev.group(2)))
+                _xxt_home(), m_prev.group(1), m_prev.group(2), run_id=run_id))
             return
         elif u.path == "/xxt/works":
             wp = xxt_layout.works_json(_xxt_home())
