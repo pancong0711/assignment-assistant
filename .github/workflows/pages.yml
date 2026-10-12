@@ -53,7 +53,8 @@ jobs:
       - name: Publish engine version marker (D65)
         run: |
           SHA=$(git rev-parse HEAD)
-          printf '{"engine_version":"0.1.0","commit":"%s"}\n' "$SHA" > app/dist/dl/engine-version.json
+          VERSION=$(grep -m1 '^version' engine/pyproject.toml | cut -d'"' -f2)
+          printf '{"engine_version":"%s","commit":"%s"}\n' "$VERSION" "$SHA" > app/dist/dl/engine-version.json
           test -s app/dist/dl/engine-version.json
 
       - name: Upload artifact
