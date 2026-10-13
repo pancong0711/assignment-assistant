@@ -292,3 +292,31 @@ assist xxt work-publish --course <id> --work-library-id <id>
 - 作业草稿创建（新建 1 道简答题）PWA 表单：本轮先支持“已有作业原样发布”，草稿创建仍可用 CLI/临时脚本；
 - 教师个人作业库文件夹的显式配置读取；
 - 通知/作业发布 receipt 展示与回执落盘页面。
+
+## H · 白名单/文件夹/草稿/防重 补充实施（2026-10-13）
+
+- 白名单改为 workspace `settings.local.json` 的 `xxt.write_allowlist`：
+  - 默认空；PWA「发布-学习通」逐班勾选加入/移出；
+  - engine 发布前读同一份配置做二次校验。
+- 作业库文件夹：
+  - 新增 `GET /xxt/work/folders`，按 `courseId` 展示文件夹；
+  - PWA 按 courseId 记忆所选文件夹，并提供「🔄 刷新文件夹」；
+  - 新建草稿保存到所选文件夹（`directoryid`）。
+- 新建 1 道简答题草稿：
+  - CLI `assist xxt work-create --course --class --cpi --title --stem [--directory-id]`；
+  - PWA「新建作业草稿」表单，创建后自动刷新作业库。
+- 作业详情：
+  - `GET /xxt/work/detail` 读取标题、题干、`workUsed`（是否已发布）；
+  - PWA 选中作业后显示标题与题干，题干可确认后再发布。
+- 防重复发布：
+  - 本地 `work-publishes/index.json` 记录 `courseId|workLibraryId|classId`；
+  - `workUsed=true` 的已发布作业默认拒绝再次发布；
+  - 提示用户在学习通创建副本（副本+时间戳）后再发布，符合“同班同作业硬拒绝”的决策。
+- 时间过期：
+  - PWA 打开/切回页面时检查开始时间；
+  - 用户未手动改过则按规则自动刷新；
+  - 已手动修改则提示过期，并提供「↺ 恢复默认时间」。
+- 真机验证：
+  - 新建草稿 `f88430ceb891495ea8b599ade00c4a42`（大学物理作业纸提交（D79草稿））保存成功；
+  - `work-detail` 成功读回题干；
+  - 已发布的测试作业 `049cd37e...` 返回 `workUsed=true`，将被防重逻辑拒绝再次发布。

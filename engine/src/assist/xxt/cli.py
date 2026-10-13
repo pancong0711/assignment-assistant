@@ -355,6 +355,46 @@ def register(group: click.Group) -> None:
         click.echo(json.dumps(rep, ensure_ascii=False, indent=1))
         raise SystemExit(0 if rep.get("ok") else 2)
 
+    @group.command("work-folders")
+    @click.option("--course", "course_id", required=True)
+    @click.option("--class", "class_id", required=True)
+    @click.option("--cpi", default="0")
+    def xxt_work_folders(course_id, class_id, cpi):
+        """只读列出作业库文件夹（用于文件夹设置）。"""
+        from .work import list_folders
+        rep = list_folders(default_storage(None), course_id, class_id, cpi)
+        click.echo(json.dumps(rep, ensure_ascii=False, indent=1))
+
+    @group.command("work-detail")
+    @click.option("--course", "course_id", required=True)
+    @click.option("--class", "class_id", required=True)
+    @click.option("--cpi", required=True)
+    @click.option("--work-library-id", "work_library_id", required=True)
+    def xxt_work_detail(course_id, class_id, cpi, work_library_id):
+        """只读读取作业标题与简答题干。"""
+        from .work import work_detail
+        rep = work_detail(default_storage(None), course_id, class_id, cpi, work_library_id)
+        click.echo(json.dumps(rep, ensure_ascii=False, indent=1))
+
+    @group.command("work-create")
+    @click.option("--course", "course_id", required=True)
+    @click.option("--class", "class_id", required=True)
+    @click.option("--cpi", required=True)
+    @click.option("--title", required=True)
+    @click.option("--stem", "stem_html", required=True, help="简答题干（纯文本或 HTML）")
+    @click.option("--directory-id", "directory_id", default="0", help="作业库文件夹 ID（默认根目录）")
+    def xxt_work_create(course_id, class_id, cpi, title, stem_html, directory_id):
+        """新建 1 道简答题草稿（白名单限制）。"""
+        from .work import create_work
+        rep = create_work(default_storage(None), course_id, class_id, cpi, title, stem_html, directory_id)
+        _journal("xxt_work_create",
+                 params={"courseId": course_id, "classId": class_id, "title": title,
+                         "directoryId": directory_id, "workLibraryId": rep.get("workLibraryId")},
+                 result="ok" if rep.get("ok") else "fail",
+                 error=str(rep.get("error") or "")[:200])
+        click.echo(json.dumps(rep, ensure_ascii=False, indent=1))
+        raise SystemExit(0 if rep.get("ok") else 2)
+
     @group.group("run")
     def xxt_run():
         """run 管理（D73-9）：导入旧 run JSON，使其在 PWA 可见。"""

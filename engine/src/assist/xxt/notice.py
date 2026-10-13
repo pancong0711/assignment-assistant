@@ -53,7 +53,7 @@ def normalize_targets(raw) -> list[dict]:
     return out
 
 
-def validate_targets(targets: list[dict]) -> str | None:
+def validate_targets(targets: list[dict], workspace=None) -> str | None:
     """返回错误字符串；None 表示通过。"""
     if not targets:
         return "未选择任何课程/班级"
@@ -65,9 +65,10 @@ def validate_targets(targets: list[dict]) -> str | None:
             kid = str(k.get("classId") or "")
             if not re.fullmatch(r"[0-9A-Za-z\\-_]{1,40}", kid):
                 return f"非法 classId：{kid}"
-            if (cid, kid) not in NOTICE_TEST_ALLOWLIST:
+            from .allowlist import is_allowed
+            if not is_allowed(cid, kid, workspace):
                 return (f"写操作白名单拒绝：courseId={cid}, classId={kid}；"
-                        "当前仅开放已真机验证的大学物理知识点拾遗（by pc）/默认班级")
+                        "请在「发布-学习通」中勾选该班级加入白名单")
     return None
 
 
@@ -201,7 +202,7 @@ def send_notice_from_spec(spec: dict, *, send: bool = False, storage: Path | str
     from .layout import pages_dir
 
     targets = normalize_targets(spec.get("targets"))
-    err = validate_targets(targets)
+    err = validate_targets(targets, workspace)
     title = str(spec.get("title") or "").strip()
     body_html = body_to_html(str(spec.get("bodyHtml") or spec.get("body") or ""),
                              is_html=bool(spec.get("bodyHtml")))

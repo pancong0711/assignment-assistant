@@ -1,19 +1,16 @@
 <script setup lang="ts">
-import { computed, onMounted, ref } from 'vue'
+import { computed, onMounted, onUnmounted, ref } from 'vue'
 import {
-  fetchXxtLoginJob, fetchXxtNoticeAttachments, fetchXxtRun, fetchXxtRuns, fetchXxtWorkList,
-  startXxtNoticeSend, startXxtWorkPublish, uploadXxtNoticeFiles,
+  fetchXxtLoginJob, fetchXxtNoticeAttachments, fetchXxtRun, fetchXxtRuns, fetchXxtWorkDetail,
+  fetchXxtWorkFolders, fetchXxtWorkList, fetchXxtWriteAllowlist, saveXxtWriteAllowlist,
+  startXxtNoticeSend, startXxtWorkCreate, startXxtWorkPublish, uploadXxtNoticeFiles,
 } from '../lib/engineClient'
-import type { XxtNoticeAttachment, XxtWorkLibraryItem } from '../lib/engineClient'
+import type { XxtAllowItem, XxtNoticeAttachment, XxtWorkFolder, XxtWorkLibraryItem } from '../lib/engineClient'
 import { useSettingsStore } from '../stores/settings'
 
 const settings = useSettingsStore()
 const engUrl = computed(() => settings.engineUrl)
 const tok = computed(() => settings.engineToken)
-
-const ALLOW = new Set(['217801417:40009084'])
-const DEFAULT_TITLE = '作业通知-大学物理'
-const DEFAULT_BODY = '作业纸见附件，请各位同学打印自己的那一张并手写完成、拍照上传到学习通作业里面。'
 
 interface PubClass { courseId: string; courseName: string; cpi: string; classId: string; name: string }
 const classes = ref<PubClass[]>([])
@@ -21,57 +18,84 @@ const runId = ref('')
 const msg = ref('')
 const busy = ref(false)
 
-function key(c: PubClass): string { return `${c.courseId}:${c.classId}` }
-function allowed(c: PubClass): boolean { return ALLOW.has(key(c)) }
+function key(c: { courseId: string; classId: string }): string { return `${c.courseId}:${c.classId}` }
+const allowKeys = ref<Set<string>>(new Set())
+function allowed(c: { courseId: string; classId: string }): boolean { return allowKeys.value.has(key(c)) }
 
 async function loadClasses() {
   try {
     const runs = await fetchXxtRuns(engUrl.value, tok.value)
-    if (!runs.length) { msg.value = '暂无已提取 run；请先到「作业预览-学习通」提取班级。'; return }
+    if (!runs.length) { msg.value = '暂无已提取批次；请先到「作业预览-学习通」提取班级。'; return }
     const r = (await fetchXxtRun(engUrl.value, tok.value, runs[0].run_id)) as {
       run_id?: string; courses?: { courseId?: string; name?: string; cpi?: string;
       classes?: { classId?: string; name?: string }[] }[]
     }
     runId.value = String(r.run_id || runs[0].run_id)
     const out: PubClass[] = []
-    for (const c of r.courses || []) {
-      for (const k of c.classes || []) out.push({
-        courseId: String(c.courseId), courseName: c.name || String(c.courseId),
-        cpi: String(c.cpi || '0'),
-        classId: String(k.classId), name: k.name || String(k.classId),
-      })
-    }
+    for (const c of r.courses || []) for (const k of c.classes || []) out.push({
+      courseId: String(c.courseId), courseName: c.name || String(c.courseId),
+      cpi: String(c.cpi || '0'), classId: String(k.classId), name: k.name || String(k.classId),
+    })
     classes.value = out
+    for (const c of out) { if (!(c.courseId in folderMap.value)) folderMap.value[c.courseId] = { directoryId: '0', name: '根目录' } }
   } catch (e) { msg.value = `读取班级失败：${String(e)}` }
 }
+async function loadAllow() {
+  try {
+    const items = await fetchXxtWriteAllowlist(engUrl.value, tok.value)
+    allowKeys.value = new Set(items.map(x => `${x.courseId}:${x.classId}`))
+  } catch { /* noop */ }
+}
+async function toggleAllow(c: PubClass, ev: Event) {
+  const on = (ev.target as HTMLInputElement).checked
+  const next = new Set(allowKeys.value)
+  if (on) next.add(key(c)); else next.delete(key(c))
+  try {
+    const items: XxtAllowItem[] = classes.value.filter(x => next.has(key(x)))
+      .map(x => ({ courseId: x.courseId, classId: x.classId, name: x.name }))
+    await saveXxtWriteAllowlist(engUrl.value, tok.value, items)
+    allowKeys.value = new Set(items.map(x => `${x.courseId}:${x.classId}`))
+    msg.value = on ? `已把 ${c.name} 加入写操作白名单` : `已把 ${c.name} 移出白名单`
+  } catch (e) { msg.value = `白名单保存失败：${String(e)}` }
+}
 
-/* ---------- 通知发布 ---------- */
-const noticeTitle = ref(DEFAULT_TITLE)
-const noticeBody = ref(DEFAULT_BODY)
+/* 文件库文件夹：按 courseId 记忆 */
+const folderMap = ref<Record<string, XxtWorkFolder>>(JSON.parse(localStorage.getItem('xxt-work-folders') || '{}'))
+const folderList = ref<XxtWorkFolder[]>([])
+function persistFolderMap() { try { localStorage.setItem('xxt-work-folders', JSON.stringify(folderMap.value)) } catch { /* noop */ } }
+async function loadFolders() {
+  const c = classes.value.find(x => key(x) === workTarget.value)
+  if (!c) { folderList.value = []; return }
+  try {
+    folderList.value = await fetchXxtWorkFolders(engUrl.value, tok.value, c.courseId, c.classId, c.cpi)
+    const cur = folderMap.value[c.courseId]
+    if (!cur || !folderList.value.some(f => f.directoryId === cur.directoryId)) {
+      folderMap.value[c.courseId] = { directoryId: '0', name: '根目录' }
+      persistFolderMap()
+    }
+  } catch (e) { msg.value = `文件夹读取失败：${String(e)}` }
+}
+
+/* 通知 */
+const noticeTitle = ref('作业通知-大学物理')
+const noticeBody = ref('作业纸见附件，请各位同学打印自己的那一张并手写完成、拍照上传到学习通作业里面。')
 const noticeTarget = ref('')
 const noticeAtt = ref<XxtNoticeAttachment[]>([])
 const noticePick = ref<Record<string, boolean>>({})
 const uploadInput = ref<HTMLInputElement | null>(null)
-
-async function loadAtt() {
-  try { noticeAtt.value = await fetchXxtNoticeAttachments(engUrl.value, tok.value, 200) } catch { /* noop */ }
-}
-function attNames(): string[] {
-  return Object.keys(noticePick.value).filter(k => noticePick.value[k])
-    .map(p => noticeAtt.value.find(a => a.path === p)?.name || p.split(/[\\/]/).pop() || p)
-}
+async function loadAtt() { try { noticeAtt.value = await fetchXxtNoticeAttachments(engUrl.value, tok.value, 200) } catch { /* noop */ } }
+function attNames() { return Object.keys(noticePick.value).filter(k => noticePick.value[k]).map(p => noticeAtt.value.find(a => a.path === p)?.name || p.split(/[\\/]/).pop() || p) }
 function applyAtt() {
   const names = attNames()
-  const suffix = names.length ? `（附件：${names.slice(0, 2).join('、')}${names.length > 2 ? '等' : ''}）` : ''
-  noticeTitle.value = `${DEFAULT_TITLE}${suffix}`.slice(0, 128)
+  noticeTitle.value = `作业通知-大学物理${names.length ? `（附件：${names.slice(0, 2).join('、')}${names.length > 2 ? '等' : ''}）` : ''}`.slice(0, 128)
   const base = noticeBody.value.split('\n').filter(x => !x.startsWith('附件文件名：')).join('\n').trim()
   noticeBody.value = names.length ? `${base}\n\n附件文件名：${names.join('、')}` : base
 }
 function toggleAtt(path: string, ev: Event) {
   const on = (ev.target as HTMLInputElement).checked
-  if (on) noticePick.value = { ...noticePick.value, [path]: true }
-  else { const n = { ...noticePick.value }; delete n[path]; noticePick.value = n }
-  applyAtt()
+  const next = { ...noticePick.value }
+  if (on) next[path] = true; else delete next[path]
+  noticePick.value = next; applyAtt()
 }
 function pickUpload() { uploadInput.value?.click() }
 async function onUpload(ev: Event) {
@@ -80,30 +104,26 @@ async function onUpload(ev: Event) {
   if (!files.length) return
   const items: { name: string; data_b64: string }[] = []
   for (const f of files.slice(0, 10)) {
-    const buf = await f.arrayBuffer()
-    let bin = ''
-    const bytes = new Uint8Array(buf)
-    for (let i = 0; i < bytes.length; i++) bin += String.fromCharCode(bytes[i])
+    const bytes = new Uint8Array(await f.arrayBuffer())
+    let bin = ''; for (let i = 0; i < bytes.length; i++) bin += String.fromCharCode(bytes[i])
     items.push({ name: f.name, data_b64: btoa(bin) })
   }
   try {
     const saved = await uploadXxtNoticeFiles(engUrl.value, tok.value, items)
     noticeAtt.value = [...saved, ...noticeAtt.value]
     for (const s of saved) noticePick.value = { ...noticePick.value, [s.path]: true }
-    applyAtt()
-    msg.value = `已上传 ${saved.length} 个附件到 workspace 临时目录`
+    applyAtt(); msg.value = `已上传 ${saved.length} 个附件`
   } catch (e) { msg.value = `上传失败：${String(e)}` }
   input.value = ''
 }
 async function sendNotice(send: boolean) {
-  const names = [noticeTarget.value].filter(Boolean)
-  if (!names.length) { msg.value = '请选择发布班级'; return }
-  if (send && !confirm(`确认发布通知到：${names.join('、')}？`)) return
+  const c = classes.value.find(x => key(x) === noticeTarget.value)
+  if (!c || !allowed(c)) { msg.value = '请选择白名单内班级'; return }
+  if (send && !confirm(`确认发布通知到 ${c.courseName}/${c.name}？`)) return
   busy.value = true
-  msg.value = send ? '正在发布通知……' : '正在预检通知……'
   try {
     const r = await startXxtNoticeSend(engUrl.value, tok.value, {
-      targets: [{ courseId: noticeTarget.value.split(':')[0], classes: [{ classId: noticeTarget.value.split(':')[1] }] }],
+      targets: [{ courseId: c.courseId, classes: [{ classId: c.classId, name: c.name }] }],
       title: noticeTitle.value, bodyHtml: noticeBody.value,
       attachments: Object.keys(noticePick.value).filter(k => noticePick.value[k]), send,
     })
@@ -111,149 +131,213 @@ async function sendNotice(send: boolean) {
   } catch (e) { busy.value = false; msg.value = `失败：${String(e)}` }
 }
 
-/* ---------- 作业发布 ---------- */
+/* 作业 */
 const workTarget = ref('')
 const works = ref<XxtWorkLibraryItem[]>([])
 const workPick = ref('')
+const workTitle = ref('')
+const workStem = ref('')
+const workUsed = ref(false)
+const draftTitle = ref('')
+const draftStem = ref('请查看学习通班级消息，打印自己的那份作业纸，手写完成，签名并记录日期，拍照原图上传，纸质版于作业截止后课前提交。')
 const startTime = ref('')
 const endTime = ref('')
 const allowLate = ref(true)
 const lateDeadline = ref('')
 const redoTimes = ref(3)
 const rememberDefault = ref(true)
+const timeEdited = ref(false)
 
-function fmt(d: Date): string {
-  const p = (n: number) => String(n).padStart(2, '0')
-  return `${d.getFullYear()}-${p(d.getMonth() + 1)}-${p(d.getDate())} ${p(d.getHours())}:${p(d.getMinutes())}:${p(d.getSeconds())}`
-}
-function applyDefaults() {
+function fmt(d: Date): string { const p = (n: number) => String(n).padStart(2, '0'); return `${d.getFullYear()}-${p(d.getMonth()+1)}-${p(d.getDate())} ${p(d.getHours())}:${p(d.getMinutes())}:${p(d.getSeconds())}` }
+function defaultTimes() {
   const now = new Date()
   const start = now.getHours() < 18 ? new Date(now.getFullYear(), now.getMonth(), now.getDate(), 18, 0, 0) : now
   const end = new Date(start); end.setDate(end.getDate() + 5); end.setHours(18, 0, 0, 0)
   const late = new Date(end); late.setDate(late.getDate() + 2); late.setHours(18, 0, 0, 0)
-  startTime.value = fmt(start); endTime.value = fmt(end); lateDeadline.value = fmt(late)
+  return { start: fmt(start), end: fmt(end), late: fmt(late) }
+}
+function applyDefaults() { const d = defaultTimes(); startTime.value = d.start; endTime.value = d.end; lateDeadline.value = d.late; timeEdited.value = false }
+function refreshStale() {
+  if (!startTime.value) { applyDefaults(); return }
+  if (new Date(startTime.value.replace(/-/g, '/')).getTime() < Date.now() - 60_000) {
+    if (!timeEdited.value) { applyDefaults(); msg.value = '开始时间已过期，已按默认规则更新。' }
+    else msg.value = '提示：开始时间已早于当前时间，发布可能被平台拒绝；可点「恢复默认时间」。'
+  }
 }
 async function loadWorks() {
   const c = classes.value.find(x => key(x) === workTarget.value)
   if (!c) { works.value = []; return }
   const r = await fetchXxtWorkList(engUrl.value, tok.value, c.courseId, c.classId, c.cpi)
   works.value = r.items || []
-  workPick.value = works.value[0]?.workLibraryId || ''
+  workPick.value = ''
+  await loadFolders()
+}
+function workPublished(w: XxtWorkLibraryItem): boolean {
+  const c = classes.value.find(x => key(x) === workTarget.value)
+  return !!c && (w.publishedClasses || []).includes(c.classId)
+}
+async function loadDetail() {
+  const c = classes.value.find(x => key(x) === workTarget.value)
+  const w = works.value.find(x => x.workLibraryId === workPick.value)
+  if (!c || !w) { workTitle.value = ''; workStem.value = ''; return }
+  try {
+    const d = await fetchXxtWorkDetail(engUrl.value, tok.value, c.courseId, c.classId, c.cpi, w.workLibraryId)
+    workTitle.value = d.title || w.text?.split('\n')[0] || w.workLibraryId
+    workStem.value = (d.stemHtml || '').replace(/<[^>]+>/g, '').trim()
+    workUsed.value = Boolean((d as { workUsed?: boolean }).workUsed)
+  } catch { workTitle.value = w.text?.split('\n')[0] || ''; workStem.value = '' }
+}
+async function createDraft() {
+  const c = classes.value.find(x => key(x) === workTarget.value)
+  if (!c || !allowed(c)) { msg.value = '请选择白名单内班级'; return }
+  if (!draftTitle.value.trim() || !draftStem.value.trim()) { msg.value = '请填写作业标题与题干'; return }
+  busy.value = true; msg.value = '正在新建作业草稿……'
+  try {
+    const jobId = await startXxtWorkCreate(engUrl.value, tok.value, {
+      courseId: c.courseId, classId: c.classId, cpi: c.cpi,
+      title: draftTitle.value.trim(), stemHtml: draftStem.value.trim(),
+      directoryId: folderMap.value[c.courseId]?.directoryId || '0',
+    })
+    await poll(jobId)
+    await loadWorks()
+  } catch (e) { busy.value = false; msg.value = `新建失败：${String(e)}` }
 }
 async function publishWork(send: boolean) {
   const c = classes.value.find(x => key(x) === workTarget.value && allowed(x))
-  if (!c) { msg.value = '请选择白名单班级'; return }
-  if (!workPick.value) { msg.value = '请选择作业'; return }
-  if (send && !confirm(`确认发布作业到：${c.courseName}/${c.name}？`)) return
+  const w = works.value.find(x => x.workLibraryId === workPick.value)
+  if (!c || !w) { msg.value = '请选择白名单班级与作业'; return }
+  if (workPublished(w) || workUsed.value) { msg.value = '该作业已发布过，禁止重复发布；如需修改请先创建副本（副本+时间戳）。'; return }
+  refreshStale()
+  if (new Date(startTime.value.replace(/-/g, '/')).getTime() < Date.now() - 60_000) {
+    msg.value = '开始时间早于当前时间，请点「恢复默认时间」后再发布。'; return
+  }
+  if (send && !confirm(`确认把「${workTitle.value || w.text}」发布到 ${c.courseName}/${c.name}？`)) return
   busy.value = true
-  msg.value = send ? '正在发布作业……' : '正在预检作业……'
   try {
     if (rememberDefault.value && send) {
       try { localStorage.setItem('xxt-work-defaults', JSON.stringify({ startTime: startTime.value, endTime: endTime.value, allowLate: allowLate.value, lateDeadline: lateDeadline.value, redoTimes: redoTimes.value })) } catch { /* noop */ }
     }
     const r = await startXxtWorkPublish(engUrl.value, tok.value, {
-      courseId: c.courseId, classId: c.classId, workLibraryId: workPick.value, cpi: c.cpi,
+      courseId: c.courseId, classId: c.classId, workLibraryId: w.workLibraryId, cpi: c.cpi,
       startTime: startTime.value, endTime: endTime.value, allowLate: allowLate.value,
       lateDeadline: lateDeadline.value, redoTimes: redoTimes.value, send,
     })
     await poll(r.jobId)
+    await loadWorks()
   } catch (e) { busy.value = false; msg.value = `失败：${String(e)}` }
 }
 
 async function poll(jobId: string) {
-  for (let i = 0; i < 120; i++) {
+  for (let i = 0; i < 160; i++) {
     const job = await fetchXxtLoginJob(engUrl.value, tok.value, jobId)
     const last = (job.lines || []).slice(-1)[0] || ''
-    msg.value = `${job.status === 'running' ? '执行中' : job.status}：${last.slice(-160)}`
+    msg.value = `${job.status === 'running' ? '执行中' : job.status}：${last.slice(-180)}`
     if (job.status !== 'running') { busy.value = false; return }
     await new Promise(r => setTimeout(r, 1500))
   }
   busy.value = false
 }
 
+const folderCur = computed(() => {
+  const c = classes.value.find(x => key(x) === workTarget.value)
+  return c ? (folderMap.value[c.courseId] || { directoryId: '0', name: '根目录' }) : { directoryId: '0', name: '根目录' }
+})
+function setFolder(cid: string, ev: Event) {
+  const id = (ev.target as HTMLSelectElement).value
+  const f = folderList.value.find(x => x.directoryId === id) || { directoryId: '0', name: '根目录' }
+  folderMap.value = { ...folderMap.value, [cid]: f }
+  persistFolderMap()
+}
+
 onMounted(async () => {
   const saved = localStorage.getItem('xxt-work-defaults')
-  if (saved) {
-    try {
-      const d = JSON.parse(saved)
-      startTime.value = d.startTime || ''; endTime.value = d.endTime || ''
-      allowLate.value = d.allowLate ?? true; lateDeadline.value = d.lateDeadline || ''
-      redoTimes.value = d.redoTimes ?? 3
-    } catch { applyDefaults() }
-  } else applyDefaults()
-  await loadClasses()
-  await loadAtt()
+  if (saved) { try { const d = JSON.parse(saved); startTime.value = d.startTime; endTime.value = d.endTime; allowLate.value = d.allowLate ?? true; lateDeadline.value = d.lateDeadline; redoTimes.value = d.redoTimes ?? 3 } catch { applyDefaults() } } else applyDefaults()
+  await loadClasses(); await loadAllow(); await loadAtt()
+  document.addEventListener('visibilitychange', refreshStale)
 })
+onUnmounted(() => document.removeEventListener('visibilitychange', refreshStale))
 </script>
 
 <template>
   <section>
     <div class="card">
-      <h2>发布-学习通 <small>通知 / 作业发布；当前仅白名单班级可写（数据源=最近一次提取批次）</small></h2>
+      <h2>发布-学习通 <small>通知 / 作业发布；写操作仅对「白名单」班级开放</small></h2>
       <p v-if="msg" class="hint">{{ msg }}</p>
-      <p class="hint">当前批次：{{ runId || '（无）' }}</p>
+      <p class="hint">当前批次：{{ runId || '（无）' }}；已选白名单：{{ allowKeys.size }} 个班</p>
+    </div>
+
+    <div class="card">
+      <h3>写操作白名单 <small>默认全部关闭；勾选后该班才可发布</small></h3>
+      <div v-if="classes.length" style="max-height:220px; overflow:auto">
+        <label v-for="c in classes" :key="'a'+key(c)" style="display:block; margin:3px 0">
+          <input type="checkbox" :checked="allowed(c)" @change="toggleAllow(c, $event)" />
+          {{ c.courseName }} / {{ c.name }}
+        </label>
+      </div>
+      <p v-else class="hint">暂无已提取班级。</p>
     </div>
 
     <div class="card">
       <h3>发通知</h3>
-      <p><label class="field">班级：
-        <select v-model="noticeTarget" style="width:320px">
-          <option value="">（选择白名单班级）</option>
-          <option v-for="c in classes" :key="'n'+key(c)" :value="key(c)" :disabled="!allowed(c)">
-            {{ c.courseName }} / {{ c.name }}{{ allowed(c) ? '' : '（白名单外）' }}
-          </option>
-        </select>
-      </label></p>
-      <p><label class="field">标题：
-        <input v-model="noticeTitle" maxlength="128" style="width:min(560px,90%)" />
-      </label></p>
-      <p><label class="field" style="vertical-align:top">正文：
-        <textarea v-model="noticeBody" rows="4" style="width:min(640px,92%)"></textarea>
-      </label></p>
+      <p><label class="field">班级：<select v-model="noticeTarget" style="width:320px">
+        <option value="">（选择白名单班级）</option>
+        <option v-for="c in classes" :key="'n'+key(c)" :value="key(c)" :disabled="!allowed(c)">{{ c.courseName }} / {{ c.name }}</option>
+      </select></label></p>
+      <p><label class="field">标题：<input v-model="noticeTitle" maxlength="128" style="width:min(560px,90%)" /></label></p>
+      <p><label class="field" style="vertical-align:top">正文：<textarea v-model="noticeBody" rows="4" style="width:min(640px,92%)"></textarea></label></p>
       <p>
         <button class="btn small" @click="loadAtt">刷新附件</button>
         <button class="btn small" style="margin-left:8px" @click="pickUpload">上传图片/PDF/doc</button>
         <input ref="uploadInput" type="file" multiple accept="image/*,.pdf,.doc,.docx" style="display:none" @change="onUpload" />
       </p>
       <div v-if="noticeAtt.length" style="max-height:160px; overflow:auto; border:1px solid var(--c-border); border-radius:8px; padding:8px">
-        <label v-for="a in noticeAtt" :key="a.path" style="display:block">
-          <input type="checkbox" :checked="!!noticePick[a.path]" @change="toggleAtt(a.path, $event)" /> {{ a.name }}
-        </label>
+        <label v-for="a in noticeAtt" :key="a.path" style="display:block"><input type="checkbox" :checked="!!noticePick[a.path]" @change="toggleAtt(a.path, $event)" /> {{ a.name }}</label>
       </div>
-      <p>
-        <button class="btn" :disabled="busy" @click="sendNotice(false)">🧪 预检（不发布）</button>
-        <button class="btn primary" style="margin-left:8px" :disabled="busy" @click="sendNotice(true)">📢 发布通知</button>
-      </p>
+      <p><button class="btn" :disabled="busy" @click="sendNotice(false)">🧪 预检（不发布）</button>
+         <button class="btn primary" style="margin-left:8px" :disabled="busy" @click="sendNotice(true)">📢 发布通知</button></p>
     </div>
 
     <div class="card">
-      <h3>发布作业 <small>从作业库选择已有作业，原样发布；不新建、不复制</small></h3>
-      <p><label class="field">班级：
-        <select v-model="workTarget" style="width:320px" @change="loadWorks">
-          <option value="">（选择白名单班级）</option>
-          <option v-for="c in classes" :key="'w'+key(c)" :value="key(c)" :disabled="!allowed(c)">
-            {{ c.courseName }} / {{ c.name }}{{ allowed(c) ? '' : '（白名单外）' }}
-          </option>
+      <h3>发布作业 <small>新建 1 道简答题草稿，或从作业库选择已有作业原样发布；同班同作业禁止重复发布</small></h3>
+      <p><label class="field">班级：<select v-model="workTarget" style="width:320px" @change="loadWorks">
+        <option value="">（选择白名单班级）</option>
+        <option v-for="c in classes" :key="'w'+key(c)" :value="key(c)" :disabled="!allowed(c)">{{ c.courseName }} / {{ c.name }}</option>
+      </select></label></p>
+      <p><label class="field">作业库文件夹：
+        <select :value="folderCur.directoryId" style="width:260px" @change="setFolder(classes.find(x => key(x) === workTarget)?.courseId || '', $event)">
+          <option value="0">根目录</option>
+          <option v-for="f in folderList" :key="f.directoryId" :value="f.directoryId">{{ f.name }}</option>
         </select>
+        <button class="btn small" style="margin-left:8px" @click="loadFolders">🔄 刷新文件夹</button>
       </label></p>
-      <p><label class="field">作业：
-        <select v-model="workPick" style="width:min(620px,90%)">
-          <option value="">（选择作业库中的作业）</option>
-          <option v-for="w in works" :key="w.workLibraryId" :value="w.workLibraryId">{{ w.text || w.workLibraryId }}</option>
-        </select>
-      </label>
-        <button class="btn small" style="margin-left:8px" @click="loadWorks">刷新作业库</button>
+      <div style="border:1px dashed var(--c-border); border-radius:8px; padding:8px; margin:8px 0">
+        <p><b>新建作业草稿（1 道简答题）</b></p>
+        <p><input v-model="draftTitle" placeholder="作业标题" style="width:min(420px,90%)" /></p>
+        <p><textarea v-model="draftStem" rows="3" placeholder="简答题干" style="width:min(640px,92%)"></textarea></p>
+        <button class="btn" :disabled="busy" @click="createDraft">＋ 新建草稿到所选文件夹</button>
+      </div>
+      <p><label class="field">已有作业：<select v-model="workPick" style="width:min(560px,90%)" @change="loadDetail">
+        <option value="">（选择作业库中的作业）</option>
+        <option v-for="w in works" :key="w.workLibraryId" :value="w.workLibraryId" :disabled="workPublished(w)">
+          {{ w.text || w.workLibraryId }}{{ workPublished(w) ? '（本班已发布）' : '' }}
+        </option>
+      </select></label>
+        <button class="btn small" style="margin-left:8px" @click="loadWorks">🔁 刷新作业库</button>
       </p>
-      <p><label class="field">开始：<input v-model="startTime" style="width:180px" /></label>
-         <label class="field" style="margin-left:12px">截止：<input v-model="endTime" style="width:180px" /></label></p>
+      <div v-if="workPick" class="hint" style="border:1px solid var(--c-border); border-radius:8px; padding:8px">
+        <b>{{ workTitle || '（作业）' }}</b>
+        <span v-if="workUsed" class="tag" style="background:#fee2e2;color:#991b1b;padding:1px 6px;border-radius:6px;margin-left:6px">已发布，禁止重复发布</span>
+        <p style="white-space:pre-wrap">{{ workStem || '（题干未读取到；可到学习通查看）' }}</p>
+      </div>
+      <p><label class="field">开始：<input v-model="startTime" style="width:180px" @input="timeEdited = true" /></label>
+         <label class="field" style="margin-left:12px">截止：<input v-model="endTime" style="width:180px" @input="timeEdited = true" /></label>
+         <button class="btn small" style="margin-left:8px" @click="applyDefaults">↺ 恢复默认时间</button></p>
       <p><label><input v-model="allowLate" type="checkbox" /> 允许补交</label>
-         <label class="field" style="margin-left:12px">补交截止：<input v-model="lateDeadline" style="width:180px" /></label></p>
+         <label class="field" style="margin-left:12px">补交截止：<input v-model="lateDeadline" style="width:180px" @input="timeEdited = true" /></label></p>
       <p><label class="field">截止前允许重做：<input v-model.number="redoTimes" type="number" min="0" max="100" style="width:80px" /> 次</label></p>
       <p><label><input v-model="rememberDefault" type="checkbox" /> 记住为默认</label></p>
-      <p>
-        <button class="btn" :disabled="busy" @click="publishWork(false)">🧪 预检（不发布）</button>
-        <button class="btn primary" style="margin-left:8px" :disabled="busy" @click="publishWork(true)">📢 发布作业</button>
-      </p>
+      <p><button class="btn" :disabled="busy" @click="publishWork(false)">🧪 预检（不发布）</button>
+        <button class="btn primary" style="margin-left:8px" :disabled="busy" @click="publishWork(true)">📢 发布作业</button></p>
     </div>
   </section>
 </template>

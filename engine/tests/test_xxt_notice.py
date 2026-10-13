@@ -7,17 +7,18 @@ from assist.xxt.notice import (NOTICE_TEST_ALLOWLIST, body_to_html, list_notice_
                                validate_targets)
 
 
-def test_normalize_and_validate_allowlist():
+def test_normalize_and_validate_allowlist(tmp_path):
+    from assist.xxt.allowlist import write_allowlist
+    write_allowlist(tmp_path, [{"courseId": "217801417", "classId": "40009084", "name": "默认班级"}])
     targets = normalize_targets([{
         "courseId": "217801417",
         "courseName": "大学物理知识点拾遗（by pc）",
         "classes": [{"classId": "40009084", "name": "默认班级"}],
     }])
-    assert validate_targets(targets) is None
+    assert validate_targets(targets, tmp_path) is None
     bad = normalize_targets([{"courseId": "1", "classes": ["2"]}])
-    err = validate_targets(bad)
+    err = validate_targets(bad, tmp_path)
     assert err and "白名单拒绝" in err
-    assert ("217801417", "40009084") in NOTICE_TEST_ALLOWLIST
 
 
 def test_body_to_html_escapes_plain_text():
@@ -51,8 +52,10 @@ def test_save_notice_uploads_roundtrip(tmp_path):
     assert Path(items[0]["path"]).is_relative_to(tmp_path)
 
 
-def test_work_target_allowlist():
+def test_work_target_allowlist(tmp_path):
+    from assist.xxt.allowlist import write_allowlist
     from assist.xxt.work import validate_work_target
-    assert validate_work_target("217801417", "40009084") is None
-    err = validate_work_target("1", "2")
+    write_allowlist(tmp_path, [{"courseId": "217801417", "classId": "40009084"}])
+    assert validate_work_target("217801417", "40009084", tmp_path) is None
+    err = validate_work_target("1", "2", tmp_path)
     assert err and "白名单拒绝" in err

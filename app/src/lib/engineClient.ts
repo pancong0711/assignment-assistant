@@ -785,9 +785,52 @@ export async function startXxtNoticeSend(
   return { jobId: o.job_id, mode: String(o.mode || (payload.send ? 'send' : 'dry-run')) }
 }
 
+export interface XxtAllowItem { courseId: string; classId: string; name?: string }
+export interface XxtWorkFolder { directoryId: string; name: string }
+
+export async function fetchXxtWriteAllowlist(engineAddr: string, token?: string): Promise<XxtAllowItem[]> {
+  const base = normalizeEngineAddr(engineAddr)
+  const o = (await getJson2(engineUrlWithToken(base, '/xxt/write-allowlist', token))) as { items?: XxtAllowItem[] }
+  return o.items || []
+}
+export async function saveXxtWriteAllowlist(engineAddr: string, token: string | undefined, items: XxtAllowItem[]): Promise<XxtAllowItem[]> {
+  const base = normalizeEngineAddr(engineAddr)
+  const res = await fetch(engineUrlWithToken(base, '/xxt/write-allowlist', token), {
+    method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ items }),
+  })
+  if (!res.ok) throw new Error(`HTTP ${res.status}`)
+  const o = (await res.json()) as { items?: XxtAllowItem[] }
+  return o.items || []
+}
+export async function fetchXxtWorkFolders(engineAddr: string, token: string | undefined, courseId: string, classId: string, cpi: string): Promise<XxtWorkFolder[]> {
+  const base = normalizeEngineAddr(engineAddr)
+  const path = `/xxt/work/folders?courseId=${encodeURIComponent(courseId)}&classId=${encodeURIComponent(classId)}&cpi=${encodeURIComponent(cpi)}`
+  const o = (await getJson2(engineUrlWithToken(base, path, token))) as { items?: XxtWorkFolder[] }
+  return o.items || []
+}
+export async function fetchXxtWorkDetail(engineAddr: string, token: string | undefined, courseId: string, classId: string, cpi: string, workLibraryId: string): Promise<{ ok?: boolean; title?: string; stemHtml?: string; error?: string }> {
+  const base = normalizeEngineAddr(engineAddr)
+  const path = `/xxt/work/detail?courseId=${encodeURIComponent(courseId)}&classId=${encodeURIComponent(classId)}&cpi=${encodeURIComponent(cpi)}&workLibraryId=${encodeURIComponent(workLibraryId)}`
+  return (await getJson2(engineUrlWithToken(base, path, token))) as { ok?: boolean; title?: string; stemHtml?: string; error?: string }
+}
+export async function startXxtWorkCreate(engineAddr: string, token: string | undefined, payload: { courseId: string; classId: string; cpi: string; title: string; stemHtml: string; directoryId?: string }): Promise<string> {
+  const base = normalizeEngineAddr(engineAddr)
+  const res = await fetch(engineUrlWithToken(base, '/xxt/work/create', token), {
+    method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(payload),
+  })
+  if (!res.ok) {
+    let detail = `HTTP ${res.status}`
+    try { const o = (await res.json()) as { error?: string }; if (o?.error) detail = o.error } catch {}
+    throw new Error(detail)
+  }
+  const o = (await res.json()) as { job_id?: string }
+  if (!o?.job_id) throw new Error('引擎未返回 job_id')
+  return o.job_id
+}
+
 /* ========== D79：发布-学习通（通知上传 / 作业列表与发布） ========== */
 
-export interface XxtWorkLibraryItem { workLibraryId: string; type?: string; text?: string; canEdit?: boolean }
+export interface XxtWorkLibraryItem { workLibraryId: string; type?: string; text?: string; canEdit?: boolean; publishedClasses?: string[] }
 
 export async function uploadXxtNoticeFiles(
   engineAddr: string, token: string | undefined,

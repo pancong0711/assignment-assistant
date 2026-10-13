@@ -831,6 +831,52 @@ class Handler(BaseHTTPRequestHandler):
                                                    "mode": str(payload.get("mode") or "missing")})
             self._json({"ok": True, "job_id": job_id})
             return
+        if u.path == "/xxt/write-allowlist":
+            payload: dict = {}
+            try:
+                length = int(self.headers.get("Content-Length") or 0)
+                if length:
+                    payload = json.loads(self.rfile.read(length).decode("utf-8")) or {}
+            except Exception as exc:  # noqa: BLE001
+                self._json({"ok": False, "error": f"bad json: {exc}"}, 400)
+                return
+            from .xxt.allowlist import write_allowlist
+            items = write_allowlist(Path(self.ws).resolve(), payload.get("items") or [])
+            self._json({"ok": True, "items": items})
+            return
+        if u.path == "/xxt/work/create":
+            payload: dict = {}
+            try:
+                length = int(self.headers.get("Content-Length") or 0)
+                if length:
+                    payload = json.loads(self.rfile.read(length).decode("utf-8")) or {}
+            except Exception as exc:  # noqa: BLE001
+                self._json({"ok": False, "error": f"bad json: {exc}"}, 400)
+                return
+            cid = str(payload.get("courseId") or "")
+            kid = str(payload.get("classId") or "")
+            cpi = str(payload.get("cpi") or "0")
+            title = str(payload.get("title") or "")[:100]
+            stem = str(payload.get("stemHtml") or "")
+            directory = str(payload.get("directoryId") or "0")
+            from .xxt.work import validate_work_target
+            err = validate_work_target(cid, kid, Path(self.ws).resolve())
+            if err:
+                self._json({"ok": False, "error": err}, 400)
+                return
+            args = ["xxt", "work-create", "--course", cid, "--class", kid, "--cpi", cpi,
+                    "--title", title, "--stem", stem, "--directory-id", directory]
+            home = _xxt_home(); env = _xxt_env(home); cwd = str(_ws())
+            ok, detail = _xxt_preflight(cwd, env)
+            if not ok:
+                self._json({"ok": False, "error": "engine 无法 import assist.cli", "detail": detail}, 500)
+                return
+            job_id = secrets.token_urlsafe(6)
+            self._start_stream_job(job_id, _xxt_cli_cmd(args), env, "xxt_work_create", "xxt-work", cwd,
+                                   journal_kind="xxt_work_create",
+                                   journal_params={"courseId": cid, "classId": kid, "directoryId": directory})
+            self._json({"ok": True, "job_id": job_id})
+            return
         if u.path == "/xxt/work/publish":
             payload: dict = {}
             try:
@@ -1209,6 +1255,33 @@ class Handler(BaseHTTPRequestHandler):
             self.send_header("Content-Length", str(len(body)))
             self.end_headers()
             self.wfile.write(body)
+            return
+        elif u.path == "/xxt/write-allowlist":
+            from .xxt.allowlist import read_allowlist
+            self._json({"ok": True, "items": read_allowlist(Path(self.ws).resolve())})
+            return
+        elif u.path == "/xxt/work/folders":
+            from .xxt.work import list_folders
+            q = urllib.parse.parse_qs(u.query)
+            cid = (q.get("courseId") or [""])[0]
+            kid = (q.get("classId") or [""])[0]
+            cpi = (q.get("cpi") or ["0"])[0]
+            if not cid or not kid:
+                self._json({"ok": False, "error": "courseId/classId 必填"}, 400)
+                return
+            self._json(list_folders(_xxt_home() / "xxt-storage.json", cid, kid, cpi))
+            return
+        elif u.path == "/xxt/work/detail":
+            from .xxt.work import work_detail
+            q = urllib.parse.parse_qs(u.query)
+            cid = (q.get("courseId") or [""])[0]
+            kid = (q.get("classId") or [""])[0]
+            cpi = (q.get("cpi") or ["0"])[0]
+            wid = (q.get("workLibraryId") or [""])[0]
+            if not all((cid, kid, wid)):
+                self._json({"ok": False, "error": "参数不全"}, 400)
+                return
+            self._json(work_detail(_xxt_home() / "xxt-storage.json", cid, kid, cpi, wid))
             return
         elif u.path == "/xxt/work/list":
             from .xxt.work import list_works
