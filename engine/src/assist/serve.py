@@ -1289,10 +1289,11 @@ class Handler(BaseHTTPRequestHandler):
             course = (q.get("courseId") or [""])[0]
             clazz = (q.get("classId") or [""])[0]
             cpi = (q.get("cpi") or ["0"])[0]
+            directory = (q.get("directoryId") or ["0"])[0]
             if not course or not clazz:
                 self._json({"ok": False, "error": "courseId/classId 必填"}, 400)
                 return
-            self._json(list_works(_xxt_home() / "xxt-storage.json", course, clazz, cpi))
+            self._json(list_works(_xxt_home() / "xxt-storage.json", course, clazz, cpi, directory))
             return
         elif u.path == "/xxt/notice/attachments":
             from .xxt.notice import list_notice_attachments

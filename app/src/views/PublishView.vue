@@ -182,9 +182,10 @@ function refreshStale() {
 async function loadWorks() {
   const c = classes.value.find(x => key(x) === workTarget.value)
   if (!c) { works.value = []; return }
-  const r = await fetchXxtWorkList(engUrl.value, tok.value, c.courseId, c.classId, c.cpi)
+  const dir = folderMap.value[c.courseId]?.directoryId || '0'
+  const r = await fetchXxtWorkList(engUrl.value, tok.value, c.courseId, c.classId, c.cpi, dir)
   works.value = r.items || []
-  workPick.value = ''
+  workPick.value = ''; workTitle.value = ''; workStem.value = ''; workUsed.value = false
   await loadFolders()
 }
 function workPublished(w: XxtWorkLibraryItem): boolean {
@@ -245,12 +246,28 @@ async function publishWork(send: boolean) {
 async function poll(jobId: string) {
   for (let i = 0; i < 160; i++) {
     const job = await fetchXxtLoginJob(engUrl.value, tok.value, jobId)
-    const last = (job.lines || []).slice(-1)[0] || ''
-    msg.value = `${job.status === 'running' ? '执行中' : job.status}：${last.slice(-180)}`
-    if (job.status !== 'running') { busy.value = false; return }
+    const lines = job.lines || []
+    const last = lines.slice(-1)[0] || ''
+    if (job.status === 'running') {
+      msg.value = `执行中（${i * 1.5 | 0}s）：${last.slice(-160)}`
+    } else {
+      const all = lines.join('\n')
+      if (all.includes('"mode": "dry-run"') && all.includes('"ok": true')) {
+        msg.value = '✅ 预检通过：平台「发布设置」页可正常填写，尚未点击「发放」。'
+      } else if (all.includes('"mode": "send"') && all.includes('发布成功')) {
+        msg.value = '✅ 发布成功。'
+      } else if (job.returncode && job.returncode !== 0) {
+        msg.value = `❌ 任务失败：${last.slice(-220) || job.status}`
+      } else {
+        msg.value = `任务结束：${last.slice(-220) || job.status}`
+      }
+      busy.value = false
+      return
+    }
     await new Promise(r => setTimeout(r, 1500))
   }
   busy.value = false
+  msg.value = '任务超时，请刷新后查看。'
 }
 
 const folderCur = computed(() => {
@@ -262,6 +279,7 @@ function setFolder(cid: string, ev: Event) {
   const f = folderList.value.find(x => x.directoryId === id) || { directoryId: '0', name: '根目录' }
   folderMap.value = { ...folderMap.value, [cid]: f }
   persistFolderMap()
+  void loadWorks()
 }
 
 onMounted(async () => {

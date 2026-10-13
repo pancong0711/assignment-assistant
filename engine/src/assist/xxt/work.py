@@ -33,7 +33,7 @@ def _receipt_dir() -> Path:
     return d
 
 
-def list_works(storage, course_id: str, class_id: str, cpi: str = "0") -> dict:
+def list_works(storage, course_id: str, class_id: str, cpi: str = "0", directory_id: str = "0") -> dict:
     """只读列出作业库条目（含未发布草稿）。"""
     from playwright.sync_api import sync_playwright
     from .session import check_session, _launch
@@ -61,7 +61,7 @@ def list_works(storage, course_id: str, class_id: str, cpi: str = "0") -> dict:
     for it in items:
         it["publishedClasses"] = published_classes(str(course_id), str(it.get("workLibraryId") or ""))
     return {"ok": True, "courseId": str(course_id), "classId": str(class_id),
-            "cpi": str(cpi), "items": items}
+            "cpi": str(cpi), "directoryId": str(directory_id), "items": items}
 
 
 def publish_work(storage, course_id: str, class_id: str, work_library_id: str, *,

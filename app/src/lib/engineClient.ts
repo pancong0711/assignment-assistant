@@ -849,10 +849,10 @@ export async function uploadXxtNoticeFiles(
 /** GET /xxt/work/list：读取作业库条目（含未发布草稿）。 */
 export async function fetchXxtWorkList(
   engineAddr: string, token: string | undefined,
-  courseId: string, classId: string, cpi: string,
+  courseId: string, classId: string, cpi: string, directoryId = '0',
 ): Promise<{ ok?: boolean; items?: XxtWorkLibraryItem[]; error?: string }> {
   const base = normalizeEngineAddr(engineAddr)
-  const path = `/xxt/work/list?courseId=${encodeURIComponent(courseId)}&classId=${encodeURIComponent(classId)}&cpi=${encodeURIComponent(cpi)}`
+  const path = `/xxt/work/list?courseId=${encodeURIComponent(courseId)}&classId=${encodeURIComponent(classId)}&cpi=${encodeURIComponent(cpi)}&directoryId=${encodeURIComponent(directoryId)}`
   return (await getJson2(engineUrlWithToken(base, path, token))) as { ok?: boolean; items?: XxtWorkLibraryItem[]; error?: string }
 }
 
