@@ -318,11 +318,12 @@ def register(group: click.Group) -> None:
     @click.option("--course", "course_id", required=True)
     @click.option("--class", "class_id", required=True)
     @click.option("--cpi", default="0")
+    @click.option("--directory-id", "directory_id", default="0", help="作业库文件夹 ID（0=根目录）")
     @click.option("--storage", "storage", default=None, type=click.Path(dir_okay=False))
-    def xxt_work_list(course_id, class_id, cpi, storage):
+    def xxt_work_list(course_id, class_id, cpi, directory_id, storage):
         """只读列出作业库条目（含未发布草稿）。"""
         from .work import list_works
-        rep = list_works(storage or default_storage(None), course_id, class_id, cpi)
+        rep = list_works(storage or default_storage(None), course_id, class_id, cpi, directory_id)
         click.echo(json.dumps(rep, ensure_ascii=False, indent=1))
         raise SystemExit(0 if rep.get("ok") else 2)
 

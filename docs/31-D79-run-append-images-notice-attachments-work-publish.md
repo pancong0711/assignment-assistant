@@ -320,3 +320,15 @@ assist xxt work-publish --course <id> --work-library-id <id>
   - 新建草稿 `f88430ceb891495ea8b599ade00c4a42`（大学物理作业纸提交（D79草稿））保存成功；
   - `work-detail` 成功读回题干；
   - 已发布的测试作业 `049cd37e...` 返回 `workUsed=true`，将被防重逻辑拒绝再次发布。
+
+## I · 文件夹/作业列表本地缓存（2026-10-13）
+
+- PWA 首次读取「作业库文件夹」「已有作业」时写入 localStorage：
+  - `xxt-work-folders-cache:<courseId>`
+  - `xxt-work-list-cache:<courseId>:<directoryId>`
+- 缓存 TTL = 30 天，过期自动重新拉取；
+- 点「🔄 刷新文件夹 / 🔁 刷新作业库」强制实时更新；
+- 新建草稿/发布成功后强制刷新当前文件夹作业列表。
+- 修复：`work-list` 改用学习通 `intoFolder` 的真实 URL 契约
+  （`courseid&directoryid&cpi&from&topicid&backurl`），并过滤 `type=0` 的文件夹条目，
+  「已有作业」只显示当前文件夹下的作业。

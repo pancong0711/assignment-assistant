@@ -84,11 +84,29 @@ function expandAllAllow(on: boolean) { const next: Record<string, boolean> = {};
 const folderMap = ref<Record<string, XxtWorkFolder>>(JSON.parse(localStorage.getItem('xxt-work-folders') || '{}'))
 const folderList = ref<XxtWorkFolder[]>([])
 function persistFolderMap() { try { localStorage.setItem('xxt-work-folders', JSON.stringify(folderMap.value)) } catch { /* noop */ } }
-async function loadFolders() {
+const CACHE_TTL = 30 * 24 * 3600 * 1000
+function cacheGet<T>(key: string): T | null {
+  try {
+    const raw = JSON.parse(localStorage.getItem(key) || 'null')
+    if (!raw || typeof raw.at !== 'number') return null
+    if (Date.now() - raw.at > CACHE_TTL) return null
+    return raw.data as T
+  } catch { return null }
+}
+function cacheSet(key: string, data: unknown) {
+  try { localStorage.setItem(key, JSON.stringify({ at: Date.now(), data })) } catch { /* noop */ }
+}
+async function loadFolders(force = false) {
   const c = classes.value.find(x => key(x) === workTarget.value)
   if (!c) { folderList.value = []; return }
+  const ck = `xxt-work-folders-cache:${c.courseId}`
+  if (!force) {
+    const hit = cacheGet<XxtWorkFolder[]>(ck)
+    if (hit) { folderList.value = hit; return }
+  }
   try {
     folderList.value = await fetchXxtWorkFolders(engUrl.value, tok.value, c.courseId, c.classId, c.cpi)
+    cacheSet(ck, folderList.value)
     const cur = folderMap.value[c.courseId]
     if (!cur || !folderList.value.some(f => f.directoryId === cur.directoryId)) {
       folderMap.value[c.courseId] = { directoryId: '0', name: '根目录' }
@@ -225,12 +243,23 @@ function refreshStale() {
     else msg.value = '提示：开始时间已早于当前时间，发布可能被平台拒绝；可点「恢复默认时间」。'
   }
 }
-async function loadWorks() {
+async function loadWorks(force = false) {
   const c = classes.value.find(x => key(x) === workTarget.value)
   if (!c) { works.value = []; return }
   const dir = folderMap.value[c.courseId]?.directoryId || '0'
+  const ck = `xxt-work-list-cache:${c.courseId}:${dir}`
+  if (!force) {
+    const hit = cacheGet<XxtWorkLibraryItem[]>(ck)
+    if (hit) {
+      works.value = hit
+      workPick.value = ''; workTitle.value = ''; workStem.value = ''; workUsed.value = false
+      await loadFolders()
+      return
+    }
+  }
   const r = await fetchXxtWorkList(engUrl.value, tok.value, c.courseId, c.classId, c.cpi, dir)
   works.value = r.items || []
+  cacheSet(ck, works.value)
   workPick.value = ''; workTitle.value = ''; workStem.value = ''; workUsed.value = false
   await loadFolders()
 }
@@ -261,7 +290,7 @@ async function createDraft() {
       directoryId: folderMap.value[c.courseId]?.directoryId || '0',
     })
     await poll(jobId)
-    await loadWorks()
+    await loadWorks(true)
   } catch (e) { busy.value = false; msg.value = `新建失败：${String(e)}` }
 }
 async function publishWork(send: boolean) {
@@ -286,7 +315,7 @@ async function publishWork(send: boolean) {
       lateDeadline: lateDeadline.value, redoTimes: redoTimes.value, send,
     })
     await poll(r.jobId)
-    await loadWorks()
+    await loadWorks(true)
   } catch (e) { busy.value = false; msg.value = `失败：${String(e)}` }
 }
 
@@ -413,7 +442,7 @@ onUnmounted(() => document.removeEventListener('visibilitychange', refreshStale)
 
     <div class="card">
       <h3>发布作业 <small>新建 1 道简答题草稿，或从作业库选择已有作业原样发布；同班同作业禁止重复发布</small></h3>
-      <p><label class="field">班级：<select v-model="workTarget" style="width:320px" @change="loadWorks">
+      <p><label class="field">班级：<select v-model="workTarget" style="width:320px" @change="loadWorks()">
         <option value="">（选择白名单班级）</option>
         <option v-for="c in classes" :key="'w'+key(c)" :value="key(c)" :disabled="!allowed(c)">{{ c.courseName }} / {{ c.name }}</option>
       </select></label></p>
@@ -422,7 +451,7 @@ onUnmounted(() => document.removeEventListener('visibilitychange', refreshStale)
           <option value="0">根目录</option>
           <option v-for="f in folderList" :key="f.directoryId" :value="f.directoryId">{{ f.name }}</option>
         </select>
-        <button class="btn small" style="margin-left:8px" @click="loadFolders">🔄 刷新文件夹</button>
+        <button class="btn small" style="margin-left:8px" @click="loadFolders(true)">🔄 刷新文件夹</button>
       </label></p>
       <div style="border:1px dashed var(--c-border); border-radius:8px; padding:8px; margin:8px 0">
         <p><b>新建作业草稿（1 道简答题）</b></p>
@@ -436,7 +465,7 @@ onUnmounted(() => document.removeEventListener('visibilitychange', refreshStale)
           {{ w.text || w.workLibraryId }}{{ workPublished(w) ? '（本班已发布）' : '' }}
         </option>
       </select></label>
-        <button class="btn small" style="margin-left:8px" @click="loadWorks">🔁 刷新作业库</button>
+        <button class="btn small" style="margin-left:8px" @click="loadWorks(true)">🔁 刷新作业库</button>
       </p>
       <div v-if="workPick" class="hint" style="border:1px solid var(--c-border); border-radius:8px; padding:8px">
         <b>{{ workTitle || '（作业）' }}</b>

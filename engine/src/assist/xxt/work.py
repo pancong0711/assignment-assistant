@@ -51,7 +51,7 @@ def list_works(storage, course_id: str, class_id: str, cpi: str = "0", directory
         page = ctx.new_page()
         page.goto(url, wait_until="domcontentloaded", timeout=60000)
         page.wait_for_timeout(6000)
-        items = page.evaluate("""() => Array.from(document.querySelectorAll('ul.dataBody_td[data]')).map(e => ({
+        items = page.evaluate("""() => Array.from(document.querySelectorAll('ul.dataBody_td[data]')).filter(e => (e.getAttribute('type') || '') === '1').map(e => ({
           workLibraryId: e.getAttribute('data') || '',
           type: e.getAttribute('type') || '',
           text: (e.innerText || '').trim().slice(0, 120),
