@@ -1332,3 +1332,14 @@ applyManualTranslation/setTranslationRatio 中 setTranslationRatio 保留——�
 - 白名单：当前仅开放 `217801417/40009084`（大学物理知识点拾遗（by pc）/默认班级）；
 - engine 版本 0.1.0→0.4.0，`/status` 增加 short commit；
 - 状态：**已实施并真机验证（附件通知实际发布成功）**。
+
+---
+
+## D79 · run 增补/图片更新/通知通用附件/发布作业（2026-10-13，讨论稿）
+
+- 主任务单：`docs/31-D79-run-append-images-notice-attachments-work-publish.md`；
+- run：保留多 run，新增「追加到当前 run」增量提取；UI 中文词「提取批次」；
+- 图片：review-download 增加 `full/missing/comments-only` 与「更新全部图片」入口；
+- 通知：附件改通用（图片/截图/PDF/doc），默认标题改「作业通知-大学物理」；
+- 发布作业：完成只读侦察（新建编辑器/作业库/发布设置字段），CLI 先行、PWA 套壳；
+- 状态：**需求讨论稿，待拍板后开发**。
