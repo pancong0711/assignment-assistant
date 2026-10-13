@@ -552,13 +552,13 @@ export async function clearXxtTargetsHistory(
 /** POST /xxt/extract（mode=targets）：只提取勾选的课程/班级。 */
 export async function startXxtExtractTargets(
   engineAddr: string, token: string | undefined,
-  targets: XxtTargetCourse[], opts?: { skip_notices?: boolean },
+  targets: XxtTargetCourse[], opts?: { skip_notices?: boolean; appendRunId?: string },
 ): Promise<string> {
   const base = normalizeEngineAddr(engineAddr)
   const res = await fetch(engineUrlWithToken(base, '/xxt/extract', token), {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ mode: 'targets', targets, skip_notices: opts?.skip_notices ?? false }),
+    body: JSON.stringify({ mode: 'targets', targets, skip_notices: opts?.skip_notices ?? false, append_run_id: opts?.appendRunId || '' }),
   })
   if (!res.ok) {
     let detail = `HTTP ${res.status}`
@@ -785,6 +785,55 @@ export async function startXxtNoticeSend(
   return { jobId: o.job_id, mode: String(o.mode || (payload.send ? 'send' : 'dry-run')) }
 }
 
+/* ========== D79：发布-学习通（通知上传 / 作业列表与发布） ========== */
+
+export interface XxtWorkLibraryItem { workLibraryId: string; type?: string; text?: string; canEdit?: boolean }
+
+export async function uploadXxtNoticeFiles(
+  engineAddr: string, token: string | undefined,
+  items: { name: string; data_b64: string }[],
+): Promise<XxtNoticeAttachment[]> {
+  const base = normalizeEngineAddr(engineAddr)
+  const res = await fetch(engineUrlWithToken(base, '/xxt/notice/upload', token), {
+    method: 'POST', headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ items }),
+  })
+  if (!res.ok) throw new Error(`HTTP ${res.status}`)
+  const o = (await res.json()) as { items?: XxtNoticeAttachment[] }
+  return o.items || []
+}
+
+/** GET /xxt/work/list：读取作业库条目（含未发布草稿）。 */
+export async function fetchXxtWorkList(
+  engineAddr: string, token: string | undefined,
+  courseId: string, classId: string, cpi: string,
+): Promise<{ ok?: boolean; items?: XxtWorkLibraryItem[]; error?: string }> {
+  const base = normalizeEngineAddr(engineAddr)
+  const path = `/xxt/work/list?courseId=${encodeURIComponent(courseId)}&classId=${encodeURIComponent(classId)}&cpi=${encodeURIComponent(cpi)}`
+  return (await getJson2(engineUrlWithToken(base, path, token))) as { ok?: boolean; items?: XxtWorkLibraryItem[]; error?: string }
+}
+
+/** POST /xxt/work/publish：dry-run 或发布已有作业。 */
+export async function startXxtWorkPublish(
+  engineAddr: string, token: string | undefined,
+  payload: { courseId: string; classId: string; workLibraryId: string; cpi: string;
+    startTime?: string; endTime?: string; allowLate?: boolean; lateDeadline?: string;
+    redoTimes?: number; send: boolean },
+): Promise<{ jobId: string; mode: string }> {
+  const base = normalizeEngineAddr(engineAddr)
+  const res = await fetch(engineUrlWithToken(base, '/xxt/work/publish', token), {
+    method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(payload),
+  })
+  if (!res.ok) {
+    let detail = `HTTP ${res.status}`
+    try { const o = (await res.json()) as { error?: string }; if (o?.error) detail = o.error } catch {}
+    throw new Error(detail)
+  }
+  const o = (await res.json()) as { job_id?: string; mode?: string }
+  if (!o?.job_id) throw new Error('引擎未返回 job_id')
+  return { jobId: o.job_id, mode: String(o.mode || (payload.send ? 'send' : 'dry-run')) }
+}
+
 /* ========== D75-1c/d：批阅图片 + 两栏批语 ========== */
 
 export interface XxtReviewImageWork {
@@ -817,6 +866,7 @@ export async function startXxtReviewDownload(
   engineAddr: string, token: string | undefined,
   opts: { courseId: string; classId: string; workId: string
     courseName?: string; className?: string; workName?: string; limit?: number
+    mode?: 'full' | 'missing' | 'comments-only'
     allowPost?: string[] },
 ): Promise<string> {
   const base = normalizeEngineAddr(engineAddr)

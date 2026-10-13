@@ -24,7 +24,7 @@ from pathlib import Path
 NOTICE_TEST_ALLOWLIST = {
     ("217801417", "40009084"),
 }
-ATTACH_SUFFIXES = (".pdf", ".doc", ".docx")
+ATTACH_SUFFIXES = (".pdf", ".doc", ".docx", ".jpg", ".jpeg", ".png", ".webp", ".gif")
 
 
 def normalize_targets(raw) -> list[dict]:
@@ -399,3 +399,40 @@ def send_notice_from_spec(spec: dict, *, send: bool = False, storage: Path | str
         "failures": failures,
         "results": results,
     }
+
+def save_notice_uploads(workspace, items: list[dict]) -> list[dict]:
+    """D79-B：把 PWA base64 上传的附件保存到 workspace 临时目录。
+
+    items: [{name, data_b64}]；返回 [{name, path, size}]。
+    """
+    import base64
+    import re as _re
+    if workspace is None:
+        try:
+            from ..workspace import find_workspace
+            ws = Path(find_workspace(None)).resolve()
+        except Exception:
+            ws = Path.cwd().resolve()
+    else:
+        ws = Path(workspace).resolve()
+    dest = ws / ".runtime" / "xxt" / "notice-uploads" / time.strftime("%Y%m%d-%H%M%S")
+    dest.mkdir(parents=True, exist_ok=True)
+    out = []
+    for it in items[:20]:
+        name = _re.sub(r"[^0-9A-Za-z\u4e00-\u9fff._()（）+\- ]", "_", str(it.get("name") or "file"))[:120]
+        if not name:
+            name = "file"
+        raw = str(it.get("data_b64") or "")
+        if not raw:
+            continue
+        try:
+            body = base64.b64decode(raw)
+        except Exception:
+            continue
+        if len(body) > 20 * 1024 * 1024:
+            continue
+        p = dest / name
+        p.write_bytes(body)
+        out.append({"name": name, "path": str(p), "size": len(body)})
+    return out
+

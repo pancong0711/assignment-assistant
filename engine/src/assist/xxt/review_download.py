@@ -103,7 +103,7 @@ def download_review(storage, home, course_id: str, class_id: str, work_id: str, 
                     course_name: str = "", class_name: str = "", work_name: str = "",
                     use_fallback: bool = False, limit: int = 0,
                     allow_post: "list[str] | None" = None,
-                    months: int = 6) -> dict:
+                    months: int = 6, mode: str = "missing") -> dict:
     """逐生下载作答图片 + 两栏批语，写 students.json；返回回执。"""
     from playwright.sync_api import sync_playwright
     from .session import check_session, _launch
@@ -116,6 +116,15 @@ def download_review(storage, home, course_id: str, class_id: str, work_id: str, 
                 "hint": chk.get("hint", "请先 assist xxt login")}
     wdir = review_store.work_dir(home, class_id, work_id)
     wdir.mkdir(parents=True, exist_ok=True)
+    mode = str(mode or "missing").lower()
+    if mode not in ("full", "missing", "comments-only"):
+        return {"ok": False, "error": f"unsupported mode: {mode}"}
+    old_manifest = review_store.read_manifest(home, class_id, work_id) or {}
+    old_by_key = {}
+    for st in old_manifest.get("students") or []:
+        key = str(st.get("workAnswerId") or st.get("name") or "")
+        if key:
+            old_by_key[key] = st
     aborted: list = []
     students_out: list = []
     steps: list = []
@@ -139,10 +148,19 @@ def download_review(storage, home, course_id: str, class_id: str, work_id: str, 
                         wait_until="load", timeout=60000)
                 sp.wait_for_timeout(2000)
                 detail = sp.evaluate(JS_REVIEW_DETAIL) or {}
-                def _save(url: str, idx: int, kind: str, qidx=None):
+                def _save(url: str, idx: int, kind: str, qidx=None, force: bool = True):
                     nonlocal total_images
                     try:
                         ext = os.path.splitext(urlparse(url).path)[1] or ".jpg"
+                        if kind == "comment":
+                            fn_probe = review_store.comment_image_filename(
+                                s["name"], class_name or class_id, work_name or work_id,
+                                idx, ext, qidx=qidx)
+                        else:
+                            fn_probe = review_store.image_filename(
+                                s["name"], class_name or class_id, work_name or work_id, idx, ext)
+                        if not force and (wdir / fn_probe).is_file():
+                            return fn_probe
                         if url.startswith("data:image/"):
                             import base64 as _b64
                             import re as _re
@@ -171,13 +189,23 @@ def download_review(storage, home, course_id: str, class_id: str, work_id: str, 
                     except Exception:  # noqa: BLE001
                         return ""
 
-                for n, url in enumerate(detail.get("images") or [], 1):
-                    fn = _save(url, n, "answer")
-                    if fn:
-                        imgs.append(fn)
-                comment_urls = (extract_image_urls_from_html(detail.get("comment") or "")
-                                + extract_image_urls_from_html(detail.get("ueditor0") or ""))
-                comment_imgs = []
+                old_st = old_by_key.get(str(s.get("workAnswerId") or s.get("name") or "")) or {}
+                if mode != "comments-only":
+                    for n, url in enumerate(detail.get("images") or [], 1):
+                        fn = _save(url, n, "answer", force=(mode == "full"))
+                        if fn:
+                            imgs.append(fn)
+                    if mode == "missing" and not imgs:
+                        imgs = [x for x in (old_st.get("images") or []) if (wdir / x).is_file()]
+                old_has_comment = mode == "missing" and (
+                    (old_st.get("comment") or "") or (old_st.get("comment_images") or []))
+                comment_text = (old_st.get("comment") or "") if old_has_comment else (detail.get("comment") or "")
+                comment_text2 = (old_st.get("comment_text") or "") if old_has_comment else html_to_text(comment_text)
+                comment_imgs = [x for x in (old_st.get("comment_images") or [])
+                                if (wdir / x).is_file()] if old_has_comment else []
+                comment_urls = [] if old_has_comment else (
+                    extract_image_urls_from_html(comment_text)
+                    + extract_image_urls_from_html(detail.get("ueditor0") or ""))
                 seen_c = set()
                 for n, url in enumerate(comment_urls, 1):
                     if url in seen_c:
@@ -187,13 +215,17 @@ def download_review(storage, home, course_id: str, class_id: str, work_id: str, 
                     if fn:
                         comment_imgs.append(fn)
                 q_imgs: list = []
-                for qi, txt in enumerate(detail.get("per_question_comments") or [], 1):
-                    one = []
-                    for url in extract_image_urls_from_html(txt or ""):
-                        fn = _save(url, len(one) + 1, "comment", qidx=qi)
-                        if fn:
-                            one.append(fn)
-                    q_imgs.append(one)
+                re_use_q = mode == "missing" and bool(old_st.get("per_question_comments"))
+                if re_use_q:
+                    q_imgs = old_st.get("per_question_comment_images") or []
+                else:
+                    for qi, txt in enumerate(detail.get("per_question_comments") or [], 1):
+                        one = []
+                        for url in extract_image_urls_from_html(txt or ""):
+                            fn = _save(url, len(one) + 1, "comment", qidx=qi, force=(mode == "full"))
+                            if fn:
+                                one.append(fn)
+                        q_imgs.append(one)
                 steps.append({"action": "下载学生作答",
                               "detail": f'{s["name"]}: {len(imgs)} 张图',
                               "ts": time.strftime("%H:%M:%S")})
@@ -209,15 +241,16 @@ def download_review(storage, home, course_id: str, class_id: str, work_id: str, 
                 "workAnswerId": s["workAnswerId"],
                 "status": s.get("status") or "",
                 "images": imgs,
-                "comment": detail.get("comment") or "",
-                "comment_text": html_to_text(detail.get("comment") or ""),
+                "comment": comment_text,
+                "comment_text": comment_text2,
                 "comment_images": comment_imgs,
-                "per_question_comments": detail.get("per_question_comments") or [],
-                "per_question_comment_texts": [html_to_text(t or "")
-                                               for t in (detail.get("per_question_comments") or [])],
+                "per_question_comments": (old_st.get("per_question_comments") or []) if re_use_q
+                    else (detail.get("per_question_comments") or []),
+                "per_question_comment_texts": (old_st.get("per_question_comment_texts") or []) if re_use_q
+                    else [html_to_text(t or "") for t in (detail.get("per_question_comments") or [])],
                 "per_question_comment_images": q_imgs,
-                "ueditor0": detail.get("ueditor0") or "",
-                "score": detail.get("score") or "",
+                "ueditor0": detail.get("ueditor0") or old_st.get("ueditor0") or "",
+                "score": detail.get("score") or old_st.get("score") or "",
                 "error": detail.get("error") or "",
             })
         browser.close()
@@ -226,6 +259,7 @@ def download_review(storage, home, course_id: str, class_id: str, work_id: str, 
         "courseName": course_name, "className": class_name or str(class_id),
         "workName": work_name or str(work_id),
         "generated_at": time.strftime("%Y-%m-%d %H:%M:%S"),
+        "mode": mode,
         "students": students_out, "aborted": aborted[:80],
     }
     mp = review_store.write_manifest(home, class_id, work_id, manifest)

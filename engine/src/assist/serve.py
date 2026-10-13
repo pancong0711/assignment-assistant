@@ -703,7 +703,10 @@ class Handler(BaseHTTPRequestHandler):
                     self._json({"ok": False, "error": f"write targets failed: {exc}"}, 500)
                     return
                 target_count = sum(len(c["classes"]) for c in targets)
+                append_run = str(payload.get("append_run_id") or "").strip()
                 cmd = _xxt_cli_cmd(["xxt", "extract", "--targets", str(spec)])
+                if append_run:
+                    cmd += ["--append", append_run[:120]]
             else:
                 self._json({"ok": False, "error": "unsupported mode",
                             "hint": "支持 mode=all 或 mode=targets"}, 400)
@@ -722,6 +725,7 @@ class Handler(BaseHTTPRequestHandler):
             self._start_stream_job(job_id, cmd, env, "xxt_extract", "xxt-extract", cwd,
                                     journal_kind="xxt_extract",
                                     journal_params={"mode": mode, "classes": target_count,
+                                                    "append_run_id": str(payload.get("append_run_id") or ""),
                                                     "skip_notices": bool(payload.get("skip_notices", False))})
             self._json({"ok": True, "job_id": job_id, "mode": mode,
                         "targets": target_count,
@@ -810,6 +814,8 @@ class Handler(BaseHTTPRequestHandler):
                         args += [flag, str(payload[key])[:80]]
                 if payload.get("limit"):
                     args += ["--limit", str(int(payload["limit"]))]
+                if payload.get("mode"):
+                    args += ["--mode", str(payload["mode"])[:20]]
             else:
                 args += ["--sample", str(int(payload.get("sample") or 1))]
             for pat in (payload.get("allowPost") or [])[:20]:
@@ -821,8 +827,70 @@ class Handler(BaseHTTPRequestHandler):
                                    "xxt_review_probe" if is_probe else "xxt_review_download",
                                    "xxt-review", cwd,
                                    journal_kind="xxt_review_probe" if is_probe else "xxt_review_download",
-                                   journal_params={"classId": ids["classId"], "workId": ids["workId"]})
+                                   journal_params={"classId": ids["classId"], "workId": ids["workId"],
+                                                   "mode": str(payload.get("mode") or "missing")})
             self._json({"ok": True, "job_id": job_id})
+            return
+        if u.path == "/xxt/work/publish":
+            payload: dict = {}
+            try:
+                length = int(self.headers.get("Content-Length") or 0)
+                if length:
+                    payload = json.loads(self.rfile.read(length).decode("utf-8")) or {}
+            except Exception as exc:  # noqa: BLE001
+                self._json({"ok": False, "error": f"bad json: {exc}"}, 400)
+                return
+            ids = {k: str(payload.get(k) or "").strip() for k in ("courseId", "classId", "workLibraryId", "cpi")}
+            if not all(ids.values()):
+                self._json({"ok": False, "error": "courseId/classId/workLibraryId/cpi 必填"}, 400)
+                return
+            from .xxt.work import validate_work_target
+            err = validate_work_target(ids["courseId"], ids["classId"])
+            if err:
+                self._json({"ok": False, "error": err}, 400)
+                return
+            args = ["xxt", "work-publish", "--course", ids["courseId"], "--class", ids["classId"],
+                    "--work-library-id", ids["workLibraryId"], "--cpi", ids["cpi"]]
+            if payload.get("startTime"):
+                args += ["--start", str(payload["startTime"])[:30]]
+            if payload.get("endTime"):
+                args += ["--end", str(payload["endTime"])[:30]]
+            if payload.get("allowLate"):
+                args += ["--allow-late"]
+            if payload.get("lateDeadline"):
+                args += ["--late-deadline", str(payload["lateDeadline"])[:30]]
+            if payload.get("redoTimes"):
+                args += ["--redo-times", str(int(payload["redoTimes"]))]
+            if payload.get("send"):
+                args += ["--send"]
+            home = _xxt_home()
+            env = _xxt_env(home)
+            cwd = str(_ws())
+            ok, detail = _xxt_preflight(cwd, env)
+            if not ok:
+                self._json({"ok": False, "error": "engine 无法 import assist.cli", "detail": detail}, 500)
+                return
+            job_id = secrets.token_urlsafe(6)
+            self._start_stream_job(job_id, _xxt_cli_cmd(args), env, "xxt_work_publish", "xxt-work", cwd,
+                                   journal_kind="xxt_work_publish",
+                                   journal_params=ids)
+            self._json({"ok": True, "job_id": job_id, "mode": "send" if payload.get("send") else "dry-run"})
+            return
+        if u.path == "/xxt/notice/upload":
+            payload: dict = {}
+            try:
+                length = int(self.headers.get("Content-Length") or 0)
+                if length:
+                    if length > 30 * 1024 * 1024:
+                        self._json({"ok": False, "error": "payload too large"}, 413)
+                        return
+                    payload = json.loads(self.rfile.read(length).decode("utf-8")) or {}
+            except Exception as exc:  # noqa: BLE001
+                self._json({"ok": False, "error": f"bad json: {exc}"}, 400)
+                return
+            from .xxt.notice import save_notice_uploads
+            items = save_notice_uploads(Path(self.ws).resolve(), payload.get("items") or [])
+            self._json({"ok": True, "items": items})
             return
         if u.path == "/xxt/notice/send":
             payload: dict = {}
@@ -1141,6 +1209,17 @@ class Handler(BaseHTTPRequestHandler):
             self.send_header("Content-Length", str(len(body)))
             self.end_headers()
             self.wfile.write(body)
+            return
+        elif u.path == "/xxt/work/list":
+            from .xxt.work import list_works
+            q = urllib.parse.parse_qs(u.query)
+            course = (q.get("courseId") or [""])[0]
+            clazz = (q.get("classId") or [""])[0]
+            cpi = (q.get("cpi") or ["0"])[0]
+            if not course or not clazz:
+                self._json({"ok": False, "error": "courseId/classId 必填"}, 400)
+                return
+            self._json(list_works(_xxt_home() / "xxt-storage.json", course, clazz, cpi))
             return
         elif u.path == "/xxt/notice/attachments":
             from .xxt.notice import list_notice_attachments

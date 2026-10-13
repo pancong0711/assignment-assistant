@@ -63,9 +63,11 @@ def register(group: click.Group) -> None:
                   help="与--roster-labels 配套：学习通-25C1-<班>-0621.xlsx 所在目录")
     @click.option("--roster-label", "roster_labels", multiple=True,
                   help="差集基准班级标签（可多次；命中班级名子串即启用名册差集）")
+    @click.option("--append", "append_run_id", default=None,
+                  help="D79：把本次提取追加到已有 run（同班覆盖、新班追加）")
     @click.option("--skip-notices", is_flag=True, default=False, help="跳过通知抓取")
     def xxt_extract(targets, extract_all, storage, out_dir, archive_dir,
-                    roster_dir, roster_labels, skip_notices):
+                    roster_dir, roster_labels, append_run_id, skip_notices):
         """只读提取 run（T9/D72）：体检前置→逐班直达导航+evaluate直读→JSON+存档；POST 全拦截。"""
         import json as _json
         from . import layout
@@ -74,9 +76,26 @@ def register(group: click.Group) -> None:
             raise click.UsageError("必须提供 --targets，或使用 --all 扫描账户全部课程/班级")
         if extract_all and targets:
             raise click.UsageError("--all 与 --targets 不能同时使用")
+        if append_run_id and not targets:
+            raise click.UsageError("--append 必须与 --targets 一起使用")
         spec = {"courses": []}
         if targets:
             spec = _json.loads(Path(targets).read_text(encoding='utf-8'))
+        if append_run_id:
+            from .extract_run import append_extract
+            rep = append_extract(str(append_run_id), spec.get('courses', []),
+                                 storage=storage or default_storage(None),
+                                 out_dir=out_dir, archive_dir=archive_dir,
+                                 roster_dir=roster_dir,
+                                 roster_labels=set(roster_labels or []),
+                                 skip_notices=skip_notices)
+            click.echo(json.dumps(rep, ensure_ascii=False, indent=1))
+            _journal("xxt_extract_append",
+                     params={"run_id": rep.get("run_id"), "source_run": rep.get("source_run"),
+                             "appended": len(rep.get("appended") or [])},
+                     result="ok" if rep.get("ok") else "fail",
+                     error=str(rep.get("error") or "")[:200])
+            raise SystemExit(0 if rep.get("ok") else 2)
         rep = run_extract(spec.get('courses', []),
                           storage=storage or default_storage(None),
                           out_dir=out_dir or layout.runs_dir(),
@@ -210,11 +229,14 @@ def register(group: click.Group) -> None:
     @click.option("--work-name", default="", help="用于友好文件名/报告展示")
     @click.option("--limit", default=0, type=int, help="只下载前 N 个学生（0=全部）")
     @click.option("--months", default=6, type=int, help="下载后自动清理超过 N 个月的旧批阅图片")
+    @click.option("--mode", "mode", default="missing",
+                  type=click.Choice(["full", "missing", "comments-only"]),
+                  help="full=全量；missing=只补缺失（默认）；comments-only=只刷新批语/分数，不重下作答图")
     @click.option("--allow-post", "allow_post", multiple=True, help="放行的只读 POST URL 子串（可多次）")
     @click.option("--storage", "storage", default=None, type=click.Path(dir_okay=False))
     @click.option("--fallback", is_flag=True, default=False, help="使用旧版 review 页 URL")
     def xxt_review_download(course_id, class_id, work_id, course_name, class_name, work_name,
-                            limit, months, allow_post, storage, fallback):
+                            limit, months, mode, allow_post, storage, fallback):
         """只读下载作答图片 + 两栏批语（作业批语/题目批语），写 students.json。"""
         from . import layout
         from .review_download import download_review
@@ -222,7 +244,7 @@ def register(group: click.Group) -> None:
         rep = download_review(storage or default_storage(None), home,
                               course_id, class_id, work_id,
                               course_name=course_name, class_name=class_name,
-                              work_name=work_name, limit=limit, months=months,
+                              work_name=work_name, limit=limit, months=months, mode=mode,
                               allow_post=list(allow_post), use_fallback=fallback)
         _journal("xxt_review_download",
                  params={"classId": class_id, "workId": work_id,
@@ -231,7 +253,7 @@ def register(group: click.Group) -> None:
                  result="ok" if rep.get("ok") else "fail",
                  error=str(rep.get("error") or "")[:200])
         click.echo(json.dumps({k: rep.get(k) for k in
-                               ("ok", "classId", "workId", "students", "images",
+                               ("ok", "classId", "workId", "students", "images", "mode",
                                 "aborted", "manifest", "out_dir", "error", "pruned")},
                               ensure_ascii=False, indent=1))
         raise SystemExit(0 if rep.get("ok") else 2)
@@ -289,6 +311,47 @@ def register(group: click.Group) -> None:
                          "attachments": rep.get("attachments"), "receipt": rep.get("receipt")},
                  result="ok" if rep.get("ok") else "fail",
                  error=str(rep.get("error") or "")[:200])
+        click.echo(json.dumps(rep, ensure_ascii=False, indent=1))
+        raise SystemExit(0 if rep.get("ok") else 2)
+
+    @group.command("work-list")
+    @click.option("--course", "course_id", required=True)
+    @click.option("--class", "class_id", required=True)
+    @click.option("--cpi", default="0")
+    @click.option("--storage", "storage", default=None, type=click.Path(dir_okay=False))
+    def xxt_work_list(course_id, class_id, cpi, storage):
+        """只读列出作业库条目（含未发布草稿）。"""
+        from .work import list_works
+        rep = list_works(storage or default_storage(None), course_id, class_id, cpi)
+        click.echo(json.dumps(rep, ensure_ascii=False, indent=1))
+        raise SystemExit(0 if rep.get("ok") else 2)
+
+    @group.command("work-publish")
+    @click.option("--course", "course_id", required=True)
+    @click.option("--class", "class_id", required=True)
+    @click.option("--work-library-id", "work_library_id", required=True)
+    @click.option("--cpi", required=True)
+    @click.option("--start", "start_time", default="")
+    @click.option("--end", "end_time", default="")
+    @click.option("--allow-late", is_flag=True, default=False)
+    @click.option("--late-deadline", "late_deadline", default="")
+    @click.option("--redo-times", default=0, type=int)
+    @click.option("--send", is_flag=True, default=False, help="真正发布；缺省 dry-run")
+    @click.option("--storage", "storage", default=None, type=click.Path(dir_okay=False))
+    def xxt_work_publish(course_id, class_id, work_library_id, cpi, start_time, end_time,
+                         allow_late, late_deadline, redo_times, send, storage):
+        """发布作业设置（D79-C；默认 dry-run，白名单限制）。"""
+        from .work import publish_work
+        rep = publish_work(storage or default_storage(None), course_id, class_id,
+                           work_library_id, cpi=cpi, start_time=start_time,
+                           end_time=end_time, allow_late=allow_late,
+                           late_deadline=late_deadline, redo_times=redo_times, send=send)
+        _journal("xxt_work_publish",
+                 params={"courseId": course_id, "classId": class_id,
+                         "workLibraryId": work_library_id, "mode": rep.get("mode"),
+                         "redo": redo_times, "allowLate": bool(allow_late)},
+                 result="ok" if rep.get("ok") else "fail",
+                 error=str(rep.get("error") or rep.get("responseText") or "")[:200])
         click.echo(json.dumps(rep, ensure_ascii=False, indent=1))
         raise SystemExit(0 if rep.get("ok") else 2)
 

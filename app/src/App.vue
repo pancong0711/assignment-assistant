@@ -7,6 +7,7 @@ import SheetDesignView from './views/SheetDesignView.vue'
 import RosterView from './views/RosterView.vue'
 import GradingView from './views/GradingView.vue'
 import XxetongView from './views/XxetongView.vue'
+import PublishView from './views/PublishView.vue'
 import TransferView from './views/TransferView.vue'
 import HelpView from './views/HelpView.vue'
 import JournalView from './views/JournalView.vue'
@@ -20,7 +21,8 @@ const TABS = [
   { key: 'kb', label: '题库编辑器', component: KbEditorView },
   { key: 'design', label: '作业纸设计', component: SheetDesignView },
   { key: 'roster', label: '班级与标签', component: RosterView },
-  { key: 'xxetong', label: '学习通', component: XxetongView },
+  { key: 'xxetong', label: '作业预览-学习通', component: XxetongView },
+  { key: 'publish', label: '发布-学习通', component: PublishView },
   { key: 'grading', label: '批阅', component: GradingView },
   { key: 'transfer', label: '导入导出', component: TransferView },
   { key: 'help', label: '使用说明', component: HelpView },

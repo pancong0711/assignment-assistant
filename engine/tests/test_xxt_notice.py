@@ -3,7 +3,8 @@ import json
 from pathlib import Path
 
 from assist.xxt.notice import (NOTICE_TEST_ALLOWLIST, body_to_html, list_notice_attachments,
-                               normalize_targets, safe_attachment_path, validate_targets)
+                               normalize_targets, safe_attachment_path, save_notice_uploads,
+                               validate_targets)
 
 
 def test_normalize_and_validate_allowlist():
@@ -39,3 +40,19 @@ def test_safe_attachment_and_list(tmp_path):
     assert items and items[0]["name"] == "a.pdf"
     # JSON serializable
     json.dumps(items)
+
+
+def test_save_notice_uploads_roundtrip(tmp_path):
+    import base64
+    data = base64.b64encode(b"hello pdf").decode()
+    items = save_notice_uploads(tmp_path, [{"name": "a.pdf", "data_b64": data}])
+    assert len(items) == 1 and items[0]["name"] == "a.pdf"
+    assert Path(items[0]["path"]).read_bytes() == b"hello pdf"
+    assert Path(items[0]["path"]).is_relative_to(tmp_path)
+
+
+def test_work_target_allowlist():
+    from assist.xxt.work import validate_work_target
+    assert validate_work_target("217801417", "40009084") is None
+    err = validate_work_target("1", "2")
+    assert err and "白名单拒绝" in err

@@ -2,16 +2,15 @@
 import { computed, onMounted, onUnmounted, ref } from 'vue'
 import type { XxtTargetsDiff, XxtWork, XxtWorksCourse } from '../lib/engineClient'
 import {
-  clearXxtRuns, clearXxtTargetsHistory, deleteXxtRun, fetchXxtLoginJob, fetchXxtNoticeAttachments,
+  clearXxtRuns, clearXxtTargetsHistory, deleteXxtRun, fetchXxtLoginJob,
   fetchXxtFreshness, fetchXxtReviewIndex, fetchXxtReviewProbeLatest, fetchXxtReviewStudents,
   fetchXxtReviewWork, fetchXxtRun, fetchXxtRuns, fetchXxtStatus, fetchXxtStorage, fetchXxtTargets,
   fetchXxtWorks, importXxtRun, pruneXxtReview, pruneXxtRuns, startXxtDiscover,
   startXxtDiscoverWorks, startXxtExtract, startXxtExtractTargets, startXxtLogin,
-  startXxtNoticeSend,
   deleteXxtReviewWork, purgeXxtReviewWork, startXxtReviewDownload, startXxtReviewProbe,
   xxtReviewFileUrl,
 } from '../lib/engineClient'
-import type { XxtNoticeAttachment, XxtNoticeTargetCourse, XxtReviewImageWork, XxtReviewManifestStudent, XxtReviewProbe,
+import type { XxtReviewImageWork, XxtReviewManifestStudent, XxtReviewProbe,
   XxtReviewStudent, XxtStorageStats } from '../lib/engineClient'
 import { useSettingsStore } from '../stores/settings'
 import { useXxtJobsStore } from '../stores/xxtJobs'
@@ -640,6 +639,28 @@ async function extractSelected() {
     extractSubmitting.value = false
   }
 }
+async function extractAppend() {
+  if (extracting.value || extractSubmitting.value) return
+  if (!curRun.value) { targetMsg.value = '当前没有可追加的批次，请先提取一次'; return }
+  const sel = extractionTargets()
+  const n = sel.reduce((a, c) => a + c.classes.length, 0)
+  if (!n) { targetMsg.value = '请先勾选至少一个班级/作业'; return }
+  stopExtractPolling()
+  extractSubmitting.value = true
+  targetMsg.value = `正在追加到批次 ${curRun.value}……`
+  try {
+    const jobId = await startXxtExtractTargets(engUrl.value, tok.value, sel,
+      { skip_notices: false, appendRunId: curRun.value })
+    xxtJobs.startExtractJob(jobId)
+    runMsg.value = xxtJobs.extractMsg
+    pollExtractJob(jobId)
+  } catch (e) {
+    targetMsg.value = `追加失败：${String(e)}`
+  } finally {
+    extractSubmitting.value = false
+  }
+}
+
 function pickImportFile() { importInput.value?.click() }
 async function onImportFile(ev: Event) {
   const input = ev.target as HTMLInputElement
@@ -909,6 +930,25 @@ async function downloadReview(c: CourseRow, cl: ClassRow, w: WorkRow) {
     reviewDlLoading.value = false
   }
 }
+async function updateReviewWork(it: XxtReviewImageWork, mode: 'missing' | 'comments-only') {
+  if (reviewDlLoading.value) return
+  reviewDlLoading.value = true
+  reviewDlMsg.value = mode === 'missing' ? '正在补下缺失图片/批语……' : '正在仅更新批语/分数……'
+  try {
+    const jobId = await startXxtReviewDownload(engUrl.value, tok.value, {
+      courseId: it.courseId || '', classId: it.classId, workId: it.workId,
+      className: it.className, workName: it.workName, mode,
+      allowPost: allowPost.value,
+    })
+    reviewDlJobId.value = jobId
+    try { localStorage.setItem('xxt-review-dl-job', jobId) } catch { /* noop */ }
+    pollReviewDl(jobId)
+  } catch (e) {
+    reviewDlMsg.value = `更新启动失败：${String(e)}`
+    reviewDlLoading.value = false
+  }
+}
+
 async function pruneReview() {
   if (!confirm('清理 6 个月前的批阅图片/批语？（按作业文件夹时间，独立于 run 历史清理）')) return
   try {
@@ -1152,166 +1192,10 @@ const grouped = computed(() => courses.value.map(c => {
 }))
 
 
-/* ---------- D77：课程通知发布（写操作；白名单测试） ---------- */
-const NOTICE_ALLOWLIST = new Set(['217801417:40009084'])
-const NOTICE_DEFAULT_TITLE = '大学物理课作业通知'
-const NOTICE_DEFAULT_BODY = '作业纸见附件，请各位同学打印自己的那一张并手写完成、拍照上传到学习通作业里面。'
-const noticeSel = ref<Record<string, boolean>>({})
-const noticeTitle = ref(NOTICE_DEFAULT_TITLE)
-const noticeBody = ref(NOTICE_DEFAULT_BODY)
-const noticeAttachments = ref<XxtNoticeAttachment[]>([])
-const noticeAttSel = ref<Record<string, boolean>>({})
-const noticeMsg = ref('')
-const noticeConfirm = ref(false)
-const noticeLoading = ref(false)
-let noticeTimer: number | undefined
-
-function nkey(courseId: string, classId: string): string { return `${courseId}:${classId}` }
-function noticeAllowed(courseId: string, classId: string): boolean {
-  return NOTICE_ALLOWLIST.has(nkey(courseId, classId))
-}
-function isNoticeSel(courseId: string, classId: string): boolean {
-  return noticeSel.value[nkey(courseId, classId)] === true
-}
-function onNoticeClassToggle(courseId: string, classId: string, ev: Event) {
-  if (!noticeAllowed(courseId, classId)) return
-  const checked = (ev.target as HTMLInputElement).checked
-  if (checked) noticeSel.value = { ...noticeSel.value, [nkey(courseId, classId)]: true }
-  else {
-    const next = { ...noticeSel.value }
-    delete next[nkey(courseId, classId)]
-    noticeSel.value = next
-  }
-  applyNoticeAttachmentsToContent()
-}
-function selectedNoticeTargets(): XxtNoticeTargetCourse[] {
-  const out: XxtNoticeTargetCourse[] = []
-  for (const c of courses.value) {
-    const classes = c.classes.filter(k => isNoticeSel(c.courseId, k.classId)).map(k => ({ classId: k.classId, name: k.name }))
-    if (classes.length) out.push({ courseId: c.courseId, courseName: c.name, classes })
-  }
-  return out
-}
-function selectedNoticeCount(): number {
-  return selectedNoticeTargets().reduce((a, c) => a + c.classes.length, 0)
-}
-function selectedAttachmentNames(): string[] {
-  return Object.keys(noticeAttSel.value).filter(k => noticeAttSel.value[k])
-    .map(p => noticeAttachments.value.find(a => a.path === p)?.name || String(p).split(/[\/]/).pop() || String(p))
-}
-function attachmentLine(names: string[]): string {
-  return names.length ? `附件文件名：${names.join('、')}` : ''
-}
-function applyNoticeAttachmentsToContent() {
-  const names = selectedAttachmentNames()
-  const line = attachmentLine(names)
-  // title suffix: only when title still starts with default or already has our suffix
-  const suffix = names.length ? `（附件：${names.slice(0, 2).join('、')}${names.length > 2 ? '等' : ''}）` : ''
-  let t = noticeTitle.value.trim()
-  const baseTitle = t.startsWith(NOTICE_DEFAULT_TITLE) ? NOTICE_DEFAULT_TITLE : (t.includes('（附件：') ? NOTICE_DEFAULT_TITLE : t)
-  const maxLen = 128
-  let nt = suffix ? `${baseTitle}${suffix}` : baseTitle
-  if (nt.length > maxLen) nt = nt.slice(0, maxLen)
-  noticeTitle.value = nt
-  // body: keep user text but replace/update the attachment filename line at the end
-  let b = noticeBody.value.trim()
-  if (!b) b = NOTICE_DEFAULT_BODY
-  const withoutAtt = b.split('\n').filter(x => !x.startsWith('附件文件名：')).join('\n').trim()
-  noticeBody.value = line ? `${withoutAtt}\n\n${line}` : withoutAtt
-}
-async function loadNoticeAttachments() {
-  try {
-    noticeAttachments.value = await fetchXxtNoticeAttachments(engUrl.value, tok.value, 200)
-    // drop stale selections
-    const valid = new Set(noticeAttachments.value.map(a => a.path))
-    const next: Record<string, boolean> = {}
-    for (const [k, v] of Object.entries(noticeAttSel.value)) if (v && valid.has(k)) next[k] = true
-    noticeAttSel.value = next
-  } catch (e) {
-    noticeMsg.value = `附件清单读取失败：${String(e)}`
-  }
-}
-function onNoticeAttachToggle(path: string, ev: Event) {
-  const checked = (ev.target as HTMLInputElement).checked
-  if (checked) noticeAttSel.value = { ...noticeAttSel.value, [path]: true }
-  else {
-    const next = { ...noticeAttSel.value }
-    delete next[path]
-    noticeAttSel.value = next
-  }
-  applyNoticeAttachmentsToContent()
-}
-function stopNoticePolling() {
-  if (noticeTimer !== undefined) { window.clearTimeout(noticeTimer); noticeTimer = undefined }
-}
-function pollNoticeJob(jobId: string, send: boolean) {
-  stopNoticePolling()
-  const tick = async () => {
-    try {
-      const job = await fetchXxtLoginJob(engUrl.value, tok.value, jobId)
-      if (job.status === 'running') {
-        const line = (job.lines || []).slice(-1)[0]
-        noticeMsg.value = `${send ? '发送中' : '预检中'}：${line ? line.slice(-160) : '……'}`
-        noticeTimer = window.setTimeout(tick, 1500)
-        return
-      }
-      noticeLoading.value = false
-      const tail = (job.lines || []).slice(-8).join('\n')
-      if (job.status === 'done' && (job.returncode ?? 0) === 0) {
-        noticeMsg.value = send
-          ? `发布完成。请在学习通网页查看；本地 receipt 已保存。
-${tail}`
-          : `预检完成（未发布）。本地 receipt/截图已保存。
-${tail}`
-      } else {
-        noticeMsg.value = `${send ? '发布' : '预检'}失败：${tail || job.status}`
-      }
-    } catch (e) {
-      noticeLoading.value = false
-      noticeMsg.value = `任务状态查询失败：${String(e)}`
-    }
-  }
-  void tick()
-}
-async function runNoticeSend(send: boolean) {
-  if (noticeLoading.value) return
-  const targets = selectedNoticeTargets()
-  if (!targets.length) { noticeMsg.value = '请先勾选允许发布的班级'; return }
-  if (!noticeTitle.value.trim()) { noticeMsg.value = '标题不能为空'; return }
-  if (!noticeBody.value.trim()) { noticeMsg.value = '正文不能为空'; return }
-  if (send && !noticeConfirm.value) { noticeMsg.value = '请先勾选“我已确认发送对象与内容”'; return }
-  if (send) {
-    const names = selectedAttachmentNames()
-    const ok = window.confirm(`即将真正发布通知：
-标题：${noticeTitle.value}
-目标：${targets.map(c => `${c.courseName || c.courseId}/${c.classes.map(k => k.name || k.classId).join('+')}`).join('; ')}
-附件：${names.join('、') || '无'}
-
-确定发送？`)
-    if (!ok) { noticeMsg.value = '已取消发布。'; return }
-  }
-  noticeLoading.value = true
-  noticeMsg.value = send ? '正在提交发布任务……' : '正在提交预检任务……'
-  try {
-    const r = await startXxtNoticeSend(engUrl.value, tok.value, {
-      targets,
-      title: noticeTitle.value.trim(),
-      bodyHtml: noticeBody.value.trim(),
-      attachments: Object.keys(noticeAttSel.value).filter(k => noticeAttSel.value[k]),
-      send,
-    })
-    pollNoticeJob(r.jobId, send)
-  } catch (e) {
-    noticeLoading.value = false
-    noticeMsg.value = `启动失败：${String(e)}`
-  }
-}
-
 onMounted(() => {
   refreshStatus()
   refreshRuns()
   loadTargets().catch(() => { /* 无历史发现结果时忽略 */ })
-  loadNoticeAttachments().catch(() => { /* 引擎离线或无附件时忽略 */ })
   loadWorks().catch(() => { /* 无历史作业清单时忽略 */ })
   loadReviewIndex().catch(() => { /* 无批阅图片目录时忽略 */ })
   if (reviewDlJobId.value) { reviewDlMsg.value = '检测到未完成的下载任务，继续轮询……'; pollReviewDl(reviewDlJobId.value) }
@@ -1387,71 +1271,10 @@ onUnmounted(() => { loginSeq += 1; stopLoginPolling(); stopExtractPolling(); sto
       </div>
     </div>
 
-    <!-- D77 发公告向导卡：engine CLI 写操作套壳；当前白名单仅开放已真机验证班级 -->
+    <!-- D79：写操作拆分到「发布-学习通」选项卡；本页保留只读/预览 -->
     <div class="card">
-      <h3>发公告 <small style="font-weight:400;color:var(--c-muted)">从“已提取班”中选择发布对象；当前测试白名单仅开放「大学物理知识点拾遗（by pc）/默认班级」</small>
-        <span class="tag" style="background:#fff3cd; color:#7a5c00; padding:2px 8px; border-radius:6px; font-size:12px">🔒 白名单写操作</span></h3>
-      <p class="hint">
-        数据源=最近一次提取 run 的班级列表。未勾选或白名单外班级不可选；真正发送前会二次确认，并由 engine CLI 执行。
-      </p>
-      <div v-if="!courses.length" class="hint" style="color:var(--c-muted)">
-        暂无已提取班级：请先在「发现课程/班级」中勾选并「提取所选」。
-      </div>
-      <div v-else style="max-height:220px; overflow:auto; border:1px solid var(--c-border); border-radius:8px; padding:8px; margin-bottom:8px">
-        <div v-for="c in courses" :key="'notice-' + c.courseId" style="margin-bottom:8px">
-          <b>{{ c.name }}</b>
-          <span class="hint" style="color:var(--c-muted)">courseId {{ c.courseId }} · {{ c.classes.length }} 班</span>
-          <div style="margin:4px 0 0 22px; display:flex; flex-wrap:wrap; gap:12px">
-            <label v-for="k in c.classes" :key="k.classId"
-                   :style="{ color: noticeAllowed(c.courseId, k.classId) ? '' : 'var(--c-muted)' }">
-              <input type="checkbox" :checked="isNoticeSel(c.courseId, k.classId)"
-                     :disabled="!noticeAllowed(c.courseId, k.classId)"
-                     @change="onNoticeClassToggle(c.courseId, k.classId, $event)" />
-              {{ k.name }}
-              <span v-if="!noticeAllowed(c.courseId, k.classId)" class="hint">（白名单外）</span>
-            </label>
-          </div>
-        </div>
-      </div>
-      <p><label class="field">标题（≤128 字）：
-        <input v-model="noticeTitle" type="text" maxlength="128" placeholder="大学物理课作业通知" style="width:min(520px,90%)" />
-      </label></p>
-      <p><label class="field" style="vertical-align:top">正文：
-        <textarea v-model="noticeBody" rows="4" placeholder="作业纸见附件，请各位同学打印自己的那一张并手写完成、拍照上传到学习通作业里面。" style="width:min(640px,92%); vertical-align:middle"></textarea>
-      </label></p>
-      <p>
-        <button class="btn small" :disabled="noticeLoading" @click="loadNoticeAttachments">🔄 刷新附件清单</button>
-        <span class="hint" style="margin-left:8px">共 {{ noticeAttachments.length }} 个可发布的作业纸 PDF；勾选后文件名会自动进入标题/正文。</span>
-      </p>
-      <div v-if="noticeAttachments.length" style="max-height:180px; overflow:auto; border:1px solid var(--c-border); border-radius:8px; padding:8px; margin-bottom:8px">
-        <label v-for="a in noticeAttachments" :key="a.path" style="display:block; margin:3px 0">
-          <input type="checkbox" :checked="!!noticeAttSel[a.path]" @change="onNoticeAttachToggle(a.path, $event)" />
-          {{ a.name }}
-          <span class="hint" style="color:var(--c-muted)">{{ a.generated_at || '' }} · {{ fmtBytes(a.size) }}</span>
-        </label>
-      </div>
-      <p class="hint">定时发送 / 提醒渠道：本轮保持缺省关闭；附件走学习通 WebUploader（PDF/DOC/DOCX）。</p>
-      <p>
-        <label>
-          <input v-model="noticeConfirm" type="checkbox" />
-          我已确认发送对象与内容
-        </label>
-      </p>
-      <p>
-        <button class="btn" :disabled="!selectedNoticeCount() || noticeLoading" @click="runNoticeSend(false)">
-          {{ noticeLoading ? '任务中…' : '🧪 预检/试运行（不发布）' }}
-        </button>
-        <button class="btn primary" style="margin-left:8px"
-                :disabled="!selectedNoticeCount() || !noticeConfirm || noticeLoading"
-                @click="runNoticeSend(true)">
-          📢 发布通知（二次确认）
-        </button>
-        <span class="hint" style="margin-left:8px">已选 {{ selectedNoticeCount() }} 个班 / {{ selectedAttachmentNames().length }} 个附件</span>
-      </p>
-      <p v-if="noticeMsg" class="hint" style="white-space:pre-wrap">{{ noticeMsg }}</p>
-      <p class="hint" style="color:var(--c-muted)">
-        流程：PWA → POST /xxt/notice/send → assist xxt notice-send --spec → Playwright 打开新建通知页 → 注入收件人/填标题正文/上传附件 → dry-run 截图或点击发送。receipt 写入本机 xxt_home()/notice-sends/。
-      </p>
+      <h3>发公告 / 发布作业 <small style="font-weight:400;color:var(--c-muted)">已拆分到「发布-学习通」选项卡</small></h3>
+      <p class="hint">本页负责登录、发现课程/班级、提取批次与作业预览；通知/作业发布请用顶部「发布-学习通」。</p>
     </div>
 
     <!-- D72 targets：只读发现 → 勾选 → 按需提取；D73-9 旧 run 导入 -->
@@ -1472,6 +1295,11 @@ onUnmounted(() => { loginSeq += 1; stopLoginPolling(); stopExtractPolling(); sto
                 :disabled="!selectedCount() || extracting || extractSubmitting"
                 @click="extractSelected">
           📥 提取所选（{{ selectedCount() }} 个班<template v-if="worksCourses.length"> / {{ selectedWorksCount() }} 份作业</template>）
+        </button>
+        <button class="btn" style="margin-left:8px"
+                :disabled="!selectedCount() || !curRun || extracting || extractSubmitting"
+                @click="extractAppend">
+          ➕ 追加到当前批次
         </button>
         <button class="btn" style="margin-left:12px" :disabled="importLoading" @click="pickImportFile">
           {{ importLoading ? '导入中…' : '📂 导入旧 run JSON' }}
@@ -1738,6 +1566,8 @@ onUnmounted(() => { loginSeq += 1; stopLoginPolling(); stopExtractPolling(); sto
             <span v-if="it.images_deleted" class="tag"
                   style="background:#fee2e2;color:#991b1b;padding:1px 6px;border-radius:6px;margin-left:6px">图片已删除（保留清单）</span>
             <button class="btn" style="padding:2px 8px; margin-left:8px" @click="openReviewWork(it)">👁 打开预览</button>
+            <button class="btn" style="padding:2px 8px; margin-left:4px" :disabled="reviewDlLoading" @click="updateReviewWork(it, 'missing')">⬇ 补下缺失</button>
+            <button class="btn" style="padding:2px 8px; margin-left:4px" :disabled="reviewDlLoading" @click="updateReviewWork(it, 'comments-only')">💬 仅更新批语</button>
             <button class="btn" style="padding:2px 8px; margin-left:4px" @click="deleteReviewWork(it)">🗑 删除图片</button>
             <button class="btn" style="padding:2px 8px; margin-left:4px" @click="purgeReviewWork(it)">🗑 彻底删除</button>
             <div v-if="!it.images_deleted && (it.zero_image_students || []).length"

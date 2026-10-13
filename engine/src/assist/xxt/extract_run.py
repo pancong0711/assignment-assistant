@@ -242,3 +242,102 @@ def run_extract(targets: "list[dict] | None", storage: "Path | str",
     except Exception:  # noqa: BLE001
         rep['pruned'] = None
     return rep
+
+def append_extract(run_id: str, targets: "list[dict]", storage: "Path | str | None" = None,
+                   out_dir: "Path | str | None" = None,
+                   archive_dir: "Path | str | None" = None,
+                   roster_dir: "Path | str | None" = None,
+                   roster_labels: "set[str] | None" = None,
+                   skip_notices: bool = True) -> dict:
+    """D79-A1：把新提取结果合并进已有 run（同 courseId/classId 覆盖，新班级追加）。
+
+    实现：先正常跑一次 run_extract（新 run 文件/存档），再把新结果合并回目标 run 文件，
+    并把新 run 的 HTML 存档复制到目标 run 的存档目录，最后删除新 run 的 JSON 与临时页目录。
+    """
+    import json as _json
+    import shutil as _shutil
+    from . import layout as _layout
+    home = None
+    if storage is not None:
+        home = Path(storage).resolve().parent
+    else:
+        from .session import xxt_home
+        home = xxt_home()
+    old_path = _layout.find_run_json(str(run_id), home)
+    if old_path is None:
+        return {"ok": False, "error": f"run not found: {run_id}"}
+    old = _json.loads(old_path.read_text(encoding="utf-8"))
+    if not isinstance(old, dict) or not isinstance(old.get("courses"), list):
+        return {"ok": False, "error": "target run shape invalid"}
+    new_rep = run_extract(targets, storage=storage or (home / "xxt-storage.json"),
+                          out_dir=out_dir or _layout.runs_dir(home),
+                          archive_dir=archive_dir or _layout.pages_dir(home),
+                          roster_dir=roster_dir, roster_labels=roster_labels,
+                          skip_notices=skip_notices, discover_all=False)
+    if not new_rep.get("run_id"):
+        return {"ok": False, "error": new_rep.get("failures") or "new extract failed"}
+    new_path = new_rep.get("out")
+    if not new_path or not Path(new_path).is_file():
+        return {"ok": False, "error": "new run json missing"}
+    new = _json.loads(Path(new_path).read_text(encoding="utf-8"))
+    # backup old run
+    hist = _layout.runs_dir(home) / ".history"
+    hist.mkdir(parents=True, exist_ok=True)
+    (hist / f"{run_id}-{time.strftime('%Y%m%d-%H%M%S')}.json").write_text(
+        _json.dumps(old, ensure_ascii=False, indent=1), encoding="utf-8")
+    # merge courses/classes
+    old_courses = {str(c.get("courseId")): c for c in old.get("courses") or []}
+    appended = []
+    for nc in new.get("courses") or []:
+        cid = str(nc.get("courseId") or "")
+        if not cid:
+            continue
+        if cid not in old_courses:
+            old["courses"].append(nc)
+            old_courses[cid] = nc
+            appended.append({"scope": "course", "ref": cid})
+            continue
+        oc = old_courses[cid]
+        oc["name"] = nc.get("name") or oc.get("name")
+        oc["cpi"] = nc.get("cpi") or oc.get("cpi")
+        classes = {str(k.get("classId")): k for k in oc.get("classes") or []}
+        for nk in nc.get("classes") or []:
+            kid = str(nk.get("classId") or "")
+            if not kid:
+                continue
+            if kid in classes:
+                classes[kid].update(nk)
+            else:
+                oc.setdefault("classes", []).append(nk)
+            appended.append({"scope": "class", "ref": f"{cid}:{kid}"})
+    old["run_id"] = str(run_id)
+    old["ts_end"] = new.get("ts_end") or time.strftime("%Y-%m-%d %H:%M:%S")
+    old["append_history"] = (old.get("append_history") or []) + [{
+        "at": time.strftime("%Y-%m-%d %H:%M:%S"),
+        "source_run": new.get("run_id"),
+        "targets": appended,
+        "failures": new.get("failures") or [],
+    }][-20:]
+    if new.get("failures"):
+        old["failures"] = new.get("failures")
+    old_path.write_text(_json.dumps(old, ensure_ascii=False, indent=1), encoding="utf-8")
+    # move new run HTML archives into old run archive dir
+    try:
+        src = _layout.run_pages_dir(str(new.get("run_id")), home)
+        dst = _layout.run_pages_dir(str(run_id), home)
+        if src.is_dir():
+            dst.mkdir(parents=True, exist_ok=True)
+            _shutil.copytree(src, dst, dirs_exist_ok=True)
+        # remove temporary new run file/dir
+        Path(new_path).unlink(missing_ok=True)
+        if src.is_dir():
+            _shutil.rmtree(src, ignore_errors=True)
+        nshots = _layout.shots_dir(home)
+        for p in nshots.glob(f"{new.get('run_id')}-*.png") if nshots.is_dir() else []:
+            p.unlink(missing_ok=True)
+    except Exception:  # noqa: BLE001
+        pass
+    return {"ok": True, "run_id": str(run_id), "source_run": new.get("run_id"),
+            "appended": appended, "failures": new.get("failures") or [],
+            "out": str(old_path)}
+

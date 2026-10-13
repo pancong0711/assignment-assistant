@@ -1344,4 +1344,5 @@ applyManualTranslation/setTranslationRatio 中 setTranslationRatio 保留——�
 - 发布作业：完成只读侦察（新建编辑器/作业库/发布设置字段），CLI 先行、PWA 套壳；
 - 拍板：A1 run 追加；missing 补漏 / comments-only 刷新批语；附件限 图片/PDF/doc；固定教师个人作业库文件夹（用户填写）；已有作业原样发布不复制；草稿→预览→发放；重做 3 次；
 - 真机测试：目标班 `217801417/40009084` 已发布 1 道简答作业（workId=56864879），仅该班；
+- 追加拍板：>18:00 用当前时间；记住为默认开关；拆「作业预览-学习通」+「发布-学习通」；review-download 默认 missing；
 - 状态：**需求已拍板；测试作业已发布，待开发 CLI/PWA。**
