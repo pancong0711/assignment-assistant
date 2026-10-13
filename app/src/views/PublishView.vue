@@ -99,7 +99,7 @@ function cacheSet(key: string, data: unknown) {
 async function loadFolders(force = false) {
   const c = classes.value.find(x => key(x) === workTarget.value)
   if (!c) { folderList.value = []; return }
-  const ck = `xxt-work-folders-cache:${c.courseId}`
+  const ck = `xxt-work-folders-cache-v2:${c.courseId}`
   if (!force) {
     const hit = cacheGet<XxtWorkFolder[]>(ck)
     if (hit) { folderList.value = hit; return }
@@ -247,7 +247,7 @@ async function loadWorks(force = false) {
   const c = classes.value.find(x => key(x) === workTarget.value)
   if (!c) { works.value = []; return }
   const dir = folderMap.value[c.courseId]?.directoryId || '0'
-  const ck = `xxt-work-list-cache:${c.courseId}:${dir}`
+  const ck = `xxt-work-list-cache-v2:${c.courseId}:${dir}`
   if (!force) {
     const hit = cacheGet<XxtWorkLibraryItem[]>(ck)
     if (hit) {

@@ -43,7 +43,7 @@ def list_works(storage, course_id: str, class_id: str, cpi: str = "0", directory
         return {"ok": False, "error": "session dead",
                 "hint": chk.get("hint", "请先 assist xxt login")}
     url = (f"https://mooc2-ans.chaoxing.com/mooc2-ans/work/library"
-           f"?courseid={course_id}&clazzid={class_id}&cpi={cpi}&selectClassid={class_id}")
+           f"?courseid={course_id}&directoryid={directory_id}&cpi={cpi}&from=&topicid=0&backurl=")
     with sync_playwright() as pw:
         browser = _launch(pw, headless=True)
         ctx = browser.new_context(storage_state=str(storage),
