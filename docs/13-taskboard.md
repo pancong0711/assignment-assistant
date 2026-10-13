@@ -1342,4 +1342,6 @@ applyManualTranslation/setTranslationRatio 中 setTranslationRatio 保留——�
 - 图片：review-download 增加 `full/missing/comments-only` 与「更新全部图片」入口；
 - 通知：附件改通用（图片/截图/PDF/doc），默认标题改「作业通知-大学物理」；
 - 发布作业：完成只读侦察（新建编辑器/作业库/发布设置字段），CLI 先行、PWA 套壳；
-- 状态：**需求讨论稿，待拍板后开发**。
+- 拍板：A1 run 追加；missing 补漏 / comments-only 刷新批语；附件限 图片/PDF/doc；固定教师个人作业库文件夹（用户填写）；已有作业原样发布不复制；草稿→预览→发放；重做 3 次；
+- 真机测试：目标班 `217801417/40009084` 已发布 1 道简答作业（workId=56864879），仅该班；
+- 状态：**需求已拍板；测试作业已发布，待开发 CLI/PWA。**
