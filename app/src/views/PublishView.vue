@@ -17,6 +17,12 @@ const classes = ref<PubClass[]>([])
 const runId = ref('')
 const msg = ref('')
 const busy = ref(false)
+const previewOpen = ref(false)
+const previewTitle = ref('')
+const previewLines = ref<string[]>([])
+const logOpen = ref(false)
+const logTitle = ref('')
+const logLines = ref<string[]>([])
 
 function key(c: { courseId: string; classId: string }): string { return `${c.courseId}:${c.classId}` }
 const allowKeys = ref<Record<string, boolean>>({})
@@ -131,11 +137,51 @@ async function onUpload(ev: Event) {
   } catch (e) { msg.value = `上传失败：${String(e)}` }
   input.value = ''
 }
+
+function showPreview(title: string, lines: string[]) {
+  previewTitle.value = title
+  previewLines.value = lines
+  previewOpen.value = true
+}
+function previewNotice() {
+  const c = classes.value.find(x => key(x) === noticeTarget.value)
+  if (!c || !allowed(c)) { msg.value = '请选择白名单内班级'; return }
+  const names = attNames()
+  showPreview('通知发布预览', [
+    `发布班级：${c.courseName} / ${c.name}`,
+    `标题：${noticeTitle.value}`,
+    '正文：',
+    noticeBody.value,
+    `附件：${names.join('、') || '无'}`,
+  ])
+}
+function previewWork() {
+  const c = classes.value.find(x => key(x) === workTarget.value && allowed(x))
+  const w = works.value.find(x => x.workLibraryId === workPick.value)
+  if (!c || !w) { msg.value = '请选择白名单班级与作业'; return }
+  if (workUsed.value) { msg.value = '该作业已发布，禁止重复发布。'; return }
+  showPreview('作业发布预览', [
+    `发布班级：${c.courseName} / ${c.name}`,
+    `作业库文件夹：${folderCur.value.name}`,
+    `作业：${workTitle.value || w.text || w.workLibraryId}`,
+    `workLibraryId：${w.workLibraryId}`,
+    '题干：',
+    workStem.value || '（未读取到题干；请在学习通确认）',
+    `开始时间：${startTime.value}`,
+    `截止时间：${endTime.value}`,
+    `允许补交：${allowLate.value ? '是' : '否'}`,
+    `补交截止：${allowLate.value ? lateDeadline.value : '—'}`,
+    `截止前允许重做：${redoTimes.value} 次`,
+    `记住为默认：${rememberDefault.value ? '是' : '否'}`,
+  ])
+}
+
 async function sendNotice(send: boolean) {
   const c = classes.value.find(x => key(x) === noticeTarget.value)
   if (!c || !allowed(c)) { msg.value = '请选择白名单内班级'; return }
   if (send && !confirm(`确认发布通知到 ${c.courseName}/${c.name}？`)) return
   busy.value = true
+  startLog('发布通知')
   try {
     const r = await startXxtNoticeSend(engUrl.value, tok.value, {
       targets: [{ courseId: c.courseId, classes: [{ classId: c.classId, name: c.name }] }],
@@ -229,6 +275,7 @@ async function publishWork(send: boolean) {
   }
   if (send && !confirm(`确认把「${workTitle.value || w.text}」发布到 ${c.courseName}/${c.name}？`)) return
   busy.value = true
+  startLog('发布作业')
   try {
     if (rememberDefault.value && send) {
       try { localStorage.setItem('xxt-work-defaults', JSON.stringify({ startTime: startTime.value, endTime: endTime.value, allowLate: allowLate.value, lateDeadline: lateDeadline.value, redoTimes: redoTimes.value })) } catch { /* noop */ }
@@ -243,22 +290,41 @@ async function publishWork(send: boolean) {
   } catch (e) { busy.value = false; msg.value = `失败：${String(e)}` }
 }
 
+function startLog(title: string) {
+  logTitle.value = title
+  logLines.value = []
+  logOpen.value = true
+}
+function appendLog(line: string) {
+  if (!line) return
+  const lines = logLines.value
+  if (lines[lines.length - 1] === line) return
+  lines.push(line)
+  if (lines.length > 400) lines.splice(0, lines.length - 400)
+}
+
 async function poll(jobId: string) {
   for (let i = 0; i < 160; i++) {
     const job = await fetchXxtLoginJob(engUrl.value, tok.value, jobId)
     const lines = job.lines || []
     const last = lines.slice(-1)[0] || ''
     if (job.status === 'running') {
+      appendLog(last)
       msg.value = `执行中（${i * 1.5 | 0}s）：${last.slice(-160)}`
     } else {
+      for (const ln of lines.slice(-30)) appendLog(ln)
       const all = lines.join('\n')
-      if (all.includes('"mode": "dry-run"') && all.includes('"ok": true')) {
-        msg.value = '✅ 预检通过：平台「发布设置」页可正常填写，尚未点击「发放」。'
-      } else if (all.includes('"mode": "send"') && all.includes('发布成功')) {
-        msg.value = '✅ 发布成功。'
+      if (all.includes('发布成功') || all.includes('"status": true') || all.includes('"status":true')) {
+        appendLog('✅ 发布成功')
+        msg.value = '✅ 发布成功；可到学习通查看。'
+      } else if (all.includes('"ok": true') && all.includes('"mode": "send"')) {
+        appendLog('✅ 任务完成')
+        msg.value = '✅ 任务完成。'
       } else if (job.returncode && job.returncode !== 0) {
+        appendLog(`❌ 任务失败：${last.slice(-220) || job.status}`)
         msg.value = `❌ 任务失败：${last.slice(-220) || job.status}`
       } else {
+        appendLog(`任务结束：${last.slice(-220) || job.status}`)
         msg.value = `任务结束：${last.slice(-220) || job.status}`
       }
       busy.value = false
@@ -341,7 +407,7 @@ onUnmounted(() => document.removeEventListener('visibilitychange', refreshStale)
       <div v-if="noticeAtt.length" style="max-height:160px; overflow:auto; border:1px solid var(--c-border); border-radius:8px; padding:8px">
         <label v-for="a in noticeAtt" :key="a.path" style="display:block"><input type="checkbox" :checked="!!noticePick[a.path]" @change="toggleAtt(a.path, $event)" /> {{ a.name }}</label>
       </div>
-      <p><button class="btn" :disabled="busy" @click="sendNotice(false)">🧪 预检（不发布）</button>
+      <p><button class="btn" :disabled="busy" @click="previewNotice">👁 检查预览</button>
          <button class="btn primary" style="margin-left:8px" :disabled="busy" @click="sendNotice(true)">📢 发布通知</button></p>
     </div>
 
@@ -384,8 +450,23 @@ onUnmounted(() => document.removeEventListener('visibilitychange', refreshStale)
          <label class="field" style="margin-left:12px">补交截止：<input v-model="lateDeadline" style="width:180px" @input="timeEdited = true" /></label></p>
       <p><label class="field">截止前允许重做：<input v-model.number="redoTimes" type="number" min="0" max="100" style="width:80px" /> 次</label></p>
       <p><label><input v-model="rememberDefault" type="checkbox" /> 记住为默认</label></p>
-      <p><button class="btn" :disabled="busy" @click="publishWork(false)">🧪 预检（不发布）</button>
+      <p><button class="btn" :disabled="busy" @click="previewWork">👁 检查预览</button>
         <button class="btn primary" style="margin-left:8px" :disabled="busy" @click="publishWork(true)">📢 发布作业</button></p>
+    </div>
+    <div v-if="previewOpen" @click.self="previewOpen = false"
+         style="position:fixed; inset:0; background:rgba(15,23,42,.45); z-index:100; display:flex; align-items:center; justify-content:center">
+      <div style="background:var(--c-card,#fff); border-radius:12px; max-width:min(760px,94vw); max-height:86vh; overflow:auto; padding:16px">
+        <h3 style="margin-top:0">{{ previewTitle }}<button class="btn" style="float:right" @click="previewOpen = false">关闭</button></h3>
+        <pre style="white-space:pre-wrap; word-break:break-word; font-size:13px; line-height:1.6">{{ previewLines.join('\n') }}</pre>
+      </div>
+    </div>
+    <div v-if="logOpen" @click.self="logOpen = false"
+         style="position:fixed; inset:0; background:rgba(15,23,42,.45); z-index:101; display:flex; align-items:center; justify-content:center">
+      <div style="background:var(--c-card,#fff); border-radius:12px; max-width:min(760px,94vw); max-height:86vh; display:flex; flex-direction:column; padding:16px">
+        <h3 style="margin-top:0">{{ logTitle }} · CLI 输出<button class="btn" style="float:right" @click="logOpen = false">关闭</button></h3>
+        <p class="hint" style="margin:4px 0">{{ msg }}</p>
+        <pre style="flex:1; overflow:auto; white-space:pre-wrap; word-break:break-word; font-size:12px; background:var(--c-bg,#f7f7f9); border:1px solid var(--c-border); border-radius:8px; padding:8px; max-height:56vh">{{ logLines.join('\n') }}</pre>
+      </div>
     </div>
   </section>
 </template>
