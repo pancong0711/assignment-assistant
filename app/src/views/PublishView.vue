@@ -19,8 +19,8 @@ const msg = ref('')
 const busy = ref(false)
 
 function key(c: { courseId: string; classId: string }): string { return `${c.courseId}:${c.classId}` }
-const allowKeys = ref<Set<string>>(new Set())
-function allowed(c: { courseId: string; classId: string }): boolean { return allowKeys.value.has(key(c)) }
+const allowKeys = ref<Record<string, boolean>>({})
+function allowed(c: { courseId: string; classId: string }): boolean { return allowKeys.value[key(c)] === true }
 
 async function loadClasses() {
   try {
@@ -43,21 +43,36 @@ async function loadClasses() {
 async function loadAllow() {
   try {
     const items = await fetchXxtWriteAllowlist(engUrl.value, tok.value)
-    allowKeys.value = new Set(items.map(x => `${x.courseId}:${x.classId}`))
+    const nextAllow: Record<string, boolean> = {}
+    for (const x of items) nextAllow[`${x.courseId}:${x.classId}`] = true
+    allowKeys.value = nextAllow
   } catch { /* noop */ }
 }
 async function toggleAllow(c: PubClass, ev: Event) {
   const on = (ev.target as HTMLInputElement).checked
-  const next = new Set(allowKeys.value)
-  if (on) next.add(key(c)); else next.delete(key(c))
+  const next: Record<string, boolean> = { ...allowKeys.value }
+  if (on) next[key(c)] = true; else delete next[key(c)]
   try {
-    const items: XxtAllowItem[] = classes.value.filter(x => next.has(key(x)))
+    const items: XxtAllowItem[] = classes.value.filter(x => next[key(x)] === true)
       .map(x => ({ courseId: x.courseId, classId: x.classId, name: x.name }))
     await saveXxtWriteAllowlist(engUrl.value, tok.value, items)
-    allowKeys.value = new Set(items.map(x => `${x.courseId}:${x.classId}`))
+    await loadAllow()
     msg.value = on ? `已把 ${c.name} 加入写操作白名单` : `已把 ${c.name} 移出白名单`
   } catch (e) { msg.value = `白名单保存失败：${String(e)}` }
 }
+const allowExpanded = ref<Record<string, boolean>>({})
+function allowGroups() {
+  const map = new Map<string, { courseId: string; courseName: string; classes: PubClass[] }>()
+  for (const c of classes.value) {
+    if (!map.has(c.courseId)) map.set(c.courseId, { courseId: c.courseId, courseName: c.courseName, classes: [] })
+    map.get(c.courseId)!.classes.push(c)
+  }
+  return [...map.values()]
+}
+function allowCount(g: { classes: PubClass[] }): number { return g.classes.filter(c => allowed(c)).length }
+function allowExpandedState(cid: string): boolean { return allowExpanded.value[cid] !== false }
+function toggleAllowExpanded(cid: string, ev: Event) { allowExpanded.value = { ...allowExpanded.value, [cid]: (ev.target as HTMLDetailsElement).open } }
+function expandAllAllow(on: boolean) { const next: Record<string, boolean> = {}; for (const g of allowGroups()) next[g.courseId] = on; allowExpanded.value = next }
 
 /* 文件库文件夹：按 courseId 记忆 */
 const folderMap = ref<Record<string, XxtWorkFolder>>(JSON.parse(localStorage.getItem('xxt-work-folders') || '{}'))
@@ -263,16 +278,31 @@ onUnmounted(() => document.removeEventListener('visibilitychange', refreshStale)
     <div class="card">
       <h2>发布-学习通 <small>通知 / 作业发布；写操作仅对「白名单」班级开放</small></h2>
       <p v-if="msg" class="hint">{{ msg }}</p>
-      <p class="hint">当前批次：{{ runId || '（无）' }}；已选白名单：{{ allowKeys.size }} 个班</p>
+      <p class="hint">当前批次：{{ runId || '（无）' }}；已选白名单：{{ Object.keys(allowKeys).filter(k => allowKeys[k]).length }} 个班</p>
     </div>
 
     <div class="card">
-      <h3>写操作白名单 <small>默认全部关闭；勾选后该班才可发布</small></h3>
-      <div v-if="classes.length" style="max-height:220px; overflow:auto">
-        <label v-for="c in classes" :key="'a'+key(c)" style="display:block; margin:3px 0">
-          <input type="checkbox" :checked="allowed(c)" @change="toggleAllow(c, $event)" />
-          {{ c.courseName }} / {{ c.name }}
-        </label>
+      <h3>写操作白名单 <small>默认全部关闭；按课程折叠，勾选后该班才可发布</small></h3>
+      <div v-if="classes.length" style="border:1px solid var(--c-border); border-radius:8px; padding:8px">
+        <div style="display:flex; gap:8px; margin-bottom:6px">
+          <button class="btn small" @click="expandAllAllow(true)">展开全部</button>
+          <button class="btn small" @click="expandAllAllow(false)">折叠全部</button>
+        </div>
+        <div style="max-height:280px; overflow:auto">
+          <details v-for="g in allowGroups()" :key="'ag'+g.courseId" :open="allowExpandedState(g.courseId)"
+                   @toggle="toggleAllowExpanded(g.courseId, $event)" style="margin-bottom:6px">
+            <summary style="cursor:pointer; font-weight:600">
+              {{ g.courseName }}
+              <span class="hint" style="color:var(--c-muted)">courseId {{ g.courseId }} · {{ g.classes.length }} 班 · 白名单 {{ allowCount(g) }}</span>
+            </summary>
+            <div style="margin:4px 0 0 20px">
+              <label v-for="c in g.classes" :key="'a'+key(c)" style="display:block; margin:2px 0">
+                <input type="checkbox" :checked="allowed(c)" @change="toggleAllow(c, $event)" />
+                {{ c.name }}
+              </label>
+            </div>
+          </details>
+        </div>
       </div>
       <p v-else class="hint">暂无已提取班级。</p>
     </div>
