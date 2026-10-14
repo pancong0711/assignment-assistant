@@ -344,3 +344,15 @@ assist xxt work-publish --course <id> --work-library-id <id>
 - CLI/PWA 当前允许的通知附件后缀：pdf/doc/docx/jpg/jpeg/png/webp/gif；
 - 是否完全去掉后缀白名单待用户确认；平台 input 本身不限制，但建议只放开常用格式以避免
   平台对不常见格式的处理不一致。
+
+## K · 附件格式白名单（2026-10-14）
+
+- 拍板：通知附件按**白名单模式**管理格式，不做完全放开；
+- 配置位置：workspace `settings.local.json` 的 `xxt.notice_attachment_exts`；
+- 默认：`pdf/doc/docx/jpg/jpeg/png/webp/gif`；
+- CLI：`safe_attachment_path` 与 `save_notice_uploads` 按该白名单校验；
+- PWA「发布-学习通 → 发通知」新增「附件格式白名单」折叠区：
+  - 勾选允许的扩展名；
+  - 保存后立即生效；
+  - 上传/文件选择器只接受白名单内格式；
+- 作业新建保持简单：仍只做 1 道简答题草稿，不做复杂题型/题库选题。
