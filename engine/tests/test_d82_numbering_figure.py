@@ -10,12 +10,22 @@
 import json
 from pathlib import Path
 
+import pytest
 from openpyxl import Workbook
 from PIL import Image as PILImage
 from pypdf import PdfReader
 
 from assist.paper.layout import _fitted_image, make_pdf
 from assist.paper.task import resolve_items
+
+
+def _cjk_font_available() -> bool:
+    """CI 无 CJK 字体时会回落到未注册的 'simsun' 名，reportlab Paragraph 直接报错；
+    此类环境跳过需要真实出 PDF 的用例（与既有 _contents_style 同字体依赖）。"""
+    from assist.paper.fonts import register_font
+    resolved = register_font("simsun", "simsun.ttc", "wqy-microhei.ttc",
+                             workspace=None, user_cfg=None)
+    return Path(resolved).exists()
 
 
 def _kb(tmp: Path) -> Path:
@@ -72,6 +82,7 @@ def test_resolve_items_auto_with_label_keeps_seq(tmp_path: Path):
     assert [x[3] for x in out] == ["1.", "3.", "3."]
 
 
+@pytest.mark.skipif(not _cjk_font_available(), reason="CI 无 CJK 字体，无法出 PDF")
 def test_make_pdf_accepts_max_box_and_writes_pdf(tmp_path: Path):
     kb_dir = _kb(tmp_path)
     fig = kb_dir / "fig" / "q1.png"
@@ -104,6 +115,7 @@ def test_fitted_image_respects_max_box(tmp_path: Path):
     assert abs(im.drawWidth - 40 * mm) < 1.0
 
 
+@pytest.mark.skipif(not _cjk_font_available(), reason="CI 无 CJK 字体，无法出 PDF")
 def test_make_pdf_oversized_figure_does_not_crash(tmp_path: Path):
     """极端：用户把最大框设成 180×240mm + scale 2（超纸面）→ 必须硬钳到 frame，不 LayoutError。"""
     kb_dir = _kb(tmp_path)
