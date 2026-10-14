@@ -396,6 +396,34 @@ def register(group: click.Group) -> None:
         click.echo(json.dumps(rep, ensure_ascii=False, indent=1))
         raise SystemExit(0 if rep.get("ok") else 2)
 
+    @group.command("work-folder-create")
+    @click.option("--course", "course_id", required=True)
+    @click.option("--class", "class_id", required=True)
+    @click.option("--cpi", required=True)
+    @click.option("--directory-id", "directory_id", default="0", help="父文件夹 ID（0=根目录）")
+    @click.option("--title", required=True)
+    def xxt_work_folder_create(course_id, class_id, cpi, directory_id, title):
+        """在作业库创建文件夹（白名单限制）。"""
+        from .work import create_folder
+        rep = create_folder(default_storage(None), course_id, class_id, cpi, directory_id, title)
+        click.echo(json.dumps(rep, ensure_ascii=False, indent=1))
+        raise SystemExit(0 if rep.get("ok") else 2)
+
+    @group.command("work-copy")
+    @click.option("--course", "course_id", required=True)
+    @click.option("--class", "class_id", required=True)
+    @click.option("--cpi", required=True)
+    @click.option("--directory-id", "directory_id", default="0")
+    @click.option("--work-library-id", "work_library_id", required=True)
+    @click.option("--title", required=True, help="副本新标题（建议 原名-副本-时间戳）")
+    def xxt_work_copy(course_id, class_id, cpi, directory_id, work_library_id, title):
+        """复制作业为副本并重命名（白名单限制）。"""
+        from .work import copy_work
+        rep = copy_work(default_storage(None), course_id, class_id, cpi, directory_id,
+                        work_library_id, title)
+        click.echo(json.dumps(rep, ensure_ascii=False, indent=1))
+        raise SystemExit(0 if rep.get("ok") else 2)
+
     @group.group("run")
     def xxt_run():
         """run 管理（D73-9）：导入旧 run JSON，使其在 PWA 可见。"""

@@ -844,6 +844,32 @@ class Handler(BaseHTTPRequestHandler):
             items = write_allowlist(Path(self.ws).resolve(), payload.get("items") or [])
             self._json({"ok": True, "items": items})
             return
+        if u.path in ("/xxt/work/folder-create", "/xxt/work/copy"):
+            payload: dict = {}
+            try:
+                length = int(self.headers.get("Content-Length") or 0)
+                if length:
+                    payload = json.loads(self.rfile.read(length).decode("utf-8")) or {}
+            except Exception as exc:  # noqa: BLE001
+                self._json({"ok": False, "error": f"bad json: {exc}"}, 400)
+                return
+            cid = str(payload.get("courseId") or "")
+            kid = str(payload.get("classId") or "")
+            cpi = str(payload.get("cpi") or "0")
+            directory = str(payload.get("directoryId") or "0")
+            title = str(payload.get("title") or "")[:50]
+            from .xxt.work import copy_work, create_folder, validate_work_target
+            err = validate_work_target(cid, kid, Path(self.ws).resolve())
+            if err:
+                self._json({"ok": False, "error": err}, 400)
+                return
+            if u.path.endswith("/folder-create"):
+                rep = create_folder(_xxt_home() / "xxt-storage.json", cid, kid, cpi, directory, title)
+            else:
+                rep = copy_work(_xxt_home() / "xxt-storage.json", cid, kid, cpi, directory,
+                                str(payload.get("workLibraryId") or ""), title)
+            self._json(rep)
+            return
         if u.path == "/xxt/work/create":
             payload: dict = {}
             try:

@@ -1,7 +1,7 @@
 <script setup lang="ts">
 import { computed, onMounted, onUnmounted, ref } from 'vue'
 import {
-  fetchXxtAttachmentWhitelist, fetchXxtLoginJob, fetchXxtNoticeAttachments, fetchXxtRun, fetchXxtRuns, fetchXxtWorkDetail,
+  copyXxtWork, createXxtWorkFolder, fetchXxtAttachmentWhitelist, fetchXxtLoginJob, fetchXxtNoticeAttachments, fetchXxtRun, fetchXxtRuns, fetchXxtWorkDetail,
   fetchXxtWorkFolders, fetchXxtWorkList, fetchXxtWriteAllowlist, saveXxtAttachmentWhitelist, saveXxtWriteAllowlist,
   startXxtNoticeSend, startXxtWorkCreate, startXxtWorkPublish, uploadXxtNoticeFiles,
 } from '../lib/engineClient'
@@ -385,6 +385,48 @@ function setFolder(cid: string, ev: Event) {
   persistFolderMap()
   void loadWorks()
 }
+const newFolderName = ref('')
+async function createFolder() {
+  const c = classes.value.find(x => key(x) === workTarget.value)
+  if (!c || !allowed(c)) { msg.value = '请选择白名单班级'; return }
+  if (!newFolderName.value.trim()) { msg.value = '请输入文件夹名'; return }
+  busy.value = true; msg.value = '正在创建文件夹……'
+  try {
+    const r = await createXxtWorkFolder(engUrl.value, tok.value, {
+      courseId: c.courseId, classId: c.classId, cpi: c.cpi,
+      directoryId: folderMap.value[c.courseId]?.directoryId || '0',
+      title: newFolderName.value.trim(),
+    })
+    if (!r.ok) throw new Error(r.error || '创建失败')
+    newFolderName.value = ''
+    await loadFolders(true)
+    msg.value = '文件夹已创建'
+  } catch (e) { msg.value = `创建文件夹失败：${String(e)}` }
+  busy.value = false
+}
+async function copySelectedWork() {
+  const c = classes.value.find(x => key(x) === workTarget.value && allowed(x))
+  const w = works.value.find(x => x.workLibraryId === workPick.value)
+  if (!c || !w) { msg.value = '请选择白名单班级与作业'; return }
+  const stamp = new Date().toISOString().slice(0, 16).replace(/[-:T]/g, '')
+  const base = (workTitle.value || w.text?.split('\n')[0] || w.workLibraryId).slice(0, 40)
+  const title = `${base}-副本-${stamp}`
+  if (!confirm(`复制为：${title}？`)) return
+  busy.value = true; msg.value = '正在创建副本……'
+  try {
+    const r = await copyXxtWork(engUrl.value, tok.value, {
+      courseId: c.courseId, classId: c.classId, cpi: c.cpi,
+      directoryId: folderMap.value[c.courseId]?.directoryId || '0',
+      workLibraryId: w.workLibraryId, title,
+    })
+    if (!r.ok) throw new Error(r.error || '复制失败')
+    await loadWorks(true)
+    workPick.value = r.newWorkLibraryId || ''
+    await loadDetail()
+    msg.value = `副本已创建：${title}`
+  } catch (e) { msg.value = `创建副本失败：${String(e)}` }
+  busy.value = false
+}
 
 onMounted(async () => {
   const saved = localStorage.getItem('xxt-work-defaults')
@@ -471,6 +513,8 @@ onUnmounted(() => document.removeEventListener('visibilitychange', refreshStale)
           <option v-for="f in folderList" :key="f.directoryId" :value="f.directoryId">{{ f.name }}</option>
         </select>
         <button class="btn small" style="margin-left:8px" @click="loadFolders(true)">🔄 刷新文件夹</button>
+        <input v-model="newFolderName" placeholder="新文件夹名" style="width:140px; margin-left:8px" />
+        <button class="btn small" style="margin-left:4px" :disabled="busy" @click="createFolder">＋ 新建文件夹</button>
       </label></p>
       <div style="border:1px dashed var(--c-border); border-radius:8px; padding:8px; margin:8px 0">
         <p><b>新建作业草稿（1 道简答题）</b></p>
@@ -485,6 +529,7 @@ onUnmounted(() => document.removeEventListener('visibilitychange', refreshStale)
         </option>
       </select></label>
         <button class="btn small" style="margin-left:8px" @click="loadWorks(true)">🔁 刷新作业库</button>
+        <button class="btn small" style="margin-left:4px" :disabled="busy || !workPick" @click="copySelectedWork">📄 创建副本（副本+时间戳）</button>
       </p>
       <div v-if="workPick" class="hint" style="border:1px solid var(--c-border); border-radius:8px; padding:8px">
         <b>{{ workTitle || '（作业）' }}</b>

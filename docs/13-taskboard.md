@@ -1346,3 +1346,12 @@ applyManualTranslation/setTranslationRatio 中 setTranslationRatio 保留——�
 - 真机测试：目标班 `217801417/40009084` 已发布 1 道简答作业（workId=56864879），仅该班；
 - 追加拍板：>18:00 用当前时间；记住为默认开关；拆「作业预览-学习通」+「发布-学习通」；review-download 默认 missing；
 - 状态：**需求已拍板；测试作业已发布，待开发 CLI/PWA。**
+
+---
+
+## D80 · LLM 两步批阅 + 上传协作测试计划（2026-10-14）
+
+- 计划：`docs/32-D80-grade-upload-collab-test-plan.md`；
+- 范围：仅目标白名单班级；用户提供作答图片，我方跑 transcribe/evaluate/report，后续实现并执行 upload；
+- 上传/打分写操作沿用 `xxt.write_allowlist`；
+- 作业库新增：文件夹创建、作业复制（副本+时间戳）。

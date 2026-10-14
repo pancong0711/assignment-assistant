@@ -308,4 +308,112 @@ def published_classes(course_id: str, work_library_id: str) -> list[str]:
     idx = _load_index()
     return [k.split("|")[-1] for k in idx if k.startswith(f"{course_id}|{work_library_id}|")]
 
+def create_folder(storage, course_id: str, class_id: str, cpi: str, directory_id: str, title: str) -> dict:
+    """在作业库指定父文件夹下创建文件夹。"""
+    err = validate_work_target(course_id, class_id)
+    if err:
+        return {"ok": False, "error": err}
+    from playwright.sync_api import sync_playwright
+    from .session import check_session, _launch
+    storage = Path(storage)
+    chk = check_session(storage)
+    if chk.get("verdict") != "alive":
+        return {"ok": False, "error": "session dead"}
+    parent = str(directory_id or "0")
+    url = (f"https://mooc2-ans.chaoxing.com/mooc2-ans/work/library"
+           f"?courseid={course_id}&directoryid={parent}&cpi={cpi}&from=&topicid=0&backurl=")
+    with sync_playwright() as pw:
+        browser = _launch(pw, headless=True)
+        ctx = browser.new_context(storage_state=str(storage),
+                                  viewport={"width": 1440, "height": 1000}, locale="zh-CN")
+        page = ctx.new_page()
+        page.goto(url, wait_until="domcontentloaded", timeout=60000)
+        page.wait_for_timeout(3000)
+        res = page.evaluate("""async ([cid, did, cpi, title]) => {
+          const u = '/mooc2-ans/work/library/addfolder?courseid=' + encodeURIComponent(cid)
+            + '&directoryid=' + encodeURIComponent(did) + '&title=' + encodeURIComponent(title)
+            + '&cpi=' + encodeURIComponent(cpi);
+          const r = await fetch(u, {headers:{'Accept':'application/json'}});
+          return {status:r.status, body:(await r.text()).slice(0,1000)};
+        }""", [str(course_id), parent, str(cpi), title[:50]])
+        browser.close()
+    return {"ok": True, "response": res, "courseId": str(course_id), "classId": str(class_id),
+            "parentDirectoryId": parent, "title": title[:50]}
 
+
+def copy_work(storage, course_id: str, class_id: str, cpi: str, directory_id: str,
+              work_library_id: str, new_title: str = "") -> dict:
+    """复制已有作业库作业到指定文件夹，并按 new_title 重命名（副本+时间戳）。"""
+    err = validate_work_target(course_id, class_id)
+    if err:
+        return {"ok": False, "error": err}
+    from playwright.sync_api import sync_playwright
+    from .session import check_session, _launch
+    storage = Path(storage)
+    chk = check_session(storage)
+    if chk.get("verdict") != "alive":
+        return {"ok": False, "error": "session dead"}
+    directory = str(directory_id or "0")
+    url = (f"https://mooc2-ans.chaoxing.com/mooc2-ans/work/library"
+           f"?courseid={course_id}&directoryid={directory}&cpi={cpi}&from=&topicid=0&backurl=")
+    old_ids: set[str] = set()
+    with sync_playwright() as pw:
+        browser = _launch(pw, headless=True)
+        ctx = browser.new_context(storage_state=str(storage),
+                                  viewport={"width": 1440, "height": 1000}, locale="zh-CN")
+        page = ctx.new_page()
+        page.goto(url, wait_until="domcontentloaded", timeout=60000)
+        page.wait_for_timeout(4000)
+        old_ids = set(page.evaluate("""() => Array.from(document.querySelectorAll('ul.dataBody_td[data]')).filter(e=>(e.getAttribute('type')||'')==='1').map(e=>e.getAttribute('data')||'')"""))
+        res = page.evaluate("""async ([cid, did, wid, cpi]) => {
+          const u = '/mooc2-ans/work/library/copy?courseid=' + encodeURIComponent(cid)
+            + '&directoryid=' + encodeURIComponent(did) + '&workid=' + encodeURIComponent(wid)
+            + '&cpi=' + encodeURIComponent(cpi);
+          const r = await fetch(u, {headers:{'Accept':'application/json'}});
+          return {status:r.status, body:(await r.text()).slice(0,1000)};
+        }""", [str(course_id), directory, str(work_library_id), str(cpi)])
+        page.wait_for_timeout(2500)
+        page.reload(wait_until="domcontentloaded")
+        page.wait_for_timeout(4000)
+        new_ids = set(page.evaluate("""() => Array.from(document.querySelectorAll('ul.dataBody_td[data]')).filter(e=>(e.getAttribute('type')||'')==='1').map(e=>e.getAttribute('data')||'')"""))
+        browser.close()
+    new_id = next(iter(new_ids - old_ids), "")
+    renamed = {"ok": False, "error": "未找到副本 id"}
+    if new_id and new_title:
+        renamed = rename_work(storage, course_id, class_id, cpi, directory, new_id, new_title)
+    return {"ok": bool(new_id), "sourceWorkLibraryId": str(work_library_id),
+            "newWorkLibraryId": new_id, "title": new_title, "copyResponse": res,
+            "renameResponse": renamed}
+
+
+def rename_work(storage, course_id: str, class_id: str, cpi: str, directory_id: str,
+                work_library_id: str, new_title: str) -> dict:
+    """重命名作业库作业：打开编辑器改标题后保存（学习通库内重命名接口只对文件夹生效）。"""
+    err = validate_work_target(course_id, class_id)
+    if err:
+        return {"ok": False, "error": err}
+    from playwright.sync_api import sync_playwright
+    from .session import check_session, _launch
+    storage = Path(storage)
+    chk = check_session(storage)
+    if chk.get("verdict") != "alive":
+        return {"ok": False, "error": "session dead"}
+    url = (f"https://mooc2-ans.chaoxing.com/mooc2-ans/work/goToWorkEditor"
+           f"?courseid={course_id}&clazzid={class_id}&cpi={cpi}&workid={work_library_id}&built=1&from=")
+    with sync_playwright() as pw:
+        browser = _launch(pw, headless=True)
+        ctx = browser.new_context(storage_state=str(storage),
+                                  viewport={"width": 1440, "height": 1000}, locale="zh-CN")
+        page = ctx.new_page()
+        page.on("dialog", lambda d: d.accept())
+        page.goto(url, wait_until="domcontentloaded", timeout=60000)
+        page.wait_for_timeout(6000)
+        if page.query_selector("#title"):
+            page.fill("#title", new_title[:100])
+        try:
+            page.locator("a", has_text="保存").first.click(timeout=10000)
+            page.wait_for_timeout(5000)
+        except Exception as exc:  # noqa: BLE001
+            return {"ok": False, "error": f"保存标题失败：{exc}"}
+        browser.close()
+    return {"ok": True, "workLibraryId": str(work_library_id), "title": new_title}

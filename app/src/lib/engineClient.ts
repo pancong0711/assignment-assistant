@@ -828,6 +828,31 @@ export async function fetchXxtWorkDetail(engineAddr: string, token: string | und
   const path = `/xxt/work/detail?courseId=${encodeURIComponent(courseId)}&classId=${encodeURIComponent(classId)}&cpi=${encodeURIComponent(cpi)}&workLibraryId=${encodeURIComponent(workLibraryId)}`
   return (await getJson2(engineUrlWithToken(base, path, token))) as { ok?: boolean; title?: string; stemHtml?: string; error?: string }
 }
+export async function createXxtWorkFolder(engineAddr: string, token: string | undefined, payload: { courseId: string; classId: string; cpi: string; directoryId: string; title: string }): Promise<{ ok?: boolean; error?: string }> {
+  const base = normalizeEngineAddr(engineAddr)
+  const res = await fetch(engineUrlWithToken(base, '/xxt/work/folder-create', token), {
+    method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(payload),
+  })
+  if (!res.ok) {
+    let detail = `HTTP ${res.status}`
+    try { const o = (await res.json()) as { error?: string }; if (o?.error) detail = o.error } catch {}
+    throw new Error(detail)
+  }
+  return (await res.json()) as { ok?: boolean; error?: string }
+}
+export async function copyXxtWork(engineAddr: string, token: string | undefined, payload: { courseId: string; classId: string; cpi: string; directoryId: string; workLibraryId: string; title: string }): Promise<{ ok?: boolean; newWorkLibraryId?: string; error?: string }> {
+  const base = normalizeEngineAddr(engineAddr)
+  const res = await fetch(engineUrlWithToken(base, '/xxt/work/copy', token), {
+    method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(payload),
+  })
+  if (!res.ok) {
+    let detail = `HTTP ${res.status}`
+    try { const o = (await res.json()) as { error?: string }; if (o?.error) detail = o.error } catch {}
+    throw new Error(detail)
+  }
+  return (await res.json()) as { ok?: boolean; newWorkLibraryId?: string; error?: string }
+}
+
 export async function startXxtWorkCreate(engineAddr: string, token: string | undefined, payload: { courseId: string; classId: string; cpi: string; title: string; stemHtml: string; directoryId?: string }): Promise<string> {
   const base = normalizeEngineAddr(engineAddr)
   const res = await fetch(engineUrlWithToken(base, '/xxt/work/create', token), {

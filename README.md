@@ -38,6 +38,7 @@
 - `docs/29-D77-feishu4dsh-long-reply-thread-loss.md` — **D77 feishu4dsh 长回复分片落到话题外诊断**
 - `docs/30-D78-pwa-notice-publish.md` — **D78 PWA 课程通知发布（CLI 套壳 + 附件上传 + 白名单）**
 - `docs/31-D79-run-append-images-notice-attachments-work-publish.md` — **D79 run 增补/图片更新/通知通用附件/发布作业（讨论稿）**
+- `docs/32-D80-grade-upload-collab-test-plan.md` — **D80 LLM 两步批阅 + 上传协作测试计划（白名单）**
 - `docs/16-xuexitong-integration.md` — **阶段6 学习通整合任务需求单**（登录/读取/下载/上传/发布）
 - `_legacy/` — 原始两项目解档（仅本地参考，已被 gitignore，永不推送）
 
