@@ -100,6 +100,17 @@ watch(footerText, (v) => { pad.current.layout.footer.text = v })
 function figureCfg() { return pad.current.layout.figure ?? (pad.current.layout.figure = { scale: 1, pos: 'rt' }) }
 function setFigureScale(v: number) { figureCfg().scale = Math.max(0.1, Math.min(2, Number(v) || 1)) }
 function setFigurePos(v: string) { figureCfg().pos = (v as 'lt' | 'rt' | 'center') }
+/** D82-C：题图最大框（mm）；非法值回落缺省 45×60，与引擎同口径。 */
+function setFigureMaxW(v: unknown) {
+  const n = Number(v)
+  figureCfg().max_w_mm = Number.isFinite(n) && n >= 10 && n <= 180 ? n : 45
+}
+function setFigureMaxH(v: unknown) {
+  const n = Number(v)
+  figureCfg().max_h_mm = Number.isFinite(n) && n >= 10 && n <= 240 ? n : 60
+}
+/** D82：题号规则 auto=连续 1./2.；id=题库题号。 */
+function setNumbering(v: string) { pad.current.layout.numbering = v === 'id' ? 'id' : 'auto' }
 
 // 从作业纸初始化表单（当前包切换/载入/导入后也同步；③段载入后通过 current.id 触发）
 function syncFromPad() {
@@ -222,6 +233,23 @@ function saveOnly() {
               <option value="rt">右上</option>
               <option value="lt">左上</option>
               <option value="center">居中</option>
+            </select>
+          </label>
+          <label class="field">题图最大宽：
+            <input type="number" min="10" max="180" step="5" style="width:70px"
+                   :value="figureCfg().max_w_mm ?? 45"
+                   @change="setFigureMaxW(($event.target as HTMLInputElement).value)" /> mm
+          </label>
+          <label class="field">题图最大高：
+            <input type="number" min="10" max="240" step="5" style="width:70px"
+                   :value="figureCfg().max_h_mm ?? 60"
+                   @change="setFigureMaxH(($event.target as HTMLInputElement).value)" /> mm
+          </label>
+          <label class="field">题号规则：
+            <select :value="pad.current.layout.numbering ?? 'auto'"
+                    @change="setNumbering(($event.target as HTMLSelectElement).value)">
+              <option value="auto">连续编号（1./2.）</option>
+              <option value="id">题库题号</option>
             </select>
           </label>
         </p>

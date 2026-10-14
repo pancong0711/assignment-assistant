@@ -26,6 +26,20 @@ const selChap = ref('')
 const rowFilter = ref('')
 const dragItem = ref<number | null>(null)
 function onDropItem(target: number) { const src = dragItem.value; dragItem.value = null; if (src === null || src === target) return; const arr = pad.current.items; const [moved] = arr.splice(src, 1); arr.splice(target, 0, moved) }
+/** D82：逐题编号覆盖（labels[id]）；空值=回落 layout.numbering 的默认口径。 */
+function itemLabels(itemIdx: number): Record<string, string> {
+  const it = pad.current.items[itemIdx]
+  if (!it) return {}
+  if (!it.labels) it.labels = {}
+  return it.labels
+}
+function setLabel(itemIdx: number, id: string, value: string) {
+  const labels = itemLabels(itemIdx)
+  const v = value.trim()
+  if (v) labels[id] = v
+  else delete labels[id]
+}
+
 const selectedIds = ref<string[]>([])
 const itemTag = ref('')
 
@@ -215,10 +229,13 @@ async function downloadBatchZip() {
             <details style="margin-left:18px">
               <summary class="hint">题号顺序（{{ it.ids.join('、') }}）</summary>
               <div style="margin:4px 0">
-                <span v-for="(id, i) in it.ids" :key="id" style="display:inline-block; margin:2px 6px 2px 0">
+                <span v-for="(id, i) in it.ids" :key="id" style="display:inline-block; margin:2px 6px 2px 0; white-space:nowrap">
                   {{ id }}
                   <button class="btn small" :disabled="i === 0" @click="pad.moveId(idx, i, -1)">↑</button>
                   <button class="btn small" :disabled="i === it.ids.length - 1" @click="pad.moveId(idx, i, 1)">↓</button>
+                  <input type="text" placeholder="编号(可空)" style="width:64px; margin-left:4px"
+                         :value="itemLabels(idx)[id] ?? ''"
+                         @change="setLabel(idx, id, ($event.target as HTMLInputElement).value)" />
                 </span>
               </div>
             </details>

@@ -222,5 +222,50 @@ def test_sheet_html_cli_dual_layout_and_template_markers(ws: Path):
     for marker in ["page-break-after: always", "@page { size: A4 ",
                    'class="sheet-page', "data-grid=", "data-order=", "data-rows=", "data-cols=",
                    "wm-page-text", "data-wm-item", "data-wm-pos", "sf-line",
-                   "katex@", "0.16.4", "auto-render.min.js", "renderMathInElement"]:
+                   "katex@", "0.16.4", "auto-render.min.js", "renderMathInElement",
+                   # D82-C：题号+题干悬挂缩进两列 + 题图右上最大框（与模板同构）
+                   ".q-body", "q-content", "q-img", "max-height:", "max-width:"]:
         assert marker in ts_src, f"TS 同构缺少标记: {marker}"
+    # 模板侧同样具备 D82-C 两列/悬挂缩进标记
+    tpl = (REPO / "engine" / "templates" / "assignment.html.j2").read_text(encoding="utf-8")
+    for marker in [".q-body", "q-content", "q-img", "doc.figure.max_w_mm",
+                   "doc.figure.max_h_mm", "fr.no"]:
+        assert marker in tpl, f"模板缺少 D82-C 标记: {marker}"
+
+
+def test_sheet_html_d82_numbering_labels_and_figure_box(ws: Path):
+    """D82-C：HTML 通道题号规则/覆盖 + 题图最大框 与 PDF/PWA 同口径。"""
+    # 显式 numbering=id + labels 覆盖 + figure 最大框
+    task = _write_task(ws, "portrait", 2, {"enabled": False, "items": []})
+    obj = json.loads(task.read_text(encoding="utf-8"))
+    obj["layout"]["numbering"] = "id"
+    obj["layout"]["figure"] = {"scale": 1.0, "pos": "rt", "max_w_mm": 33, "max_h_mm": 28}
+    obj["items"][0]["labels"] = {"demo-04-2": "(二)"}
+    task.write_text(json.dumps(obj, ensure_ascii=False, indent=1), encoding="utf-8")
+
+    runner = CliRunner()
+    out = ws / "tmp" / "d82c.html"
+    res = runner.invoke(cli, ["sheet", "html", "--task", str(task),
+                              "--workspace", str(ws), "-o", str(out)])
+    assert res.exit_code == 0, res.output
+    html = out.read_text(encoding="utf-8")
+    # id 编号模式：题库 id 出现；labels 覆盖生效
+    assert "demo-04-1" in html and "(二)" in html
+    # figure 最大框透传到模板（图片 style 与 CSS）
+    assert "max-width:33.0mm" in html
+    assert "max-height: 28.0mm" in html or "max-height:28.0mm" in html
+    # 两列/悬挂缩进块存在
+    assert 'class="q-body"' in html
+
+
+def test_sheet_html_auto_numbering_sequential(ws: Path):
+    """D82-C：numbering=auto（缺省）→ 连续 1./2. 序号出现在题干前。"""
+    task = _write_task(ws, "portrait", 2, {"enabled": False, "items": []})
+    runner = CliRunner()
+    out = ws / "tmp" / "auto.html"
+    res = runner.invoke(cli, ["sheet", "html", "--task", str(task),
+                              "--workspace", str(ws), "-o", str(out)])
+    assert res.exit_code == 0, res.output
+    html = out.read_text(encoding="utf-8")
+    assert "1.  " in html
+    assert "2.  " in html

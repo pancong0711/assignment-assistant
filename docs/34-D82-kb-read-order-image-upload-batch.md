@@ -147,3 +147,32 @@ LLMClient.batch_fetch(...)    # 取回
 - 题库编辑器行内 `figThumb(img_path)` 直接用 basename 命中并显示缩略图；
 - 作业纸预览/HTML 也复用同一 figAssets；
 - 单图 >5MB 跳过，最多 500 张，避免 localStorage 溢出。
+
+## 实施进度补充：D82-C 图片最大框 / 题号 / 悬挂缩进（2026-10-14 续）
+
+- 引擎 `paper/layout.py`：
+  - `_fitted_image` 改为「最大框 a×b」等比缩放（`figure_max_w_mm/max_h_mm`，缺省 45×60），
+    `scale` 作为相对最大框的放大系数，最终以 frame 为硬上限（超框自动钳制，避免 LayoutError）；
+  - `_question_flowable`：题号+题干 `_hanging_style`（leftIndent 13mm / firstLineIndent -13mm）
+    悬挂缩进；有图时左右两列 Table（题干左、图右上），题干过高或图过高自动退回单列并续页拆分；
+  - `make_pdf` 新增 `figure_max_w_mm/max_h_mm` 参数并透传到 `_flow_by_order`；
+  - 删除重复定义的旧 `_portrait_flow`（此前遮蔽新版导致 `TypeError`）。
+- 题号规则 `layout.numbering`：`auto`（整份连续 1./2.，缺省）| `id`（题库题号）；
+  逐题 `item.labels[id]` 可覆盖编号（三端同口径）。
+- PWA `sheetHtml.ts`：`.q-body` 悬挂缩进 + 图右上两列；`figHtml` 用 `max_h_mm/max_w_mm`；
+  `expandPadItems` 输出 `no`（labels 优先，其次 auto/id）。
+- 引擎 HTML 通道（`htmlfile.py` + `assignment.html.j2`）与 PWA/PDF 同构：复用
+  `resolve_items` 的 `no`，模板渲染 `q-body` + `doc.figure.max_w_mm/max_h_mm`。
+- PWA 版式 UI 新增「题图最大宽/高（mm）」「题号规则」；选题 UI 新增逐题编号输入框。
+- `parseTaskpad`/`serializeTaskpad` 现完整保留 `layout.figure`（含 max_w/max_h）、
+  `layout.numbering`、`item.labels`（往返不丢字段）。
+
+## 作业纸自动 id 规则变更（2026-10-14）
+
+- 旧：`<term>-<class>-<chap>-<随机3位>`（如 `2026S1-classA-chap1-123`）。
+- 新：`<年月>-<章节>-<随机3位>`（如 `202610-chap04-321`），意义更明确：
+  - 年月取本地当前 `YYYYMM`（`makeTaskpadId` 无参时）；
+  - 章节取作业纸首个选题分组的 chap（`chapLabelOfItems`，归一化去路径/空白/非法字符）；
+    未选题时占位 `q`；
+  - 首次「加入作业纸」时若 id 仍是 `-q-` 占位，自动用章节刷新；
+  - 「换新 id」按钮同样按当前选题章节重算。

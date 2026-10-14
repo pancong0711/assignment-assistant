@@ -40,7 +40,9 @@ export interface TaskpadLayout {
   /** D61：显式网格列数；缺省（旧任务）按 orientation+per_page 兼容推导 */
   grid_cols?: number
   /** D82-C：题图缩放与位置（全局，scale=1 默认；pos=lt/rt/center） */
-  figure?: { scale?: number; pos?: 'lt' | 'rt' | 'center' }
+  figure?: { scale?: number; pos?: 'lt' | 'rt' | 'center'; max_w_mm?: number; max_h_mm?: number }
+  /** D82：题号规则 auto（连续 1./2.）/ id（题库 id） */
+  numbering?: 'auto' | 'id'
   header: TaskpadLayoutHeader
   footer: TaskpadLayoutFooter
 }
@@ -54,6 +56,8 @@ export interface TaskpadItem {
   ids: string[]
   /** 分层标签 */
   tag: string
+  /** D82：题号显示覆盖（id → 自定义编号） */
+  labels?: Record<string, string>
 }
 
 /** 水印九宫格位置（3x3，与 engine logo_draw pos_sp 同口径）。 */
@@ -128,10 +132,43 @@ export interface Taskpad {
   journal?: TaskpadJournalEntry[]
 }
 
-export function makeTaskpadId(term = '2026S1', classDir = '', chap = 'chap1'): string {
-  const cls = classDir.split('/').pop() || 'classA'
-  const n = Math.floor(Math.random() * 900) + 100
-  return `${term}-${cls}-${chap}-${n}`
+/** 生成 3 位随机数（100-999），保证首位非 0。 */
+function rand3(): string {
+  return String(Math.floor(Math.random() * 900) + 100)
+}
+
+/** 章节名归一：`chap04` / `第4章` / `4.3` → 简洁可读片段（去空白/路径分隔/非法字符）。 */
+export function normalizeChapLabel(chap?: string): string {
+  const raw = (chap ?? '').trim()
+  if (!raw) return ''
+  // 取最后一段路径（kb/chap04 → chap04；plants/04-xxx → 04-xxx）
+  const segs = raw.split(/[\\/]/).filter(Boolean)
+  const last = segs.length ? segs[segs.length - 1] : raw
+  const cleaned = last.replace(/[\s]+/g, '').replace(/[^0-9A-Za-z\u4e00-\u9fa5._-]/g, '')
+  return cleaned.slice(0, 16)
+}
+
+/** D82：从作业纸 items 推断章节标签——取首个分组章节；无则空。 */
+export function chapLabelOfItems(items?: Array<{ chap?: string }>): string {
+  for (const it of items ?? []) {
+    const c = normalizeChapLabel(it?.chap)
+    if (c) return c
+  }
+  return ''
+}
+
+/**
+ * 作业纸 id：`<年月>-<章节>-<随机3位>`（如 `202610-chap04-321`），意义明确且可读。
+ * - yearMonth 缺省取当前本地年月（YYYYMM）；显式传入旧 term（含 `-`/`S`）时忽略并回退。
+ * - chap 缺省 `q`（未选题时的占位），见 chapLabelOfItems。
+ */
+export function makeTaskpadId(yearMonth?: string, chap?: string): string {
+  const now = new Date()
+  const ym = /^\d{6}$/.test(yearMonth ?? '')
+    ? (yearMonth as string)
+    : `${now.getFullYear()}${String(now.getMonth() + 1).padStart(2, '0')}`
+  const c = normalizeChapLabel(chap) || 'q'
+  return `${ym}-${c}-${rand3()}`
 }
 
 export function emptyTaskpad(): Taskpad {
@@ -314,6 +351,32 @@ export function parseWatermark(raw: unknown): TaskpadWatermark {
  *  per_page 1..MAX_PER_PAGE，越界/缺失按方向缺省 竖1横2；
  *  grid_rows/grid_cols 可选，非法/缺失时渲染层走 legacy 兼容网格；
  *  watermark 兼容 items 与 legacy 三槽，见 parseWatermark）。 */
+/** D82-C：题图参数（scale/pos/max_w_mm/max_h_mm）；全空 → undefined（不写字段）。 */
+function parseFigure(raw: unknown): TaskpadLayout['figure'] {
+  if (typeof raw !== 'object' || raw == null) return undefined
+  const f = raw as Record<string, unknown>
+  const out: NonNullable<TaskpadLayout['figure']> = {}
+  const scale = Number(f.scale)
+  if (Number.isFinite(scale)) out.scale = Math.max(0.1, Math.min(2, scale))
+  if (f.pos === 'lt' || f.pos === 'rt' || f.pos === 'center') out.pos = f.pos
+  const w = Number(f.max_w_mm)
+  if (Number.isFinite(w) && w > 0) out.max_w_mm = w
+  const h = Number(f.max_h_mm)
+  if (Number.isFinite(h) && h > 0) out.max_h_mm = h
+  return Object.keys(out).length ? out : undefined
+}
+
+/** D82：逐题编号覆盖（id → 自定义编号）；空对象 → undefined。 */
+function parseLabels(raw: unknown): Record<string, string> | undefined {
+  if (typeof raw !== 'object' || raw == null) return undefined
+  const out: Record<string, string> = {}
+  for (const [k, v] of Object.entries(raw as Record<string, unknown>)) {
+    const s = String(v ?? '').trim()
+    if (s) out[k] = s
+  }
+  return Object.keys(out).length ? out : undefined
+}
+
 export function parseTaskpad(raw: unknown): Taskpad {
   if (typeof raw !== 'object' || raw == null) throw new Error('作业纸 JSON 顶层应为对象')
   const o = raw as Record<string, unknown>
@@ -334,14 +397,21 @@ export function parseTaskpad(raw: unknown): Taskpad {
       grid_cols: positiveDim(layout.grid_cols),
       header: (layout.header ?? {}) as TaskpadLayoutHeader,
       footer: (layout.footer ?? {}) as TaskpadLayoutFooter,
+      figure: parseFigure(layout.figure),
+      numbering: layout.numbering === 'id' ? 'id' : layout.numbering === 'auto' ? 'auto' : undefined,
     },
     items: Array.isArray(o.items)
-      ? (o.items as Record<string, unknown>[]).map((it) => ({
-          kb: String(it.kb ?? ''),
-          chap: String(it.chap ?? ''),
-          ids: Array.isArray(it.ids) ? (it.ids as unknown[]).map(String) : [],
-          tag: String(it.tag ?? ''),
-        }))
+      ? (o.items as Record<string, unknown>[]).map((it) => {
+          const out: TaskpadItem = {
+            kb: String(it.kb ?? ''),
+            chap: String(it.chap ?? ''),
+            ids: Array.isArray(it.ids) ? (it.ids as unknown[]).map(String) : [],
+            tag: String(it.tag ?? ''),
+          }
+          const labels = parseLabels(it.labels)
+          if (labels) out.labels = labels
+          return out
+        })
       : [],
     watermark: parseWatermark(o.watermark),
     grade: (o.grade ?? {}) as TaskpadGrade,

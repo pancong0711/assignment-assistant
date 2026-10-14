@@ -18,18 +18,22 @@ def load_task(task_path: Path) -> dict:
     return json.loads(Path(task_path).read_text(encoding="utf-8"))
 
 
-def resolve_items(kb_data: dict, task_items: list[dict], kb_dir: Path) -> list[tuple]:
-    """按任务包 items 展开 [kind/chap/ids/tag] → [(content, img_abspath, tag)]。
+def resolve_items(kb_data: dict, task_items: list[dict], kb_dir: Path,
+                  numbering: str = "auto") -> list[tuple]:
+    """按任务包 items 展开 → [(content, img_abspath, tag, no)]。
 
     迁移自 _legacy/2603paperDesign/src/paperdesign/kbtools.py 的按 id 抽题逻辑
     （_oneChap：遍历题库 sheet，匹配 ids）；ids 为空则整章全收。
+    no：题号，auto=整份连续编号，id=题库 id，labels=题包内的覆盖值。
     """
     out = []
+    seq = 0
     for spec in task_items:
         kind = spec.get("kb", "problems")
         chap = spec.get("chap")
         ids = spec.get("ids")
         tag = spec.get("tag", kind)
+        labels = spec.get("labels") if isinstance(spec.get("labels"), dict) else {}
         chapters = kb_data.get(kind, {})
         if chap:
             entries = list(chapters.get(chap, []))
@@ -37,13 +41,18 @@ def resolve_items(kb_data: dict, task_items: list[dict], kb_dir: Path) -> list[t
             entries = [e for chs in chapters.values() for e in chs]
         if ids:
             entries = [e for e in entries if str(e.get("id")) in {str(i) for i in ids}]
-        else:
-            entries = entries
         for e in entries:
+            seq += 1
+            raw_id = e.get("id")
+            qid = str(raw_id) if raw_id not in (None, "") else str(seq)
+            # labels 支持字符串/数字 id 键；空 id 不参与覆盖匹配
+            no = str(labels.get(qid) or "")
+            if not no:
+                no = qid if numbering == "id" else f"{seq}."
             img = e.get("img_path")
             if img and not str(img).startswith("/"):
                 img = str(kb_dir / str(img))
-            out.append((e.get("content"), img, tag))
+            out.append((e.get("content"), img, tag, no))
     if not out:
         logger.warning("任务包未选中任何题目")
     return out
@@ -58,13 +67,15 @@ def sheets_from_task(task_path: Path, ws: Path, out_dir: Path | None = None,
     task = load_task(task_path)
     kb_dir = ws / "kb"
     kb_data = read_kb(kb_dir)
-    items = resolve_items(kb_data, task.get("items", []), kb_dir)
     lay = task.get("layout", {})
+    items = resolve_items(kb_data, task.get("items", []), kb_dir, str(lay.get("numbering") or "auto"))
     orientation = lay.get("orientation", "portrait")
     title = lay.get("header", {}).get("title", title_default)
     fig = lay.get("figure") or {}
     figure_scale = float(fig.get("scale") or 1.0)
     figure_pos = str(fig.get("pos") or "rt")
+    figure_max_w = float(fig.get("max_w_mm") or 45.0)
+    figure_max_h = float(fig.get("max_h_mm") or 60.0)
 
     roster_fn = ws / task.get("class_dir", "classes") / "roster" / f"{task['id']}-roster.xlsx"
     if not roster_fn.parent.exists():
@@ -98,6 +109,8 @@ def sheets_from_task(task_path: Path, ws: Path, out_dir: Path | None = None,
         grid_cols=lay.get("grid_cols"),
         figure_scale=figure_scale,
         figure_pos=figure_pos,
+        figure_max_w_mm=figure_max_w,
+        figure_max_h_mm=figure_max_h,
     )
 
 

@@ -106,4 +106,49 @@ const item = (tag) => ({ kb: 'problems', chap: 'chap10', ids: ['10-1'], tag })
   console.log('4) batch 命令/README 文案生成 … ok')
 }
 
+/* ---------- 5) D82-C：figure(numbering/labels) 往返 + makeTaskpadId 语义 ---------- */
+{
+  const pad = parseTaskpad({
+    id: '202610-chap04-321', class_dir: 'classes/x',
+    layout: { numbering: 'id', figure: { scale: 1.2, pos: 'rt', max_w_mm: 40, max_h_mm: 35 } },
+    items: [{ kb: 'problems', chap: 'chap04', ids: ['demo-04-1', 'demo-04-2'], tag: 'copy',
+              labels: { 'demo-04-2': '(二)' } }],
+  })
+  assert.equal(pad.layout.numbering, 'id')
+  assert.equal(pad.layout.figure.max_w_mm, 40)
+  assert.equal(pad.layout.figure.max_h_mm, 35)
+  assert.equal(pad.layout.figure.scale, 1.2)
+  assert.equal(pad.layout.figure.pos, 'rt')
+  assert.deepEqual(pad.items[0].labels, { 'demo-04-2': '(二)' })
+  // 往返：重新解析序列化结果仍保留
+  const round = parseTaskpad(JSON.parse(serializeTaskpad(pad)))
+  assert.equal(round.layout.numbering, 'id')
+  assert.equal(round.layout.figure.max_w_mm, 40)
+  assert.deepEqual(round.items[0].labels, { 'demo-04-2': '(二)' })
+  console.log('5a) D82-C figure/numbering/labels 往返 … ok')
+
+  // 缺省：auto/无 labels/无 figure 不写冗余字段
+  const bare = parseTaskpad({ id: '202610-q-100', layout: {}, items: [] })
+  assert.equal(bare.layout.numbering, undefined)
+  assert.equal(bare.layout.figure, undefined)
+  const bareOut = JSON.parse(serializeTaskpad(bare))
+  assert.equal(bareOut.layout.numbering, undefined)
+  assert.equal(bareOut.layout.figure, undefined)
+  console.log('5b) D82-C 缺省不写冗余字段 … ok')
+
+  // makeTaskpadId：年月+章节+3位随机；章节归一
+  const id = tp.makeTaskpadId('202610', 'chap04')
+  assert.match(id, /^202610-chap04-\d{3}$/, `id=${id}`)
+  const id2 = tp.makeTaskpadId('202610', '')
+  assert.match(id2, /^202610-q-\d{3}$/, `id=${id2}`)
+  const id3 = tp.makeTaskpadId('202610', 'kb/chap07/')
+  assert.match(id3, /^202610-chap07-\d{3}$/, `id=${id3}`)
+  // 无参 → 当前年月
+  assert.match(tp.makeTaskpadId(), /^\d{6}-q-\d{3}$/)
+  // 章节推断
+  assert.equal(tp.chapLabelOfItems([{ chap: 'plants/04-xxx' }, { chap: 'chap09' }]), '04-xxx')
+  assert.equal(tp.chapLabelOfItems([]), '')
+  console.log('5c) makeTaskpadId 年月+章节+随机3位 … ok')
+}
+
 console.log('selfcheck-variants: 全部通过')

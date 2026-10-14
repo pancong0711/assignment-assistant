@@ -279,8 +279,8 @@ def sheet_demo(obj, out, orientation, no_watermark, workspace, verbose):
         {"name": "学生A", "number": "2026xxxx01", "class": "classA"},
         {"name": "学生B", "number": "2026xxxx02", "class": "classB"},
     ]
-    items_of = lambda i: [(f"题干占位（stage1 demo）：请写出第{i+1}题的过程。", figs[i % 2], "distinguish"),
-                          ("第二题（无图占位）：练习书写规范。", None, "copy")]
+    items_of = lambda i: [(f"题干占位（stage1 demo）：请写出第{i+1}题的过程。", figs[i % 2], "distinguish", "1."),
+                          ("第二题（无图占位）：练习书写规范。", None, "copy", "2.")]
     files = make_pdf(
         students, items_of, ws / out_dir, orientation,
         assets_dir=ASSIST_ROOT / "assets",

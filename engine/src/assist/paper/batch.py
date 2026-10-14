@@ -76,8 +76,9 @@ def batch_sheets(roster_fn: Path, task_files: list[Path], ws: Path,
         if pad is None:
             logger.warning(f"tag={tag} 无绑定任务包，跳过 {len(group)} 人（+assigned: {list(pads)}）")
             continue
-        items = resolve_items(kb_data, pad.get("items", []), kb_dir)
         lay = pad.get("layout", {})
+        items = resolve_items(kb_data, pad.get("items", []), kb_dir,
+                              str(lay.get("numbering") or "auto"))
         stu = [{"name": r["name"], "number": r.get("number", ""),
                 "class": r.get("class", "")} for r in group]
         out_tag = out_dir / tag
@@ -91,6 +92,10 @@ def batch_sheets(roster_fn: Path, task_files: list[Path], ws: Path,
             per_page=lay.get("per_page"),
             grid_rows=lay.get("grid_rows"),
             grid_cols=lay.get("grid_cols"),
+            figure_scale=float((lay.get("figure") or {}).get("scale") or 1.0),
+            figure_pos=str((lay.get("figure") or {}).get("pos") or "rt"),
+            figure_max_w_mm=float((lay.get("figure") or {}).get("max_w_mm") or 45.0),
+            figure_max_h_mm=float((lay.get("figure") or {}).get("max_h_mm") or 60.0),
         )
         generated += files
         seen[tag] = pad_names.get(tag, pad.get("id"))

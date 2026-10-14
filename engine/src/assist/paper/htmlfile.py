@@ -155,40 +155,63 @@ def _watermark_items(task: dict, ws: Path, assets_dir: Path | None,
     return out
 
 
-def expand_items_html(task: dict, kb_dir: Path) -> list[dict]:
-    """任务包 items → 模板题帧（id/content/solution/img，img_path 相对 kb/）。"""
+def expand_items_html(task: dict, kb_dir: Path, numbering: str = "auto") -> list[dict]:
+    """任务包 items → 模板题帧（no/content/solution/img，img_path 相对 kb/）。
+
+    D82：题号规则与 PDF/PWA 同口径（auto=连续 1./2.；id=题库 id；labels 覆盖优先，
+    经 resolve_items 统一展开）。模板渲染改为「题号+题干」悬挂缩进 + 图右上两列。
+    """
     from ..files import read_kb
+    from .task import resolve_items
     kb_data = read_kb(kb_dir)
+    # 参考答案按题库 id 建索引（resolve_items 返回 4 元组不含 solution，与 PDF 同契约）
+    sol_by_id: dict[str, str] = {}
+    for chapters in kb_data.values():
+        for entries in chapters.values():
+            for e in entries:
+                qid = str(e.get("id") or "")
+                if qid:
+                    sol_by_id[qid] = str(e.get("solution") or "")
     out: list[dict] = []
-    for spec in task.get("items", []):
-        kind = spec.get("kb", "problems")
-        chap = spec.get("chap")
-        ids = {str(i) for i in (spec.get("ids") or [])}
-        tag = spec.get("tag", kind)
-        chapters = kb_data.get(kind, {})
-        if chap:
-            entries = list(chapters.get(chap, []))
-        else:
-            entries = [e for chs in chapters.values() for e in chs]
-        if ids:
-            entries = [e for e in entries if str(e.get("id")) in ids]
-        for e in entries:
-            img_hint = str(e.get("img_path") or "")
-            img_p = Path(img_hint)
-            b64 = mime = None
-            if img_hint:
-                cand = img_p if img_p.is_absolute() else kb_dir / img_hint
-                got = _b64_image(cand) if cand.exists() else None
-                if got:
-                    b64, mime = got
-            out.append({"id": str(e.get("id") or ""), "tag": str(tag or ""),
-                        "content": str(e.get("content") or ""),
-                        "solution": str(e.get("solution") or ""),
-                        "img_b64": b64, "img_mime": mime,
-                        "img_label": "" if (b64 or not img_hint) else img_hint})
+    # 用带序号的展开（auto/id/labels 与 PDF/PWA 同口径）
+    qid_seq = _resolved_ids(kb_data, task)
+    resolved = resolve_items(kb_data, task.get("items", []), kb_dir, numbering)
+    for (content, img, tag, no), qid in zip(resolved, qid_seq):
+        img_hint = str(img) if img else ""
+        b64 = mime = None
+        if img_hint and Path(img_hint).exists():
+            got = _b64_image(Path(img_hint))
+            if got:
+                b64, mime = got
+            else:
+                img_hint = ""
+        out.append({"id": str(qid), "no": str(no or ""), "tag": str(tag or ""),
+                    "content": str(content or ""),
+                    "solution": sol_by_id.get(str(qid), ""),
+                    "img_b64": b64, "img_mime": mime,
+                    "img_label": "" if (b64 or not img_hint) else img_hint})
     if not out:
         logger.warning("任务包未选中任何题目（HTML 输出将只有版式框）")
     return out
+
+
+def _resolved_ids(kb_data: dict, task: dict) -> list[str]:
+    """与 resolve_items 同序的题库 id 列表（供模板携带 id 列 + 参考答案索引）。"""
+    # resolve_items 返回 4 元组不含 id，这里按相同过滤逻辑重算 id 序列
+    ids_out: list[str] = []
+    for spec in task.get("items", []):
+        kind = spec.get("kb", "problems")
+        chap = spec.get("chap")
+        want = {str(i) for i in (spec.get("ids") or [])}
+        chapters = kb_data.get(kind, {})
+        entries = list(chapters.get(chap, [])) if chap else \
+            [e for chs in chapters.values() for e in chs]
+        if want:
+            entries = [e for e in entries if str(e.get("id")) in want]
+        for e in entries:
+            ids_out.append(str(e.get("id") or ""))
+    # 兜底：长度不符时用空串补齐/截断（保持 zip 安全）
+    return ids_out
 
 
 def build_context(task: dict, students: list[dict], kb_dir: Path, ws: Path,
@@ -200,7 +223,7 @@ def build_context(task: dict, students: list[dict], kb_dir: Path, ws: Path,
     per_page = normalize_per_page(lay.get("per_page"), orientation)
     grid = resolve_grid(orientation, per_page,
                         lay.get("grid_rows"), lay.get("grid_cols"))
-    frames = expand_items_html(task, kb_dir)
+    frames = expand_items_html(task, kb_dir, str(lay.get("numbering") or "auto"))
     wm_raw = task.get("watermark") or {}
     wm_enabled = (not no_watermark) and wm_raw.get("enabled", True) is not False
     wm = {"enabled": wm_enabled,
@@ -221,6 +244,12 @@ def build_context(task: dict, students: list[dict], kb_dir: Path, ws: Path,
         "grid": f"{grid['rows']}x{grid['cols']}",   # D61：与 PWA sheetHtml data-grid 同口径（去 grid 前缀）
         "grid_body_style": grid_body_style(grid["rows"], grid["cols"], grid["order"]),
         "footer_text": str((lay.get("footer") or {}).get("text") or ""),
+        "figure": {
+            "scale": float((lay.get("figure") or {}).get("scale") or 1.0),
+            "pos": str((lay.get("figure") or {}).get("pos") or "rt"),
+            "max_w_mm": float((lay.get("figure") or {}).get("max_w_mm") or 45.0),
+            "max_h_mm": float((lay.get("figure") or {}).get("max_h_mm") or 60.0),
+        },
         "katex_version": KATEX_VERSION,
     }
     stu_out = []

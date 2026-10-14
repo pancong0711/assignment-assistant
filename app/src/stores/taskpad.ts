@@ -1,6 +1,7 @@
 import { defineStore } from 'pinia'
 import {
   defaultGrid, emptyTaskpad, parseTaskpad, serializeTaskpad, makeTaskpadId,
+  chapLabelOfItems,
   type Taskpad, type TaskpadItem,
 } from '../lib/taskpad'
 
@@ -38,6 +39,10 @@ export const useTaskpadStore = defineStore('taskpad', {
         same.ids = [...ids]
       } else {
         this.current.items.push({ ...item, ids: [...item.ids] })
+      }
+      // D82：id 仍是未选题占位（`-q-`）时，首次选题后用章节刷新，意义更明确。
+      if (/-q-\d{3}$/.test(this.current.id)) {
+        this.current.id = makeTaskpadId(undefined, chapLabelOfItems(this.current.items))
       }
     },
     removeItem(idx: number) {
@@ -144,9 +149,9 @@ export const useTaskpadStore = defineStore('taskpad', {
       this.current = pad
       return pad
     },
-    /** 生成新的作业纸 id（重复导出时避免互相覆盖） */
+    /** D82：生成新的作业纸 id（年月+章节+随机3位）；章节取当前选题的首个分组。 */
     renewId() {
-      this.current.id = makeTaskpadId()
+      this.current.id = makeTaskpadId(undefined, chapLabelOfItems(this.current.items))
     },
   },
 })

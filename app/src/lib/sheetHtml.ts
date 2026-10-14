@@ -34,6 +34,7 @@ export interface SheetHtmlStudent {
 
 export interface SheetHtmlItem {
   id: string
+  no?: string
   content: string
   solution?: string
   /** kb 行 img_path（file 相对路径 hint；PWA 无文件系统 → 打印预览显示占位框） */
@@ -140,12 +141,13 @@ body {
 .sheet-body.divided { gap: 0; position: relative; }
 .sheet-body.divided .sheet-frame { overflow: hidden; word-break: break-word; }
 .sheet-frame { min-width: 0; min-height: 0; border: 1px dashed var(--hairline);
-  border-radius: 2mm; padding: 3mm; overflow: hidden; display: flex; flex-direction: column; gap: 2mm; }
+  border-radius: 2mm; padding: 3mm; overflow: hidden; display: flex; flex-direction: row; align-items: flex-start; gap: 3mm; }
+.q-body { flex: 1; min-width: 0; padding-left: 7mm; text-indent: -7mm; }
 .sheet-body.divided .sheet-frame { border: none; border-radius: 0; padding: 3mm 4mm; }
 .q-id { font-weight: 700; color: var(--accent); font-size: 11pt; }
 .q-tag { font-weight: 400; color: var(--muted); font-size: 9pt; }
 .q-content { font-size: 11.5pt; line-height: 1.8; white-space: pre-wrap; }
-.q-img { max-width: 100%; max-height: 52mm; object-fit: contain; align-self: center; }
+.q-img { margin-left: auto; max-width: 100%; max-height: 52mm; object-fit: contain; align-self: flex-start; }
 .q-img-ph { color: var(--muted); font-size: 10pt; font-style: italic; border: 1px dashed var(--hairline);
   border-radius: 2mm; padding: 4mm; text-align: center; }
 .q-solution { color: var(--muted); font-size: 10pt; border-top: 1px dashed #dfe3ea;
@@ -251,14 +253,16 @@ function wmLayerHtml(wm: WmResolved[], pageText: boolean, pageN: number): string
 
 /** B3/D46-5：题图渲染——有 img_path 且 figAssets 命中 basename → 真图；否则占位框（现状）。 */
 function figHtml(imgPath?: string, figAssets?: Record<string, string>,
-                 figure?: { scale?: number; pos?: 'lt' | 'rt' | 'center' }): string {
+                 figure?: { scale?: number; pos?: 'lt' | 'rt' | 'center'; max_w_mm?: number; max_h_mm?: number }): string {
   if (!imgPath) return ''
   const base = imgPath.split('/').pop() ?? imgPath
   const hit = figAssets?.[base]
   const scale = Math.max(0.2, Math.min(2, Number(figure?.scale ?? 1)))
   const pos = figure?.pos ?? 'rt'
   const align = pos === 'rt' ? 'flex-end' : pos === 'lt' ? 'flex-start' : 'center'
-  const style = `max-height:${(52 * scale).toFixed(1)}mm; align-self:${align}`
+  const maxH = Number(figure?.max_h_mm ?? 52)
+  const maxW = Number(figure?.max_w_mm ?? 45)
+  const style = `max-height:${(maxH * scale).toFixed(1)}mm; max-width:${(Math.max(10, maxW) * scale).toFixed(1)}mm; align-self:${align}`
   if (hit && hit.startsWith('data:')) {
     return `<img class="q-img" src="${escapeHtml(hit)}" style="${style}" alt="题图">`
   }
@@ -442,10 +446,11 @@ function pageBlockHtml(pad: Taskpad, items: SheetHtmlItem[], stu: SheetHtmlStude
   </div>
   <div class="sheet-body${lines.length ? ' divided' : ''}" data-grid="${grid.rows}x${grid.cols}" data-order="${grid.order}" data-rows="${grid.rows}" data-cols="${grid.cols}" style="${gridBodyStyle(grid.rows, grid.cols, grid.order)}">
     ${frames}${items.map((fr) => `<div class="sheet-frame">
-      <div class="q-id">${escapeHtml(fr.id)}${fr.tag ? ` <span class="q-tag">【${escapeHtml(fr.tag)}】</span>` : ''}</div>
-      <div class="q-content">${escapeHtml(fr.content)}</div>
+      <div class="q-body">
+        <div class="q-content">${escapeHtml(fr.no ? `${fr.no}  ` : '')}${escapeHtml(fr.content)}</div>
+        ${(includeSolution && fr.solution) ? `<div class="q-solution">参考答案：${escapeHtml(fr.solution)}</div>` : ''}
+      </div>
       ${figHtml(fr.imgPath, figAssets, pad.layout.figure)}
-      ${(includeSolution && fr.solution) ? `<div class="q-solution">参考答案：${escapeHtml(fr.solution)}</div>` : ''}
     </div>`).join('\n    ')}
   </div>
   <div class="sheet-footer">
@@ -580,12 +585,18 @@ export function expandPadItems(
   bookOf: (kind: KbKind) => KbBook | undefined,
 ): SheetHtmlItem[] {
   const out: SheetHtmlItem[] = []
+  let seq = 0
+  const auto = (pad.layout.numbering ?? 'auto') !== 'id'
   for (const item of pad.items) {
     const chap = bookOf(item.kb as KbKind)?.chapters.find((c) => c.name === item.chap)
     if (!chap) continue
     for (const id of item.ids) {
       const r = chap.rows.find((x) => x.id === id)
-      if (r) out.push({ id, content: r.content, solution: r.solution, imgPath: r.img_path, tag: item.tag })
+      if (!r) continue
+      seq += 1
+      const label = item.labels?.[id] || item.labels?.[String(id)] || ''
+      out.push({ id, no: label || (auto ? `${seq}.` : id), content: r.content,
+                 solution: r.solution, imgPath: r.img_path, tag: item.tag })
     }
   }
   return out
