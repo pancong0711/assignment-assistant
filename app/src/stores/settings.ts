@@ -106,7 +106,7 @@ function placeholderChecks(): EnvCheckItem[] {
     { key: 'uv', label: 'uv', status: 'pending', note: '占位：引擎未在线，接入 assist serve 后真实检测' },
     { key: 'deps', label: '引擎依赖（.runtime/venv）', status: 'pending', note: '占位：引擎未在线，接入 assist doctor 后真实检测' },
     { key: 'fonts', label: '字体（开源 fallback 链，D15）', status: 'pending', note: '占位：缺失时引擎自动降级' },
-    { key: 'tex', label: 'TeX（可选，样题渲染）', status: 'pending', note: '占位：缺失时引擎自动降级（黄）' },
+    { key: 'xelatex', label: 'TeX（xelatex，可选，样题渲染）', status: 'pending', note: '占位：缺失时引擎自动降级（黄）' },
     { key: 'kb', label: 'kb/ 题库存在', status: 'pending', note: '占位：引擎未在线' },
     { key: 'settings', label: 'settings.local.json 存在', status: 'pending', note: '占位：引擎未在线' },
   ]

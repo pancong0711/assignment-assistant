@@ -232,6 +232,36 @@ export async function fetchDoctor(engineAddr: string, token?: string): Promise<D
 /** 引擎未在线时的引导命令（D13：体检页逐项 + 复制命令按钮）。 */
 export const SERVE_HINT_CMD = 'uv run assist serve        # 引擎在线后本页自动识别（默认 http://127.0.0.1:8601）'
 
+/* ========== D81：Workspace / kb 管理 ========== */
+export interface WorkspaceInfo {
+  ok?: boolean
+  workspace: string
+  defaultWorkspace: string
+  isDefault: boolean
+  kbPath: string
+  kbExists: boolean
+  xlsx: string[]
+  xlsxCount: number
+}
+export async function fetchWorkspaceInfo(engineAddr: string, token?: string): Promise<WorkspaceInfo> {
+  const base = normalizeEngineAddr(engineAddr)
+  return (await getJson2(engineUrlWithToken(base, '/workspace/info', token))) as WorkspaceInfo
+}
+export async function createDefaultKb(engineAddr: string, token?: string): Promise<WorkspaceInfo> {
+  const base = normalizeEngineAddr(engineAddr)
+  const res = await fetch(engineUrlWithToken(base, '/workspace/bootstrap', token), { method: 'POST' })
+  if (!res.ok) throw new Error(`HTTP ${res.status}`)
+  return (await res.json()) as WorkspaceInfo
+}
+export async function migrateKb(engineAddr: string, token: string | undefined, srcDir: string): Promise<{ ok?: boolean; copiedCount?: number; errors?: string[]; target?: string }> {
+  const base = normalizeEngineAddr(engineAddr)
+  const res = await fetch(engineUrlWithToken(base, '/kb/migrate', token), {
+    method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ srcDir }),
+  })
+  if (!res.ok) throw new Error(`HTTP ${res.status}`)
+  return (await res.json()) as { ok?: boolean; copiedCount?: number; errors?: string[]; target?: string }
+}
+
 /* ========== D65-P4：引擎版本检测（engine /engine/version） ========== */
 
 export interface EngineVersionMeta {

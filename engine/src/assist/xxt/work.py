@@ -58,8 +58,14 @@ def list_works(storage, course_id: str, class_id: str, cpi: str = "0", directory
           canEdit: e.getAttribute('data-can-edit') === 'true',
         }))""")
         browser.close()
+    published: set[str] = set()
+    try:
+        published = published_library_ids(storage, course_id, class_id, cpi)
+    except Exception:  # noqa: BLE001
+        published = set()
     for it in items:
-        it["publishedClasses"] = published_classes(str(course_id), str(it.get("workLibraryId") or ""))
+        wid = str(it.get("workLibraryId") or "")
+        it["publishedClasses"] = ([str(class_id)] if wid in published else [])
     return {"ok": True, "courseId": str(course_id), "classId": str(class_id),
             "cpi": str(cpi), "directoryId": str(directory_id), "items": items}
 
@@ -76,13 +82,15 @@ def publish_work(storage, course_id: str, class_id: str, work_library_id: str, *
     if send and _dup_key in _load_index():
         return {"ok": False, "error": "该作业已在本班发布过；同一作业同一班级不允许重复发布，"
                                        "如需修改请先在学习通创建副本（副本+时间戳）后再发布。"}
-    try:
-        det = work_detail(storage, course_id, class_id, str(cpi), str(work_library_id))
-        if det.get("workUsed") and send:
-            return {"ok": False, "error": "该作业已发布过（至少一个班）；同一作业不允许重复发布，"
+    platform_published = None
+    if send:
+        try:
+            platform_published = published_library_ids(storage, course_id, class_id, str(cpi))
+        except Exception:  # noqa: BLE001
+            platform_published = None
+        if platform_published is not None and str(work_library_id) in platform_published:
+            return {"ok": False, "error": "该作业已在本班发布过；同一作业同一班级不允许重复发布，"
                                            "如需修改请先创建副本（副本+时间戳）后再发布。"}
-    except Exception:  # noqa: BLE001
-        pass
     from playwright.sync_api import sync_playwright
     from .session import check_session, _launch
     storage = Path(storage)
@@ -417,3 +425,40 @@ def rename_work(storage, course_id: str, class_id: str, cpi: str, directory_id: 
             return {"ok": False, "error": f"保存标题失败：{exc}"}
         browser.close()
     return {"ok": True, "workLibraryId": str(work_library_id), "title": new_title}
+
+def list_class_works(storage, course_id: str, class_id: str, cpi: str = "0") -> dict:
+    """只读拉取某班级已发布作业列表（viewWork(libraryId, workId, classId)）。"""
+    from playwright.sync_api import sync_playwright
+    from .session import check_session, _launch
+    storage = Path(storage)
+    chk = check_session(storage)
+    if chk.get("verdict") != "alive":
+        return {"ok": False, "error": "session dead"}
+    url = (f"https://mooc2-ans.chaoxing.com/mooc2-ans/work/list"
+           f"?courseid={course_id}&clazzid={class_id}&cpi={cpi}&selectClassid={class_id}&status=-1&v=0&topicid=0")
+    with sync_playwright() as pw:
+        browser = _launch(pw, headless=True)
+        ctx = browser.new_context(storage_state=str(storage),
+                                  viewport={"width": 1440, "height": 1000}, locale="zh-CN")
+        page = ctx.new_page()
+        page.goto(url, wait_until="domcontentloaded", timeout=60000)
+        page.wait_for_timeout(6000)
+        items = page.evaluate("""() => {
+          const out=[]; const seen=new Set();
+          document.querySelectorAll('h2[onclick]').forEach(h => {
+            const parts=((h.getAttribute('onclick')||'').split("'"));
+            if(parts.length < 7) return;
+            const lib=parts[1], wid=parts[3], cid=parts[5];
+            if(!lib || seen.has(lib)) return; seen.add(lib);
+            out.push({workLibraryId:lib, workId:wid, classId:cid, title:(h.innerText||'').trim().slice(0,100)});
+          });
+          return out;
+        }""")
+        browser.close()
+    return {"ok": True, "courseId": str(course_id), "classId": str(class_id), "cpi": str(cpi), "items": items}
+
+
+def published_library_ids(storage, course_id: str, class_id: str, cpi: str = "0") -> set[str]:
+    rep = list_class_works(storage, course_id, class_id, cpi)
+    return {str(x.get("workLibraryId") or "") for x in (rep.get("items") or []) if x.get("workLibraryId")}
+

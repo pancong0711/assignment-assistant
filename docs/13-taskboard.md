@@ -1355,3 +1355,14 @@ applyManualTranslation/setTranslationRatio 中 setTranslationRatio 保留——�
 - 范围：仅目标白名单班级；用户提供作答图片，我方跑 transcribe/evaluate/report，后续实现并执行 upload；
 - 上传/打分写操作沿用 `xxt.write_allowlist`；
 - 作业库新增：文件夹创建、作业复制（副本+时间戳）。
+
+---
+
+## D81 · 班级发布判定缓存 + Workspace/kb 管理 + 体检项清理（2026-10-14）
+
+- 主需求单：`docs/33-D81-workspace-kb-doctor-published-cache.md`；
+- 发布判定改为按班级（workLibraryId + classId），允许跨班发布，同班重复硬拒绝；
+- 班级作业列表本地 30 天缓存，刷新强制更新；
+- 设置中心新增 Workspace/kb 管理（路径显示/默认判定/创建默认/迁移整个旧 kb）；
+- uv 降级为可选+黄灰+pip 修复；TeX 合并为一个 xelatex 可选检查；kb 检查扫描全部 xlsx 并显示路径；
+- 状态：需求已确认，按顺序实现。

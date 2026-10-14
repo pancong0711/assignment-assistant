@@ -1,6 +1,7 @@
 <script setup lang="ts">
 import { computed, onMounted, ref } from 'vue'
 import { useSettingsStore } from '../stores/settings'
+import { createDefaultKb, fetchWorkspaceInfo, migrateKb } from '../lib/engineClient'
 import { pickDirectory, detectCapabilities, fsWriteHint, downloadData } from '../lib/fsAccess'
 import { getKbDirHandle } from '../stores/kb'
 import { statusGlyph } from '../lib/engineClient'
@@ -205,12 +206,18 @@ function getKbDirHandleSafe(): FileSystemDirectoryHandle | null {
   try { return getKbDirHandle() ?? null } catch { return null }
 }
 const katexStatus = ref('尚未检查（预览一般无需检查；资源已随应用打包）')
+const wsInfo = ref<{ workspace: string; defaultWorkspace: string; isDefault: boolean; kbPath: string; kbExists: boolean; xlsx: string[]; xlsxCount: number } | null>(null)
+const wsMsg = ref('')
+const kbMigrateSrc = ref('')
+async function loadWsInfo() { try { wsInfo.value = await fetchWorkspaceInfo(settings.engineUrl, settings.engineToken); wsMsg.value = '' } catch (e) { wsMsg.value = `读取失败：${String(e)}` } }
+async function doCreateKb() { try { wsInfo.value = await createDefaultKb(settings.engineUrl, settings.engineToken); wsMsg.value = '默认题库骨架已创建' } catch (e) { wsMsg.value = `创建失败：${String(e)}` } }
+async function doMigrateKb() { if (!kbMigrateSrc.value.trim()) { wsMsg.value = '请填写旧题库目录路径'; return } try { const r = await migrateKb(settings.engineUrl, settings.engineToken, kbMigrateSrc.value.trim()); wsMsg.value = r.ok ? `已迁移 ${r.copiedCount ?? 0} 个文件到 ${r.target}` : `迁移有错误：${(r.errors || []).join('; ')}`; await loadWsInfo() } catch (e) { wsMsg.value = `迁移失败：${String(e)}` } }
 
 /* ---------- D58：TinyTeX 可选依赖（设置中心专用栏：检测 + 网络安装） ---------- */
 const tinytexChecking = ref(false)
 const tinytexInstalling = ref(false)
 const tinytexStatus = ref('尚未检测（可选依赖；缺失时 LaTeX 样题自动降级，不影响 HTML/PDF 主通道）')
-const tinytexCheck = computed(() => settings.checks.find((c) => c.key === 'tex'))
+const tinytexCheck = computed(() => settings.checks.find((c) => c.key === 'xelatex'))
 
 async function checkTinyTex() {
   tinytexChecking.value = true
@@ -273,6 +280,7 @@ async function checkKatex() {
 }
 
 onMounted(() => {
+  void loadWsInfo()
   // D56-J5：恢复并显示 workspace 句柄状态
   void refreshWorkspaceState()
   // 进页即做 /status 在线检测（chip + 版本显示），不弹错误
@@ -622,6 +630,28 @@ onMounted(() => {
       <p class="hint" v-if="tinytexCheck"><b>当前体检项：</b>{{ tinytexCheck.note || '—' }}</p>
       <p class="hint" v-if="tinytexInstalling && settings.installLog"><code>安装输出（末尾）</code></p>
       <pre v-if="tinytexInstalling && settings.installLog" style="max-height:180px; overflow:auto; white-space:pre-wrap">{{ settings.installLog.slice(-1200) }}</pre>
+    </div>
+
+    <!-- ============ D81：Workspace / 题库管理 ============ -->
+    <div class="card">
+      <h2>Workspace / 题库管理 <small style="font-weight:400;color:var(--c-muted)">路径显示 · 默认判定 · 创建默认题库 · 迁移旧 kb</small></h2>
+      <p class="hint">运行期 kb 固定为 <code>&lt;workspace&gt;/kb</code>；迁移会复制全部 *.xlsx 与 fig/.history/export。</p>
+      <p>
+        <button class="btn small" @click="loadWsInfo">🔄 刷新</button>
+        <button class="btn small" style="margin-left:8px" @click="doCreateKb">＋ 创建默认题库</button>
+      </p>
+      <p v-if="wsInfo" class="hint">
+        workspace：<code>{{ wsInfo.workspace }}</code>
+        <span v-if="wsInfo.isDefault" class="tag" style="background:#dcfce7;color:#166534;padding:1px 6px;border-radius:6px">默认路径</span>
+        <span v-else class="tag" style="background:#ffedd5;color:#9a3412;padding:1px 6px;border-radius:6px">非默认路径</span><br />
+        kb：<code>{{ wsInfo.kbPath }}</code>
+        （{{ wsInfo.kbExists ? '存在' : '不存在' }}，xlsx {{ wsInfo.xlsxCount }} 个<template v-if="wsInfo.xlsx.length">：{{ wsInfo.xlsx.join('、') }}</template>）
+      </p>
+      <p>
+        <input v-model="kbMigrateSrc" placeholder="旧 kb 目录完整路径（引擎所在机器）" style="width:min(520px,80%)" />
+        <button class="btn small" style="margin-left:8px" @click="doMigrateKb">📥 迁移旧题库到默认位置</button>
+      </p>
+      <p v-if="wsMsg" class="hint">{{ wsMsg }}</p>
     </div>
   </section>
 </template>

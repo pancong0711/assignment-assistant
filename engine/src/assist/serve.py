@@ -181,9 +181,9 @@ def installer_for(item: str) -> tuple[list[str] | None, str | None]:
             return ["bash", str(fonts_sh)], None
         return None, ["fonts-download.sh 未找到（仓库 tools/）—— CHRIST 自绘示意；Windows 请自备 simsun.ttc/simkai.ttf"]
     if item == "uv":
-        return None, [f"未安装 uv：Windows 运行 tools/install.ps1，或 bash：curl -LsSf https://astral.sh/uv/install.sh | sh"]
+        return [py, "-m", "pip", "install", "--user", "uv"], None
     if item == "kb_init":
-        return None, ["假题库示例：请从 PWA 题库编辑器「载入示例数据」后导出 zip，解压至 workspace/kb/"]
+        return [py, "-m", "assist.cli", "bootstrap", "--no-sync", "-w", str(_ws())], None
     if item == "tinytex":
         return None, ["TinyTeX 请使用设置中心专用栏或 CLI `assist tex install`（/install/tinytex 为服务端直装通道）"]
     raise ValueError(f"unknown install item {item}")
@@ -201,9 +201,9 @@ def _doctor_checks(ws: Path) -> list[dict]:
                          "Python (≥3.11)", f"Python {sys.version.split()[0]}",
                          {"type": "guide"}))
     uv_ok = bool(shutil.which("uv"))
-    checks.append(_check("uv", "green" if uv_ok else "red", "uv（依赖管理）",
-                         "已安装" if uv_ok else "未安装（start 脚本会自动装）",
-                         {"type": "guide"}))
+    checks.append(_check("uv", "green" if uv_ok else "yellow", "uv（可选·依赖安装加速）",
+                         "已安装" if uv_ok else "未安装；可用 pip 快速修复，或让 start 脚本自动安装",
+                         {} if uv_ok else {"type": "install", "install": "uv"}))
     missing: list[str] = []
     for mod in ("openpyxl", "reportlab", "loguru", "httpx", "PIL"):
         try:
@@ -242,9 +242,12 @@ def _doctor_checks(ws: Path) -> list[dict]:
     checks.append(_check("settings", "green" if ok_settings else "yellow",
                          "settings.local.json",
                          str(ws / "settings.local.json") if ok_settings else "未生成（assist bootstrap 可生成）", {}))
-    ok_kb = (ws / "kb" / "problems.xlsx").exists()
+    kb_dir = ws / "kb"
+    kb_xlsx = sorted(p.name for p in kb_dir.glob("*.xlsx")) if kb_dir.is_dir() else []
+    ok_kb = len(kb_xlsx) > 0
     checks.append(_check("kb", "green" if ok_kb else "yellow", "kb 题库",
-                         "kb/problems.xlsx（真实题库不入仓库）", {} if ok_kb else {"type": "guide"}))
+                         f"{kb_dir}；xlsx={len(kb_xlsx)}" + (f"（{', '.join(kb_xlsx[:5])}）" if kb_xlsx else "（缺失，可创建默认题库）"),
+                         {} if ok_kb else {"type": "install", "install": "kb_init"}))
     # D74-7：云同步/网盘占用（只提示，不阻塞）
     try:
         from .xxt.sync import detect as _detect_sync
@@ -948,6 +951,22 @@ class Handler(BaseHTTPRequestHandler):
                                    journal_params=ids)
             self._json({"ok": True, "job_id": job_id, "mode": "send" if payload.get("send") else "dry-run"})
             return
+        if u.path == "/workspace/bootstrap":
+            from .xxt.workspace_ops import create_default_kb
+            self._json(create_default_kb(Path(self.ws).resolve()))
+            return
+        if u.path == "/kb/migrate":
+            payload: dict = {}
+            try:
+                length = int(self.headers.get("Content-Length") or 0)
+                if length:
+                    payload = json.loads(self.rfile.read(length).decode("utf-8")) or {}
+            except Exception as exc:  # noqa: BLE001
+                self._json({"ok": False, "error": f"bad json: {exc}"}, 400)
+                return
+            from .xxt.workspace_ops import migrate_kb
+            self._json(migrate_kb(Path(self.ws).resolve(), str(payload.get("srcDir") or "")))
+            return
         if u.path == "/xxt/notice/attachment-whitelist":
             payload: dict = {}
             try:
@@ -1302,6 +1321,17 @@ class Handler(BaseHTTPRequestHandler):
             from .xxt.allowlist import read_allowlist
             self._json({"ok": True, "items": read_allowlist(Path(self.ws).resolve())})
             return
+        elif u.path == "/xxt/work/class-works":
+            from .xxt.work import list_class_works
+            q = urllib.parse.parse_qs(u.query)
+            cid = (q.get("courseId") or [""])[0]
+            kid = (q.get("classId") or [""])[0]
+            cpi = (q.get("cpi") or ["0"])[0]
+            if not cid or not kid:
+                self._json({"ok": False, "error": "courseId/classId 必填"}, 400)
+                return
+            self._json(list_class_works(_xxt_home() / "xxt-storage.json", cid, kid, cpi))
+            return
         elif u.path == "/xxt/work/folders":
             from .xxt.work import list_folders
             q = urllib.parse.parse_qs(u.query)
@@ -1451,6 +1481,10 @@ class Handler(BaseHTTPRequestHandler):
                         "sources_used": {"pip_index": os.environ.get('UV_DEFAULT_INDEX') or 'tuna',
                                           "python_dl": os.environ.get('UV_PYTHON_INSTALL_MIRROR') or 'official',
                                           "official": os.environ.get('CN_OFFICIAL') == 'official'}})
+        elif u.path == "/workspace/info":
+            from .xxt.workspace_ops import workspace_info
+            self._json(workspace_info(Path(self.ws).resolve()))
+            return
         elif u.path == "/status":
             from . import get_commit
             self._json({
