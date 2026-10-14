@@ -45,6 +45,16 @@ function fromPersisted(raw: string): Record<KbKind, KbBook> | null {
   }
 }
 
+function kindFromXlsxName(fname: string): KbKind | null {
+  const stem = fname.replace(/\.xlsx$/i, '')
+  const kinds = KB_KINDS as readonly string[]
+  if (kinds.includes(stem)) return stem as KbKind
+  for (const k of kinds) {
+    if (stem === `${k}-example` || stem === `example-${k}`) return k as KbKind
+  }
+  return null
+}
+
 export const useKbStore = defineStore('kb', {
   state: () => ({
     // 初始：无任何本地记录时自动载入合成示例（快速上手体验；载入教师数据后即被替换）
@@ -94,12 +104,9 @@ export const useKbStore = defineStore('kb', {
     },
     /** 读取教师选择的 xlsx 文件（File input 方式，Firefox/Safari 亦可） */
     async loadXlsxFile(file: File): Promise<{ ok: boolean; message: string }> {
-      const stem = file.name.replace(/\.xlsx$/i, '')
-      const kind = (KB_KINDS as readonly string[]).includes(stem)
-        ? (stem as KbKind)
-        : null
+      const kind = kindFromXlsxName(file.name)
       if (!kind) {
-        return { ok: false, message: `无法从文件名识别 kind（${file.name}）。请使用 problems.xlsx / copy.xlsx / qa.xlsx / distinguish.xlsx / innovation.xlsx / translation.xlsx 命名。` }
+        return { ok: false, message: `无法从文件名识别 kind（${file.name}）。请使用 problems.xlsx / problems-example.xlsx 等命名。` }
       }
       const book = await readKbXlsx(file, kind)
       this.books[kind] = book
@@ -114,14 +121,54 @@ export const useKbStore = defineStore('kb', {
       this.dirty = true
       this.persist()
     },
-    connectWorkspaceDir(): Promise<boolean> {
-      return pickDirectory().then(async (dir) => {
-        if (!dir) return false
-        await connectKbDir(dir)
-        this.fsDirName = dir.name
-        this.origin = this.origin === 'none' ? 'fs' : this.origin
-        return true
+    async connectWorkspaceDir(): Promise<boolean> {
+      const dir = await pickDirectory()
+      if (!dir) return false
+      await connectKbDir(dir)
+      this.fsDirName = dir.name
+      this.origin = this.origin === 'none' ? 'fs' : this.origin
+      await this.loadWorkspaceKbFiles(dir)
+      return true
+    },
+    /** D82：从 workspace/kb 目录读取所有可识别的 xlsx（支持多个 xlsx）。 */
+    async loadWorkspaceKbFiles(dirHandle: FileSystemDirectoryHandle): Promise<{ ok: boolean; loaded: string[]; skipped: string[] }> {
+      const loaded: string[] = []
+      const skipped: string[] = []
+      let kbDir: FileSystemDirectoryHandle | null = null
+      try { kbDir = await dirHandle.getDirectoryHandle('kb') } catch { kbDir = null }
+      const roots = kbDir ? [kbDir] : [dirHandle]
+      const files: File[] = []
+      for (const root of roots) {
+        // @ts-expect-error FileSystemDirectoryHandle.values 在部分 TS lib 中缺失
+        for await (const entry of root.values()) {
+          const e = entry as FileSystemFileHandle
+          if (e.kind !== 'file' || !/\.xlsx$/i.test(e.name)) continue
+          const kind = kindFromXlsxName(e.name)
+          if (!kind) { skipped.push(e.name); continue }
+          try { files.push(await e.getFile()) } catch { skipped.push(e.name) }
+        }
+      }
+      // exact 文件名优先于 -example
+      files.sort((a, b) => {
+        const ae = /-example\.xlsx$/i.test(a.name) || /^example-/.test(a.name)
+        const be = /-example\.xlsx$/i.test(b.name) || /^example-/.test(b.name)
+        return Number(ae) - Number(be)
       })
+      for (const f of files) {
+        const kind = kindFromXlsxName(f.name)
+        if (!kind) continue
+        this.books[kind] = await readKbXlsx(f, kind)
+        loaded.push(`${kind}(${f.name})`)
+      }
+      this.origin = loaded.length ? 'fs' : this.origin
+      if (loaded.length) this.persist()
+      return { ok: loaded.length > 0, loaded, skipped }
+    },
+    /** D82：示例数据导出为 <kind>-example.xlsx。 */
+    downloadExample(kind: KbKind) {
+      const bin = writeKbXlsx(this.books[kind])
+      downloadData(bin, `${kind}-example.xlsx`,
+        'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet')
     },
     /** 章级操作 */
     addChapter(kind: KbKind, name: string) {

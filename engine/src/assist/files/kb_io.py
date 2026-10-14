@@ -90,14 +90,36 @@ def read_translation(xlsx_path: Path, kb_dir: Path) -> dict[str, list[dict]]:
     return {"translation": entries}
 
 
+_KNOWN_KINDS = ("problems", "copy", "qa", "summary", "distinguish",
+                 "innovation", "translation", "copySp", "copyOnly")
+
+
+def _kind_of_xlsx(fn: Path) -> "tuple[str, bool]":
+    """返回 (kind, is_example)；兼容 problems-example.xlsx / example-problems.xlsx。"""
+    stem = fn.stem
+    if stem in _KNOWN_KINDS:
+        return stem, False
+    for k in _KNOWN_KINDS:
+        if stem == f"{k}-example" or stem == f"example-{k}":
+            return k, True
+    return stem, False
+
+
 def read_kb(kb_dir: Path) -> dict[str, dict[str, list[dict]]]:
-    """读全部题库：{"problems": {...}, "copy": {...}, ...}；文件名去 .xlsx 即 kind。"""
-    out = {}
+    """读全部题库；同名 exact 文件优先于 *-example/example-* 示例文件。"""
+    out: dict[str, dict[str, list[dict]]] = {}
+    examples: dict[str, Path] = {}
     for fn in sorted(kb_dir.glob("*.xlsx")):
         if fn.name.startswith("~$"):
             continue
-        kind = fn.stem
+        kind, is_example = _kind_of_xlsx(fn)
+        if is_example:
+            examples.setdefault(kind, fn)
+            continue
         out[kind] = read_translation(fn, kb_dir) if kind == "translation" else read_xlsx(fn, kb_dir)
+    for kind, fn in examples.items():
+        if kind not in out:
+            out[kind] = read_translation(fn, kb_dir) if kind == "translation" else read_xlsx(fn, kb_dir)
     return out
 
 

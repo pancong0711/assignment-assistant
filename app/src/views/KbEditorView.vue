@@ -147,6 +147,7 @@ function addChapter() {
         <label class="btn as-label btn-file" for="kb-file">载入教师 xlsx…</label>
         <input type="file" accept=".xlsx" hidden id="kb-file" @change="selectXlsx" />
         <button class="btn" style="margin-left:8px" @click="loadDemoData">载入示例数据</button>
+        <button class="btn" style="margin-left:8px" @click="kb.downloadExample(activeKind)">⬇ 下载示例 xlsx（{{ activeKind }}-example.xlsx）</button>
         <button class="btn" style="margin-left:8px" :disabled="!caps.directoryPicker" @click="connectWorkspace"
           :title="caps.insecure ? writeHint : '需 Chrome/Edge（File System Access API），本机 localhost/https 打开'">
           {{ getKbDirHandle() ? `工作目录：${kb.fsDirName}` : '连接本地题库目录（Chrome/Edge）…' }}

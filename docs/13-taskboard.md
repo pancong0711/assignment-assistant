@@ -1366,3 +1366,15 @@ applyManualTranslation/setTranslationRatio 中 setTranslationRatio 保留——�
 - 设置中心新增 Workspace/kb 管理（路径显示/默认判定/创建默认/迁移整个旧 kb）；
 - uv 降级为可选+黄灰+pip 修复；TeX 合并为一个 xelatex 可选检查；kb 检查扫描全部 xlsx 并显示路径；
 - 状态：需求已确认，按顺序实现。
+
+---
+
+## D82 · kb 多文件读取/题目排序/插图参数/草稿修复/上传试跑/batch（2026-10-14）
+
+- 主需求单：`docs/34-D82-kb-read-order-image-upload-batch.md`；
+- kb：连接 workspace 自动扫描 kb/*.xlsx；兼容 *-example.xlsx；示例导出改 `*-example.xlsx`；
+- 题目顺序：拖拽+上下移，写回 taskpad items/ids；
+- 插图：可调大小与位置（默认右上），三端同参；
+- 新建草稿 PWA 修复；
+- 上传：目标班单份作业做“期末补交”试跑；
+- LLM：两套模型 + 一般/batch 调用；晚间协作两步批阅。

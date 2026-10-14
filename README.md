@@ -40,6 +40,7 @@
 - `docs/31-D79-run-append-images-notice-attachments-work-publish.md` — **D79 run 增补/图片更新/通知通用附件/发布作业（讨论稿）**
 - `docs/32-D80-grade-upload-collab-test-plan.md` — **D80 LLM 两步批阅 + 上传协作测试计划（白名单）**
 - `docs/33-D81-workspace-kb-doctor-published-cache.md` — **D81 班级发布判定缓存/Workspace-kb 管理/体检项清理**
+- `docs/34-D82-kb-read-order-image-upload-batch.md` — **D82 kb 多文件读取/题目排序/插图参数/草稿修复/上传试跑/batch**
 - `docs/16-xuexitong-integration.md` — **阶段6 学习通整合任务需求单**（登录/读取/下载/上传/发布）
 - `_legacy/` — 原始两项目解档（仅本地参考，已被 gitignore，永不推送）
 
