@@ -160,9 +160,11 @@ def _receipt_dir(home=None) -> Path:
 
 
 def _editor_attachment_count(page) -> int:
+    """统计编辑器里的附件/图片块；PDF 会插入 editor-iframe，图片插入 drag-image-wrap。"""
     try:
-        content = page.evaluate("UE.getEditor('container').getContent()")
-        return len(re.findall(r'class=\"editor-iframe\"', content or ""))
+        content = page.evaluate("UE.getEditor('container').getContent()") or ""
+        return (len(re.findall(r'class=\"editor-iframe\"', content))
+                + len(re.findall(r'class=\"drag-image-wrap\"', content)))
     except Exception:
         return -1
 

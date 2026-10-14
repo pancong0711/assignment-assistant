@@ -332,3 +332,15 @@ assist xxt work-publish --course <id> --work-library-id <id>
 - 修复：`work-list` 改用学习通 `intoFolder` 的真实 URL 契约
   （`courseid&directoryid&cpi&from&topicid&backurl`），并过滤 `type=0` 的文件夹条目，
   「已有作业」只显示当前文件夹下的作业。
+
+## J · 通知附件格式与图片附件验证（2026-10-14）
+
+- 学习通新建通知页「附件」按钮的 WebUploader hidden input **没有 accept 扩展名限制**；
+- 真机 dry-run 验证：
+  - PDF：上传成功，插入 `editor-iframe`（附件块）；
+  - PNG 图片：上传成功（pan-yz upload/v2 200），插入 `drag-image-wrap` / `editor-img`（内联图片块）；
+- engine 原先只按 `editor-iframe` 判断附件成功，因此图片会被误判失败；已改为同时统计
+  `editor-iframe` 与 `drag-image-wrap`；
+- CLI/PWA 当前允许的通知附件后缀：pdf/doc/docx/jpg/jpeg/png/webp/gif；
+- 是否完全去掉后缀白名单待用户确认；平台 input 本身不限制，但建议只放开常用格式以避免
+  平台对不常见格式的处理不一致。
