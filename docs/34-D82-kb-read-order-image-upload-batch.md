@@ -125,3 +125,15 @@ LLMClient.batch_fetch(...)    # 取回
 - 题目顺序、插图大小/位置可调且三端一致；
 - batch/普通两种 LLM 调用可用；
 - 上传仅落在白名单班级。
+
+## 实施进度（2026-10-14）
+
+- D82-A：已完成 kb 目录多文件读取 + `*-example.xlsx` 兼容 + 示例导出按钮；
+- D82-B：已完成 items 拖拽 + 上/下移 + 分组内题号上/下移（SheetContentView）；
+- D82-C：已完成全局题图 `figure.scale` / `figure.pos`：
+  - PWA「作业纸版式」新增缩放滑块与位置下拉（右上/左上/居中）；
+  - 引擎 PDF `layout` 使用 scale + hAlign；
+  - PWA HTML 预览 `.q-img` 同步 max-height/align-self；
+- D82-D：PWA 新建草稿后解析 job JSON 中的 workLibraryId、强制刷新并自动选中；
+- D82-F：LLM 支持 per-step base_url/api_key/model + `batch_chat` 通用批量调用；
+- 待做：D82-E 上传试跑（晚间）、provider 专用 batch 端点适配。

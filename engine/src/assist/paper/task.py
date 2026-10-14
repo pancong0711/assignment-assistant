@@ -62,6 +62,9 @@ def sheets_from_task(task_path: Path, ws: Path, out_dir: Path | None = None,
     lay = task.get("layout", {})
     orientation = lay.get("orientation", "portrait")
     title = lay.get("header", {}).get("title", title_default)
+    fig = lay.get("figure") or {}
+    figure_scale = float(fig.get("scale") or 1.0)
+    figure_pos = str(fig.get("pos") or "rt")
 
     roster_fn = ws / task.get("class_dir", "classes") / "roster" / f"{task['id']}-roster.xlsx"
     if not roster_fn.parent.exists():
@@ -93,6 +96,8 @@ def sheets_from_task(task_path: Path, ws: Path, out_dir: Path | None = None,
         per_page=lay.get("per_page"),
         grid_rows=lay.get("grid_rows"),
         grid_cols=lay.get("grid_cols"),
+        figure_scale=figure_scale,
+        figure_pos=figure_pos,
     )
 
 

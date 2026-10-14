@@ -298,8 +298,17 @@ async function createDraft() {
       title: draftTitle.value.trim(), stemHtml: draftStem.value.trim(),
       directoryId: folderMap.value[c.courseId]?.directoryId || '0',
     })
-    await poll(jobId)
+    const res = await poll(jobId)
+    const all = res.lines.join('\n')
+    const m = all.match(/"workLibraryId":\s*"([^"]+)"/)
     await loadWorks(true)
+    if (res.ok && m) {
+      workPick.value = m[1]
+      await loadDetail()
+      msg.value = `作业草稿已创建并选中：${draftTitle.value.trim()}`
+    } else {
+      msg.value = res.ok ? '作业草稿已创建，请刷新作业库查看。' : `新建失败：${all.slice(-300)}`
+    }
   } catch (e) { busy.value = false; msg.value = `新建失败：${String(e)}` }
 }
 async function publishWork(send: boolean) {
@@ -341,7 +350,7 @@ function appendLog(line: string) {
   if (lines.length > 400) lines.splice(0, lines.length - 400)
 }
 
-async function poll(jobId: string) {
+async function poll(jobId: string): Promise<{ ok: boolean; lines: string[] }> {
   for (let i = 0; i < 160; i++) {
     const job = await fetchXxtLoginJob(engUrl.value, tok.value, jobId)
     const lines = job.lines || []
@@ -366,12 +375,13 @@ async function poll(jobId: string) {
         msg.value = `任务结束：${last.slice(-220) || job.status}`
       }
       busy.value = false
-      return
+      return { ok: !(job.returncode && job.returncode !== 0), lines }
     }
     await new Promise(r => setTimeout(r, 1500))
   }
   busy.value = false
   msg.value = '任务超时，请刷新后查看。'
+  return { ok: false, lines: logLines.value }
 }
 
 const folderCur = computed(() => {

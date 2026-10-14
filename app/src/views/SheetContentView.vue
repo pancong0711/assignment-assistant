@@ -24,6 +24,8 @@ const status = ref('')
 const selKind = ref<KbKind>('problems')
 const selChap = ref('')
 const rowFilter = ref('')
+const dragItem = ref<number | null>(null)
+function onDropItem(target: number) { const src = dragItem.value; dragItem.value = null; if (src === null || src === target) return; const arr = pad.current.items; const [moved] = arr.splice(src, 1); arr.splice(target, 0, moved) }
 const selectedIds = ref<string[]>([])
 const itemTag = ref('')
 
@@ -202,9 +204,24 @@ async function downloadBatchZip() {
 
         <h3>② 已选组（items）</h3>
         <ol style="font-size:13px; padding-left:18px; margin:4px 0">
-          <li v-for="(it, idx) in pad.current.items" :key="idx" style="margin-bottom:4px">
+          <li v-for="(it, idx) in pad.current.items" :key="idx" style="margin-bottom:6px"
+              draggable="true"
+              @dragstart="dragItem = idx" @dragover.prevent
+              @drop="onDropItem(idx)">
             {{ it.kb }} / {{ it.chap }} / tag={{ it.tag || '—' }} · {{ it.ids.length }} 题
+            <button class="btn small" style="margin-left:6px" :disabled="idx === 0" @click="pad.moveItem(idx, -1)">↑</button>
+            <button class="btn small" style="margin-left:2px" :disabled="idx === pad.current.items.length - 1" @click="pad.moveItem(idx, 1)">↓</button>
             <button class="btn small" style="margin-left:6px" @click="pad.removeItem(idx)">移除</button>
+            <details style="margin-left:18px">
+              <summary class="hint">题号顺序（{{ it.ids.join('、') }}）</summary>
+              <div style="margin:4px 0">
+                <span v-for="(id, i) in it.ids" :key="id" style="display:inline-block; margin:2px 6px 2px 0">
+                  {{ id }}
+                  <button class="btn small" :disabled="i === 0" @click="pad.moveId(idx, i, -1)">↑</button>
+                  <button class="btn small" :disabled="i === it.ids.length - 1" @click="pad.moveId(idx, i, 1)">↓</button>
+                </span>
+              </div>
+            </details>
           </li>
         </ol>
         <p class="hint" v-if="!pad.current.items.length">尚未选择题目。</p>

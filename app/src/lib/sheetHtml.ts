@@ -250,14 +250,19 @@ function wmLayerHtml(wm: WmResolved[], pageText: boolean, pageN: number): string
 }
 
 /** B3/D46-5：题图渲染——有 img_path 且 figAssets 命中 basename → 真图；否则占位框（现状）。 */
-function figHtml(imgPath?: string, figAssets?: Record<string, string>): string {
+function figHtml(imgPath?: string, figAssets?: Record<string, string>,
+                 figure?: { scale?: number; pos?: 'lt' | 'rt' | 'center' }): string {
   if (!imgPath) return ''
   const base = imgPath.split('/').pop() ?? imgPath
   const hit = figAssets?.[base]
+  const scale = Math.max(0.2, Math.min(2, Number(figure?.scale ?? 1)))
+  const pos = figure?.pos ?? 'rt'
+  const align = pos === 'rt' ? 'flex-end' : pos === 'lt' ? 'flex-start' : 'center'
+  const style = `max-height:${(52 * scale).toFixed(1)}mm; align-self:${align}`
   if (hit && hit.startsWith('data:')) {
-    return `<img class="q-img" src="${escapeHtml(hit)}" alt="题图">`
+    return `<img class="q-img" style="${style}" src="${escapeHtml(hit)}" alt="题图">`
   }
-  return `<div class="q-img-ph">[题图：${escapeHtml(imgPath)}]</div>`
+  return `<div class="q-img-ph" style="${style}">[题图：${escapeHtml(imgPath)}]</div>`
 }
 
 /* ---------- KaTeX（与模板同一段 include + 同一段渲染脚本） ---------- */
@@ -439,7 +444,7 @@ function pageBlockHtml(pad: Taskpad, items: SheetHtmlItem[], stu: SheetHtmlStude
     ${frames}${items.map((fr) => `<div class="sheet-frame">
       <div class="q-id">${escapeHtml(fr.id)}${fr.tag ? ` <span class="q-tag">【${escapeHtml(fr.tag)}】</span>` : ''}</div>
       <div class="q-content">${escapeHtml(fr.content)}</div>
-      ${figHtml(fr.imgPath, figAssets)}
+      ${figHtml(fr.imgPath, figAssets, pad.layout.figure)}
       ${(includeSolution && fr.solution) ? `<div class="q-solution">参考答案：${escapeHtml(fr.solution)}</div>` : ''}
     </div>`).join('\n    ')}
   </div>

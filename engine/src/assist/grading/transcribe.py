@@ -92,7 +92,7 @@ def transcribe_student(client: LLMClient, images: list[Path], student: str,
                 system_prompt=TRANSCRIPTION_PROMPT,
                 user_text=TRANSCRIBE_USER_TEXT,
                 image_paths=[str(p) for p in images],
-                model=model, temperature=0.1,
+                model=model, temperature=0.1, step="transcription",
             )
             data = parse_llm_json(raw)
             break

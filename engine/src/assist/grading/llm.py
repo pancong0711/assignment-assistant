@@ -70,6 +70,7 @@ class LLMClient:
             if ws is None:
                 raise LLMConfigError("LLMClient 需要 settings 或 workspace 参数")
             settings = load_llm_settings(Path(ws))
+        self._llm_settings = dict(settings or {})
         self.base_url = str(settings.get("base_url") or DEFAULT_BASE_URL).rstrip("/")
         self.api_key = str(settings.get("api_key") or "")
         self.model = settings.get("model") or DEFAULT_MODEL
@@ -79,14 +80,30 @@ class LLMClient:
         self.timeout = float(settings.get("timeout_s", 120))
         self.retries = int(settings.get("retries", 2))  # 失败重试次数（默认 2）
 
+    def _step_cfg(self, step: str | None) -> dict:
+        """D82-F：llm.transcription / llm.evaluation 可各自覆盖 base_url/api_key/model。"""
+        if not step:
+            return {}
+        raw = self._llm_settings.get(step)
+        return dict(raw) if isinstance(raw, dict) else {}
+
+    def _step_base_key(self, step: str | None) -> "tuple[str, str, str]":
+        cfg = self._step_cfg(step)
+        base = str(cfg.get("base_url") or self.base_url).rstrip("/")
+        key = str(cfg.get("api_key") or self.api_key)
+        model = str(cfg.get("model") or (self.transcription_model if step == "transcription"
+                                         else self.evaluation_model))
+        return base, key, model
+
     # ---- core request -------------------------------------------------
     def request(self, messages: list[dict], model: str | None = None,
                 temperature: float | None = None,
                 response_format: dict | None = None,
-                max_tokens: int = 8192) -> dict:
+                max_tokens: int = 8192, step: str | None = None) -> dict:
         """发送请求并返回原始响应 dict；重试 retries 次，错误信息脱敏。"""
+        base_url, api_key, step_model = self._step_base_key(step)
         payload = {
-            "model": model or self.evaluation_model,
+            "model": model or step_model,
             "messages": messages,
             "temperature": self.temperature if temperature is None else temperature,
             "max_tokens": max_tokens,
@@ -98,8 +115,8 @@ class LLMClient:
         for attempt in range(self.retries + 1):
             try:
                 resp = httpx.post(
-                    f"{self.base_url}/chat/completions",
-                    headers={"Authorization": f"Bearer {self.api_key}",
+                    f"{base_url}/chat/completions",
+                    headers={"Authorization": f"Bearer {api_key}",
                              "Content-Type": "application/json"},
                     json=payload, timeout=self.timeout,
                 )
@@ -134,19 +151,21 @@ class LLMClient:
     # ---- convenience ---------------------------------------------------
     def chat(self, system_prompt: str, user_text: str, model: str | None = None,
              temperature: float | None = None,
-             response_format: dict | None = None, max_tokens: int = 8192) -> str:
+             response_format: dict | None = None, max_tokens: int = 8192,
+             step: str = "evaluation") -> str:
         data = self.request(
             [{"role": "system", "content": system_prompt},
              {"role": "user", "content": user_text}],
             model=model or self.evaluation_model,
             temperature=temperature, response_format=response_format,
-            max_tokens=max_tokens)
+            max_tokens=max_tokens, step=step)
         return self.extract_text(data)
 
     def chat_with_images(self, system_prompt: str, user_text: str,
                          image_paths: list[str | Path], model: str | None = None,
                          temperature: float | None = None,
-                         max_tokens: int = 8192) -> str:
+                         max_tokens: int = 8192,
+                         step: str = "transcription") -> str:
         """多模态：图片 base64 data-url + 文本（迁移自 client.chat_with_images）。"""
         content: list[dict] = [{"type": "text", "text": user_text}]
         for img_path in image_paths:
@@ -162,5 +181,30 @@ class LLMClient:
             [{"role": "system", "content": system_prompt},
              {"role": "user", "content": content}],
             model=model or self.transcription_model, temperature=temperature,
-            max_tokens=max_tokens)
+            max_tokens=max_tokens, step=step)
         return self.extract_text(data)
+
+    # ---- D82-F: batch API -------------------------------------------------
+    def batch_chat(self, items: list[dict], step: str = "evaluation",
+                   workers: int = 3) -> list[str]:
+        """通用批量调用：items=[{system_prompt,user_text,model?,response_format?}]。
+
+        当前实现以受控并发调用普通 chat；后续 provider batch 端点可替换实现，
+        调用方不需要改。
+        """
+        from concurrent.futures import ThreadPoolExecutor
+        out: list[str] = [""] * len(items)
+        def one(i: int, it: dict) -> "tuple[int,str]":
+            txt = self.chat(
+                str(it.get("system_prompt") or ""),
+                str(it.get("user_text") or ""),
+                model=it.get("model"),
+                response_format=it.get("response_format"),
+                max_tokens=int(it.get("max_tokens") or 8192),
+                step=str(it.get("step") or step),
+            )
+            return i, txt
+        with ThreadPoolExecutor(max_workers=max(1, min(8, int(workers or 3)))) as ex:
+            for i, txt in ex.map(lambda p: one(*p), list(enumerate(items))):
+                out[i] = txt
+        return out

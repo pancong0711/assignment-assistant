@@ -170,7 +170,8 @@ def make_pdf(students: list[dict], items_of_student, out_dir: Path,
              watermark: bool = True,
              user_cfg: dict | None = None,
              per_page: int | None = None,
-             grid_rows: int | None = None, grid_cols: int | None = None) -> list[Path]:
+             grid_rows: int | None = None, grid_cols: int | None = None,
+             figure_scale: float = 1.0, figure_pos: str = "rt") -> list[Path]:
     """students: [{name, number, class}]；items_of_student(i) → [(content, img, tag)]。
 
     D61：per_page = 每页题数 N；grid_rows/grid_cols = 显式网格。
@@ -198,7 +199,7 @@ def make_pdf(students: list[dict], items_of_student, out_dir: Path,
             onPage=_make_onpage(stu, title, notes_prefix, orientation, n_pages,
                                 per_page=n, dividers_ok=g["capacity"] > 1,
                                 grid_rows=grid_rows, grid_cols=grid_cols))])
-        flow = _flow_by_order(items, frames, n)
+        flow = _flow_by_order(items, frames, n, figure_scale, figure_pos)
         doc.build(flow)
 
         if watermark:
@@ -221,7 +222,7 @@ def make_pdf(students: list[dict], items_of_student, out_dir: Path,
 
 # ---------------- flow ----------------
 
-def _flow_by_order(items, frames, per_page: int):
+def _flow_by_order(items, frames, per_page: int, figure_scale: float = 1.0, figure_pos: str = 'rt'):
     """D61：每页按 per_page 切题；frame 列表已按阅读顺序排好，多出 frame 留空。
 
     竖版 row-major / 横版 col-major 的 frame 顺序由 grid_frames 保证；
@@ -234,7 +235,7 @@ def _flow_by_order(items, frames, per_page: int):
         for k, (content, img_path, _tag) in enumerate(page_items):
             f = frames[k]
             if img_path and Path(img_path).exists():
-                flow.append(_fitted_image(img_path, f.width, f.height))
+                flow.append(_fitted_image(img_path, f.width, f.height, figure_scale, figure_pos))
             else:
                 flow.append(Paragraph(content, _contents_style()))
             if k < len(page_items) - 1:
@@ -244,7 +245,7 @@ def _flow_by_order(items, frames, per_page: int):
     return flow
 
 
-def _portrait_flow(items, frames):
+def _portrait_flow(items, frames, figure_scale: float = 1.0, figure_pos: str = 'rt'):
     """竖版 flow：per_page 行各一题（缺省 1 行=每题一页，基线沿用）。"""
     per_page = len(frames)
     flow = []
@@ -254,7 +255,7 @@ def _portrait_flow(items, frames):
         for k, (content, img_path, _tag) in enumerate(rows):
             f = frames[k]
             if img_path and Path(img_path).exists():
-                flow.append(_fitted_image(img_path, f.width, f.height))
+                flow.append(_fitted_image(img_path, f.width, f.height, figure_scale, figure_pos))
             else:
                 flow.append(Paragraph(content, _contents_style()))
             if k < len(rows) - 1:

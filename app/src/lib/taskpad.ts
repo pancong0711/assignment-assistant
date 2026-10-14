@@ -39,6 +39,8 @@ export interface TaskpadLayout {
   grid_rows?: number
   /** D61：显式网格列数；缺省（旧任务）按 orientation+per_page 兼容推导 */
   grid_cols?: number
+  /** D82-C：题图缩放与位置（全局，scale=1 默认；pos=lt/rt/center） */
+  figure?: { scale?: number; pos?: 'lt' | 'rt' | 'center' }
   header: TaskpadLayoutHeader
   footer: TaskpadLayoutFooter
 }
@@ -146,6 +148,7 @@ export function emptyTaskpad(): Taskpad {
       grid_cols: 2,
       header: { title: '大学物理 作业纸' },
       footer: {},
+      figure: { scale: 1, pos: 'rt' },
     },
     items: [],
     watermark: { enabled: true, style: 'default', pageText: true, items: [] },

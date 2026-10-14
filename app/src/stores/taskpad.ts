@@ -43,6 +43,21 @@ export const useTaskpadStore = defineStore('taskpad', {
     removeItem(idx: number) {
       this.current.items.splice(idx, 1)
     },
+    /** D82-B：分组顺序上移/下移 */
+    moveItem(idx: number, dir: -1 | 1) {
+      const j = idx + dir
+      if (idx < 0 || j < 0 || idx >= this.current.items.length || j >= this.current.items.length) return
+      const arr = this.current.items
+      ;[arr[idx], arr[j]] = [arr[j], arr[idx]]
+    },
+    /** D82-B：分组内题号顺序上移/下移 */
+    moveId(itemIdx: number, idIdx: number, dir: -1 | 1) {
+      const item = this.current.items[itemIdx]
+      if (!item) return
+      const j = idIdx + dir
+      if (idIdx < 0 || j < 0 || idIdx >= item.ids.length || j >= item.ids.length) return
+      ;[item.ids[idIdx], item.ids[j]] = [item.ids[j], item.ids[idIdx]]
+    },
     setOrientation(orientation: 'portrait' | 'landscape') {
       this.current.layout.orientation = orientation
       const n = orientation === 'landscape' ? 2 : 1

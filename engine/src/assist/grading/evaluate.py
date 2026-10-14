@@ -132,7 +132,7 @@ def analyze(client: LLMClient, user_prompt: str, model: str | None = None,
             raw = client.chat(system_prompt=ANALYSIS_PROMPT, user_text=user_prompt,
                               model=model, temperature=0.2,
                               response_format={"type": "json_object"},
-                              max_tokens=_mt)
+                              max_tokens=_mt, step="evaluation")
             return parse_llm_json(raw)
         except json.JSONDecodeError as e:
             if "Unterminated string" in str(e) and _mt < 262144:

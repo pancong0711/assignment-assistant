@@ -97,6 +97,9 @@ const footerText = ref('')
 
 watch(headTitle, (v) => { pad.current.layout.header.title = v })
 watch(footerText, (v) => { pad.current.layout.footer.text = v })
+function figureCfg() { return pad.current.layout.figure ?? (pad.current.layout.figure = { scale: 1, pos: 'rt' }) }
+function setFigureScale(v: number) { figureCfg().scale = Math.max(0.1, Math.min(2, Number(v) || 1)) }
+function setFigurePos(v: string) { figureCfg().pos = (v as 'lt' | 'rt' | 'center') }
 
 // 从作业纸初始化表单（当前包切换/载入/导入后也同步；③段载入后通过 current.id 触发）
 function syncFromPad() {
@@ -209,6 +212,18 @@ function saveOnly() {
         <p>
           <label class="field">页眉标题：<input type="text" v-model="headTitle" style="width:180px" @change="pad.current.layout.header.title = headTitle" /></label>
           <label class="field">页脚：<input type="text" v-model="footerText" style="width:150px" @change="pad.current.layout.footer.text = footerText" /></label>
+          <label class="field">题图缩放：
+            <input type="range" min="0.2" max="2" step="0.1" :value="figureCfg().scale ?? 1"
+                   @input="setFigureScale(Number(($event.target as HTMLInputElement).value))" />
+            <span class="hint">{{ (figureCfg().scale ?? 1).toFixed(1) }}×</span>
+          </label>
+          <label class="field">题图位置：
+            <select :value="figureCfg().pos ?? 'rt'" @change="setFigurePos(($event.target as HTMLSelectElement).value)">
+              <option value="rt">右上</option>
+              <option value="lt">左上</option>
+              <option value="center">居中</option>
+            </select>
+          </label>
         </p>
         <h3>作业纸头部（docs/04 §1）</h3>
         <p>
