@@ -260,7 +260,7 @@ function figHtml(imgPath?: string, figAssets?: Record<string, string>,
   const align = pos === 'rt' ? 'flex-end' : pos === 'lt' ? 'flex-start' : 'center'
   const style = `max-height:${(52 * scale).toFixed(1)}mm; align-self:${align}`
   if (hit && hit.startsWith('data:')) {
-    return `<img class="q-img" style="${style}" src="${escapeHtml(hit)}" alt="题图">`
+    return `<img class="q-img" src="${escapeHtml(hit)}" style="${style}" alt="题图">`
   }
   return `<div class="q-img-ph" style="${style}">[题图：${escapeHtml(imgPath)}]</div>`
 }
