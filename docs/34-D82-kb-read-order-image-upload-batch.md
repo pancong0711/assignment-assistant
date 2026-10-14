@@ -137,3 +137,13 @@ LLMClient.batch_fetch(...)    # 取回
 - D82-D：PWA 新建草稿后解析 job JSON 中的 workLibraryId、强制刷新并自动选中；
 - D82-F：LLM 支持 per-step base_url/api_key/model + `batch_chat` 通用批量调用；
 - 待做：D82-E 上传试跑（晚间）、provider 专用 batch 端点适配。
+
+## 实施进度补充：题图缩略图自动识别（2026-10-14）
+
+- 连接 workspace 后除读取 kb/*.xlsx 外，还自动扫描：
+  - `<workspace>/kb/fig/`
+  - `<workspace>/fig/`、`<workspace>/kb/figs/`
+- 图片（png/jpg/webp/gif/bmp）写入 `settings.figAssets[basename]`；
+- 题库编辑器行内 `figThumb(img_path)` 直接用 basename 命中并显示缩略图；
+- 作业纸预览/HTML 也复用同一 figAssets；
+- 单图 >5MB 跳过，最多 500 张，避免 localStorage 溢出。

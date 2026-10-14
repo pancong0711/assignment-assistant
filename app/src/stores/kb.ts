@@ -55,6 +55,32 @@ function kindFromXlsxName(fname: string): KbKind | null {
   return null
 }
 
+function fileToDataUrl(file: File): Promise<string> {
+  return new Promise((resolve, reject) => {
+    const r = new FileReader()
+    r.onload = () => resolve(String(r.result ?? ''))
+    r.onerror = () => reject(r.error)
+    r.readAsDataURL(file)
+  })
+}
+
+const FIG_EXTS = /[.](png|jpe?g|webp|gif|bmp)$/i
+
+async function collectFigFiles(dir: FileSystemDirectoryHandle, acc: File[], limit = 500, depth = 0): Promise<void> {
+  if (depth > 4 || acc.length >= limit) return
+  // @ts-expect-error values() 在部分 TS lib 中缺失
+  for await (const entry of dir.values()) {
+    if (acc.length >= limit) return
+    if (entry.kind === 'file') {
+      if (FIG_EXTS.test(entry.name)) {
+        try { acc.push(await (entry as FileSystemFileHandle).getFile()) } catch { /* skip */ }
+      }
+    } else if (depth < 4) {
+      await collectFigFiles(entry as FileSystemDirectoryHandle, acc, limit, depth + 1)
+    }
+  }
+}
+
 export const useKbStore = defineStore('kb', {
   state: () => ({
     // 初始：无任何本地记录时自动载入合成示例（快速上手体验；载入教师数据后即被替换）
@@ -162,6 +188,27 @@ export const useKbStore = defineStore('kb', {
       }
       this.origin = loaded.length ? 'fs' : this.origin
       if (loaded.length) this.persist()
+      // D82：自动扫描 kb/fig（或根 fig）图片 → settings.figAssets，用于缩略图/预览
+      try {
+        const figDirs: FileSystemDirectoryHandle[] = []
+        for (const base of [kbDir, dirHandle]) {
+          if (!base) continue
+          for (const name of ['fig', 'figs']) {
+            try { figDirs.push(await base.getDirectoryHandle(name)) } catch { /* continue */ }
+          }
+        }
+        const figFiles: File[] = []
+        for (const d of figDirs) await collectFigFiles(d, figFiles, 500)
+        if (figFiles.length) {
+          const { useSettingsStore } = await import('./settings')
+          const settings = useSettingsStore()
+          for (const f of figFiles) {
+            if (f.size > 5 * 1024 * 1024) continue
+            try { settings.persistFigAsset(f.name, await fileToDataUrl(f)) } catch { /* skip */ }
+          }
+          loaded.push(`fig×${figFiles.length}`)
+        }
+      } catch { /* 图库扫描失败不影响 xlsx 读取 */ }
       return { ok: loaded.length > 0, loaded, skipped }
     },
     /** D82：示例数据导出为 <kind>-example.xlsx。 */
