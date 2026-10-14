@@ -72,7 +72,7 @@ def validate_targets(targets: list[dict], workspace=None) -> str | None:
     return None
 
 
-def safe_attachment_path(path: str | Path, workspace: Path | str | None = None) -> Path | None:
+def safe_attachment_path(path: str | Path, workspace: Path | str | None = None, allowed_exts=None) -> Path | None:
     """只允许 workspace 下的 pdf/doc/docx 附件。"""
     if workspace is None:
         try:
@@ -100,7 +100,9 @@ def safe_attachment_path(path: str | Path, workspace: Path | str | None = None) 
         rp.relative_to(ws)
     except ValueError:
         return None
-    if rp.suffix.lower() not in ATTACH_SUFFIXES:
+    from .allowlist import normalize_exts, read_notice_attachment_exts
+    allowed = normalize_exts(allowed_exts) if allowed_exts is not None else read_notice_attachment_exts(ws)
+    if rp.suffix.lower().lstrip(".") not in allowed:
         return None
     return rp
 
@@ -403,7 +405,7 @@ def send_notice_from_spec(spec: dict, *, send: bool = False, storage: Path | str
         "results": results,
     }
 
-def save_notice_uploads(workspace, items: list[dict]) -> list[dict]:
+def save_notice_uploads(workspace, items: list[dict], allowed_exts=None) -> list[dict]:
     """D79-B：把 PWA base64 上传的附件保存到 workspace 临时目录。
 
     items: [{name, data_b64}]；返回 [{name, path, size}]。
@@ -418,6 +420,8 @@ def save_notice_uploads(workspace, items: list[dict]) -> list[dict]:
             ws = Path.cwd().resolve()
     else:
         ws = Path(workspace).resolve()
+    from .allowlist import normalize_exts, read_notice_attachment_exts
+    allowed = normalize_exts(allowed_exts) if allowed_exts is not None else read_notice_attachment_exts(ws)
     dest = ws / ".runtime" / "xxt" / "notice-uploads" / time.strftime("%Y%m%d-%H%M%S")
     dest.mkdir(parents=True, exist_ok=True)
     out = []
@@ -425,6 +429,9 @@ def save_notice_uploads(workspace, items: list[dict]) -> list[dict]:
         name = _re.sub(r"[^0-9A-Za-z\u4e00-\u9fff._()（）+\- ]", "_", str(it.get("name") or "file"))[:120]
         if not name:
             name = "file"
+        ext = Path(name).suffix.lower().lstrip(".")
+        if allowed and ext not in allowed:
+            continue
         raw = str(it.get("data_b64") or "")
         if not raw:
             continue

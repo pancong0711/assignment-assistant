@@ -87,3 +87,35 @@ def set_work_folder_default(ws, course_id: str, directory_id: str, name: str = "
     p.parent.mkdir(parents=True, exist_ok=True)
     p.write_text(json.dumps(data, ensure_ascii=False, indent=1), encoding="utf-8")
     return folders[str(course_id)]
+
+DEFAULT_NOTICE_ATTACHMENT_EXTS = ["pdf", "doc", "docx", "jpg", "jpeg", "png", "webp", "gif"]
+
+
+def normalize_exts(raw) -> list[str]:
+    out: list[str] = []
+    for x in raw or []:
+        e = str(x or "").strip().lower().lstrip(".")
+        if e and e not in out:
+            out.append(e)
+    return out
+
+
+def read_notice_attachment_exts(ws=None) -> list[str]:
+    data = _read_settings(ws)
+    xxt = data.get("xxt") or {}
+    raw = xxt.get("notice_attachment_exts")
+    if not isinstance(raw, list):
+        return list(DEFAULT_NOTICE_ATTACHMENT_EXTS)
+    return normalize_exts(raw)
+
+
+def write_notice_attachment_exts(ws, exts) -> list[str]:
+    p = _settings_path(ws)
+    data = _read_settings(ws)
+    xxt = data.setdefault("xxt", {})
+    clean = normalize_exts(exts)
+    xxt["notice_attachment_exts"] = clean
+    p.parent.mkdir(parents=True, exist_ok=True)
+    p.write_text(json.dumps(data, ensure_ascii=False, indent=1), encoding="utf-8")
+    return clean
+

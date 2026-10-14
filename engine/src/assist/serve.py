@@ -922,6 +922,19 @@ class Handler(BaseHTTPRequestHandler):
                                    journal_params=ids)
             self._json({"ok": True, "job_id": job_id, "mode": "send" if payload.get("send") else "dry-run"})
             return
+        if u.path == "/xxt/notice/attachment-whitelist":
+            payload: dict = {}
+            try:
+                length = int(self.headers.get("Content-Length") or 0)
+                if length:
+                    payload = json.loads(self.rfile.read(length).decode("utf-8")) or {}
+            except Exception as exc:  # noqa: BLE001
+                self._json({"ok": False, "error": f"bad json: {exc}"}, 400)
+                return
+            from .xxt.allowlist import write_notice_attachment_exts
+            items = write_notice_attachment_exts(Path(self.ws).resolve(), payload.get("items") or [])
+            self._json({"ok": True, "items": items})
+            return
         if u.path == "/xxt/notice/upload":
             payload: dict = {}
             try:
@@ -934,8 +947,11 @@ class Handler(BaseHTTPRequestHandler):
             except Exception as exc:  # noqa: BLE001
                 self._json({"ok": False, "error": f"bad json: {exc}"}, 400)
                 return
+            from .xxt.allowlist import read_notice_attachment_exts
             from .xxt.notice import save_notice_uploads
-            items = save_notice_uploads(Path(self.ws).resolve(), payload.get("items") or [])
+            ws = Path(self.ws).resolve()
+            items = save_notice_uploads(ws, payload.get("items") or [],
+                                        allowed_exts=read_notice_attachment_exts(ws))
             self._json({"ok": True, "items": items})
             return
         if u.path == "/xxt/notice/send":
@@ -1294,6 +1310,10 @@ class Handler(BaseHTTPRequestHandler):
                 self._json({"ok": False, "error": "courseId/classId 必填"}, 400)
                 return
             self._json(list_works(_xxt_home() / "xxt-storage.json", course, clazz, cpi, directory))
+            return
+        elif u.path == "/xxt/notice/attachment-whitelist":
+            from .xxt.allowlist import read_notice_attachment_exts
+            self._json({"ok": True, "items": read_notice_attachment_exts(Path(self.ws).resolve())})
             return
         elif u.path == "/xxt/notice/attachments":
             from .xxt.notice import list_notice_attachments

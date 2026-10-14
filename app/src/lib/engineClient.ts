@@ -785,6 +785,21 @@ export async function startXxtNoticeSend(
   return { jobId: o.job_id, mode: String(o.mode || (payload.send ? 'send' : 'dry-run')) }
 }
 
+export async function fetchXxtAttachmentWhitelist(engineAddr: string, token?: string): Promise<string[]> {
+  const base = normalizeEngineAddr(engineAddr)
+  const o = (await getJson2(engineUrlWithToken(base, '/xxt/notice/attachment-whitelist', token))) as { items?: string[] }
+  return o.items || []
+}
+export async function saveXxtAttachmentWhitelist(engineAddr: string, token: string | undefined, items: string[]): Promise<string[]> {
+  const base = normalizeEngineAddr(engineAddr)
+  const res = await fetch(engineUrlWithToken(base, '/xxt/notice/attachment-whitelist', token), {
+    method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ items }),
+  })
+  if (!res.ok) throw new Error(`HTTP ${res.status}`)
+  const o = (await res.json()) as { items?: string[] }
+  return o.items || []
+}
+
 export interface XxtAllowItem { courseId: string; classId: string; name?: string }
 export interface XxtWorkFolder { directoryId: string; name: string }
 

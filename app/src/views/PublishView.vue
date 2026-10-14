@@ -1,8 +1,8 @@
 <script setup lang="ts">
 import { computed, onMounted, onUnmounted, ref } from 'vue'
 import {
-  fetchXxtLoginJob, fetchXxtNoticeAttachments, fetchXxtRun, fetchXxtRuns, fetchXxtWorkDetail,
-  fetchXxtWorkFolders, fetchXxtWorkList, fetchXxtWriteAllowlist, saveXxtWriteAllowlist,
+  fetchXxtAttachmentWhitelist, fetchXxtLoginJob, fetchXxtNoticeAttachments, fetchXxtRun, fetchXxtRuns, fetchXxtWorkDetail,
+  fetchXxtWorkFolders, fetchXxtWorkList, fetchXxtWriteAllowlist, saveXxtAttachmentWhitelist, saveXxtWriteAllowlist,
   startXxtNoticeSend, startXxtWorkCreate, startXxtWorkPublish, uploadXxtNoticeFiles,
 } from '../lib/engineClient'
 import type { XxtAllowItem, XxtNoticeAttachment, XxtWorkFolder, XxtWorkLibraryItem } from '../lib/engineClient'
@@ -120,9 +120,15 @@ const noticeTitle = ref('作业通知-大学物理')
 const noticeBody = ref('作业纸见附件，请各位同学打印自己的那一张并手写完成、拍照上传到学习通作业里面。')
 const noticeTarget = ref('')
 const noticeAtt = ref<XxtNoticeAttachment[]>([])
+const attExts = ref<string[]>([])
+const attExtOptions = ['pdf', 'doc', 'docx', 'jpg', 'jpeg', 'png', 'webp', 'gif', 'xls', 'xlsx', 'ppt', 'pptx', 'zip', 'txt']
+const attAccept = computed(() => attExts.value.map(e => '.' + e).join(','))
 const noticePick = ref<Record<string, boolean>>({})
 const uploadInput = ref<HTMLInputElement | null>(null)
-async function loadAtt() { try { noticeAtt.value = await fetchXxtNoticeAttachments(engUrl.value, tok.value, 200) } catch { /* noop */ } }
+function attAllowed(name: string): boolean { const e = (name.split('.').pop() || '').toLowerCase(); return attExts.value.includes(e) }
+async function loadAttWhitelist() { try { attExts.value = await fetchXxtAttachmentWhitelist(engUrl.value, tok.value) } catch { /* noop */ } }
+async function saveAttWhitelist() { try { attExts.value = await saveXxtAttachmentWhitelist(engUrl.value, tok.value, attExts.value); await loadAtt(); msg.value = '附件格式白名单已保存' } catch (e) { msg.value = `白名单保存失败：${String(e)}` } }
+async function loadAtt() { try { noticeAtt.value = (await fetchXxtNoticeAttachments(engUrl.value, tok.value, 200)).filter(a => attAllowed(a.name)) } catch { /* noop */ } }
 function attNames() { return Object.keys(noticePick.value).filter(k => noticePick.value[k]).map(p => noticeAtt.value.find(a => a.path === p)?.name || p.split(/[\\/]/).pop() || p) }
 function applyAtt() {
   const names = attNames()
@@ -139,7 +145,10 @@ function toggleAtt(path: string, ev: Event) {
 function pickUpload() { uploadInput.value?.click() }
 async function onUpload(ev: Event) {
   const input = ev.target as HTMLInputElement
-  const files = Array.from(input.files || [])
+  const allFiles = Array.from(input.files || [])
+  if (!allFiles.length) return
+  const files = allFiles.filter(f => attAllowed(f.name))
+  if (files.length < allFiles.length) msg.value = `已忽略 ${allFiles.length - files.length} 个不在白名单内的文件`
   if (!files.length) return
   const items: { name: string; data_b64: string }[] = []
   for (const f of files.slice(0, 10)) {
@@ -380,7 +389,7 @@ function setFolder(cid: string, ev: Event) {
 onMounted(async () => {
   const saved = localStorage.getItem('xxt-work-defaults')
   if (saved) { try { const d = JSON.parse(saved); startTime.value = d.startTime; endTime.value = d.endTime; allowLate.value = d.allowLate ?? true; lateDeadline.value = d.lateDeadline; redoTimes.value = d.redoTimes ?? 3 } catch { applyDefaults() } } else applyDefaults()
-  await loadClasses(); await loadAllow(); await loadAtt()
+  await loadAttWhitelist(); await loadClasses(); await loadAllow(); await loadAtt()
   document.addEventListener('visibilitychange', refreshStale)
 })
 onUnmounted(() => document.removeEventListener('visibilitychange', refreshStale))
@@ -431,11 +440,21 @@ onUnmounted(() => document.removeEventListener('visibilitychange', refreshStale)
       <p>
         <button class="btn small" @click="loadAtt">刷新附件</button>
         <button class="btn small" style="margin-left:8px" @click="pickUpload">上传图片/PDF/doc</button>
-        <input ref="uploadInput" type="file" multiple accept="image/*,.pdf,.doc,.docx" style="display:none" @change="onUpload" />
+        <input ref="uploadInput" type="file" multiple :accept="attAccept" style="display:none" @change="onUpload" />
       </p>
       <div v-if="noticeAtt.length" style="max-height:160px; overflow:auto; border:1px solid var(--c-border); border-radius:8px; padding:8px">
         <label v-for="a in noticeAtt" :key="a.path" style="display:block"><input type="checkbox" :checked="!!noticePick[a.path]" @change="toggleAtt(a.path, $event)" /> {{ a.name }}</label>
       </div>
+      <details class="hint" style="margin-top:8px">
+        <summary>附件格式白名单（{{ attExts.join(' / ') }}）</summary>
+        <div style="display:flex; flex-wrap:wrap; gap:10px; margin:6px 0">
+          <label v-for="e in attExtOptions" :key="e">
+            <input type="checkbox" :value="e" v-model="attExts" /> {{ e }}
+          </label>
+        </div>
+        <button class="btn small" @click="saveAttWhitelist">保存白名单</button>
+        <span class="hint" style="margin-left:8px">仅白名单内格式允许上传为通知附件。</span>
+      </details>
       <p><button class="btn" :disabled="busy" @click="previewNotice">👁 检查预览</button>
          <button class="btn primary" style="margin-left:8px" :disabled="busy" @click="sendNotice(true)">📢 发布通知</button></p>
     </div>
