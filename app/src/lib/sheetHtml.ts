@@ -148,6 +148,8 @@ body {
 .sheet-frame.pos-below-left, .sheet-frame.pos-below-right { flex-direction: column; align-items: stretch; }
 .sheet-frame.pos-below-left .q-img, .sheet-frame.pos-below-left .q-img-ph { align-self: flex-start; }
 .sheet-frame.pos-below-right .q-img, .sheet-frame.pos-below-right .q-img-ph { align-self: flex-end; }
+/* D83 修复：column 方向下 .q-body flex:1 会撑满整帧、把图挤到帧底；below-* 正文按内容高度排 */
+.sheet-frame.pos-below-left .q-body, .sheet-frame.pos-below-right .q-body { flex: none; }
 .q-body { flex: 1; min-width: 0; }
 .q-body.indent-first { text-indent: 2em; }
 .q-body.indent-hanging { padding-left: 7mm; text-indent: -7mm; }

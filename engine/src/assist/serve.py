@@ -311,6 +311,27 @@ def _playwright_state() -> str:
 
 
 
+def _job_error_summary(lines: list[str]) -> str:
+    """从 CLI 输出尾部提取错误摘要（D83 修复：别把 indent JSON 的结尾 '}' 当错误）。
+
+    引擎 CLI 失败时会先 echo 一份 indent JSON（含 "error" 字段），末行是 '}'；
+    旧实现取末行 → journal 记成 "}"。这里优先取 JSON error 字段，回退最后一个非空行。
+    """
+    text = "\n".join(lines)
+    m = None
+    for cand in re.finditer(r'"error"\s*:\s*"((?:[^"\\]|\\.)*)"', text):
+        m = cand  # 取最后一个：CLI 末尾的结果 JSON 才是本 job 的结论
+    if m:
+        try:
+            return str(json.loads(f'"{m.group(1)}"'))[:400]
+        except Exception:  # noqa: BLE001
+            return m.group(1)[:400]
+    for ln in reversed(lines):
+        if ln.strip():
+            return ln.strip()[:400]
+    return ""
+
+
 def _xxt_home() -> Path:
     """xxt 工件根（storage/runs/pages）：与 xxt.session.xxt_home 共用同一口径。"""
     from .xxt.session import xxt_home
@@ -508,7 +529,7 @@ class Handler(BaseHTTPRequestHandler):
                                       source="pwa", params=journal_params or {},
                                       result="ok" if rc == 0 else "fail",
                                       duration_ms=int((time.time() - t0) * 1000),
-                                      error=(out[-1] if out else ""))
+                                      error=(_job_error_summary(out) if rc != 0 else ""))
                 except Exception:  # noqa: BLE001
                     pass
             except Exception as exc:  # noqa: BLE001
@@ -551,7 +572,7 @@ class Handler(BaseHTTPRequestHandler):
                         from .xxt import journal as _journal
                         _journal.log_event(f"install_{item}", home=_xxt_home(), source="pwa",
                                            result="ok" if rc == 0 else "fail",
-                                           error=(out[-1] if out else ""))
+                                           error=(_job_error_summary(out) if rc != 0 else ""))
                     except Exception:  # noqa: BLE001
                         pass
                 except Exception as e:  # noqa: BLE001

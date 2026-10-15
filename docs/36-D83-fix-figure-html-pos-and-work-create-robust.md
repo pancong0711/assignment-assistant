@@ -67,3 +67,45 @@ D83（9b98a37）交付后用户实测发现两个问题：
 
 - engine pytest：200 passed（含新增 28+5+4 用例）；
 - `npm run build` / `npm run selfcheck`（含新 D83 四态断言）/ `check-secrets.sh` 全过。
+
+## 追加修复（2026-10-15 第二轮用户实测反馈）
+
+### 问题1 续：below-* 的图跑到帧的左/右下角
+
+第一轮修好 text-right/text-left 后，用户实测 below-* 的图落在**当前题目 frame 的
+左下/右下角**（而非题文正下方）。
+
+根因：`.q-body { flex: 1 }` 是为 **row** 方向（text-right 时把图推到行尾）设计的；
+`below-*` 切成 **column** 方向后，`flex:1` 让正文沿**主轴上**张满整个 frame，
+图片被挤到 frame 底部 —— 横向再由 align-self 决定，于是呈现"左下角/右下角"。
+
+修复（两份 HTML 同步）：新增
+
+```css
+.sheet-frame.pos-below-left .q-body, .sheet-frame.pos-below-right .q-body { flex: none; }
+```
+
+（类选择器特异性高于 `.q-body`，无需调整声明顺序。）
+
+回归：`test_sheet_html` 与 PWA selfcheck 均改为**按 CSS 规则块解析**并断言
+below-left/right 的 `.q-body` 规则含 `flex:none`（顺带修掉两个哨兵此前因
+用 `bodyOf()` 裁掉 `<head><style>` 而**空跑**的问题）。
+
+### 问题2 续：失败信息只剩「}」，看不到具体错误
+
+根因：`create_work` CLI 失败时先 `click.echo(json.dumps(rep, indent=1))`，末行是 `}`；
+PWA 与 serve journal 都取**末行** → 显示/记录「}」。
+
+修复：
+
+- `app/src/lib/engineClient.ts` 新增 `extractJobError()`：取**最后一个**
+  `"error"` 字段（JSON 转义解码，含后端步骤名），无 JSON 时回退 traceback 末行；
+  PublishView 的 task 失败提示与「新建失败」提示改用它；
+- `engine/src/assist/serve.py` 新增 `_job_error_summary()`：journal 只在
+  失败时记录 error（成功记空，不再记 `}`），同样优先解析 JSON error 字段，
+  并覆盖整形后的长 JSON（不受尾部行数窗口限制）;
+- `create_work` / `rename_work` 失败返回的 error 文案追加**现场截图路径**，
+  PWA 可直接显示去哪看截图。
+
+回归：`engine/tests/test_job_error_summary.py`（5 例）+ PWA
+`selfcheck:job-error`（5 例，esbuild 打包 engineClient 后 node 断言）。

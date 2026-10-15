@@ -405,6 +405,25 @@ export async function startXxtLogin(engineAddr: string, token?: string): Promise
   return o.job_id
 }
 
+/** 从 CLI job 输出里提取可读错误信息（D83 修复）。
+ *
+ * 背景：引擎 CLI 失败时先 echo 一份 indent JSON（`{ "ok": false, "error": "步骤…" }`），
+ * 最后一行是 `}`；旧实现取末行 → PWA 只显示「}」。
+ * 这里优先解析 JSON 的 error 字段（含后端步骤名）；没有则回退到最后一个非空行
+ * （未捕获异常时即 traceback 末行的异常消息）。
+ */
+export function extractJobError(output: string): string {
+  const raw = String(output || '')
+  // 取**最后**一个 "error" 字段：CLI 末尾的结果 JSON 才是本 job 的结论
+  let m: RegExpMatchArray | null = null
+  for (const cand of raw.matchAll(/"error"\s*:\s*"((?:[^"\\]|\\.)*)"/g)) m = cand
+  if (m) {
+    try { return JSON.parse(`"${m[1]}"`) as string } catch { return m[1] }
+  }
+  const lines = raw.split('\n').map((l) => l.trim()).filter(Boolean)
+  return lines.length ? lines[lines.length - 1].slice(-400) : '未知错误（无输出）'
+}
+
 /** GET /jobs/<id>：D66 扫码登录任务状态（生成失败时给前端明确原因，而不是破图）。 */
 export interface XxtLoginJobStatus {
   status: string

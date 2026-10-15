@@ -66,9 +66,21 @@ const sh = await import('./sheetHtml.bundle.mjs')
   // - row（text-*）里 align-self 是纵向对齐 → 一律顶部 flex-start；
   // - column（below-*）里是横向对齐 → flex-start=左 / flex-end=右；
   // - .q-img 静态 CSS 不得用 margin-left:auto（column 下会压过 align-self 把 below-left 推右）。
-  const anyHtml = bodyOf(sh.stringifySheetHtml([{ pad, items }], {}))
-  for (const rule of anyHtml.match(/\.q-img\s*\{[^}]*\}/g) || []) {
+  // 注意：CSS 在 <head><style>，必须用完整 html（bodyOf 会裁掉）
+  const fullHtml = sh.stringifySheetHtml([{ pad, items }], {})
+  const qimgRules = fullHtml.match(/\.q-img\s*\{[^}]*\}/g) || []
+  assert.ok(qimgRules.length >= 1, 'D83: 未找到 .q-img 规则')
+  for (const rule of qimgRules) {
     assert.ok(!rule.includes('margin-left: auto'), `D83: .q-img 不得回归 margin-left:auto：${rule}`)
+  }
+  const qbodyRules = fullHtml.match(/\.q-body\s*\{[^}]*\}/g) || []
+  assert.ok(qbodyRules.length >= 1, 'D83: 未找到 .q-body 规则')
+  // 按 CSS 规则块解析（选择器可能被逗号分组，正则直接匹配选择器不可靠）
+  const cssRules = [...fullHtml.matchAll(/([^{}]+)\{([^}]*)\}/g)].map(m => [m[1], m[2]])
+  for (const pos of ['below-left', 'below-right']) {
+    const hit = cssRules.find(([sel, decl]) =>
+      sel.includes(`.sheet-frame.pos-${pos} .q-body`) && decl.includes('flex: none'))
+    assert.ok(hit, `D83: 缺少 .pos-${pos} .q-body { flex:none }（否则 column 下正文撑满、图被挤到帧底）`)
   }
   for (const [pos, align] of [['text-right', 'flex-start'], ['text-left', 'flex-start'],
     ['below-left', 'flex-start'], ['below-right', 'flex-end']]) {

@@ -1,7 +1,7 @@
 <script setup lang="ts">
 import { computed, onMounted, onUnmounted, ref } from 'vue'
 import {
-  copyXxtWork, createXxtWorkFolder, fetchXxtAttachmentWhitelist, fetchXxtLoginJob, fetchXxtNoticeAttachments, fetchXxtRun, fetchXxtRuns, fetchXxtWorkDetail,
+  copyXxtWork, createXxtWorkFolder, extractJobError, fetchXxtAttachmentWhitelist, fetchXxtLoginJob, fetchXxtNoticeAttachments, fetchXxtRun, fetchXxtRuns, fetchXxtWorkDetail,
   fetchXxtTargets, fetchXxtWorkFolders, fetchXxtWorkList, fetchXxtWriteAllowlist, saveXxtAttachmentWhitelist, saveXxtWriteAllowlist,
   startXxtNoticeSend, startXxtWorkCreate, startXxtWorkPublish, uploadXxtNoticeFiles,
 } from '../lib/engineClient'
@@ -373,7 +373,7 @@ async function createDraft() {
       draftAtts.value = []
       msg.value = `作业草稿已创建并选中：${draftTitle.value.trim()}`
     } else {
-      msg.value = res.ok ? '作业草稿已创建，请刷新作业库查看。' : `新建失败：${all.slice(-300)}`
+      msg.value = res.ok ? '作业草稿已创建，请刷新作业库查看。' : `新建失败：${extractJobError(all)}`
     }
   } catch (e) { busy.value = false; msg.value = `新建失败：${String(e)}` }
 }
@@ -434,8 +434,9 @@ async function poll(jobId: string): Promise<{ ok: boolean; lines: string[] }> {
         appendLog('✅ 任务完成')
         msg.value = '✅ 任务完成。'
       } else if (job.returncode && job.returncode !== 0) {
-        appendLog(`❌ 任务失败：${last.slice(-220) || job.status}`)
-        msg.value = `❌ 任务失败：${last.slice(-220) || job.status}`
+        const err = extractJobError(all) || job.status
+        appendLog(`❌ 任务失败：${err}`)
+        msg.value = `❌ 任务失败：${err}`
       } else {
         appendLog(`任务结束：${last.slice(-220) || job.status}`)
         msg.value = `任务结束：${last.slice(-220) || job.status}`

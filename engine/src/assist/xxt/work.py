@@ -428,7 +428,8 @@ def create_work(storage, course_id: str, class_id: str, cpi: str, title: str,
                 except Exception as exc:  # noqa: BLE001
                     shot = _fail_shot(page, "attach")
                     browser.close()
-                    return {"ok": False, "error": f"附件上传失败：{exc}",
+                    return {"ok": False,
+                            "error": f"附件上传失败：{exc}" + (f"；现场截图：{shot}" if shot else ""),
                             "step": step, "screenshot": shot,
                             "attachmentsTried": [p.name for p in att_paths]}
 
@@ -463,7 +464,9 @@ def create_work(storage, course_id: str, class_id: str, cpi: str, title: str,
                 browser.close()
             except Exception:  # noqa: BLE001
                 pass
-            return {"ok": False, "error": f"新建作业失败（步骤：{step}）：{str(exc)[:400]}",
+            return {"ok": False,
+                    "error": f"新建作业失败（步骤：{step}）：{str(exc)[:400]}"
+                             + (f"；现场截图：{shot}" if shot else ""),
                     "step": step, "screenshot": shot, "requests": reqs[-8:]}
         browser.close()
     return {"ok": bool(work_id), "workLibraryId": work_id, "title": title,
@@ -605,7 +608,9 @@ def rename_work(storage, course_id: str, class_id: str, cpi: str, directory_id: 
             page.wait_for_timeout(5000)
         except Exception as exc:  # noqa: BLE001
             shot = _fail_shot(page, "rename")
-            return {"ok": False, "error": f"保存标题失败：{exc}", "screenshot": shot}
+            return {"ok": False,
+                    "error": f"保存标题失败：{exc}" + (f"；现场截图：{shot}" if shot else ""),
+                    "screenshot": shot}
         browser.close()
     return {"ok": True, "workLibraryId": str(work_library_id), "title": new_title}
 

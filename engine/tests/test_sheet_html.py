@@ -302,6 +302,12 @@ def test_sheet_html_figure_pos_alignment(ws: Path, pos: str, expect_align: str):
     assert qimg_rules, "未找到 .q-img 规则"
     for rule in qimg_rules:
         assert "margin-left: auto" not in rule, f".q-img 不得使用 margin-left:auto：{rule}"
+    # D83 修复②：column 方向下 .q-body flex:1 会撑满整帧把图挤到帧底（选择器可能逗号分组）
+    css_rules = [(sel, decl) for sel, decl in _re.findall(r"([^{}]+)\{([^}]*)\}", html)]
+    for want in ("below-left", "below-right"):
+        hit = [sel for sel, decl in css_rules
+               if f".sheet-frame.pos-{want} .q-body" in sel and "flex: none" in decl]
+        assert hit, f"缺少 .pos-{want} .q-body {{flex:none}} 规则"
     # 题图 inline align-self 口径
     assert f"align-self:{expect_align}" in html, \
         f"pos={pos} 应输出 align-self:{expect_align}"
@@ -310,14 +316,20 @@ def test_sheet_html_figure_pos_alignment(ws: Path, pos: str, expect_align: str):
 
 
 def test_figure_css_no_auto_margin_in_sources():
-    """D83 修复哨兵：PWA sheetHtml.ts 与引擎模板的 .q-img 静态 CSS 均不得回归
-    margin-left:auto（below-left 在 column 方向会被推到右侧）。"""
+    """D83 修复哨兵：两份 HTML 静态 CSS 均不得回归
+    ① .q-img margin-left:auto（below-left 在 column 方向会被推到右侧）；
+    ② below-* 的 .q-body 必须 flex:none（否则 column 下撑满整帧、图被挤到帧底）。"""
+    import re as _re
+    tpl = REPO / "engine" / "templates" / "assignment.html.j2"
+    sources = [tpl.read_text(encoding="utf-8")]
     ts = REPO / "app" / "src" / "lib" / "sheetHtml.ts"
     if ts.exists():
-        src = ts.read_text(encoding="utf-8")
-        for rule in __import__("re").findall(r"\.q-img\s*\{[^}]*\}", src):
-            assert "margin-left: auto" not in rule, f"sheetHtml.ts .q-img 回归：{rule}"
-    tpl = REPO / "engine" / "templates" / "assignment.html.j2"
-    src = tpl.read_text(encoding="utf-8")
-    for rule in __import__("re").findall(r"\.q-img\s*\{[^}]*\}", src):
-        assert "margin-left: auto" not in rule, f"模板 .q-img 回归：{rule}"
+        sources.append(ts.read_text(encoding="utf-8"))
+    for src in sources:
+        for rule in _re.findall(r"\.q-img\s*\{[^}]*\}", src):
+            assert "margin-left: auto" not in rule, f".q-img 回归：{rule}"
+        rules = [(sel, decl) for sel, decl in _re.findall(r"([^{}]+)\{([^}]*)\}", src)]
+        for want in ("below-left", "below-right"):
+            hit = [sel for sel, decl in rules
+                   if f".sheet-frame.pos-{want} .q-body" in sel and "flex: none" in decl]
+            assert hit, f"缺少 .pos-{want} .q-body {{flex:none}} 规则"
