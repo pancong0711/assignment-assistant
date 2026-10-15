@@ -433,7 +433,8 @@ def register(group: click.Group) -> None:
     @click.option("--course", "course_id", required=True)
     @click.option("--class", "class_id", required=True)
     @click.option("--cpi", default="0")
-    @click.option("--work", "work_id", required=True, help="作业库 workId（work-library 条目）")
+    @click.option("--work", "work_id", required=True,
+                  help="作业 workId（也可传 workLibraryId，自动归一；mark 页只认 workId）")
     @click.option("--student", required=True, help="学生姓名（在批阅列表内精确匹配）")
     @click.option("--score", default=0.0, type=float, help="设为已交时填的分数（默认 0，作补交标记）")
     @click.option("--confirm-send", "send", is_flag=True, default=False,
@@ -458,7 +459,8 @@ def register(group: click.Group) -> None:
     @click.option("--course", "course_id", required=True)
     @click.option("--class", "class_id", required=True)
     @click.option("--cpi", default="0")
-    @click.option("--work", "work_id", required=True, help="作业库 workId")
+    @click.option("--work", "work_id", required=True,
+                  help="作业 workId（也可传 workLibraryId，自动归一；mark 页只认 workId）")
     @click.option("--student", default="", help="学生姓名（与 --work-answer-id 二选一）")
     @click.option("--work-answer-id", "work_answer_id", default="", help="直接指定 workAnswerId")
     @click.option("--comment", default="", help="作业批语（纯文本自动转段落；也可直接给 HTML）")

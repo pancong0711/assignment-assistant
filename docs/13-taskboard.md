@@ -1390,4 +1390,8 @@ applyManualTranslation/setTranslationRatio 中 setTranslationRatio 保留——�
 - 两者均：白名单校验 + 默认 dry-run + receipt + journal；真提交需 `--confirm-send`；
 - 蓝本：遗留 `_legacy/2601playwright/src/uploader.py` + `submit_v3.py`（已真机跑通）；
 - 实施顺序：§1 批阅页写入原语 → §2 grade-upload → §3 mark-submitted →
-  §4 grading 产物装配 → §5 PWA 入口 → §6 收口。
+  §4 grading 产物装配 → §5 PWA 入口 → §6 收口；
+- **2026-10-15 真机验证通过**（目标班唯一学生）：设为已交 → 文字+图片批语 + 88 分 →
+  `markAction(1)` 提交 → 平台只读复核 score=88、批语/图片一致；关键坑：mark 页 `id=`
+  必须是 workId（非 workLibraryId），未交列表需 `submit=false&evaluation=0`，
+  且「设为已交」点击即生效（dry-run 不得点击）——均已修正，详见 docs/37 §3.4.1。

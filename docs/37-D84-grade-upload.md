@@ -87,43 +87,37 @@ assist xxt grade-upload --course <cid> --class <kid> --cpi <cpi> --work <workId>
 
 | # | 阶段 | 交付物 | 状态 |
 |---|---|---|---|
-| §1 | 批阅页写入原语 `marking.py` | open / comment / image / score / submit / popup | ✅ 代码+单测（7 例）；真机待批阅页联调 |
-| §2 | `assist xxt grade-upload`（dry-run/confirm-send、单学生） | CLI + receipt | ✅ 代码+单测（9 例）；白名单/参数守卫已验证 |
-| §3 | `assist xxt mark-submitted`（设为已交） | CLI + 回读 waId | ✅ 代码；真机待已发布作业 |
+| §1 | 批阅页写入原语 `marking.py` | open / comment / image / score / submit / popup | ✅ 代码+单测；**真机验证通过** |
+| §2 | `assist xxt grade-upload`（dry-run/confirm-send、单学生） | CLI + receipt | ✅ **真机验证通过**（文字+图片+分数提交，平台读回一致） |
+| §3 | `assist xxt mark-submitted`（设为已交） | CLI + 回读 waId | ✅ **真机验证通过**（单学生设交 + 回读 workAnswerId） |
 | §4 | 从 grading 产物自动装配（`--task/--all`） | evaluations → payload | ✅ 代码+单测 |
 | §5 | PWA 上传入口（dry-run 预览 + 二次确认） | serve 端点 + XxetongView | ⏳ 待做 |
 | §6 | 文档与收口 | 本文进度表、docs/13 索引、docs/16 解冻记录 | ⏳ 收尾 |
 
-### 3.4.1 当前阻塞（2026-10-15）
+### 3.4.1 真机验证记录（2026-10-15，目标班唯一学生 · 单条）
 
-真机联调需要一份**已发布到目标班**的作业（批阅列表才会出现学生行）。当前
-`217801417/40009084` 唯一在列作业 `049cd37e...` 打开批阅页返回"作业已删除！"，
-其余均为未发布草稿（`publishedClasses: []`）。
+**基本情况核对**：`217801417 / 40009084`（大学物理知识点拾遗 / 默认班级）
+班级已发布作业 **1 份**（「大学物理作业纸提交（测试）」，作答时间 10-13 19:33 ~ 10-14 23:59），
+批阅统计 **1 名学生，已交 0 / 未交 1**；该班只有 1 名学生。与用户描述一致，**非缓存问题**。
 
-**待用户确认**（发布会对学生端可见，可能带通知）：
+**ID 口径（本次发现的关键坑）**：`/work/mark` 的 `id=` 必须是 **workId**（如 56864879），
+不是作业库的 workLibraryId；且「未交」列表必须带 `submit=false&evaluation=0`
+（否则渲染成已交视图 → 0 行）。来源：班级列表 `viewWork('libraryId','workId','classId')`。
+→ 已实现 `pick_work_id()` 归一 + `open_mark_unsubmitted()`；`--work` 两种 id 均可传。
 
-```bash
-# ① 新建一份明确的测试作业（标题带"测试/勿交"），或复用现有草稿
-# ② 发布到默认班，时间窗设为已结束（最小打扰）
-assist xxt work-publish --course 217801417 --class 40009084 --work-library-id <id>     --cpi 171743814 --start 2026-10-14 --end 2026-10-14 --send
-# ③ 设为已交（单学生；dry-run → confirm-send）
-assist xxt mark-submitted --course 217801417 --class 40009084 --cpi 171743814     --work <id> --student <姓名>            # dry-run
-# ④ 上传批语+图片（dry-run → confirm-send）
-assist xxt grade-upload --course 217801417 --class 40009084 --cpi 171743814     --work <id> --student <姓名> --comment "..." --comment-image <png> --score 88
-```
+**「设为已交」语义（本次发现）**：点该链接**本身立即生效**（弹窗只是填分数），
+因此 dry-run **绝不能点击** → 已改为"只定位 + 截图"，真执行需 `--confirm-send`。
 
-### 3.5 验收（对齐 docs/32 §5）
+**端到端结果（真机）**：
 
-- 同班同作业同学生不重复提交（幂等拒绝）；
-- 上传只落在白名单班级；
-- 平台侧评语/分数与本地报告一致（读回校验 + 截图）；
-- receipt/journal 可回查；
-- dry-run 零写（除媒体上传外不发提交请求）。
+| 步骤 | 命令 | 结果 |
+|---|---|---|
+| 设为已交 | `mark-submitted --work <libId> --student <姓名> --confirm-send` | ✅ 班级变为 1 已交/0 未交；回读 `workAnswerId` |
+| 批语+图片+分数（dry-run） | `grade-upload ... --comment ... --comment-image ... --score 88` | ✅ 写入 UE + 插图 + 分数并读回；未提交 |
+| 真提交 | 同上 + `--confirm-send` | ✅ `markAction(1)` 提交，页面跳回批阅列表 |
+| 平台只读复核 | 重新打开批阅页读回 | ✅ **score=88、批语文字+图片** 与本地一致 |
 
-## 4. 风险
-
-- **提交不可逆**（学生立刻可见分数）→ 默认 dry-run；首条在知识点拾遗/默认班级单学生验证；
-- 「设为已交」改变学生提交状态 → 独立命令、默认 dry-run、需 `--confirm-send`；
-- 平台 DOM 漂移（批语 UE id / 上传弹窗 / 确认弹窗）→ 沿用本次附件那种"可见性 + 多定位器 + JS 兜底"
-  与失败截图；
-- `markAction(1)` 可能触发二次确认/拦截弹窗 → 处理并记录，不盲目重试（避免重复提交）。
+- receipt/截图：`<xxt_home>/grade-uploads/`（`grade-upload-*.json` / `-pre.png` / `-submitted.png`）；
+- 字体/顺序细节：批语文字在图片**之前**（图片先上传、再把文字置于其前）；
+- dry-run 的副作用边界：`grade-upload` dry-run 只写编辑器**不提交**，但会上传一次媒体到平台素材库；
+  `mark-submitted` dry-run 现在零写。

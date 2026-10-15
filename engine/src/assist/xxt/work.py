@@ -681,6 +681,26 @@ def rename_work(storage, course_id: str, class_id: str, cpi: str, directory_id: 
         browser.close()
     return {"ok": True, "workLibraryId": str(work_library_id), "title": new_title}
 
+def class_works_url(course_id: str, class_id: str, cpi: str = "0") -> str:
+    """班级已发布作业列表 URL（D84：workId 的唯一来源）。"""
+    return (f"https://mooc2-ans.chaoxing.com/mooc2-ans/work/list"
+            f"?courseid={course_id}&clazzid={class_id}&cpi={cpi}"
+            f"&selectClassid={class_id}&status=-1&v=0&topicid=0")
+
+
+CLASS_WORKS_JS = """() => {
+  const out=[]; const seen=new Set();
+  document.querySelectorAll('h2[onclick]').forEach(h => {
+    const parts=((h.getAttribute('onclick')||'').split("'"));
+    if(parts.length < 7) return;
+    const lib=parts[1], wid=parts[3], cid=parts[5];
+    if(!lib || seen.has(lib)) return; seen.add(lib);
+    out.push({workLibraryId:lib, workId:wid, classId:cid, title:(h.innerText||'').trim().slice(0,100)});
+  });
+  return out;
+}"""
+
+
 def list_class_works(storage, course_id: str, class_id: str, cpi: str = "0") -> dict:
     """只读拉取某班级已发布作业列表（viewWork(libraryId, workId, classId)）。"""
     from playwright.sync_api import sync_playwright
@@ -689,8 +709,7 @@ def list_class_works(storage, course_id: str, class_id: str, cpi: str = "0") -> 
     chk = check_session(storage)
     if chk.get("verdict") != "alive":
         return {"ok": False, "error": "session dead"}
-    url = (f"https://mooc2-ans.chaoxing.com/mooc2-ans/work/list"
-           f"?courseid={course_id}&clazzid={class_id}&cpi={cpi}&selectClassid={class_id}&status=-1&v=0&topicid=0")
+    url = class_works_url(course_id, class_id, cpi)
     with sync_playwright() as pw:
         browser = _launch(pw, headless=True)
         ctx = browser.new_context(storage_state=str(storage),
@@ -698,17 +717,7 @@ def list_class_works(storage, course_id: str, class_id: str, cpi: str = "0") -> 
         page = ctx.new_page()
         page.goto(url, wait_until="domcontentloaded", timeout=60000)
         page.wait_for_timeout(6000)
-        items = page.evaluate("""() => {
-          const out=[]; const seen=new Set();
-          document.querySelectorAll('h2[onclick]').forEach(h => {
-            const parts=((h.getAttribute('onclick')||'').split("'"));
-            if(parts.length < 7) return;
-            const lib=parts[1], wid=parts[3], cid=parts[5];
-            if(!lib || seen.has(lib)) return; seen.add(lib);
-            out.push({workLibraryId:lib, workId:wid, classId:cid, title:(h.innerText||'').trim().slice(0,100)});
-          });
-          return out;
-        }""")
+        items = page.evaluate(CLASS_WORKS_JS)
         browser.close()
     return {"ok": True, "courseId": str(course_id), "classId": str(class_id), "cpi": str(cpi), "items": items}
 

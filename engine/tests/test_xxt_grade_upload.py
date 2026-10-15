@@ -85,3 +85,16 @@ def test_find_payload_exact_and_fuzzy():
     assert find_payload(payloads, "张三丰")["total_score"] == 1
     assert find_payload(payloads, "不存在") is None
     assert find_payload(payloads, "") is None
+
+
+# ---------------- ID 口径（D84 真机实证） ----------------
+
+def test_pick_work_id_normalizes_library_id_to_work_id():
+    """mark/review 页要 workId；作业库条目给的是 workLibraryId（viewWork(lib,wid,cid)）。"""
+    from assist.xxt.grade_upload import pick_work_id
+    items = [{"workLibraryId": "049cd37e6fec4ccabc45c7da11fd012d", "workId": "56864879"}]
+    assert pick_work_id(items, "049cd37e6fec4ccabc45c7da11fd012d") == "56864879"
+    assert pick_work_id(items, "56864879") == "56864879"
+    assert pick_work_id(items, "unknown-id") == "unknown-id"
+    assert pick_work_id([], "x") == "x"
+    assert pick_work_id(items, "") == ""

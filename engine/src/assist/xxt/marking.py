@@ -55,6 +55,22 @@ def parse_question_scores(spec) -> list[float]:
     return out
 
 
+# D84 关键口径：mark 页的 id= 是 **workId**（不是 workLibraryId）；
+# 未交列表必须带 submit=false&evaluation=0（否则渲染成已交视图 → 0 行）。
+MARK_UNSUBMITTED_URL = ("https://mooc2-ans.chaoxing.com/mooc2-ans/work/mark"
+                        "?courseid={course}&clazzid={clazz}&id={work}"
+                        "&submit=false&evaluation=0")
+
+
+def open_mark_unsubmitted(page, course_id: str, class_id: str, work_id: str,
+                          *, wait_ms: int = 3000) -> str:
+    """打开「未交」批阅列表（设为已交入口在此）。work_id 必须是 workId。"""
+    url = MARK_UNSUBMITTED_URL.format(course=course_id, clazz=class_id, work=work_id)
+    page.goto(url, wait_until="domcontentloaded", timeout=60000)
+    page.wait_for_timeout(wait_ms)
+    return url
+
+
 def open_mark_page(page, course_id: str, class_id: str, work_id: str,
                    work_answer_id: str, *, wait_ms: int = 3000) -> str:
     """打开某学生批阅页；返回最终 URL。"""
@@ -67,7 +83,7 @@ def open_mark_page(page, course_id: str, class_id: str, work_id: str,
 
 # ---------------- 批语（UEditor） ----------------
 
-_JS_SET_UE = """(sel, html) => {
+_JS_SET_UE = """([sel, html]) => {
   const ta = document.querySelector(sel);
   if (!ta) return {ok: false, reason: 'no-textarea', sel};
   let mode = 'textarea';

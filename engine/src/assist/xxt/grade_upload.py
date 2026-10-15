@@ -12,6 +12,7 @@
 from __future__ import annotations
 
 import json
+import re
 import time
 from pathlib import Path
 
@@ -66,6 +67,50 @@ def find_student_row(rows: list[dict], student: str) -> "dict | None":
         if fuzzy is None and key and key in name:
             fuzzy = r
     return fuzzy
+
+
+def pick_work_id(items: list[dict], given: str) -> str:
+    """把 workLibraryId 归一为 mark/review 页需要的 workId（纯函数）。
+
+    学习通两套 id：作业库条目=workLibraryId，班级已发布记录=workId；
+    `work/list` 的 viewWork('lib','wid','cid') 同时给出两者。
+    """
+    g = str(given or "").strip()
+    if not g:
+        return ""
+    for it in items or []:
+        if str(it.get("workLibraryId") or "") == g and it.get("workId"):
+            return str(it["workId"])
+    for it in items or []:
+        if str(it.get("workId") or "") == g:
+            return g
+    return g
+
+
+def resolve_work_id_on_page(page, course_id: str, class_id: str, cpi: str, work: str) -> str:
+    """在**当前 page** 上打开班级已发布列表并归一为 workId（避免嵌套 sync_playwright）。"""
+    from .work import CLASS_WORKS_JS, class_works_url
+    try:
+        page.goto(class_works_url(str(course_id), str(class_id), str(cpi)),
+                  wait_until="domcontentloaded", timeout=60000)
+        page.wait_for_timeout(3000)
+        items = page.evaluate(CLASS_WORKS_JS) or []
+        return pick_work_id(items, work)
+    except Exception as exc:  # noqa: BLE001
+        logger.warning(f"workId 解析失败（原样使用 {work}）：{str(exc)[:120]}")
+        return str(work)
+
+
+def _unsubmitted_rows(page) -> list[dict]:
+    """未交列表行：姓名 + 是否有「设为已交」入口（该视图无 cz_py，不能用 JS_REVIEW）。"""
+    return page.evaluate(r"""() => Array.from(document.querySelectorAll('ul.dataBody_td')).map(ul => {
+      const nameEl = ul.querySelector('li.taskBody_name div.py_name');
+      const links = Array.from(ul.querySelectorAll('a'));
+      const setLink = links.find(a => (a.textContent || '').includes('设为已交'));
+      return {name: nameEl ? (nameEl.textContent || '').trim() : '',
+              status: (ul.innerText || '').replace(/\s+/g, ' ').trim().slice(0, 60),
+              canSetSubmitted: !!setLink};
+    }).filter(r => r.name)""")
 
 
 def _students_from_mark_list(page) -> list[dict]:
@@ -174,13 +219,20 @@ def mark_submitted(*, storage, course_id: str, class_id: str, cpi: str, work_id:
     result: dict = {"ok": False, "mode": "send" if send else "dry-run",
                     "student": student, "courseId": str(course_id),
                     "classId": str(class_id), "workId": str(work_id)}
-    step = "打开批阅列表"
+    from .marking import open_mark_unsubmitted
+    step = "解析 workId + 打开未交列表"
     try:
-        list_url = _open_mark_list(page, str(course_id), str(class_id), str(work_id))
+        wid = resolve_work_id_on_page(page, str(course_id), str(class_id), str(cpi), str(work_id))
+        result["resolvedWorkId"] = wid
+        list_url = open_mark_unsubmitted(page, str(course_id), str(class_id), wid)
         result["listUrl"] = list_url
-        rows = _students_from_mark_list(page)
+        rows = _unsubmitted_rows(page)
         result["rows"] = len(rows)
         row = find_student_row(rows, student)
+        if row is None and rows:
+            result["error"] = f"未交列表未找到学生：{student}；实际：{[r.get('name') for r in rows]}"
+            result["screenshot"] = _shot(page, "mark-submitted-notfound")
+            return result
         if row is None:
             result["error"] = f"批阅列表未找到学生：{student}（共 {len(rows)} 行）"
             result["screenshot"] = _shot(page, "mark-submitted-notfound")
@@ -190,6 +242,20 @@ def mark_submitted(*, storage, course_id: str, class_id: str, cpi: str, work_id:
         if row.get("workAnswerId"):
             result.update({"ok": True, "status": "already-submitted",
                            "workAnswerId": row["workAnswerId"]})
+            result["receipt"] = _write_receipt("mark-submitted", result)
+            return result
+
+        # 注意（真机实证 2026-10-15）：点「设为已交」**本身立即生效**，
+        # 弹窗只是填分数；因此 dry-run 绝不能点它 → 只定位 + 截图。
+        if not row.get("canSetSubmitted"):
+            result["error"] = ("该学生行没有「设为已交」入口（可能已交/已批阅）："
+                               f"{row.get('status')}")
+            result["screenshot"] = _shot(page, "mark-submitted-nolink")
+            return result
+        if not send:
+            result.update({"ok": True, "status": "dry-run-ready",
+                           "note": "dry-run：已定位「设为已交」入口，未点击（点击即生效）"})
+            result["screenshot"] = _shot(page, "mark-submitted-dry")
             result["receipt"] = _write_receipt("mark-submitted", result)
             return result
 
@@ -207,17 +273,11 @@ def mark_submitted(*, storage, course_id: str, class_id: str, cpi: str, work_id:
             result["error"] = f"确认弹窗处理失败：{popup}"
             result["screenshot"] = _shot(page, "mark-submitted-popup")
             return result
-        result["screenshot"] = _shot(page, "mark-submitted-" + ("sent" if send else "dry"))
-        if not send:
-            result.update({"ok": True, "status": "dry-run-clicked",
-                           "note": "dry-run 已完成弹窗填写；未点「确定」不会生效"})
-            result["receipt"] = _write_receipt("mark-submitted", result)
-            return result
-
+        result["screenshot"] = _shot(page, "mark-submitted-sent")
         step = "等待设交生效"
         page.wait_for_timeout(4000)
         step = "回读 workAnswerId"
-        _open_mark_list(page, str(course_id), str(class_id), str(work_id))
+        _open_mark_list(page, str(course_id), str(class_id), wid)
         rows2 = _students_from_mark_list(page)
         row2 = find_student_row(rows2, student)
         result["after"] = {"matched": row2, "rows": len(rows2)}
@@ -333,7 +393,9 @@ def upload_grade(*, storage, course_id: str, class_id: str, cpi: str, work_id: s
                     "workId": str(work_id), "student": student}
     step = "定位学生"
     try:
-        row = _resolve_target(page, str(course_id), str(class_id), str(work_id),
+        wid = resolve_work_id_on_page(page, str(course_id), str(class_id), str(cpi), str(work_id))
+        result["resolvedWorkId"] = wid
+        row = _resolve_target(page, str(course_id), str(class_id), wid,
                               student, work_answer_id)
         if row is None:
             result["error"] = f"未找到学生：{student or work_answer_id}"
@@ -352,20 +414,25 @@ def upload_grade(*, storage, course_id: str, class_id: str, cpi: str, work_id: s
         result["matched"] = {"name": row.get("name"), "status": row.get("status"),
                              "workAnswerId": wa}
         step = "打开批阅页"
-        result["url"] = open_mark_page(page, str(course_id), str(class_id),
-                                       str(work_id), wa)
+        result["url"] = open_mark_page(page, str(course_id), str(class_id), wid, wa)
         result["before"] = read_back(page)
         result["preScreenshot"] = _shot(page, "grade-upload-pre")
 
-        if comment:
-            step = "写作业批语"
-            result["commentResult"] = set_comment_html(page, normalize_comment_html(comment))
+        # 先传图片（UEditor 会插到文首），再把批语文字放到图片**之前**，保证阅读顺序
         for img in (comment_images or []):
             step = "上传评语图片"
             up = upload_comment_image(page, img)
             result.setdefault("commentImages", []).append(up)
             if not up.get("ok"):
                 raise RuntimeError(f"评语图片上传失败：{up.get('error')}")
+        if comment:
+            step = "写作业批语"
+            html = normalize_comment_html(comment)
+            if comment_images:
+                imgs = re.findall(r"<img\b[^>]*>", str(read_back(page).get("comment") or ""))
+                if imgs:
+                    html = html + "".join(imgs)  # 文字在前、图片在后
+            result["commentResult"] = set_comment_html(page, html)
         if question_comments:
             step = "写题目批语"
             result["questionCommentResults"] = set_question_comments_html(page, question_comments)

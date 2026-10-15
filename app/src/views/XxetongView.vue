@@ -21,7 +21,7 @@ import ProcessStreamView from '../components/ProcessStreamView.vue'
  * - 登录卡：QR 框（/xxt/qr）↔ 头像（verdict=alive 时 data-URL）；
  * - 列表：/xxt/runs 最新 run 的 全 course 分组列表，组头 sticky、每列表独立滚动；
  * - 行操作：置顶(≤10 可调)/移出/刷新/从学习通恢复（恢复=仅回放最近 run JSON，零网络）。
- * 写操作：D77 起发公告白名单开放；批阅回传仍冻结。   */
+ * 写操作：D77 起发公告白名单开放；D84 起批阅回传开放（CLI 默认 dry-run，白名单限制）。 */
 
 const settings = useSettingsStore()
 const xxtJobs = useXxtJobsStore()
