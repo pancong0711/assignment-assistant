@@ -172,7 +172,13 @@ def publish_work(storage, course_id: str, class_id: str, work_library_id: str, *
             return {"ok": True, "mode": "dry-run", "runId": run_id, "screenshot": str(pre),
                     "classes": names, "courseId": str(course_id), "classId": str(class_id),
                     "workLibraryId": work_library_id}
-        page.locator("a.jb_btn", has_text="发放").first.click(timeout=10000)
+        # D83 修复：与 create_work 同款健壮点击（可见过滤 + 多定位器 + JS 兜底）
+        _click_first_visible(
+            page,
+            [page.locator("a.jb_btn", has_text="发放"),
+             page.locator("a", has_text="发放"),
+             page.get_by_role("link", name="发放")],
+            "点击「发放」", timeout=10000, js_text="发放")
         page.wait_for_timeout(10000)
         post = _receipt_dir() / f"{run_id}-post.png"
         page.screenshot(path=str(post), full_page=True)
@@ -309,6 +315,55 @@ def _upload_work_attachments(page, att_paths: list[Path]) -> list[str]:
     return uploaded
 
 
+def _fail_shot(page, tag: str) -> str:
+    """失败现场截图（full page）到 xxt_home/work-publishes/；失败返回空串不阻断。"""
+    try:
+        from .session import xxt_home
+        d = Path(xxt_home()) / "work-drafts"
+        d.mkdir(parents=True, exist_ok=True)
+        p = d / f"create-fail-{tag}-{int(time.time())}.png"
+        page.screenshot(path=str(p), full_page=True)
+        return str(p)
+    except Exception:  # noqa: BLE001
+        return ""
+
+
+def _click_first_visible(page, locs, step: str, timeout: int = 10000,
+                         js_text: "str | None" = None) -> None:
+    """D83 修复：多定位器 + 可见过滤 + JS 兜底的健壮点击。
+
+    背景：真机报「element is not visible」重试超时 —— 页面上存在同名隐藏元素
+    （模板/下拉容器），`.first` 按文档序取到的是隐藏的那个。这里逐个定位器
+    先按 visible 过滤再点；全部失败时用 JS 找「可见且文本精确匹配」的元素兜底。
+    """
+    errors: list[str] = []
+    for loc in locs:
+        try:
+            vis = loc.filter(visible=True).first
+            vis.wait_for(state="visible", timeout=max(2000, timeout // 2))
+            vis.click(timeout=timeout)
+            return
+        except Exception as exc:  # noqa: BLE001
+            errors.append(f"{type(exc).__name__}: {str(exc).splitlines()[0][:140]}")
+    if js_text:
+        try:
+            clicked = page.evaluate(
+                """(t) => {
+                    const els = Array.from(document.querySelectorAll('a,button,li,span,div,p'))
+                        .filter(e => e.offsetParent !== null
+                                    && e.childElementCount === 0
+                                    && e.textContent.trim() === t);
+                    if (els.length) { els[0].click(); return true; }
+                    return false;
+                }""", js_text)
+            if clicked:
+                return
+        except Exception as exc:  # noqa: BLE001
+            errors.append(f"JS兜底: {str(exc).splitlines()[0][:140]}")
+    raise RuntimeError(f"{step}：{len(locs)} 种定位器与 JS 兜底均无法点击可见元素；"
+                       + " || ".join(errors[:3]))
+
+
 def create_work(storage, course_id: str, class_id: str, cpi: str, title: str,
                 stem_html: str, directory_id: str = "0",
                 attachments: "list[str] | None" = None, workspace=None) -> dict:
@@ -346,28 +401,70 @@ def create_work(storage, course_id: str, class_id: str, cpi: str, title: str,
         page = ctx.new_page()
         page.on("dialog", lambda d: d.accept())
         page.on("request", lambda r: reqs.append({"method": r.method, "url": r.url}) if r.method != "GET" else None)
-        page.goto(url, wait_until="domcontentloaded", timeout=60000)
-        page.wait_for_timeout(6000)
-        page.get_by_text("简答题", exact=True).first.click(timeout=10000)
-        page.wait_for_timeout(2500)
-        page.evaluate("""(stem) => { const ed=UE.getEditor('content'); if (ed) ed.setContent(stem); }""", stem_html or "<p></p>")
-        page.wait_for_timeout(500)
-        # D83-7：附件内嵌进这道简答题正文
-        if att_paths:
+        step = "打开作业编辑器"
+        try:
+            page.goto(url, wait_until="domcontentloaded", timeout=60000)
+            page.wait_for_timeout(6000)
+
+            # 题型面板可能有同名隐藏模板节点 → 可见过滤 + 多定位器 + JS 兜底
+            step = "选择题型（简答题）"
+            _click_first_visible(
+                page,
+                [page.get_by_text("简答题", exact=True),
+                 page.locator("text=简答题"),
+                 page.locator("li", has_text="简答题")],
+                step, timeout=10000, js_text="简答题")
+            page.wait_for_timeout(2500)
+
+            step = "填入题干"
+            page.evaluate("""(stem) => { const ed=UE.getEditor('content'); if (ed) ed.setContent(stem); }""", stem_html or "<p></p>")
+            page.wait_for_timeout(500)
+
+            # D83-7：附件内嵌进这道简答题正文
+            step = "上传附件"
+            if att_paths:
+                try:
+                    _upload_work_attachments(page, att_paths)
+                except Exception as exc:  # noqa: BLE001
+                    shot = _fail_shot(page, "attach")
+                    browser.close()
+                    return {"ok": False, "error": f"附件上传失败：{exc}",
+                            "step": step, "screenshot": shot,
+                            "attachmentsTried": [p.name for p in att_paths]}
+
+            step = "点击「完成」"
+            _click_first_visible(
+                page,
+                [page.locator("a.jb_btn", has_text="完成"),
+                 page.locator("a", has_text="完成"),
+                 page.get_by_role("link", name="完成")],
+                step, timeout=10000, js_text="完成")
+            page.wait_for_timeout(4000)
+
+            step = "读取作业ID"
+            work_id = page.eval_on_selector("#workid", "e=>e.value") if page.query_selector("#workid") else ""
+
+            step = "填写标题与文件夹"
+            if title:
+                page.fill("#title", title[:100])
+            page.evaluate("""(d) => { const el=document.querySelector('#directoryid'); if (el) el.value=String(d); }""", directory_id)
+
+            step = "点击「保存」"
+            _click_first_visible(
+                page,
+                [page.locator("a.jb_btn", has_text="保存"),
+                 page.locator("a", has_text="保存"),
+                 page.get_by_role("link", name="保存")],
+                step, timeout=10000, js_text="保存")
+            page.wait_for_timeout(5000)
+        except Exception as exc:  # noqa: BLE001
+            shot = _fail_shot(page, step)
             try:
-                _upload_work_attachments(page, att_paths)
-            except Exception as exc:  # noqa: BLE001
                 browser.close()
-                return {"ok": False, "error": f"附件上传失败：{exc}",
-                        "attachmentsTried": [p.name for p in att_paths]}
-        page.locator("a.jb_btn", has_text="完成").first.click(timeout=10000)
-        page.wait_for_timeout(4000)
-        work_id = page.eval_on_selector("#workid", "e=>e.value") if page.query_selector("#workid") else ""
-        if title:
-            page.fill("#title", title[:100])
-        page.evaluate("""(d) => { const el=document.querySelector('#directoryid'); if (el) el.value=String(d); }""", directory_id)
-        page.locator("a", has_text="保存").first.click(timeout=10000)
-        page.wait_for_timeout(5000)
+            except Exception:  # noqa: BLE001
+                pass
+            return {"ok": False, "error": f"新建作业失败（步骤：{step}）：{str(exc)[:400]}",
+                    "step": step, "screenshot": shot, "requests": reqs[-8:]}
         browser.close()
     return {"ok": bool(work_id), "workLibraryId": work_id, "title": title,
             "attachments": [p.name for p in att_paths], "requests": reqs[-8:]}
@@ -498,10 +595,17 @@ def rename_work(storage, course_id: str, class_id: str, cpi: str, directory_id: 
         if page.query_selector("#title"):
             page.fill("#title", new_title[:100])
         try:
-            page.locator("a", has_text="保存").first.click(timeout=10000)
+            # D83 修复：与 create_work 同款健壮点击（可见过滤 + 多定位器 + JS 兜底）
+            _click_first_visible(
+                page,
+                [page.locator("a.jb_btn", has_text="保存"),
+                 page.locator("a", has_text="保存"),
+                 page.get_by_role("link", name="保存")],
+                "rename_work 保存", timeout=10000, js_text="保存")
             page.wait_for_timeout(5000)
         except Exception as exc:  # noqa: BLE001
-            return {"ok": False, "error": f"保存标题失败：{exc}"}
+            shot = _fail_shot(page, "rename")
+            return {"ok": False, "error": f"保存标题失败：{exc}", "screenshot": shot}
         browser.close()
     return {"ok": True, "workLibraryId": str(work_library_id), "title": new_title}
 

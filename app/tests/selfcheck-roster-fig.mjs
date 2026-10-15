@@ -61,6 +61,24 @@ const sh = await import('./sheetHtml.bundle.mjs')
   assert.ok(hit.includes(`<img class="q-img" src="${png}"`), 'B3: basename 命中→真图内联')
   const none = bodyOf(sh.stringifySheetHtml([{ pad, items: [{ id: 'q2', content: '无图' }] }], { figAssets: { 'diagram.png': png } }))
   assert.ok(!none.includes('q-img'), 'B3: 无 img_path 不渲染图区')
+
+  // D83 修复回归：插图四态对齐口径（右下角 bug）
+  // - row（text-*）里 align-self 是纵向对齐 → 一律顶部 flex-start；
+  // - column（below-*）里是横向对齐 → flex-start=左 / flex-end=右；
+  // - .q-img 静态 CSS 不得用 margin-left:auto（column 下会压过 align-self 把 below-left 推右）。
+  const anyHtml = bodyOf(sh.stringifySheetHtml([{ pad, items }], {}))
+  for (const rule of anyHtml.match(/\.q-img\s*\{[^}]*\}/g) || []) {
+    assert.ok(!rule.includes('margin-left: auto'), `D83: .q-img 不得回归 margin-left:auto：${rule}`)
+  }
+  for (const [pos, align] of [['text-right', 'flex-start'], ['text-left', 'flex-start'],
+    ['below-left', 'flex-start'], ['below-right', 'flex-end']]) {
+    const pp = structuredClone(pad)
+    pp.layout.figure = { scale: 1, pos, max_w_mm: 40, max_h_mm: 35 }
+    const h = bodyOf(sh.stringifySheetHtml([{ pad: pp, items }], {}))
+    assert.ok(h.includes(`class="sheet-frame pos-${pos}"`), `D83: pos-${pos} 帧 class 缺失`)
+    assert.ok(h.includes(`align-self:${align}`), `D83: pos-${pos} 应为 align-self:${align}`)
+    if (pos !== 'below-right') assert.ok(!h.includes('align-self:flex-end'), `D83: pos-${pos} 不得出现 flex-end`)
+  }
 }
 
 /* ---------- D) D47 真实形态回归（legacy fixtures，文件缺失时 skip-safe） ---------- */
@@ -208,4 +226,4 @@ const sh = await import('./sheetHtml.bundle.mjs')
   console.log('   D57 output switches (solution/watermark/pagetext): PASS')
 }
 
-console.log('selfcheck-roster-fig: ALL PASS (A×4 · B×4 · C×3 · D47-legacy* · D57-switches · B2-number)')
+console.log('selfcheck-roster-fig: ALL PASS (A×4 · B×4 · C×3+D83四态 · D47-legacy* · D57-switches · B2-number)')

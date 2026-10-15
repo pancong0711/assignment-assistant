@@ -99,8 +99,9 @@
 - ✅ §2 插图位置四态（text-right/text-left/below-left/below-right；旧值兼容；三端同口径；四态 PDF 实跑通过）
 - ✅ §3 题号缩进开关（none 默认/first/hanging；三端同口径）
 - ✅ §4 页眉删日期 + 各 span 等宽左对齐铺满（模板/PWA/PDF 页眉；页脚保留日期）
-- ⏳ §1 工作目录自动恢复与记忆（进行中）
-- ⏳ §7 新建作业插附件（待做）
+- ✅ §1 工作目录自动恢复与记忆（kb.restoreWorkspace + App onMounted 自动重扫）
+- ✅ §7 新建作业插附件（--attach + serve base64 落盘 + PWA 附件选择器）
+- （交付后修复见 docs/36：插图 HTML 右下角 bug + 新建作业点击健壮化）
 
 ## 实施顺序
 1. §5.0 workspace 一致性（最紧急，直接决定"新建作业能不能用"）；

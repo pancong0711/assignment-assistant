@@ -155,7 +155,7 @@ body {
 .q-id { font-weight: 700; color: var(--accent); font-size: 11pt; }
 .q-tag { font-weight: 400; color: var(--muted); font-size: 9pt; }
 .q-content { font-size: 11.5pt; line-height: 1.8; white-space: pre-wrap; }
-.q-img { margin-left: auto; max-width: 100%; max-height: 52mm; object-fit: contain; align-self: flex-start; }
+.q-img { max-width: 100%; max-height: 52mm; object-fit: contain; align-self: flex-start; }
 .q-img-ph { color: var(--muted); font-size: 10pt; font-style: italic; border: 1px dashed var(--hairline);
   border-radius: 2mm; padding: 4mm; text-align: center; }
 .q-solution { color: var(--muted); font-size: 10pt; border-top: 1px dashed #dfe3ea;
@@ -282,8 +282,10 @@ function figHtml(imgPath?: string, figAssets?: Record<string, string>,
   const hit = figAssets?.[base]
   const scale = Math.max(0.2, Math.min(2, Number(figure?.scale ?? 1)))
   const pos = normalizeFigurePos(figure?.pos)
-  const align = pos === 'below-left' ? 'flex-start' : pos === 'below-right' ? 'flex-end'
-    : pos === 'text-left' ? 'flex-start' : 'flex-end'
+  // D83 修复：sheet-frame 为 row（text-*）时 align-self 控制的是**纵向**对齐 → 一律顶部
+  // flex-start；为 column（below-*）时才是横向对齐 → flex-start=左 / flex-end=右。
+  // （此前 text-right 误用 flex-end，导致图被压到行底右下角。）
+  const align = pos === 'below-right' ? 'flex-end' : 'flex-start'
   const maxH = Number(figure?.max_h_mm ?? 52)
   const maxW = Number(figure?.max_w_mm ?? 45)
   const style = `max-height:${(maxH * scale).toFixed(1)}mm; max-width:${(Math.max(10, maxW) * scale).toFixed(1)}mm; align-self:${align}`

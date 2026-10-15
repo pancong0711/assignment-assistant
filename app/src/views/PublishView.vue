@@ -113,8 +113,14 @@ function allowExpandedState(cid: string): boolean { return allowExpanded.value[c
 function toggleAllowExpanded(cid: string, ev: Event) { allowExpanded.value = { ...allowExpanded.value, [cid]: (ev.target as HTMLDetailsElement).open } }
 function expandAllAllow(on: boolean) { const next: Record<string, boolean> = {}; for (const g of allowGroups()) next[g.courseId] = on; allowExpanded.value = next }
 
-/* 文件库文件夹：按 courseId 记忆 */
-const folderMap = ref<Record<string, XxtWorkFolder>>(JSON.parse(localStorage.getItem('xxt-work-folders') || '{}'))
+/* 文件库文件夹：按 courseId:classId 记忆（D83-5.2；载入时清掉 D83 前的裸 courseId 旧键） */
+function loadFolderMap(): Record<string, XxtWorkFolder> {
+  try {
+    const raw = JSON.parse(localStorage.getItem('xxt-work-folders') || '{}') as Record<string, XxtWorkFolder>
+    return Object.fromEntries(Object.entries(raw).filter(([k]) => k.includes(':')))
+  } catch { return {} }
+}
+const folderMap = ref<Record<string, XxtWorkFolder>>(loadFolderMap())
 const folderList = ref<XxtWorkFolder[]>([])
 function persistFolderMap() { try { localStorage.setItem('xxt-work-folders', JSON.stringify(folderMap.value)) } catch { /* noop */ } }
 const CACHE_TTL = 30 * 24 * 3600 * 1000

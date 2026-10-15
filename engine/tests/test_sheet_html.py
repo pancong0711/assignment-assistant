@@ -269,3 +269,55 @@ def test_sheet_html_auto_numbering_sequential(ws: Path):
     html = out.read_text(encoding="utf-8")
     assert "1.  " in html
     assert "2.  " in html
+
+
+@pytest.mark.parametrize("pos,expect_align", [
+    ("text-right", "flex-start"), ("text-left", "flex-start"),
+    ("below-left", "flex-start"), ("below-right", "flex-end"),
+])
+def test_sheet_html_figure_pos_alignment(ws: Path, pos: str, expect_align: str):
+    """D83 修复回归：插图四态 HTML 对齐口径（右下角 bug）。
+
+    - `.q-img` 规则不得含 `margin-left: auto`（column 方向下 auto 边距压过
+      align-self，below-left 会被推到右侧）；
+    - 题图 inline align-self：row（text-*）= 纵向对齐一律顶部 flex-start；
+      column（below-*）= 横向对齐 flex-start/flex-end。below-right 之外
+      一律 flex-start（此前 text-right 误用 flex-end → 图被压到右下角）。
+    """
+    task = _write_task(ws, "landscape", 2, {"enabled": False, "items": []})
+    obj = json.loads(task.read_text(encoding="utf-8"))
+    obj["layout"]["figure"] = {"scale": 1.0, "pos": pos, "max_w_mm": 40, "max_h_mm": 35}
+    task.write_text(json.dumps(obj, ensure_ascii=False, indent=1), encoding="utf-8")
+    out = ws / "tmp" / f"figpos-{pos}.html"
+    runner = CliRunner()
+    res = runner.invoke(cli, ["sheet", "html", "--task", str(task),
+                              "--roster", str(ws / "roster.xlsx"),
+                              "--workspace", str(ws), "-o", str(out)])
+    assert res.exit_code == 0, res.output
+    html = out.read_text(encoding="utf-8")
+    assert f'class="sheet-frame pos-{pos}"' in html, f"缺少 pos-{pos} 帧 class"
+    # .q-img CSS 无 auto 左边距（对 column 方向的 below-left 是致命的）
+    import re as _re
+    qimg_rules = [m for m in _re.findall(r"\.q-img\s*\{[^}]*\}", html)]
+    assert qimg_rules, "未找到 .q-img 规则"
+    for rule in qimg_rules:
+        assert "margin-left: auto" not in rule, f".q-img 不得使用 margin-left:auto：{rule}"
+    # 题图 inline align-self 口径
+    assert f"align-self:{expect_align}" in html, \
+        f"pos={pos} 应输出 align-self:{expect_align}"
+    if pos != "below-right":
+        assert "align-self:flex-end" not in html, f"pos={pos} 不得出现 flex-end"
+
+
+def test_figure_css_no_auto_margin_in_sources():
+    """D83 修复哨兵：PWA sheetHtml.ts 与引擎模板的 .q-img 静态 CSS 均不得回归
+    margin-left:auto（below-left 在 column 方向会被推到右侧）。"""
+    ts = REPO / "app" / "src" / "lib" / "sheetHtml.ts"
+    if ts.exists():
+        src = ts.read_text(encoding="utf-8")
+        for rule in __import__("re").findall(r"\.q-img\s*\{[^}]*\}", src):
+            assert "margin-left: auto" not in rule, f"sheetHtml.ts .q-img 回归：{rule}"
+    tpl = REPO / "engine" / "templates" / "assignment.html.j2"
+    src = tpl.read_text(encoding="utf-8")
+    for rule in __import__("re").findall(r"\.q-img\s*\{[^}]*\}", src):
+        assert "margin-left: auto" not in rule, f"模板 .q-img 回归：{rule}"

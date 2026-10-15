@@ -81,7 +81,7 @@ body {
 .q-id { font-weight: 700; color: var(--accent); font-size: 11pt; }
 .q-tag { font-weight: 400; color: var(--muted); font-size: 9pt; }
 .q-content { font-size: 11.5pt; line-height: 1.8; white-space: pre-wrap; }
-.q-img { margin-left: auto; max-width: 100%; max-height: {{ doc.figure.max_h_mm }}mm; object-fit: contain; align-self: flex-start; }
+.q-img { max-width: 100%; max-height: {{ doc.figure.max_h_mm }}mm; object-fit: contain; align-self: flex-start; }
 .q-img-ph { color: var(--muted); font-size: 10pt; font-style: italic; border: 1px dashed var(--hairline);
   border-radius: 2mm; padding: 4mm; text-align: center; }
 .q-solution { color: var(--muted); font-size: 10pt; border-top: 1px dashed #dfe3ea;
@@ -150,7 +150,11 @@ body {
         <div class="q-content">{% if fr.no %}{{ fr.no }}  {% endif %}{{ fr.content }}{% if fr.tag %} <span class="q-tag">【{{ fr.tag }}】</span>{% endif %}</div>
         {% if doc.include_solution and fr.solution %}<div class="q-solution">参考答案：{{ fr.solution }}</div>{% endif %}
       </div>
-      {% if fr.img_b64 %}<img class="q-img" src="data:{{ fr.img_mime }};base64,{{ fr.img_b64 }}" style="max-width:{{ doc.figure.max_w_mm }}mm" alt="题图">{% elif fr.img_label %}<div class="q-img-ph" style="max-width:{{ doc.figure.max_w_mm }}mm">[题图：{{ fr.img_label }}]</div>{% endif %}
+      {%- set fig_w = '%.1f'|format(doc.figure.max_w_mm * doc.figure.scale) %}
+      {%- set fig_h = '%.1f'|format(doc.figure.max_h_mm * doc.figure.scale) %}
+      {#- D83 修复：row（text-*）里 align-self=纵向对齐→一律顶部；column（below-*）=横向→左/右 -#}
+      {%- set fig_align = 'flex-end' if doc.figure.pos == 'below-right' else 'flex-start' %}
+      {% if fr.img_b64 %}<img class="q-img" src="data:{{ fr.img_mime }};base64,{{ fr.img_b64 }}" style="max-height:{{ fig_h }}mm; max-width:{{ fig_w }}mm; align-self:{{ fig_align }}" alt="题图">{% elif fr.img_label %}<div class="q-img-ph" style="max-height:{{ fig_h }}mm; max-width:{{ fig_w }}mm; align-self:{{ fig_align }}">[题图：{{ fr.img_label }}]</div>{% endif %}
     </div>
     {% endfor %}
   </div>
