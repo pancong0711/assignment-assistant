@@ -478,10 +478,13 @@ def register(group: click.Group) -> None:
                   help="任务包 JSON：从批阅产物（evaluations）装配批语/分数")
     @click.option("--all", "all_students", is_flag=True, default=False,
                   help="对产物内全部学生上传（默认仅 --student 指定的一人）")
+    @click.option("--from-drafts", "from_drafts", is_flag=True, default=False,
+                  help="D85：上传本地人工批阅草稿（<xxt_home>/grade-drafts）；可配 --student 只传一人")
     @click.option("--storage", "storage", default=None, type=click.Path(dir_okay=False))
     def xxt_grade_upload(course_id, class_id, cpi, work_id, student, work_answer_id,
                          comment, comment_images, question_comments, total_score,
-                         question_scores, send, force, task_path, all_students, storage):
+                         question_scores, send, force, task_path, all_students,
+                         from_drafts, storage):
         """D84 §2：批阅页上传批语（文字+图片）/分数并提交（默认 dry-run，白名单限制）。"""
         from .grade_upload import upload_grade
         from .marking import parse_question_scores
@@ -497,6 +500,58 @@ def register(group: click.Group) -> None:
         scores: list[float] = []
         for spec in question_scores:
             scores.extend(parse_question_scores(spec))
+        # D85 §3：--from-drafts → 读本地人工批阅草稿（图片落 workspace 临时目录后走 --comment-image）
+        if from_drafts:
+            from . import grade_store
+            from .session import xxt_home
+            from .grade_upload import drafts_to_payloads
+            drafts = grade_store.read_drafts(xxt_home(), class_id, work_id)
+            payloads = drafts_to_payloads(drafts, only=student)
+            if not payloads:
+                click.echo(json.dumps({"ok": False, "error": "本地无该作业的批阅草稿",
+                                       "hint": "先在逐生预览的『人工批阅』栏填写并保存到本地",
+                                       "keys": sorted((drafts or {}).keys())},
+                                      ensure_ascii=False, indent=1))
+                raise SystemExit(2)
+            tmp_dir = ws / "tmp" / "grade-uploads" / time.strftime("%Y%m%d-%H%M%S")
+            reps = []
+            for pl in payloads:
+                imgs: list[str] = []
+                for i, img in enumerate(pl.get("images") or []):
+                    data = str(img.get("data_b64") or "")
+                    if not data:
+                        continue
+                    tmp_dir.mkdir(parents=True, exist_ok=True)
+                    ext = Path(str(img.get("name") or "img.png")).suffix or ".png"
+                    fp = tmp_dir / f"{pl['key']}-{i + 1}{ext}"
+                    try:
+                        import base64
+                        fp.write_bytes(base64.b64decode(data.split(",")[-1]))
+                        imgs.append(str(fp))
+                    except Exception as exc:  # noqa: BLE001
+                        reps.append({"ok": False, "error": f"草稿图片解码失败：{exc}"})
+                rep = upload_grade(storage=default_storage(None), course_id=course_id,
+                                   class_id=class_id, cpi=cpi, work_id=work_id,
+                                   student=str(pl["key"]),
+                                   comment=str(pl.get("comment") or ""), comment_images=imgs,
+                                   total_score=pl.get("score"), question_scores=None,
+                                   send=bool(send), force=bool(force), workspace=ws)
+                rep["draftKey"] = pl["key"]
+                reps.append(rep)
+                if len(payloads) > 1:
+                    click.echo(json.dumps(rep, ensure_ascii=False, indent=1))
+            summary = reps[0] if len(reps) == 1 else {
+                "ok": all(x.get("ok") for x in reps), "count": len(reps),
+                "okCount": sum(1 for x in reps if x.get("ok")), "results": reps}
+            _journal("xxt_grade_upload",
+                     params={"courseId": course_id, "classId": class_id, "workId": work_id,
+                             "mode": summary.get("mode"), "fromDrafts": True,
+                             "count": len(reps)},
+                     result="ok" if summary.get("ok") else "fail",
+                     error=str(summary.get("error") or "")[:200])
+            click.echo(json.dumps(summary, ensure_ascii=False, indent=1))
+            raise SystemExit(0 if summary.get("ok") else 2)
+
         # §4：--task 时从批阅产物装配（评语=feedback_md、分数=total/per_question）
         targets: list[dict] = [{}]
         if task_path:

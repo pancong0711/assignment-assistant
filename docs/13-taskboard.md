@@ -1395,3 +1395,21 @@ applyManualTranslation/setTranslationRatio 中 setTranslationRatio 保留——�
   `markAction(1)` 提交 → 平台只读复核 score=88、批语/图片一致；关键坑：mark 页 `id=`
   必须是 workId（非 workLibraryId），未交列表需 `submit=false&evaluation=0`，
   且「设为已交」点击即生效（dry-run 不得点击）——均已修正，详见 docs/37 §3.4.1。
+
+
+---
+
+## D85 · 新建作业（题型面板/文件夹）修复 + PWA 人工批阅栏（2026-10-15）
+
+- 主需求单：`docs/38-D85-create-work-panel-folder-and-manual-grading.md`；
+- ① C2Z/C2 默认班级「简答题」在「更多」弹层里（按课程题型集合不同）→ 直点失败；
+  修法：属性选择器 + 「更多」兜底 + 加题成功判据；
+- ② 新建作业落根目录 → 编辑器 URL 未带 `directoryid`（草稿加题时即固定目录）；
+  修法：URL 带 `directoryParam` + 保存后用 `work-list --directory-id` 回读校验；
+- ③ PWA 逐生预览「人工批阅」栏：分数（默认 100）+ 批语（文字/图片）本地草稿保存
+  （输入即存 + 保存按钮）+ 上传本生（dry-run→确认）+ 上传全部（跳过已批阅，可强制）；
+  本地草稿存 `<xxt_home>/grade-drafts/<classId>/<workId>.json`，上传复用 D84 CLI；
+- **2026-10-15 实施完成（§1–§4）**：题型「更多」兜底 + 加题成功判据；编辑器 URL 带
+  `directoryid` 且保存后回读校验（真机 `directoryCheck.ok=true`）；本地草稿 store +
+  serve `/xxt/grade/drafts|draft|upload` + CLI `--from-drafts`（真机 dry-run 回填通过）；
+  PWA 人工批阅栏（保存到本地 / 演练上传 / 上传并提交 / 上传全部 / 强制覆盖 / 清除草稿）。

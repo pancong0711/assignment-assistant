@@ -431,6 +431,113 @@ def _click_first_visible(page, locs, step: str, timeout: int = 10000,
                        + " || ".join(errors[:3]))
 
 
+# ---- D85：题型面板（按课程题型集合不同；简答题可能在「更多」弹层里）----
+
+_JS_TYPE_EVIDENCE = r"""([title]) => {
+  const stem = document.querySelector('.eidt_stem');
+  const wid = (document.querySelector('#workid') || {}).value || '';
+  const stemText = stem ? (stem.innerText || '') : '';
+  return {stem: stemText.trim().slice(0, 40), workid: wid,
+          stemHas: stemText.includes(title), hasWid: !!wid};
+}"""
+
+
+def _click_first_actionable(page, locators: list, timeout_ms: int = 4000) -> dict:
+    """依次尝试多个定位器（正常 click → DOM click 兜底）；返回命中信息。
+
+    真机经验：外层 span/li[title] 常 0×0 或被父级 overflow 裁剪，Playwright 的
+    可见性判定会认为不可点；但内层 <a> 实际有 82×34 的盒子。故：
+    先 Playwright click（自带等待/滚动），失败再 `element.click()` DOM 兜底。
+    """
+    last = ""
+    for name, loc in locators:
+        try:
+            n = loc.count()
+        except Exception as exc:  # noqa: BLE001
+            last = f"{name}: {str(exc).splitlines()[0][:100]}"
+            continue
+        if not n:
+            last = f"{name}: not-found"
+            continue
+        for i in range(min(n, 3)):
+            item = loc.nth(i)
+            try:
+                item.click(timeout=timeout_ms)
+                return {"ok": True, "via": f"click:{name}", "index": i}
+            except Exception as exc:  # noqa: BLE001
+                last = f"{name}#{i}: {str(exc).splitlines()[0][:100]}"
+            try:
+                item.evaluate("e => e.click()")   # DOM 兜底
+                return {"ok": True, "via": f"dom-click:{name}", "index": i}
+            except Exception as exc:  # noqa: BLE001
+                last = f"{name}#{i}(dom): {str(exc).splitlines()[0][:100]}"
+    return {"ok": False, "reason": "click-failed", "lastError": last}
+
+
+def _type_locators(page, title: str, where: str) -> list:
+    """题型可点元素候选：内层 <a> 优先，其次元素自身。where ∈ addTitle/morePop。"""
+    if where == "morePop":
+        scope = '.morePop'
+    else:
+        scope = '.addTitle'
+    return [
+        (f"{scope}-a", page.locator(f'{scope} [title="{title}"] a')),
+        (f"{scope}-self", page.locator(f'{scope} [title="{title}"]')),
+    ]
+
+
+def _wait_type_evidence(page, title: str, timeout_s: float = 8.0) -> dict:
+    """等"题目/草稿已创建"的判据（`.eidt_stem` 出现题型名 或 `#workid` 非空）。"""
+    deadline = time.time() + max(1.0, timeout_s)
+    last: dict = {}
+    while time.time() < deadline:
+        last = page.evaluate(_JS_TYPE_EVIDENCE, [title])
+        if last.get("stemHas") or last.get("hasWid"):
+            return last
+        page.wait_for_timeout(500)
+    return {}
+
+
+def _ensure_question_type(page, title: str = "简答题", timeout_s: float = 15.0,
+                          force_more: bool = False) -> dict:
+    """D85：添加题型（直接列表 → 「更多」弹层），以**成功判据**决定是否收工。
+
+    真机依据：
+    - 不同课程「添加题目」直接题型集合不同（C2Z 班没有简答题直钮，只在 `.morePop` 里）；
+    - 外层 `span/li[title]` 常被 0×0/overflow 裁剪 → Playwright click 判不可点，
+      内层 `<a>` 才是目标（click 失败再 DOM click 兜底）；
+    - 点题型按钮本身即创建草稿（`#workid` 立即有值）→ 所以"点完必须验到题目/草稿"，
+      验不到就换「更多」路径，避免 DOM 兜底点了隐藏按钮却什么都没发生。
+    `force_more=True` 仅测试钩子（直接跳过直点路径）。
+    """
+    info: dict = {"title": title, "attempts": [], "usedPath": None}
+    paths = ["more"] if force_more else ["direct", "more"]
+    for path in paths:
+        if path == "direct":
+            click = _click_first_actionable(page, _type_locators(page, title, "addTitle"))
+        else:
+            more = _click_first_actionable(page, [
+                ("addQTypeBtn", page.locator("#addQTypeBtn")),
+                ("moreCon-a", page.locator(".moreCon a.more")),
+                ("moreCon", page.locator(".moreCon")),
+            ], timeout_ms=4000)
+            info["attempts"].append({"path": "open-more", **more})
+            page.wait_for_timeout(800)
+            click = _click_first_actionable(page, _type_locators(page, title, "morePop"),
+                                            timeout_ms=5000)
+        info["attempts"].append({"path": path, **click})
+        if not click.get("ok"):
+            continue
+        ev = _wait_type_evidence(page, title, timeout_s=min(8.0, timeout_s))
+        if ev:
+            info.update({"ok": True, "usedPath": path, "evidence": ev})
+            return info
+        info["attempts"].append({"path": path, "note": "clicked-but-no-evidence"})
+    info.update({"ok": False,
+                 "error": f"题型「{title}」直接列表与「更多」弹层均未成功创建题目"})
+    return info
+
+
 def create_work(storage, course_id: str, class_id: str, cpi: str, title: str,
                 stem_html: str, directory_id: str = "0",
                 attachments: "list[str] | None" = None, workspace=None) -> dict:
@@ -458,8 +565,10 @@ def create_work(storage, course_id: str, class_id: str, cpi: str, title: str,
     chk = check_session(storage)
     if chk.get("verdict") != "alive":
         return {"ok": False, "error": "session dead"}
+    # D85：编辑器 URL 必须带 directoryid（草稿在"加题"时由服务端落目录，事后改隐藏域无效）
     url = (f"https://mooc2-ans.chaoxing.com/mooc2-ans/work/goToWorkEditor"
-           f"?courseid={course_id}&clazzid={class_id}&mooc=1&workid=&built=1&cpi={cpi}&from=")
+           f"?courseid={course_id}&clazzid={class_id}&mooc=1&workid=&built=1&cpi={cpi}"
+           f"&directoryid={directory_id or '0'}&from=")
     reqs: list = []
     with sync_playwright() as pw:
         browser = _launch(pw, headless=True)
@@ -473,14 +582,11 @@ def create_work(storage, course_id: str, class_id: str, cpi: str, title: str,
             page.goto(url, wait_until="domcontentloaded", timeout=60000)
             page.wait_for_timeout(6000)
 
-            # 题型面板可能有同名隐藏模板节点 → 可见过滤 + 多定位器 + JS 兜底
+            # D85：题型按课程不同（简答题可能在「更多」弹层）→ 直接列表 → 更多 → 成功判据
             step = "选择题型（简答题）"
-            _click_first_visible(
-                page,
-                [page.get_by_text("简答题", exact=True),
-                 page.locator("text=简答题"),
-                 page.locator("li", has_text="简答题")],
-                step, timeout=10000, js_text="简答题")
+            type_res = _ensure_question_type(page, "简答题")
+            if not type_res.get("ok"):
+                raise RuntimeError(f"{type_res.get('error')}；尝试记录={type_res.get('attempts')}")
             page.wait_for_timeout(2500)
 
             step = "填入题干"
@@ -536,8 +642,23 @@ def create_work(storage, course_id: str, class_id: str, cpi: str, title: str,
                              + (f"；现场截图：{shot}" if shot else ""),
                     "step": step, "screenshot": shot, "requests": reqs[-8:]}
         browser.close()
+    # D85：保存后用作业库列表回读，确认草稿真落在指定文件夹（主浏览器已关，避免嵌套 sync）
+    directory_check: dict = {"directoryId": str(directory_id or "0")}
+    if work_id:
+        try:
+            rep = list_works(storage, course_id, class_id, cpi, str(directory_id or "0"))
+            ids = [str(x.get("workLibraryId") or "") for x in (rep.get("items") or [])]
+            directory_check["ok"] = str(work_id) in ids
+            if not directory_check["ok"]:
+                directory_check["hint"] = ("草稿未出现在该文件夹（可能落到了根目录）；"
+                                           "请检查目录 ID 或平台目录接口变化")
+        except Exception as exc:  # noqa: BLE001
+            directory_check["ok"] = None
+            directory_check["error"] = str(exc)[:200]
     return {"ok": bool(work_id), "workLibraryId": work_id, "title": title,
-            "attachments": [p.name for p in att_paths], "requests": reqs[-8:]}
+            "attachments": [p.name for p in att_paths],
+            "typePanel": type_res if isinstance(type_res, dict) else None,
+            "directoryCheck": directory_check, "requests": reqs[-8:]}
 
 def _index_path() -> Path:
     return _receipt_dir() / "index.json"

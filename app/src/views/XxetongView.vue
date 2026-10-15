@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { computed, onMounted, onUnmounted, ref } from 'vue'
+import { computed, onMounted, onUnmounted, ref, watch } from 'vue'
 import type { XxtTargetsDiff, XxtWork, XxtWorksCourse } from '../lib/engineClient'
 import {
   clearXxtRuns, clearXxtTargetsHistory, deleteXxtRun, fetchXxtLoginJob,
@@ -8,7 +8,8 @@ import {
   fetchXxtWorks, importXxtRun, pruneXxtReview, pruneXxtRuns, startXxtDiscover,
   startXxtDiscoverWorks, startXxtExtract, startXxtExtractTargets, startXxtLogin,
   deleteXxtReviewWork, purgeXxtReviewWork, startXxtReviewDownload, startXxtReviewProbe,
-  xxtReviewFileUrl,
+  xxtReviewFileUrl, deleteXxtGradeDraft, fetchXxtGradeDrafts, saveXxtGradeDraft,
+  startXxtGradeUpload, extractJobError,
 } from '../lib/engineClient'
 import type { XxtReviewImageWork, XxtReviewManifestStudent, XxtReviewProbe,
   XxtReviewStudent, XxtStorageStats } from '../lib/engineClient'
@@ -1106,7 +1107,221 @@ async function refreshReviewIndex() {
   await loadReviewIndex()
   reviewDlMsg.value = '批阅图片目录已刷新'
 }
+/* ---------- D85 §4：人工批阅栏（本地草稿 + 上传） ---------- */
+const gradeDrafts = ref<Record<string, { score?: number; comment?: string; images?: { name: string; data_b64: string }[]; updatedAt?: string }>>({})
+const gradeScore = ref<string>('100')          // 默认 100
+const gradeComment = ref<string>('')
+const gradeImages = ref<{ name: string; data_b64: string }[]>([])
+const gradeMsg = ref<string>('')
+const gradeSaving = ref<boolean>(false)
+const gradeUploading = ref<boolean>(false)
+const gradeUnchanged = ref<boolean>(false)
+let gradeSaveTimer: number | undefined
+let gradePollTimer: number | undefined
+
+/** 班级 cpi：从 /xxt/works（按课程）里取，缺省 '0'。 */
+function classCpiOf(courseId: string, _classId: string): string {
+  const c = worksCourses.value.find(wc => String(wc.courseId) === String(courseId))
+  return String((c && c.cpi) || '0')
+}
+
+async function clearGradeDraft() {
+  const it = reviewWorkRef.value
+  const key = gradeKeyOf(curStudent.value)
+  if (!it || !key) return
+  if (!window.confirm(`删除「${curStudent.value?.name || key}」的本地批阅草稿？（不影响平台）`)) return
+  try {
+    const rep = await deleteXxtGradeDraft(engUrl.value, tok.value,
+      { classId: it.classId, workId: it.workId, key })
+    if (rep?.ok) {
+      const next = { ...gradeDrafts.value }
+      delete next[key]
+      gradeDrafts.value = next
+      gradeScore.value = '100'
+      gradeComment.value = ''
+      gradeImages.value = []
+      gradeMsg.value = '已删除本地草稿'
+    } else { gradeMsg.value = `删除失败：${rep?.error || '未知错误'}` }
+  } catch (e) { gradeMsg.value = `删除失败：${String(e)}` }
+}
+
+function gradeKeyOf(stu: XxtReviewManifestStudent | null): string {
+  if (!stu) return ''
+  return String((stu as { workAnswerId?: string }).workAnswerId || stu.name || '').trim()
+}
+function gradeDraftFor(key: string) { return key ? (gradeDrafts.value[key] || {}) : {} }
+
+async function loadGradeDrafts() {
+  const it = reviewWorkRef.value
+  if (!it) { gradeDrafts.value = {}; return }
+  try {
+    const r = await fetchXxtGradeDrafts(engUrl.value, tok.value, it.classId, it.workId)
+    gradeDrafts.value = (r.drafts || {}) as typeof gradeDrafts.value
+  } catch { /* 引擎离线时忽略 */ }
+}
+
+/** 打开弹窗/切学生时把该生草稿灌进表单（无草稿则分数默认 100）。 */
+function initGradeForm() {
+  const key = gradeKeyOf(curStudent.value)
+  const d = gradeDraftFor(key)
+  gradeScore.value = d.score !== undefined && d.score !== null ? String(d.score) : '100'
+  gradeComment.value = String(d.comment || '')
+  gradeImages.value = (d.images || []).slice()
+  gradeMsg.value = key ? (d.updatedAt ? `本地草稿：${d.updatedAt}` : '（尚无本地草稿）') : ''
+  gradeUnchanged.value = false
+}
+
+function scheduleGradeSave() {
+  if (gradeSaveTimer !== undefined) window.clearTimeout(gradeSaveTimer)
+  gradeSaveTimer = window.setTimeout(() => { void saveGradeLocal(true) }, 900)   // 输入即存（防抖）
+}
+
+async function saveGradeLocal(silent = false) {
+  const it = reviewWorkRef.value
+  const key = gradeKeyOf(curStudent.value)
+  if (!it || !key) return
+  gradeSaving.value = true
+  try {
+    const scoreNum = gradeScore.value.trim() === '' ? null : Number(gradeScore.value)
+    const rep = await saveXxtGradeDraft(engUrl.value, tok.value, {
+      classId: it.classId, workId: it.workId, key,
+      score: Number.isFinite(scoreNum as number) ? (scoreNum as number) : null,
+      comment: gradeComment.value, images: gradeImages.value,
+    })
+    if (rep?.ok) {
+      const t = new Date().toLocaleTimeString()
+      gradeDrafts.value = { ...gradeDrafts.value,
+        [key]: { score: (scoreNum as number) ?? undefined, comment: gradeComment.value,
+                 images: gradeImages.value, updatedAt: t } }
+      gradeMsg.value = `✅ 已保存到本地 ${t}`
+      gradeUnchanged.value = false
+      if (!silent) { /* 显式保存也走同一路径 */ }
+    } else {
+      gradeMsg.value = `保存失败：${rep?.error || '未知错误'}`
+    }
+  } catch (e) {
+    gradeMsg.value = `保存失败：${String(e)}`
+  } finally {
+    gradeSaving.value = false
+  }
+}
+
+function onGradeImages(ev: Event) {
+  const input = ev.target as HTMLInputElement
+  const files = Array.from(input.files || [])
+  for (const f of files) {
+    const reader = new FileReader()
+    reader.onload = () => {
+      const dataUrl = String(reader.result || '')
+      const b64 = dataUrl.split(',')[1] || ''
+      if (b64) { gradeImages.value = [...gradeImages.value, { name: f.name, data_b64: b64 }] }
+      void saveGradeLocal(true)
+    }
+    reader.readAsDataURL(f)
+  }
+  input.value = ''
+}
+function removeGradeImage(i: number) {
+  gradeImages.value = gradeImages.value.filter((_, k) => k !== i)
+  void saveGradeLocal(true)
+}
+
+function stopGradePolling() {
+  if (gradePollTimer !== undefined) { window.clearTimeout(gradePollTimer); gradePollTimer = undefined }
+}
+
+async function uploadGradeOne(send: boolean) {
+  const it = reviewWorkRef.value
+  const key = gradeKeyOf(curStudent.value)
+  if (!it || !key) return
+  if (gradeUploading.value) return
+  gradeUploading.value = true
+  try {
+    await saveGradeLocal(true)          // 先落本地，保证上传的是最新值
+    const jobId = await startXxtGradeUpload(engUrl.value, tok.value, {
+      courseId: it.courseId || '', classId: it.classId, cpi: classCpiOf(it.courseId || '', it.classId),
+      workId: it.workId, student: key, send,
+    })
+    gradeMsg.value = send ? '正在上传并提交……' : '正在演练（dry-run，不提交）……'
+    stopGradePolling()
+    const tick = async () => {
+      try {
+        const job = await fetchXxtLoginJob(engUrl.value, tok.value, jobId)
+        const lines = job.lines || []
+        if (job.status === 'running') {
+          const last = lines.slice(-1)[0] || ''
+          gradeMsg.value = (send ? '上传中：' : '演练中：') + last.slice(-140)
+          gradePollTimer = window.setTimeout(tick, 1500)
+          return
+        }
+        gradeUploading.value = false
+        if ((job.returncode ?? 0) === 0) {
+          gradeMsg.value = send ? '✅ 已上传并提交到平台' : '✅ 演练完成（未提交）；确认无误可点「上传并提交」'
+        } else {
+          gradeMsg.value = `❌ 上传失败：${extractJobError(lines.join('\n'))}`
+        }
+      } catch (e) {
+        gradeUploading.value = false
+        gradeMsg.value = `上传状态查询失败：${String(e)}`
+      }
+    }
+    void tick()
+  } catch (e) {
+    gradeUploading.value = false
+    gradeMsg.value = `上传启动失败：${String(e)}`
+  }
+}
+
+async function uploadGradeAll() {
+  const it = reviewWorkRef.value
+  if (!it) return
+  const n = Object.keys(gradeDrafts.value).length
+  if (!n) { gradeMsg.value = '还没有本地草稿：请先逐个学生填写批语/分数并保存'; return }
+  const force = window.confirm(`将上传 ${n} 份本地草稿（含打分）到平台并提交。\n` +
+    '默认跳过平台上已批阅的学生。点「确定」开始；已批阅也要覆盖请用「强制覆盖上传」。')
+  if (!force) return
+  await uploadGradeAllWith(false)
+}
+
+async function uploadGradeAllWith(force: boolean) {
+  const it = reviewWorkRef.value
+  if (!it) return
+  if (gradeUploading.value) return
+  gradeUploading.value = true
+  try {
+    const jobId = await startXxtGradeUpload(engUrl.value, tok.value, {
+      courseId: it.courseId || '', classId: it.classId, cpi: classCpiOf(it.courseId || '', it.classId),
+      workId: it.workId, send: true, force,
+    })
+    gradeMsg.value = `正在上传全部草稿（${force ? '强制覆盖' : '跳过已批阅'}）……`
+    stopGradePolling()
+    const tick = async () => {
+      try {
+        const job = await fetchXxtLoginJob(engUrl.value, tok.value, jobId)
+        const lines = job.lines || []
+        if (job.status === 'running') {
+          gradeMsg.value = `上传中：${(lines.slice(-1)[0] || '').slice(-140)}`
+          gradePollTimer = window.setTimeout(tick, 1500)
+          return
+        }
+        gradeUploading.value = false
+        if ((job.returncode ?? 0) === 0) gradeMsg.value = '✅ 全部草稿上传完成'
+        else gradeMsg.value = `❌ 上传失败：${extractJobError(lines.join('\n'))}`
+      } catch (e) {
+        gradeUploading.value = false
+        gradeMsg.value = `上传状态查询失败：${String(e)}`
+      }
+    }
+    void tick()
+  } catch (e) {
+    gradeUploading.value = false
+    gradeMsg.value = `上传启动失败：${String(e)}`
+  }
+}
+
 async function openReviewWork(it: XxtReviewImageWork) {
+  reviewWorkRef.value = it
+  await loadGradeDrafts()
   reviewWorkOpen.value = true
   reviewWorkItem.value = it
   reviewWorkTitle.value = `${it.className || it.classId} · ${it.workName || it.workId}`
@@ -1126,7 +1341,15 @@ async function openReviewWork(it: XxtReviewImageWork) {
     reviewWorkLoading.value = false
   }
 }
-function closeReviewWork() { reviewWorkOpen.value = false }
+function closeReviewWork() {
+  reviewWorkOpen.value = false
+  stopGradePolling()
+  if (gradeSaveTimer !== undefined) { window.clearTimeout(gradeSaveTimer); gradeSaveTimer = undefined }
+}
+// 切学生 → 灌入该生本地草稿（分数默认 100）；输入变化 → 防抖自动保存到本地
+watch(curStudent, () => { initGradeForm() })
+watch([gradeScore, gradeComment], () => { if (reviewWorkOpen.value) scheduleGradeSave() })
+onMounted(() => { initGradeForm() })
 function prevStudent() {
   if (reviewWorkIdx.value > 0) reviewWorkIdx.value -= 1
   reviewWorkImgIdx.value = 0; reviewWorkRotate.value = 0
@@ -1738,9 +1961,33 @@ onUnmounted(() => { loginSeq += 1; stopLoginPolling(); stopExtractPolling(); sto
               </div>
               <div v-if="!curPQTexts.length" class="hint">（空）</div>
             </div>
-            <p class="hint" style="color:var(--c-muted)">
-              人工批阅（预览/覆盖/增加/取消）需写回平台，属写操作；当前冻结，先完成只读预览/审核。
-            </p>
+            <div style="margin-top:10px; border:1px solid var(--c-border); border-radius:8px; padding:10px">
+              <div style="display:flex; align-items:center; gap:8px; flex-wrap:wrap">
+                <b>人工批阅</b>
+                <label class="field">分数：
+                  <input v-model="gradeScore" type="number" min="0" max="100" step="1" style="width:80px" />
+                </label>
+                <span class="hint">（默认 100；也会同步到平台总分）</span>
+                <button class="btn" :disabled="gradeSaving" @click="saveGradeLocal(false)">💾 保存到本地</button>
+                <button class="btn" :disabled="gradeUploading" @click="uploadGradeOne(false)">👀 演练上传</button>
+                <button class="btn" :disabled="gradeUploading" @click="uploadGradeOne(true)">⬆ 上传并提交</button>
+                <button class="btn" :disabled="gradeUploading" @click="uploadGradeAll">⬆⬆ 上传全部批阅（含打分）</button>
+                <button class="btn" :disabled="gradeUploading" @click="uploadGradeAllWith(true)">⬆⬆ 强制覆盖上传全部</button>
+                <button class="btn" :disabled="gradeSaving" @click="clearGradeDraft">🗑 清除本地草稿</button>
+              </div>
+              <textarea v-model="gradeComment" rows="4" placeholder="作业批语（纯文本；保存到本地后随上传一并写入平台）"
+                        style="width:100%; margin-top:8px; font-family:inherit; padding:6px"></textarea>
+              <div style="margin-top:6px; display:flex; align-items:center; gap:8px; flex-wrap:wrap">
+                <label class="field">评语图片：
+                  <input type="file" accept=".png,.jpg,.jpeg,.webp,.gif" multiple @change="onGradeImages" />
+                </label>
+                <span v-for="(img, i) in gradeImages" :key="i" class="hint">
+                  🖼 {{ img.name }}
+                  <a href="javascript:;" @click="removeGradeImage(i)">移除</a>
+                </span>
+              </div>
+              <p class="hint" style="margin:6px 0 0">{{ gradeMsg || '本地草稿仅存本机；上传会在白名单校验后写入平台' }}</p>
+            </div>
           </div>
         </div>
         <p v-else class="hint">没有学生记录。</p>

@@ -786,6 +786,82 @@ export interface XxtReviewStudents {
   hint?: string
 }
 
+// ---------------- D85 §3：本地人工批阅草稿 + 上传 ----------------
+
+export interface XxtGradeDraft {
+  score?: number
+  comment?: string
+  comment_text?: string
+  images?: { name: string; data_b64: string }[]
+  updatedAt?: string
+}
+
+export interface XxtGradeDrafts {
+  ok?: boolean
+  count?: number
+  drafts?: Record<string, XxtGradeDraft>
+  error?: string
+}
+
+/** GET /xxt/grade/drafts/<classId>/<workId>：读本地人工批阅草稿。 */
+export async function fetchXxtGradeDrafts(
+  engineAddr: string, token: string | undefined, classId: string, workId: string,
+): Promise<XxtGradeDrafts> {
+  const base = normalizeEngineAddr(engineAddr)
+  const path = `/xxt/grade/drafts/${encodeURIComponent(classId)}/${encodeURIComponent(workId)}`
+  return (await getJson2(engineUrlWithToken(base, path, token))) as XxtGradeDrafts
+}
+
+/** POST /xxt/grade/draft：保存单个学生的人工批阅草稿（本地文件，非平台写操作）。 */
+export async function saveXxtGradeDraft(
+  engineAddr: string, token: string | undefined,
+  payload: { classId: string; workId: string; key: string; score?: number | null
+    comment?: string; commentText?: string; images?: { name: string; data_b64: string }[] },
+): Promise<{ ok?: boolean; key?: string; error?: string }> {
+  const base = normalizeEngineAddr(engineAddr)
+  const res = await fetch(engineUrlWithToken(base, '/xxt/grade/draft', token), {
+    method: 'POST', headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(payload),
+  })
+  const o = (await res.json().catch(() => ({}))) as { ok?: boolean; key?: string; error?: string }
+  if (!res.ok && !o?.error) throw new Error(`HTTP ${res.status}`)
+  return o
+}
+
+/** POST /xxt/grade/delete-draft：删除单个学生草稿。 */
+export async function deleteXxtGradeDraft(
+  engineAddr: string, token: string | undefined,
+  payload: { classId: string; workId: string; key: string },
+): Promise<{ ok?: boolean; error?: string }> {
+  const base = normalizeEngineAddr(engineAddr)
+  const res = await fetch(engineUrlWithToken(base, '/xxt/grade/delete-draft', token), {
+    method: 'POST', headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(payload),
+  })
+  return (await res.json().catch(() => ({}))) as { ok?: boolean; error?: string }
+}
+
+/** POST /xxt/grade/upload：把本地草稿上传到平台（send=false 为 dry-run；返回 job_id）。 */
+export async function startXxtGradeUpload(
+  engineAddr: string, token: string | undefined,
+  payload: { courseId: string; classId: string; cpi: string; workId: string
+    student?: string; send?: boolean; force?: boolean },
+): Promise<string> {
+  const base = normalizeEngineAddr(engineAddr)
+  const res = await fetch(engineUrlWithToken(base, '/xxt/grade/upload', token), {
+    method: 'POST', headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(payload),
+  })
+  if (!res.ok) {
+    let detail = `HTTP ${res.status}`
+    try { const o = (await res.json()) as { error?: string }; if (o?.error) detail = o.error } catch { /* keep */ }
+    throw new Error(detail)
+  }
+  const o = (await res.json()) as { job_id?: string }
+  if (!o?.job_id) throw new Error('引擎未返回 job_id')
+  return o.job_id
+}
+
 /** GET /xxt/preview/students/<classId>/<workId>[?run_id=]：
  *  解析本地 review 列表存档；无存档时引擎会回退到 students.json manifest。 */
 export async function fetchXxtReviewStudents(

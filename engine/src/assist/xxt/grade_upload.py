@@ -341,6 +341,21 @@ def _is_num(v) -> bool:
         return False
 
 
+def drafts_to_payloads(drafts: dict, only: str = "") -> list[dict]:
+    """本地草稿表 → 每生 payload（D85 §3）。only 给定时只取匹配 key/姓名的一项。"""
+    only = str(only or "").strip()
+    out: list[dict] = []
+    for key, d in (drafts or {}).items():
+        if not isinstance(d, dict):
+            continue
+        if only and only not in (str(key), str(d.get("name") or "")):
+            continue
+        out.append({"key": str(key), "score": d.get("score"),
+                    "comment": str(d.get("comment") or ""),
+                    "images": [i for i in (d.get("images") or []) if isinstance(i, dict)]})
+    return sorted(out, key=lambda x: x["key"])
+
+
 def find_payload(payloads: list[dict], student: str) -> "dict | None":
     """按学生名匹配 payload（精确优先，其次子串）。"""
     key = str(student or "").strip().lower()

@@ -949,6 +949,84 @@ class Handler(BaseHTTPRequestHandler):
                                    journal_params={"courseId": cid, "classId": kid, "directoryId": directory})
             self._json({"ok": True, "job_id": job_id})
             return
+        if u.path == "/xxt/grade/draft":
+            payload: dict = {}
+            try:
+                length = int(self.headers.get("Content-Length") or 0)
+                if length:
+                    payload = json.loads(self.rfile.read(length).decode("utf-8")) or {}
+            except Exception as exc:  # noqa: BLE001
+                self._json({"ok": False, "error": f"bad json: {exc}"}, 400)
+                return
+            from .xxt import grade_store
+            key = str(payload.get("key") or payload.get("workAnswerId")
+                      or payload.get("name") or "")
+            rep = grade_store.save_draft(
+                _xxt_home(), str(payload.get("classId") or ""), str(payload.get("workId") or ""),
+                key, score=payload.get("score"), comment=str(payload.get("comment") or ""),
+                comment_text=str(payload.get("commentText") or ""),
+                images=payload.get("images"))
+            self._json(rep, 200 if rep.get("ok") else 400)
+            return
+        if u.path == "/xxt/grade/delete-draft":
+            payload: dict = {}
+            try:
+                length = int(self.headers.get("Content-Length") or 0)
+                if length:
+                    payload = json.loads(self.rfile.read(length).decode("utf-8")) or {}
+            except Exception as exc:  # noqa: BLE001
+                self._json({"ok": False, "error": f"bad json: {exc}"}, 400)
+                return
+            from .xxt import grade_store
+            rep = grade_store.delete_draft(_xxt_home(), str(payload.get("classId") or ""),
+                                           str(payload.get("workId") or ""),
+                                           str(payload.get("key") or ""))
+            self._json(rep, 200 if rep.get("ok") else 400)
+            return
+        if u.path == "/xxt/grade/upload":
+            payload: dict = {}
+            try:
+                length = int(self.headers.get("Content-Length") or 0)
+                if length:
+                    payload = json.loads(self.rfile.read(length).decode("utf-8")) or {}
+            except Exception as exc:  # noqa: BLE001
+                self._json({"ok": False, "error": f"bad json: {exc}"}, 400)
+                return
+            cid = str(payload.get("courseId") or "")
+            kid = str(payload.get("classId") or "")
+            cpi = str(payload.get("cpi") or "0")
+            work = str(payload.get("workId") or "")
+            student = str(payload.get("student") or "")
+            send = bool(payload.get("send"))
+            force = bool(payload.get("force"))
+            if not (cid and kid and work):
+                self._json({"ok": False, "error": "courseId/classId/workId 必填"}, 400)
+                return
+            from .xxt.work import validate_work_target
+            err = validate_work_target(cid, kid, Path(self.ws).resolve())
+            if err:
+                self._json({"ok": False, "error": err}, 400)
+                return
+            args = ["xxt", "grade-upload", "--course", cid, "--class", kid, "--cpi", cpi,
+                    "--work", work, "--from-drafts"]
+            if student:
+                args += ["--student", student]
+            if send:
+                args += ["--confirm-send"]
+            if force:
+                args += ["--force"]
+            home = _xxt_home(); env = _xxt_env(home); cwd = str(_ws())
+            ok, detail = _xxt_preflight(cwd, env)
+            if not ok:
+                self._json({"ok": False, "error": "engine 无法 import assist.cli", "detail": detail}, 500)
+                return
+            job_id = secrets.token_urlsafe(6)
+            self._start_stream_job(job_id, _xxt_cli_cmd(args), env, "xxt_grade_upload", "xxt-grade", cwd,
+                                   journal_kind="xxt_grade_upload",
+                                   journal_params={"courseId": cid, "classId": kid,
+                                                   "workId": work, "send": send, "student": student})
+            self._json({"ok": True, "job_id": job_id})
+            return
         if u.path == "/xxt/work/publish":
             payload: dict = {}
             try:
@@ -1398,6 +1476,16 @@ class Handler(BaseHTTPRequestHandler):
                 return
             self._json(work_detail(_xxt_home() / "xxt-storage.json", cid, kid, cpi, wid))
             return
+        elif u.path.startswith("/xxt/grade/drafts/"):
+            # D85 §3：读本地人工批阅草稿 <xxt_home>/grade-drafts/<class>/<work>.json
+            m = re.fullmatch(r"/xxt/grade/drafts/([0-9A-Za-z\-_]{1,40})/([0-9A-Za-z\-_]{1,40})", u.path)
+            if not m:
+                self._json({"ok": False, "error": "bad path"}, 400)
+                return
+            from .xxt import grade_store
+            drafts = grade_store.read_drafts(_xxt_home(), m.group(1), m.group(2))
+            self._json({"ok": True, "classId": m.group(1), "workId": m.group(2),
+                        "count": len(drafts), "drafts": drafts})
         elif u.path == "/xxt/work/list":
             from .xxt.work import list_works
             q = urllib.parse.parse_qs(u.query)
