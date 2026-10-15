@@ -227,7 +227,7 @@ CLI `assist render --md|--text --out --kind ai|human`；实测输出 **794px 宽
 | §3 | 作业包挂接（tag ↔ taskpad；最简包优先）+ tag 勾选 | `grading/inputs.py`（pads_by_tag / students_with_tags / build_plan） | ✅ engine 完成（PWA UI 随 §6） |
 | §4 | engine：`assist grade` 串"批阅下载目录 + 作业包"；两模式；tag 指令；诊断 | `grading/{inputs,prompts,flow}.py` + CLI `--xxt-class/--plan/--mode/--tags/--limit/--dry-plan` | ✅ engine/CLI 完成（单测 5 例；`diagnostics.jsonl`） |
 | §5 | 批阅报告（固定版式 md/html/png；AI/人工标注；LaTeX→PNG；上传前生成） | `report.py`（A4/小四/长图 + KaTeX）+ CLI `assist render` | ✅ engine/CLI 完成（真机出图 794px 宽/长图、公式渲染）；PWA 随 §6 |
-| §6 | PWA「AI 辅助批阅」选项卡：设置/provider、班级映射、tag 勾选、开始批阅、逐生查看/修改、一键生成报告、一键上传全部 | `XxetongView.vue` + serve | 🔄 进行中（engine 端点陆续就绪） |
+| §6 | PWA「AI 辅助批阅」面板：provider 管理、班级映射、作业包选择、模式/tags、开始 AI 批阅、一键生成批阅报告；逐生审核复用 D85 人工批阅栏；一键上传全批复用 D85 | `XxetongView.vue` + `engineClient.ts` + serve `/xxt/grade/ai-run|render-drafts` + `grading/drafts.py` + CLI `grade-drafts` | ✅ 代码+tsc/build/selfcheck；serve 端点参数与白名单校验冒烟通过；**真机 AI 跑通待教师机配 key** |
 | §7 | batch（DashScope）+ 成本/诊断信息 | `grading/llm_batch.py` + CLI `llm batch` | ✅ engine/CLI（默认 dry-run；JSONL+说明+submit/poll/download 诊断；单测 5 例含 key 掩码回归） |
 | §8 | 文档与真机验证（教师机实测两种提交模式） | docs/13/16/39 | 🔄 文档随各阶段更新；教师机实测待用户 |
 
@@ -243,6 +243,11 @@ CLI `assist render --md|--text --out --kind ai|human`；实测输出 **794px 宽
 6. ✅ 报告：AI/人工**版式一致、仅标注不同**；**人工报告也要 PNG**（轻量档不必正式版式）；
 7. ✅ batch 顺序：先做 **一般提交（实时+并发）闭环**，再上 DashScope batch；
 8. ✅ 多 provider：**每个 provider 各存一份 key**，PWA 掩码显示，代码/日志严格保密（见 §4.12 拆分）。
+
+**实施补充（2026-10-15）**：AI 结果统一落**本地批阅草稿**
+（`grading/drafts.py`：score=total_score、comment=feedback_md 纯文本化、images=[报告 PNG base64]），
+因此「逐生审核/修改」与「一键上传全部」直接复用 D85 的人工批阅栏与上传链路；
+「一键生成批阅报告」= `/xxt/grade/render-drafts`（可标注 ai/human）。
 
 **已拍板（补充 2026-10-15 第二轮）**
 9. ✅ 报告尺寸/字号：两档 PNG 均 **A4 宽**；轻量批语图 **小四（12pt）**；均**长图**；

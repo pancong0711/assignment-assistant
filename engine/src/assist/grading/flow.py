@@ -282,6 +282,21 @@ def run_task(task_path: Path, ws: Path, images_dir: Path | None = None,
         journal_append(journal, record)
         logger.info(f"[{step}] 完成，产物 {len(produced)} 项")
 
+    # D86 §6：批阅完成后把结果落成"本地批阅草稿"（PWA 人工批阅栏可直接查看/修改/一键上传）
+    if plan:
+        cid = str((plan.get("classId") or "")).strip()
+        wid = str((plan.get("workId") or "")).strip()
+        if cid and wid:
+            try:
+                from .drafts import save_drafts_from_grading
+                saved = save_drafts_from_grading(ws, class_id=cid, work_id=wid,
+                                                 task_id=str(task.get("id") or "task"),
+                                                 class_dir=str(plan.get("classDir") or ""),
+                                                 kind=str(ctx.get("report_kind") or "ai"))
+                logger.info(f"[草稿] 已写入本地批阅草稿 {saved.get('count')} 份（kind={ctx.get('report_kind')}）")
+            except Exception as exc:  # noqa: BLE001
+                logger.warning(f"[草稿] 写入本地草稿失败（不影响批阅结果）：{str(exc)[:160]}")
+
     # run 汇总记录（D8：任务包 = 执行历史；任务包内 journal 数组不入库但存在于工作区副本）
     summary_rec = {"ts": time.strftime("%Y-%m-%d %H:%M:%S"), "run_id": run_id,
                    "step": "run", "steps_done": to_run, "status": "done",

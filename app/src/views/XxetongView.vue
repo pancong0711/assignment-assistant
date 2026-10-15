@@ -9,8 +9,10 @@ import {
   startXxtDiscoverWorks, startXxtExtract, startXxtExtractTargets, startXxtLogin,
   deleteXxtReviewWork, purgeXxtReviewWork, startXxtReviewDownload, startXxtReviewProbe,
   xxtReviewFileUrl, deleteXxtGradeDraft, fetchXxtGradeDrafts, saveXxtGradeDraft,
-  startXxtGradeUpload, extractJobError,
+  startXxtGradeUpload, extractJobError, fetchLlmConfig, postLlmProvider, fetchXxtClassMap,
+  postXxtClassMap, startXxtGradeAi, startXxtGradeRenderDrafts,
 } from '../lib/engineClient'
+import { useTaskpadStore } from '../stores/taskpad'
 import type { XxtReviewImageWork, XxtReviewManifestStudent, XxtReviewProbe,
   XxtReviewStudent, XxtStorageStats } from '../lib/engineClient'
 import { useSettingsStore } from '../stores/settings'
@@ -1145,6 +1147,192 @@ async function clearGradeDraft() {
   } catch (e) { gradeMsg.value = `删除失败：${String(e)}` }
 }
 
+/* ---------- D86 §6：AI 辅助批阅（provider / 班级映射 / AI 运行 / 报告） ---------- */
+const aiOpen = ref(false)
+const aiMsg = ref('')
+const aiBusy = ref(false)
+const llmConfig = ref<{ providers?: any[]; stages?: Record<string, any>; default_base_url?: string }>({})
+const aiProviderName = ref('')
+const aiBaseUrl = ref('')
+const aiApiKey = ref('')
+const aiBatchSupport = ref(false)
+const aiStageProvider = ref<Record<string, string>>({ transcription: '', evaluation: '' })
+const aiStageModel = ref<Record<string, string>>({ transcription: '', evaluation: '' })
+const aiStageBatch = ref<Record<string, boolean>>({ transcription: false, evaluation: false })
+const classMap = ref<Record<string, string>>({})
+const classDirInput = ref<Record<string, string>>({})
+const aiWorkKey = ref('')
+const aiMode = ref<'optimized' | 'brute'>('optimized')
+const aiTags = ref('')
+const aiLimit = ref(0)
+const aiTaskId = ref('')
+const aiReportKind = ref<'ai' | 'human'>('ai')
+const aiProgress = ref('')
+let aiPollTimer: number | undefined
+const taskpadStore = useTaskpadStore()
+
+const pads = computed(() => (taskpadStore.saved || []).map((x: any) => ({
+  id: String(x.id || ''), tag: String(x.target_tag || ''), json: x.json || '', path: x.path || '',
+})))
+
+/** 当前下载了的作业行（来自批阅图片索引），用于 AI 批阅选择。 */
+const aiWorkOptions = computed(() => (reviewIndex.value || []).map((it: any) =>
+  ({ key: `${it.classId}:${it.workId}`, classId: it.classId, workId: it.workId,
+     courseId: it.courseId || '', cpi: it.cpi || '0',
+     label: `${it.className || it.classId} · ${it.workName || it.workId}` })))
+
+async function loadAiConfig() {
+  try {
+    const cfg = await fetchLlmConfig(engUrl.value, tok.value)
+    llmConfig.value = cfg
+    const st = cfg.stages || {}
+    for (const stage of ['transcription', 'evaluation']) {
+      const c = st[stage] || {}
+      aiStageProvider.value = { ...aiStageProvider.value, [stage]: String(c.provider || '') }
+      aiStageModel.value = { ...aiStageModel.value, [stage]: String(c.model || '') }
+      aiStageBatch.value = { ...aiStageBatch.value, [stage]: !!c.batch }
+    }
+    if (!aiStageProvider.value.evaluation && cfg.providers?.length) {
+      aiStageProvider.value = { ...aiStageProvider.value,
+        evaluation: String(cfg.providers[0].name || '') }
+    }
+    const cm = await fetchXxtClassMap(engUrl.value, tok.value)
+    classMap.value = cm.map || {}
+  } catch (e) { aiMsg.value = `读取 AI 配置失败：${String(e)}` }
+}
+
+async function saveProvider() {
+  if (!aiProviderName.value.trim()) { aiMsg.value = '请填 provider 名称'; return }
+  const rep = await postLlmProvider(engUrl.value, tok.value, {
+    action: 'set', name: aiProviderName.value.trim(), base_url: aiBaseUrl.value.trim(),
+    api_key: aiApiKey.value ? aiApiKey.value : undefined,
+    batch_support: aiBatchSupport.value,
+  })
+  aiMsg.value = rep?.ok ? `provider「${aiProviderName.value}」已保存（key 只掩码显示）` : `保存失败：${rep?.error || ''}`
+  aiApiKey.value = ''
+  await loadAiConfig()
+}
+
+async function deleteProvider(name: string) {
+  if (!window.confirm(`删除 provider「${name}」及其本地 key？`)) return
+  await postLlmProvider(engUrl.value, tok.value, { action: 'delete', name })
+  await loadAiConfig()
+}
+
+async function saveStage(stage: 'transcription' | 'evaluation') {
+  const p = aiStageProvider.value[stage]
+  if (!p) { aiMsg.value = `请先为「${stage}」勾选 provider`; return }
+  const rep = await postLlmProvider(engUrl.value, tok.value, {
+    action: 'stage', stage, provider: p, model: aiStageModel.value[stage] || '',
+    batch: stage === 'evaluation' ? !!aiStageBatch.value.evaluation : undefined,
+  })
+  aiMsg.value = rep?.ok ? `已保存「${stage}」：${p} / ${aiStageModel.value[stage] || '（未填模型）'}` : `保存失败：${rep?.error || ''}`
+  await loadAiConfig()
+}
+
+function suggestClassDir(key: string) {
+  const opt = aiWorkOptions.value.find(x => x.key === key)
+  if (!opt) return
+  classDirInput.value = { ...classDirInput.value,
+    [key]: classMap.value[`${opt.courseId}:${opt.classId}`] || classDirInput.value[key] || '' }
+}
+async function saveClassMap(key: string) {
+  const opt = aiWorkOptions.value.find(x => x.key === key)
+  if (!opt) return
+  const rep = await postXxtClassMap(engUrl.value, tok.value, {
+    courseId: opt.courseId, classId: opt.classId,
+    classDir: classDirInput.value[key] || '',
+  })
+  aiMsg.value = rep?.ok ? `已关联 ${opt.classId} → ${classDirInput.value[key]}` : `保存失败：${rep?.error || ''}`
+  await loadAiConfig()
+}
+
+async function startAiGrade() {
+  const opt = aiWorkOptions.value.find(x => x.key === aiWorkKey.value)
+  if (!opt) { aiMsg.value = '请选择作业（需先下载作答/批语）'; return }
+  const ids = aiTaskId.value.trim()
+  if (!ids) { aiMsg.value = '请选择或填写作业包（taskpad id）'; return }
+  const padRaw = pads.value.find(p => p.id === ids)?.json || ''
+  let taskpad: any = null
+  try { taskpad = padRaw ? JSON.parse(padRaw) : null } catch { taskpad = null }
+  if (!taskpad) { aiMsg.value = '作业包解析失败（请在作业纸设计里保存过该作业包）'; return }
+  aiBusy.value = true
+  aiProgress.value = '正在装配任务清单并启动 AI 批阅……'
+  try {
+    const jobId = await startXxtGradeAi(engUrl.value, tok.value, {
+      courseId: opt.courseId, classId: opt.classId, cpi: opt.cpi, workId: opt.workId,
+      taskpad, mode: aiMode.value,
+      tags: aiTags.value.split(',').map(x => x.trim()).filter(Boolean),
+      limit: Number(aiLimit.value) || 0,
+    })
+    stopAiPolling()
+    const tick = async () => {
+      try {
+        const job = await fetchXxtLoginJob(engUrl.value, tok.value, jobId)
+        const lines = job.lines || []
+        if (job.status === 'running') {
+          aiProgress.value = `AI 批阅中：${(lines.slice(-1)[0] || '').slice(-140)}`
+          aiPollTimer = window.setTimeout(tick, 2000)
+          return
+        }
+        aiBusy.value = false
+        aiProgress.value = (job.returncode ?? 0) === 0
+          ? '✅ AI 批阅完成（结果已写入本地批阅草稿，可在逐生预览里审核/修改）'
+          : `❌ AI 批阅失败：${extractJobError(lines.join('\n'))}`
+        await loadGradeDrafts()
+      } catch (e) { aiBusy.value = false; aiProgress.value = `状态查询失败：${String(e)}` }
+    }
+    void tick()
+  } catch (e) {
+    aiBusy.value = false
+    aiProgress.value = `启动失败：${String(e)}`
+  }
+}
+
+async function renderDrafts() {
+  const opt = aiWorkOptions.value.find(x => x.key === aiWorkKey.value)
+  if (!opt || !aiTaskId.value.trim()) { aiMsg.value = '请选择作业与作业包 id'; return }
+  aiBusy.value = true
+  try {
+    const jobId = await startXxtGradeRenderDrafts(engUrl.value, tok.value, {
+      courseId: opt.courseId, classId: opt.classId, workId: opt.workId,
+      taskId: aiTaskId.value.trim(), kind: aiReportKind.value,
+    })
+    stopAiPolling()
+    const tick = async () => {
+      try {
+        const job = await fetchXxtLoginJob(engUrl.value, tok.value, jobId)
+        const lines = job.lines || []
+        if (job.status === 'running') {
+          aiProgress.value = `生成报告中：${(lines.slice(-1)[0] || '').slice(-140)}`
+          aiPollTimer = window.setTimeout(tick, 2000)
+          return
+        }
+        aiBusy.value = false
+        aiProgress.value = (job.returncode ?? 0) === 0
+          ? `✅ 已生成「${aiReportKind.value === 'human' ? '人工' : 'AI'}批阅报告」并写入本地草稿（含报告图）`
+          : `❌ 生成失败：${extractJobError(lines.join('\n'))}`
+        await loadGradeDrafts()
+      } catch (e) { aiBusy.value = false; aiProgress.value = `状态查询失败：${String(e)}` }
+    }
+    void tick()
+  } catch (e) { aiBusy.value = false; aiMsg.value = `启动失败：${String(e)}` }
+}
+
+function stopAiPolling() {
+  if (aiPollTimer !== undefined) { window.clearTimeout(aiPollTimer); aiPollTimer = undefined }
+}
+
+/** 未批阅学生数（本地草稿 vs 逐生清单）。 */
+const ungradedCount = computed(() => {
+  const students = reviewWorkStudents.value || []
+  if (!students.length) return 0
+  return students.filter(s => {
+    const k = String((s as any).workAnswerId || s.name || '')
+    return !(k && gradeDrafts.value[k])
+  }).length
+})
+
 function gradeKeyOf(stu: XxtReviewManifestStudent | null): string {
   if (!stu) return ''
   return String((stu as { workAnswerId?: string }).workAnswerId || stu.name || '').trim()
@@ -1343,6 +1531,7 @@ async function openReviewWork(it: XxtReviewImageWork) {
 }
 function closeReviewWork() {
   reviewWorkOpen.value = false
+  stopAiPolling()
   stopGradePolling()
   if (gradeSaveTimer !== undefined) { window.clearTimeout(gradeSaveTimer); gradeSaveTimer = undefined }
 }
@@ -1894,6 +2083,112 @@ onUnmounted(() => { loginSeq += 1; stopLoginPolling(); stopExtractPolling(); sto
         <p v-else class="hint">没有可显示的学生行。</p>
       </div>
     </div>
+    <!-- D86 §6：AI 辅助批阅（provider / 班级映射 / AI 运行 / 报告生成） -->
+    <div style="margin-top:14px">
+      <button class="btn" @click="aiOpen = !aiOpen; if (aiOpen) loadAiConfig()">
+        {{ aiOpen ? '▾' : '▸' }} AI 辅助批阅
+      </button>
+      <span class="hint" style="margin-left:8px">
+        两段式：转写（多模态）→ 评阅（可 batch）｜
+        <template v-if="ungradedCount">尚余 <b>{{ ungradedCount }}</b> 名学生未完成批阅</template>
+        <template v-else-if="reviewWorkStudents.length">本地草稿已覆盖全部学生</template>
+      </span>
+      <span v-if="ungradedCount" class="hint" style="margin-left:8px">
+        <a href="javascript:;" @click="openReviewWork(reviewIndex[0] || reviewWorkRef)">查看未批阅</a>
+      </span>
+      <div v-if="aiOpen" style="border:1px solid var(--c-border); border-radius:8px; padding:10px; margin-top:8px">
+        <p v-if="aiMsg" class="hint" style="color:#7a5c00">{{ aiMsg }}</p>
+
+        <h4 style="margin:6px 0">① LLM 设置（provider 统一管理 + 两段式勾选）</h4>
+        <table style="width:100%; border-collapse:collapse">
+          <thead><tr><th style="text-align:left">provider</th><th style="text-align:left">base_url</th>
+            <th>batch</th><th>key</th><th></th></tr></thead>
+          <tbody>
+            <tr v-for="p in (llmConfig.providers || [])" :key="p.name">
+              <td>{{ p.name }}</td>
+              <td class="hint">{{ p.base_url }}</td>
+              <td style="text-align:center">{{ p.batch_support ? '✓' : '' }}</td>
+              <td style="text-align:center">{{ p.api_key || '（未设置）' }}</td>
+              <td style="text-align:center">
+                <a href="javascript:;" @click="aiProviderName = p.name; aiBaseUrl = p.base_url; aiBatchSupport = !!p.batch_support">编辑</a>
+                ｜<a href="javascript:;" @click="deleteProvider(p.name)">删除</a>
+              </td>
+            </tr>
+          </tbody>
+        </table>
+        <div style="margin-top:6px; display:flex; gap:8px; flex-wrap:wrap; align-items:center">
+          <label class="field">名称 <input v-model="aiProviderName" placeholder="Aliyun" style="width:110px" /></label>
+          <label class="field">base_url <input v-model="aiBaseUrl" placeholder="https://dashscope.aliyuncs.com/compatible-mode/v1" style="width:320px" /></label>
+          <label class="field">api_key <input v-model="aiApiKey" type="password" placeholder="留空=不修改（只存掩码显示）" style="width:200px" /></label>
+          <label class="field"><input type="checkbox" v-model="aiBatchSupport" /> 支持 batch</label>
+          <button class="btn" @click="saveProvider">保存 provider</button>
+        </div>
+        <div style="margin-top:8px">
+          <div v-for="stage in ['transcription', 'evaluation']" :key="stage"
+               style="display:flex; gap:8px; align-items:center; margin-top:4px; flex-wrap:wrap">
+            <b style="width:110px">{{ stage === 'transcription' ? '转写段' : '评阅段' }}</b>
+            <select v-model="aiStageProvider[stage]" style="min-width:140px">
+              <option value="">（选择 provider）</option>
+              <option v-for="p in (llmConfig.providers || [])" :key="p.name" :value="p.name">{{ p.name }}</option>
+            </select>
+            <input v-model="aiStageModel[stage]" list="ai-models" placeholder="模型名（填写即记录）"
+                   style="width:220px" />
+            <label v-if="stage === 'evaluation'" class="field">
+              <input type="checkbox" v-model="aiStageBatch.evaluation" /> 走 batch（需 provider 支持）
+            </label>
+            <button class="btn" @click="saveStage(stage as 'transcription' | 'evaluation')">保存</button>
+          </div>
+          <datalist id="ai-models">
+            <template v-for="p in (llmConfig.providers || [])" :key="p.name">
+              <option v-for="m in (p.models || [])" :key="m" :value="m"></option>
+            </template>
+          </datalist>
+        </div>
+
+        <h4 style="margin:12px 0 6px">② 班级 ↔ 作业纸目录（class_map；按文件名建议）</h4>
+        <div v-for="opt in aiWorkOptions" :key="'cm-' + opt.key"
+             style="display:flex; gap:8px; align-items:center; margin-top:4px; flex-wrap:wrap">
+          <span style="width:240px" class="hint">{{ opt.label }}</span>
+          <input v-model="classDirInput[opt.key]" placeholder="classes/xxx" style="width:220px" />
+          <button class="btn" @click="suggestClassDir(opt.key)">填当前映射</button>
+          <button class="btn" @click="saveClassMap(opt.key)">保存映射</button>
+        </div>
+
+        <h4 style="margin:12px 0 6px">③ 开始 AI 批阅 / 生成批阅报告</h4>
+        <div style="display:flex; gap:8px; align-items:center; flex-wrap:wrap">
+          <select v-model="aiWorkKey" style="min-width:260px">
+            <option value="">（选择已下载的作业）</option>
+            <option v-for="opt in aiWorkOptions" :key="opt.key" :value="opt.key">{{ opt.label }}</option>
+          </select>
+          <select v-model="aiTaskId" style="min-width:200px">
+            <option value="">（选择作业包 taskpad）</option>
+            <option v-for="p in pads" :key="p.id" :value="p.id">{{ p.id }}{{ p.tag ? ' · tag ' + p.tag : '' }}</option>
+          </select>
+          <label class="field">模式
+            <select v-model="aiMode">
+              <option value="optimized">优化（给题目/答案）</option>
+              <option value="brute">brute-force（先自己作答再比对）</option>
+            </select>
+          </label>
+          <label class="field">tags <input v-model="aiTags" placeholder="留空=全部（逗号分隔）" style="width:150px" /></label>
+          <label class="field">限前 <input v-model.number="aiLimit" type="number" min="0" style="width:70px" /> 名</label>
+          <button class="btn" :disabled="aiBusy" @click="startAiGrade">▶ 开始 AI 批阅</button>
+          <label class="field">报告标注
+            <select v-model="aiReportKind">
+              <option value="ai">AI 批阅报告</option>
+              <option value="human">人工批阅报告</option>
+            </select>
+          </label>
+          <button class="btn" :disabled="aiBusy" @click="renderDrafts">📄 一键生成批阅报告</button>
+        </div>
+        <p v-if="aiProgress" class="hint" style="margin-top:6px">{{ aiProgress }}</p>
+        <p class="hint" style="margin-top:6px">
+          说明：AI 结果会写入<b>本地批阅草稿</b>（含报告图）；到「逐生预览 → 人工批阅」修改后再用
+          「⬆⬆ 上传全部批阅」提交到平台（未批阅的不会上传）。
+        </p>
+      </div>
+    </div>
+
     <!-- D75-4 逐生两列预览：作答 | 批语；旋转 / 上一位 / 下一位（只读） -->
     <div v-if="reviewWorkOpen" @click.self="closeReviewWork"
          style="position:fixed; inset:0; background:rgba(15,23,42,.5); z-index:85; display:flex; align-items:center; justify-content:center">

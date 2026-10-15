@@ -1006,6 +1006,96 @@ class Handler(BaseHTTPRequestHandler):
             rep["config"] = providers.public_config(ws)
             self._json(rep)
             return
+        if u.path == "/xxt/grade/ai-run":
+            payload: dict = {}
+            try:
+                length = int(self.headers.get("Content-Length") or 0)
+                if length:
+                    payload = json.loads(self.rfile.read(length).decode("utf-8")) or {}
+            except Exception as exc:  # noqa: BLE001
+                self._json({"ok": False, "error": f"bad json: {exc}"}, 400)
+                return
+            cid = str(payload.get("courseId") or "")
+            kid = str(payload.get("classId") or "")
+            cpi = str(payload.get("cpi") or "0")
+            work = str(payload.get("workId") or "")
+            pad = payload.get("taskpad")
+            if not (cid and kid and work and isinstance(pad, dict)):
+                self._json({"ok": False, "error": "courseId/classId/workId/taskpad 必填"}, 400)
+                return
+            from .xxt.work import validate_work_target
+            err = validate_work_target(cid, kid, Path(self.ws).resolve())
+            if err:
+                self._json({"ok": False, "error": err}, 400)
+                return
+            # 作业包落 workspace 临时目录（PWA 的 pad 存在 localStorage，需显式传入）
+            task_id = str(pad.get("id") or "").strip() or "ai-grade-task"
+            pad_dir = Path(self.ws).resolve() / "tmp" / "ai-grade"
+            pad_dir.mkdir(parents=True, exist_ok=True)
+            pad_path = pad_dir / f"{task_id}.taskpad.json"
+            pad_path.write_text(json.dumps(pad, ensure_ascii=False, indent=1), encoding="utf-8")
+            args = ["grade", "--task", str(pad_path), "--xxt-class", f"{cid}:{kid}",
+                    "--work", work]
+            if payload.get("mode"):
+                args += ["--mode", str(payload.get("mode"))]
+            if payload.get("tags"):
+                tags = payload.get("tags")
+                args += ["--tags", ",".join(tags) if isinstance(tags, list) else str(tags)]
+            if payload.get("limit"):
+                args += ["--limit", str(int(payload.get("limit")))]
+            home = _xxt_home(); env = _xxt_env(home); cwd = str(_ws())
+            ok, detail = _xxt_preflight(cwd, env)
+            if not ok:
+                self._json({"ok": False, "error": "engine 无法 import assist.cli", "detail": detail}, 500)
+                return
+            job_id = secrets.token_urlsafe(6)
+            self._start_stream_job(job_id, _xxt_cli_cmd(args), env, "xxt_grade_ai", "xxt-grade-ai", cwd,
+                                   journal_kind="xxt_grade_ai",
+                                   journal_params={"courseId": cid, "classId": kid, "workId": work,
+                                                   "mode": payload.get("mode") or "optimized",
+                                                   "taskpad": task_id})
+            self._json({"ok": True, "job_id": job_id, "taskpadPath": str(pad_path)})
+            return
+        if u.path == "/xxt/grade/render-drafts":
+            payload: dict = {}
+            try:
+                length = int(self.headers.get("Content-Length") or 0)
+                if length:
+                    payload = json.loads(self.rfile.read(length).decode("utf-8")) or {}
+            except Exception as exc:  # noqa: BLE001
+                self._json({"ok": False, "error": f"bad json: {exc}"}, 400)
+                return
+            cid = str(payload.get("courseId") or "")
+            kid = str(payload.get("classId") or "")
+            work = str(payload.get("workId") or "")
+            task_id = str(payload.get("taskId") or "")
+            kind = str(payload.get("kind") or "human")
+            if not (cid and kid and work and task_id):
+                self._json({"ok": False, "error": "courseId/classId/workId/taskId 必填"}, 400)
+                return
+            from .xxt.work import validate_work_target
+            err = validate_work_target(cid, kid, Path(self.ws).resolve())
+            if err:
+                self._json({"ok": False, "error": err}, 400)
+                return
+            pad_path = Path(self.ws).resolve() / "tmp" / "ai-grade" / f"{task_id}.taskpad.json"
+            if not pad_path.is_file():
+                self._json({"ok": False, "error": f"未找到作业包：{pad_path}（先跑一次 AI 批阅）"}, 400)
+                return
+            args = ["grade-drafts", "--task", str(pad_path), "--class", kid, "--work", work,
+                    "--kind", kind]
+            home = _xxt_home(); env = _xxt_env(home); cwd = str(_ws())
+            ok, detail = _xxt_preflight(cwd, env)
+            if not ok:
+                self._json({"ok": False, "error": "engine 无法 import assist.cli", "detail": detail}, 500)
+                return
+            job_id = secrets.token_urlsafe(6)
+            self._start_stream_job(job_id, _xxt_cli_cmd(args), env, "xxt_grade_render", "xxt-grade-render",
+                                   cwd, journal_kind="xxt_grade_render",
+                                   journal_params={"courseId": cid, "classId": kid, "workId": work,
+                                                   "taskId": task_id, "kind": kind})
+            self._json({"ok": True, "job_id": job_id})
+            return
         if u.path == "/xxt/grade/draft":
             payload: dict = {}
             try:

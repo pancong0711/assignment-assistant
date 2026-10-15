@@ -499,6 +499,30 @@ def roster_rain(obj, files, out, workspace, verbose):
     click.echo(_j.dumps(summary.get("rows", [])[:5], ensure_ascii=False, indent=1))
 
 
+@cli.command("grade-drafts")
+@click.option("--task", "task_path", required=True, help="任务包 JSON（定位 grading 产物）")
+@click.option("--class", "class_id", required=True, help="学习通班级 ID（草稿键用）")
+@click.option("--work", "work_id", required=True, help="学习通 workId")
+@click.option("--class-dir", "class_dir", default="", help="workspace 班级目录（缺省 classes/<classId>）")
+@click.option("--kind", type=click.Choice(["ai", "human"]), default="human",
+              help="报告标注（ai=AI 批阅报告 / human=人工批阅报告）")
+@click.option("--no-report", "no_report", is_flag=True, default=False, help="不生成报告 PNG")
+@click.option("--workspace", "-w", default=None)
+def grade_drafts(task_path, class_id, work_id, class_dir, kind, no_report, workspace):
+    """D86 §6：把批阅产物写成本地批阅草稿（含报告 PNG），供 PWA 审核/一键上传。"""
+    from .workspace import find_workspace
+    from .grading.drafts import save_drafts_from_grading
+    ws = find_workspace(workspace)
+    task = json.loads(Path(task_path).expanduser().read_text(encoding="utf-8"))
+    task_id = str(task.get("id") or "task")
+    cdir = class_dir or str(task.get("class_dir") or f"classes/{class_id}")
+    rep = save_drafts_from_grading(ws, class_id=class_id, work_id=work_id, task_id=task_id,
+                                   class_dir=cdir, kind=kind,
+                                   with_report_png=not no_report)
+    click.echo(json.dumps(rep, ensure_ascii=False, indent=1))
+    raise SystemExit(0 if rep.get("ok") else 2)
+
+
 @cli.command("render")
 @click.option("--md", "md_file", default="", help="Markdown 报告文件（正式报告）")
 @click.option("--text", "text", default="", help="批语纯文本（轻量批语图）")

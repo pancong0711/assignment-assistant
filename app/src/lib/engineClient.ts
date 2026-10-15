@@ -862,6 +862,117 @@ export async function startXxtGradeUpload(
   return o.job_id
 }
 
+// ---------------- D86：AI 辅助批阅（provider 设置 / 班级映射 / AI 运行 / 报告） ----------------
+
+export interface LlmProvider {
+  name: string
+  base_url: string
+  models?: string[]
+  batch_support?: boolean
+  api_key?: string
+  has_key?: boolean
+}
+export interface LlmStageCfg { provider?: string; model?: string; batch?: boolean }
+export interface LlmConfig {
+  ok?: boolean
+  providers?: LlmProvider[]
+  stages?: Record<string, LlmStageCfg>
+  default_base_url?: string
+  error?: string
+}
+
+/** GET /llm/config：provider（**掩码**）+ 两段式配置。 */
+export async function fetchLlmConfig(engineAddr: string, token?: string): Promise<LlmConfig> {
+  const base = normalizeEngineAddr(engineAddr)
+  return (await getJson2(engineUrlWithToken(base, '/llm/config', token))) as LlmConfig
+}
+
+/** POST /llm/provider：{action:'set'|'delete'|'stage', ...}。 */
+export async function postLlmProvider(
+  engineAddr: string, token: string | undefined,
+  payload: { action?: 'set' | 'delete' | 'stage'
+    name?: string; base_url?: string; api_key?: string | null; batch_support?: boolean
+    model?: string; stage?: string; provider?: string; batch?: boolean },
+): Promise<LlmConfig & { ok?: boolean; error?: string }> {
+  const base = normalizeEngineAddr(engineAddr)
+  const res = await fetch(engineUrlWithToken(base, '/llm/provider', token), {
+    method: 'POST', headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(payload),
+  })
+  return (await res.json().catch(() => ({}))) as LlmConfig & { ok?: boolean; error?: string }
+}
+
+export interface XxtClassMap {
+  ok?: boolean
+  map?: Record<string, string>
+  candidates?: { classDir: string; dirName: string; rosters: string[] }[]
+  classDir?: string
+  source?: string
+  error?: string
+}
+
+/** GET /xxt/class-map：映射 + 本地候选目录。 */
+export async function fetchXxtClassMap(engineAddr: string, token?: string): Promise<XxtClassMap> {
+  const base = normalizeEngineAddr(engineAddr)
+  return (await getJson2(engineUrlWithToken(base, '/xxt/class-map', token))) as XxtClassMap
+}
+
+/** POST /xxt/class-map：{courseId,classId,classDir} 或 {auto:true,name}。 */
+export async function postXxtClassMap(
+  engineAddr: string, token: string | undefined,
+  payload: { courseId: string; classId: string; classDir?: string; auto?: boolean
+    name?: string; write?: boolean },
+): Promise<XxtClassMap> {
+  const base = normalizeEngineAddr(engineAddr)
+  const res = await fetch(engineUrlWithToken(base, '/xxt/class-map', token), {
+    method: 'POST', headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(payload),
+  })
+  return (await res.json().catch(() => ({}))) as XxtClassMap
+}
+
+/** POST /xxt/grade/ai-run：把作业包 + 班级/作业交给引擎跑 AI 两段式（返回 job_id）。 */
+export async function startXxtGradeAi(
+  engineAddr: string, token: string | undefined,
+  payload: { courseId: string; classId: string; cpi: string; workId: string
+    taskpad: Record<string, unknown>; mode?: string; tags?: string[]; limit?: number },
+): Promise<string> {
+  const base = normalizeEngineAddr(engineAddr)
+  const res = await fetch(engineUrlWithToken(base, '/xxt/grade/ai-run', token), {
+    method: 'POST', headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(payload),
+  })
+  if (!res.ok) {
+    let detail = `HTTP ${res.status}`
+    try { const o = (await res.json()) as { error?: string }; if (o?.error) detail = o.error } catch { /* keep */ }
+    throw new Error(detail)
+  }
+  const o = (await res.json()) as { job_id?: string }
+  if (!o?.job_id) throw new Error('引擎未返回 job_id')
+  return o.job_id
+}
+
+/** POST /xxt/grade/render-drafts：按 task 产物的批阅结果重新生成本地草稿 + 报告 PNG。 */
+export async function startXxtGradeRenderDrafts(
+  engineAddr: string, token: string | undefined,
+  payload: { courseId: string; classId: string; cpi?: string; workId: string
+    taskId: string; kind: 'ai' | 'human' },
+): Promise<string> {
+  const base = normalizeEngineAddr(engineAddr)
+  const res = await fetch(engineUrlWithToken(base, '/xxt/grade/render-drafts', token), {
+    method: 'POST', headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(payload),
+  })
+  if (!res.ok) {
+    let detail = `HTTP ${res.status}`
+    try { const o = (await res.json()) as { error?: string }; if (o?.error) detail = o.error } catch { /* keep */ }
+    throw new Error(detail)
+  }
+  const o = (await res.json()) as { job_id?: string }
+  if (!o?.job_id) throw new Error('引擎未返回 job_id')
+  return o.job_id
+}
+
 /** GET /xxt/preview/students/<classId>/<workId>[?run_id=]：
  *  解析本地 review 列表存档；无存档时引擎会回退到 students.json manifest。 */
 export async function fetchXxtReviewStudents(
