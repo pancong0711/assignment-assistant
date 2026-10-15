@@ -1427,4 +1427,7 @@ applyManualTranslation/setTranslationRatio 中 setTranslationRatio 保留——�
 - 2026-10-15 拍板：勾选粒度=多级列表勾到作业；作业包=最简包+tag 为主；映射表=settings.local.json 按班级名自动建议；
   **成绩单多源加权、只增不覆盖**；报告 AI/人工同版式仅标注不同且都要 PNG；多 provider 各存一份 key（拆 `settings.local.secrets.json`）；
   先做一般提交闭环再上 DashScope batch；
-- 状态：需求已细化，待开工（按 §5 分期）。
+- 状态：**§1–§7 已实现并入库**（班级映射/provider 管理/AI 两段式+两模式/报告 A4+KaTeX/
+  PWA AI 面板/本地草稿/一键生成报告/一键上传全部/batch dry-run 诊断）；
+  §8 收尾已完成文档（docs/16 §28 解冻记录、docs/15 教师手册、docs/04 配置契约）；
+  剩余仅**教师机实测**（配 key 跑一班 + batch 上报错）。

@@ -229,7 +229,7 @@ CLI `assist render --md|--text --out --kind ai|human`；实测输出 **794px 宽
 | §5 | 批阅报告（固定版式 md/html/png；AI/人工标注；LaTeX→PNG；上传前生成） | `report.py`（A4/小四/长图 + KaTeX）+ CLI `assist render` | ✅ engine/CLI 完成（真机出图 794px 宽/长图、公式渲染）；PWA 随 §6 |
 | §6 | PWA「AI 辅助批阅」面板：provider 管理、班级映射、作业包选择、模式/tags、开始 AI 批阅、一键生成批阅报告；逐生审核复用 D85 人工批阅栏；一键上传全批复用 D85 | `XxetongView.vue` + `engineClient.ts` + serve `/xxt/grade/ai-run|render-drafts` + `grading/drafts.py` + CLI `grade-drafts` | ✅ 代码+tsc/build/selfcheck；serve 端点参数与白名单校验冒烟通过；**真机 AI 跑通待教师机配 key** |
 | §7 | batch（DashScope）+ 成本/诊断信息 | `grading/llm_batch.py` + CLI `llm batch` | ✅ engine/CLI（默认 dry-run；JSONL+说明+submit/poll/download 诊断；单测 5 例含 key 掩码回归） |
-| §8 | 文档与真机验证（教师机实测两种提交模式） | docs/13/16/39 | 🔄 文档随各阶段更新；教师机实测待用户 |
+| §8 | 文档与真机验证 | docs/16 §28 解冻记录、docs/15 教师手册章节、docs/04 配置契约、docs/13 状态、HelpView 卡片 | ✅ 文档完成；**教师机实测（配 key 跑一班 + batch）待用户** |
 
 ## 6. 拍板与待定（2026-10-15）
 

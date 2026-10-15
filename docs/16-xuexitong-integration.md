@@ -1041,3 +1041,41 @@ D64-f 批阅回写（写操作）：学习通侧填分/评语——**另行解�
   - UI 指引同步到 `HelpView` 与 `docs/15`。
 - 远端 `engine-version.json` 由 CI `pages.yml` 随 Pages 发布；首次部署后生效。
 - P4 验证：`pytest engine/tests -q` → `52 passed`；`npm run build` 通过；`selfcheck:roster-fig` ALL PASS；`/engine/version` 集成 curl 通过（远端标记部署前为 404，UI 如实显示“无法检测”，不阻塞本地使用）。
+
+
+---
+
+## 28. T10 写操作解冻记录（2026-10-15 · D77/D79/D84/D85/D86）
+
+> 历史表格（§17.3 T10=冻结、§23/§24「写操作仍冻结」）为**当时状态**，不再改动；
+> 本节记录实际解冻顺序与约束，以本节为准。
+
+### 28.1 解冻顺序（均已真机验证，除标注外）
+
+| 批次 | 命令/入口 | 说明 |
+|---|---|---|
+| D77 | `xxt notice-send` | 发课程通知（附件走通知编辑器 WebUploader） |
+| D79 | `xxt work-folder-create` / `work-copy` / `work-publish` | 作业库文件夹、复制作业、发布设置（默认 dry-run） |
+| D83-7 | `xxt work-create --attach` | 新建作业草稿 + 附件内嵌（**附件按钮 = `.edui-for-attachment_new`，弹窗 iframe 内 file input**） |
+| D84 | `xxt mark-submitted` / `xxt grade-upload` | 设为已交；批阅页上传批语（文字+图片）/分数并提交 |
+| D85 | PWA 人工批阅栏 + `grade-upload --from-drafts` | 本地批阅草稿（自动保存）→ 逐生/一键上传 |
+| D86 | PWA「AI 辅助批阅」+ `grade`（两段式）/`llm batch` | AI 草稿落本地 → 人工审核 → 生成报告 → 一键上传 |
+
+### 28.2 写操作统一约束（不可放宽）
+
+1. **白名单**：所有平台写操作必须命中 `settings.local.json → xxt.write_allowlist`；
+   校验不过时**在启动浏览器之前**即拒绝（CLI 退出码 2 / serve 400），并回显实际读取的白名单文件与条目。
+2. **默认 dry-run**：`notice-send` / `work-publish` / `grade-upload` / `mark-submitted` 等一律默认
+   dry-run，真正写库需显式 `--send` / `--confirm-send`（PWA 为二次确认）。
+3. **幂等**：同一作业同班级发布、同一学生已批阅的重复提交默认拒绝（`--force` 才覆盖）。
+4. **可回查**：receipt + journal（`xxt_home/…` 与 `journal/*.jsonl`），失败带步骤名与现场截图。
+5. **密钥**：LLM key 存 `settings.local.secrets.json`(0600)，PWA 只掩码显示，日志/journal 绝不记 key。
+
+### 28.3 已实锤的平台坑（写操作相关，务必保留注释）
+
+- `mark` 页 `id=` 必须是 **workId**（作业库 id 会返回「作业已删除！」）；未交列表需
+  `submit=false&evaluation=0`，否则渲染成已交视图（0 行）；
+- 「设为已交」**点击即生效**（弹窗只是填分数）→ dry-run 不得点击；
+- 作业编辑器题型按课程不同：**简答题可能在「更多」弹层**里 → 直点失败要兜底展开；
+- 新建作业目录：草稿在**加题时**按编辑器 URL 的 `directoryid` 落目录，事后改隐藏域无效；
+- 附件/评语图片：文档类走 `editor-iframe`、图片走 `ans-ued-img`（计数口径要含两者）。

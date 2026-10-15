@@ -23,7 +23,8 @@
       roster/  sheets/  grading/
     _archived/                     # 毕业的班（不再使用但可查档）
   exports/                         # zip 导出包暂存
-  settings.local.json              # 教师私有：LLM apikey、引擎地址、默认班级（不入库）
+  settings.local.json              # 教师私有（不入库）：xxt 白名单/附件名单/class_map、watermark、LLM 非敏感项
+  settings.local.secrets.json      # 教师私有（不入库，0600）：LLM providers 的 api_key（每 provider 一份）
   .runtime/                        # 引擎环境（不入库，绝不打包）——05-D14
     venv/                          # .venv（引擎依赖）
     cache/                         # UV_CACHE_DIR 重定向
@@ -40,6 +41,30 @@
   check-secrets.sh 兜底拦截；
 - workspace 位置不写死：默认 `~/.assignment-assistant/`（跨平台），支持
   `settings.local.json` 或 `--workspace` 指定任意路径，便于云盘同步方案。
+  **密钥拆分（D86）**：api_key 只写 `settings.local.secrets.json`（0600），PWA 仅掩码回显，
+  日志/journal 只记 provider 名与 base_url host，绝不记 key。
+
+## 运行期目录（xxt 工件，D84–D86 新增）
+
+```
+<xxt_home>/
+  pages/review/<classId>/<workId>/     # 批阅下载：作答图 + students.json（workAnswerId/分数/两栏批语）
+  grade-drafts/<classId>/<workId>.json # 本地批阅草稿（D85/D86：人工与 AI 草稿；score/comment/images）
+  grade-uploads/                       # 回传 receipt + 过程截图
+  work-drafts/                         # 新建作业失败现场截图
+```
+
+workspace 侧批阅产物：
+
+```
+classes/<class_dir>/grading/<taskId>/
+  plan.json          # 批阅任务清单（D86：学生↔tag↔题目/答案↔作答图↔workAnswerId）
+  transcripts/       # 转录 JSON（markdown + quality）
+  evaluations/       # 评阅 JSON（total_score/per_question_scores/feedback_md/tag…）
+  reports/           # 报告 md/html/**png**（A4 宽、长图；AI/人工标注）；summary.xlsx
+  journal.jsonl      # 运行记录（D8）
+  diagnostics.jsonl  # D86：LLM 调用失败/异常诊断（provider/模型/错误原文）
+```
 
 **作业任务任务包（05-D2 的固化产物）**：
 
