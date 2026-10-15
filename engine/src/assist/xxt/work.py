@@ -271,34 +271,101 @@ def work_detail(storage, course_id: str, class_id: str, cpi: str, work_library_i
     return {"ok": True, "title": title, "stemHtml": stem, "workUsed": str(work_used).lower() == "true"}
 
 
+# D83 修复：作业编辑器里附件/图片插入正文的标记集合（实测 2026-10-15 真机 DOM）。
+# - PDF/doc 等：<div class="editor-iframe"><iframe class="attach-iframe" ...>
+# - 图片：<img class="ans-ued-img" ...>（作业编辑器专有；通知页是 drag-image-wrap）
+_ATTACH_MARKERS = ('class="editor-iframe"', 'class="attach-iframe"',
+                   'class="drag-image-wrap"', 'ans-ued-img')
+
+
 def _work_attachment_count(page) -> int:
-    """统计作业简答题编辑器（id=content）里的附件/图片块。"""
+    """统计作业简答题编辑器（id=content）里的附件/图片块（见 _ATTACH_MARKERS）。"""
     try:
         content = page.evaluate("UE.getEditor('content').getContent()") or ""
-        return (len(re.findall(r'class="editor-iframe"', content))
-                + len(re.findall(r'class="drag-image-wrap"', content)))
+        return sum(content.count(m) for m in _ATTACH_MARKERS)
     except Exception:
         return -1
 
 
+def _attachment_dialog_frame(page, timeout_s: float = 10.0):
+    """作业编辑器「附件」弹窗 iframe（.../dialogs/attachment_new/attachment.html）或 None。
+
+    D83 修复：作业编辑器的附件按钮点开后是**弹窗 iframe**，webuploader 的
+    file input 在 iframe 内；此前代码在主页面找 input[type=file] → 必然超时。
+    """
+    deadline = time.time() + max(0.0, timeout_s)
+    while True:
+        for fr in page.frames:
+            if "attachment_new/attachment.html" in (fr.url or ""):
+                return fr
+        if time.time() >= deadline:
+            return None
+        try:
+            page.wait_for_timeout(400)
+        except Exception:  # noqa: BLE001
+            return None
+
+
+def _open_work_attachment_dialog(page) -> bool:
+    """点开内容编辑器的附件按钮：作业编辑器 .edui-for-attachment_new（通知页 .edui-for-attachment）。"""
+    for spec in (".edui-for-attachment_new", ".edui-for-attachment"):
+        try:
+            loc = page.locator(spec).first
+            if loc.count() == 0:
+                continue
+            loc.scroll_into_view_if_needed(timeout=3000)
+            loc.click(timeout=5000)
+            return True
+        except Exception as exc:  # noqa: BLE001
+            logger.warning(f"附件按钮点击失败（{spec}）：{str(exc)[:140]}")
+    return False
+
+
 def _upload_work_attachments(page, att_paths: list[Path]) -> list[str]:
-    """D83-7：把本地附件上传插入到那道唯一简答题的正文（复用通知的 WebUploader 通道）。"""
+    """D83-7：把本地附件上传插入到那道唯一简答题的正文。
+
+    D83 修复（2026-10-15 真机实测）：
+    - 附件按钮 = .edui-for-attachment_new（作业编辑器；通知页才是 .edui-for-attachment）；
+    - 点开后是弹窗 iframe，webuploader 的 file input 在 iframe 内 → 用 frame 定位；
+    - 图片插入标记 ans-ued-img / 附件 editor-iframe，都要计入 _work_attachment_count。
+    """
     uploaded: list[str] = []
-    # 让附件按钮可交互（不同页面可能有多个 hidden input）
-    try:
-        btn = page.locator(".edui-for-attachment").first
-        btn.scroll_into_view_if_needed(timeout=3000)
-        btn.click(timeout=5000)
-    except Exception as exc:  # noqa: BLE001
-        logger.warning(f"附件按钮点击失败（继续尝试直接注入 input）：{str(exc)[:160]}")
+    _open_work_attachment_dialog(page)
     count = _work_attachment_count(page)
     for apath in att_paths:
         before = count
-        loc = page.locator('.edui-for-attachment input[type=file]').first
-        if loc.count() == 0:
-            loc = page.locator('input[type=file]').first
-        loc.wait_for(state="attached", timeout=10000)
-        loc.set_input_files(str(apath))
+        done = False
+        last_err: "Exception | None" = None
+        for attempt in range(2):  # 弹窗可能被上一轮上传关掉 → 重开一次
+            frame = _attachment_dialog_frame(page, 6.0)
+            if frame is None:
+                _open_work_attachment_dialog(page)
+                frame = _attachment_dialog_frame(page, 6.0)
+            if frame is not None:
+                try:
+                    inp = frame.locator("input[type=file]").first
+                    inp.wait_for(state="attached", timeout=8000)
+                    inp.set_input_files(str(apath))
+                    done = True
+                    break
+                except Exception as exc:  # noqa: BLE001
+                    last_err = exc
+                    logger.warning(f"附件弹窗内 set_input_files 失败（第 {attempt + 1} 次）：{str(exc)[:140]}")
+            else:
+                last_err = RuntimeError("附件弹窗 iframe 未出现")
+        if not done:
+            # 回退：通知页那种「主页面 hidden input」口径（兼容老页面）
+            try:
+                loc = page.locator('.edui-for-attachment input[type=file]').first
+                if loc.count() == 0:
+                    loc = page.locator('input[type=file]').first
+                loc.wait_for(state="attached", timeout=8000)
+                loc.set_input_files(str(apath))
+                done = True
+            except Exception as exc:  # noqa: BLE001
+                last_err = exc
+        if not done:
+            raise RuntimeError(f"附件上传入口不可用：{apath.name}（{str(last_err)[:160]}）")
         deadline = time.time() + 90
         ok = False
         while time.time() < deadline:

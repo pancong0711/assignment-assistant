@@ -57,6 +57,36 @@ def _number_value(row: list, number_i: int | None) -> str:
     return str(row[number_i]).strip()
 
 
+def _locate_header_row(rows: list, scan_limit: int = 20, prefer: str | None = None) -> int:
+    """D47 三段式表头定位（与 PWA rosterXlsx.locateHeader 同口径，引擎侧补齐）。
+
+    前 scan_limit 行里找「含姓名语义列 + 非空单元格≥2 + 其后确实有姓名数据」的行；
+    `prefer` 给定时优先返回同时含该关键词（如"期末"）的行，否则取首个命中行。
+    找不到返回 0（保持旧口径：首行即表头）。
+    真实现象：成绩统计表首行常是大标题（"化工252班成绩统计"）、表头在第 2~3 行。
+    """
+    fallback: int | None = None
+    for i in range(min(scan_limit, len(rows))):
+        row = rows[i] or ()
+        headers = [str(c).strip() if c is not None else "" for c in row]
+        name_i = _header_index(headers, _NAME_TOKENS)
+        if name_i is None or sum(1 for h in headers if h) < 2:
+            continue
+        has_data = False
+        for j in range(i + 1, min(i + 4, len(rows))):
+            r = rows[j] or ()
+            if name_i < len(r) and str(r[name_i] if r[name_i] is not None else "").strip():
+                has_data = True
+                break
+        if not has_data:
+            continue
+        if prefer and any(prefer in h for h in headers):
+            return i
+        if fallback is None:
+            fallback = i
+    return fallback if fallback is not None else 0
+
+
 def _col_score(rows: list, score_i: int, name_i: int, source: str,
                weight: float, skip_zero: bool = False,
                number_i: int | None = None) -> list[dict]:
@@ -81,14 +111,18 @@ def read_exam(path: Path, col: str = "期末", weight: float = 1.0) -> list[dict
     rows = _rows_of(path)
     if len(rows) < 2:
         return []
-    headers = [str(h).strip() if h is not None else "" for h in rows[0]]
-    name_i = _header_index(headers, _NAME_TOKENS) or 0
+    # D47 三段式：跳过标题行，定位真正的表头行（优先含 col 的行）
+    hdr = _locate_header_row(rows, prefer=col)
+    headers = [str(h).strip() if h is not None else "" for h in rows[hdr]]
+    name_i = _header_index(headers, _NAME_TOKENS)
+    if name_i is None:
+        name_i = 0
     number_i = _header_index(headers, _NUMBER_TOKENS)
     score_i = next((i for i, h in enumerate(headers) if col and (col in h)), None)
     if score_i is None:
         logger.warning(f"{path} 未找到{col}列；回退数字列")
         return read_flex(path, cols=col, weight=weight)
-    return _col_scores(rows, score_i, name_i, f"exam:{col}", weight, number_i=number_i)
+    return _col_scores(rows[hdr:], score_i, name_i, f"exam:{col}", weight, number_i=number_i)
 
 
 def read_xuexitong_assignment(path: Path, weight: float = 1.0,
@@ -203,17 +237,21 @@ def read_flex(path: Path, cols: list[str] | str | None = None, weight: float = 1
     rows = _rows_of(path)
     if len(rows) < 2:
         return []
-    headers = [str(h).strip() if h is not None else "" for h in rows[0]]
-    name_i = _header_index(headers, _NAME_TOKENS) or 0
+    hdr = _locate_header_row(rows)  # D47 三段式：标题行→表头行
+    headers = [str(h).strip() if h is not None else "" for h in rows[hdr]]
+    body = rows[hdr + 1:]
+    name_i = _header_index(headers, _NAME_TOKENS)
+    if name_i is None:
+        name_i = 0
     number_i = _header_index(headers, _NUMBER_TOKENS)
     if cols:
         idxs = [i for i, h in enumerate(headers) if h in (cols or [])]
     else:
         idxs = None
     if not idxs:
-        return read_flex_auto(headers, rows[1:], path, weight, name_i, number_i)
+        return read_flex_auto(headers, body, path, weight, name_i, number_i)
     out = []
-    for r in rows[1:]:
+    for r in body:
         if not r or r[name_i] is None:
             continue
         name = str(r[name_i]).strip()

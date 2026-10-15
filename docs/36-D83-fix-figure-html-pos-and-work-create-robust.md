@@ -109,3 +109,54 @@ PWA 与 serve journal 都取**末行** → 显示/记录「}」。
 
 回归：`engine/tests/test_job_error_summary.py`（5 例）+ PWA
 `selfcheck:job-error`（5 例，esbuild 打包 engineClient 后 node 断言）。
+
+## 追加修复（2026-10-15 第三轮：真机侦查定位「新建作业」附件路径 + 成绩表头）
+
+用户反馈「新建作业到文件夹依然失败」但无法提供错误信息。本轮用**保存的登录会话 +
+本机 playwright chromium** 做了真机侦查（`.scratch/d83_work_probe.py` 等只读探针），
+并用生产 CLI 端到端复跑，定位到根因。
+
+### 结论1：无附件的 create_work 在真机上是通的 → 用户侧大概率跑的是旧代码
+
+- 用真机会话复跑 `assist xxt work-create --directory-id 21400987` 成功
+  （草稿 `7c9d302c…`）；`D83诊断草稿（可删）` 可删；
+- 用户看到的「任务失败：}」正是**修复前**才会出现的文案（修复后 PWA 会显示
+  JSON error 字段/步骤名）→ 说明浏览器 PWA 缓存与 engine 都还是旧版；
+- 处置：PWA 硬刷新（Ctrl/Cmd+Shift+R 或清站点数据，Service Worker 会缓存旧 bundle）
+  + 引擎用「检测更新/更新引擎」或 start.bat 更新后再复验。
+
+### 结论2：附件路径有 3 个真机级缺陷（本次修复）
+
+真机 DOM 事实（`.scratch/xxt-pages/d83-work-probe.html`）：
+
+| # | 旧实现 | 真机事实 | 后果 |
+|---|---|---|---|
+| B1 | 找 `.edui-for-attachment` | 作业编辑器是 `.edui-for-attachment_new`（通知页才是旧名） | 按钮点不到，弹窗不出现 |
+| B2 | 主页面找 `input[type=file]` | 弹窗是 iframe `.../dialogs/attachment_new/attachment.html`，file input 在 iframe 内 | 永远找不到输入框 → 30s 超时 |
+| B3 | 只数 `editor-iframe`/`drag-image-wrap` | 图片插入为 `<img class="ans-ued-img">`；PDF/doc 为 `<div class="editor-iframe">` | 图片附件被判「未插入」→ 90s 失败 |
+
+修复（`engine/src/assist/xxt/work.py`）：
+
+- `_ATTACH_MARKERS` 统一四种标记（editor-iframe / attach-iframe / drag-image-wrap / ans-ued-img）；
+- 新增 `_attachment_dialog_frame()`（按 URL 找弹窗 iframe）与
+  `_open_work_attachment_dialog()`（`.edui-for-attachment_new` 优先，回落旧名）；
+- `_upload_work_attachments()`：弹窗 iframe 内 `set_input_files`（失败重开弹窗一次），
+  再回落旧的「主页面 hidden input」口径；每份附件用正文标记增长判定成功；
+- 真机验证：`--attach demo_task_fig.png --attach attach-test.pdf` 端到端成功
+  （草稿 `ee81ecab…`，两次 `ueditorupload/attachment` POST；两个测试草稿均可删）。
+- 回归：`engine/tests/test_xxt_work_attachments.py`（8 例，stub 无浏览器）。
+
+### 结论3：engine 成绩表三段式表头定位（docs/12 遗留项，本次修复）
+
+- 真实「xxx成绩统计.xlsx」首行是大标题、表头在第 2~3 行；旧实现把首行当表头 →
+  找不到「期末」列、回退也取不到 → 返回空；
+- 新增 `_locate_header_row()`（与 PWA `rosterXlsx.locateHeader` 同口径：
+  找含姓名语义列 + 非空列≥2 + 其后确有姓名数据的行；`prefer` 优先命中目标列），
+  `read_exam` 与 `read_flex` 都改用它；
+- 真机/真实文件验证：`化工251-成绩统计.xlsx` 34 人、`化工252班成绩统计.xlsx` 33 人
+  全部正确；标准表头文件行为不变；
+- 回归：`engine/tests/test_scores_header_offset.py`（4 例，含 legacy skip-safe）。
+
+### 验证
+
+- engine pytest **217 passed**；`npm run build` / selfcheck（9 组）/ `check-secrets.sh` 全过。

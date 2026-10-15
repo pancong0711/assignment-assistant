@@ -344,8 +344,9 @@ rainclass 67/67，PWA↔engine 全等，仅末位浮点四舍五入噪声）。
 改按存在文件动态发现、断言结构性（锁定 sheet + 解析出人），不再因文件名漂移静默跳过。
 
 **遗留（已知 PWA/engine 仍未对齐，另行任务）**：
-- `exam` 真实「成绩统计」表首行是标题行而非表头：PWA 三段式 `locateHeader` 能定位，engine `read_exam`
-  直接把首行当表头 → 找不到"期末"列、回落也取不到（返回空）。需给 engine `read_exam` 加同款三段式。
+- ✅ `exam` 真实「成绩统计」表首行是标题行而非表头：engine `read_exam`/`read_flex` 已补
+  `_locate_header_row` 三段式（与 PWA `locateHeader` 同口径），真实文件 化工251(34人)/化工252(33人)
+  验证通过（2026-10-15，见 docs/36）。
 - `xuexitong_stat` 的 sheet 关键字匹配：engine 默认"章节测验"，PWA 现按 family 优先——已一致，但真实文件
   若关键字命名不同仍需放宽。
 
