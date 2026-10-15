@@ -574,6 +574,61 @@ def llm_provider(action, name, base_url, api_key, clear_key, batch_support, mode
     raise SystemExit(0 if rep.get("ok") else 2)
 
 
+@llm.command("batch")
+@click.option("--task", "task_path", default="", help="任务包 JSON（用 plan+转录生成 batch 输入）")
+@click.option("--jsonl", "jsonl_path", default="", help="已有 JSONL（或不传而用 --task 生成）")
+@click.option("--provider", "provider_name", default="", help="provider 名称（缺省取 evaluation 段）")
+@click.option("--limit", default=0, type=int, help="只取前 N 名学生")
+@click.option("--submit", is_flag=True, default=False, help="真正提交（默认只生成 JSONL + 说明）")
+@click.option("--poll", "poll_id", default="", help="轮询批次状态 <batch_id>")
+@click.option("--download", "download_id", default="", help="下载结果 <output_file_id>")
+@click.option("--out", "out_path", default="", help="下载结果落盘路径")
+@click.option("--workspace", "-w", default=None)
+def llm_batch(task_path, jsonl_path, provider_name, limit, submit, poll_id, download_id,
+              out_path, workspace):
+    """D86 §7：LLM batch（Aliyun/OpenAI 兼容）——默认 dry-run（生成 JSONL + 说明）。
+
+    本机无法联网实测；失败会输出完整诊断（HTTP 状态/响应原文/URL/批次 id），便于回传排查。
+    """
+    from .workspace import find_workspace
+    from .grading import llm_batch as B, providers as P
+    ws = find_workspace(workspace)
+    if poll_id:
+        click.echo(json.dumps(B.poll(ws, provider_name, poll_id), ensure_ascii=False, indent=1))
+        return
+    if download_id:
+        click.echo(json.dumps(B.download(ws, provider_name, download_id,
+                                         out_path or "batch-results.jsonl"),
+                              ensure_ascii=False, indent=1))
+        return
+    if not jsonl_path:
+        if not task_path:
+            raise click.UsageError("需要 --jsonl 或 --task")
+        plan = B.plan_batch_items(ws, task_path, provider_name=provider_name, limit=limit)
+        if not plan["items"]:
+            click.echo(json.dumps({"ok": False, "error": "没有可批的转录文件（先跑 transcribe，"
+                                                        "或用 --xxt-class 装配 plan）"},
+                                  ensure_ascii=False, indent=1))
+            raise SystemExit(2)
+        jsonl_path = str(Path(plan["dir"]) / "batch" / "evaluate-batch.jsonl")
+        B.build_jsonl(plan["items"], jsonl_path, model=plan["model"])
+        provider_name = provider_name or plan["provider"]
+    prov = next((x for x in P.list_providers(ws, mask=True) if x["name"] == provider_name), None)
+    if prov is None:
+        click.echo(json.dumps({"ok": False, "error": f"provider 不存在：{provider_name}"},
+                              ensure_ascii=False, indent=1))
+        raise SystemExit(2)
+    # 说明文件用内部视图（需要 base_url/batch_support，不含 key 也可），但输出只用掩码
+    readme = B.write_instructions(Path(jsonl_path), provider=prov)
+    click.echo(json.dumps({"ok": True, "mode": "submit" if submit else "dry-run",
+                           "jsonl": str(jsonl_path), "readme": str(readme),
+                           "provider": B.provider_public(prov)},
+                          ensure_ascii=False, indent=1))
+    if submit:
+        click.echo(json.dumps(B.submit(ws, provider_name, jsonl_path), ensure_ascii=False,
+                              indent=1))
+
+
 @cli.command()
 @click.option("--task", "task_path", required=True, help="任务包 JSON 路径（grade 节驱动）")
 @click.option("--images", "images_dir", default=None, help="学生作业图片目录（文件名=学生名或学号-题号）")
