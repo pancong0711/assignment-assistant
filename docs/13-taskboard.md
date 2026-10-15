@@ -1413,3 +1413,15 @@ applyManualTranslation/setTranslationRatio 中 setTranslationRatio 保留——�
   `directoryid` 且保存后回读校验（真机 `directoryCheck.ok=true`）；本地草稿 store +
   serve `/xxt/grade/drafts|draft|upload` + CLI `--from-drafts`（真机 dry-run 回填通过）；
   PWA 人工批阅栏（保存到本地 / 演练上传 / 上传并提交 / 上传全部 / 强制覆盖 / 清除草稿）。
+
+
+---
+
+## D86 · AI 辅助批阅选项卡（两段式 + 报告 + batch）（2026-10-15 讨论稿）
+
+- 主需求单：`docs/39-D86-ai-grading-tab.md`（页面重构 / 设置区 / 班级白名单与作业勾选 /
+  作业包挂接（省 token）/ 班级↔工作区映射 / 逐生审核 / 固定版式报告（AI/人工标注）/
+  一键生成报告 → 一键上传全部（未批阅给 N 提示 + 弹窗一键 AI）/ 两种模式（brute-force 与优化）/
+  Aliyun DashScope batch）；
+- 覆盖语义确认：二次上传 = **整段替换**批语 + 覆盖分数；已批阅默认拒绝，需 force；
+- 状态：讨论中，待 §6 拍板项确认后按 §5 分期实施。
