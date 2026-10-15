@@ -106,7 +106,7 @@
 
 - 目标：在学习通班级/作业行上直接看到并用上"该班的 tag/作业纸"；
 - 落点（已拍板）：`settings.local.json → xxt.class_map: {"<courseId>:<classId>": "classes/化工25"}`；
-- **按班级名自动建议**（学习通班级名 ↔ workspace `classes/*` 目录名/roster 文件名相似度），教师确认后写入；
+- **按文件名自动建议**（已拍板：用 roster/名单**文件名**与学习通班级名匹配，比目录名更准确），教师确认后写入；
 - 该映射同时供 CLI 使用（`assist grade --xxt-class <courseId>:<classId>` 直接解析 class_dir + 作业包）。
 
 **⚠️ 与"成绩单"的区别（用户 2026-10-15 提醒，重要）**：
@@ -134,6 +134,27 @@
   - **正式报告**（本选项卡）：带标题/分段落/逐题依据，AI 与人工同版式仅标注不同；
   - **轻量批语图**（「预览-学习通」里的人工批阅）：**也要出 PNG**（LaTeX → 公式），
     但不追求正式报告的标题/分段落结构，够用即可；
+- **尺寸/字号（已拍板）**：两档 PNG 均为 **A4 纸宽**（210mm）；轻量批语图字号 **小四（12pt）**；
+  输出为**长图**（高度随内容增长）。
+
+**渲染方法（旧代码确认，2026-10-15）**：`_legacy/2601playwright/src/report_generator.py`
+
+- Markdown → HTML（`markdown` 库 + tables/fenced_code）；
+- HTML 模板：`@page A4 + margin 2cm`；`body{font-family:SimSun,…; font-size:12pt; line-height:1.8;
+  width:210mm; padding:25mm; margin:0 auto}` ← 与本次拍板一致；
+- 公式：**MathJax 3 CDN**（`tex-chtml.js`，inlineMath `$…$` 与 `\(…\)`），
+  等 `MathJax.startup.documentState === 'ready'`（超时容忍）+ 1s 缓冲；
+- 出图：**Playwright Chromium**，`viewport=794×1123`（≈A4@96dpi），
+  **`page.screenshot(full_page=True)` → 长图**，落 `reports/<student>.png`。
+
+**本项目的移植口径**：
+
+- 公式渲染改用**自托管 KaTeX**（与作业纸/预览同源、离线可用；`app/public/katex/` 已入库），
+  保留 `$…$`/`\(…\)` 口径；截图前等 KaTeX 渲染完成（`renderMathInElement` 后置标志）；
+- 截图实现 = `engine/src/assist/grading/report.py::_html_to_png`（已有 TODO 位），
+  复用 Playwright Chromium；**playwright 缺失时降级**只出 md/html 并在结果里提示
+  （引擎自身把 playwright 作为可选依赖，与 xxt 同一档）；
+- 字体沿用引擎字体注册（SimSun/Noto Sans SC，缺失回退 wqy），长度不受限（长图）。
 - 报告应在上传**之前**生成：即按钮顺序为 **一键生成批阅报告 → 一键上传批阅报告**；
 - 与「预览-学习通」里的人工批阅可以**不同风格**（本处 = 报告风格）。
 
@@ -157,7 +178,7 @@
 
 1. **brute-force（最直接）**：把**作业纸原件图片 + 学生作答图片**都给 LLM → 先确认基本情况
    （题目是否一致、姓名是否一致，防分层作业纸与学生错配）→ 再转录并评阅。最费 token，但**不依赖我们预先整理答案**；
-   保留为可选模式（"简单粗暴"兜底）。
+   保留为可选模式（"简单粗暴"兜底）。**该校验默认开启**（已拍板）：不一致只在报告里标注，不阻断评阅。
 2. **优化模式（默认）**：我们提供该 tag 的**题目 + 参考答案/评分点**（来自作业包），
    LLM 只吃"作答转录 + 题目/答案"→ 不需要 LLM 先自己作答；配合 tag 差异化评阅指令（旧代码口径）：
    - `copy/copyonly/copysp`：只查抄写完整性，不评推导/计算/精度；
@@ -218,10 +239,16 @@
 7. ✅ batch 顺序：先做 **一般提交（实时+并发）闭环**，再上 DashScope batch；
 8. ✅ 多 provider：**每个 provider 各存一份 key**，PWA 掩码显示，代码/日志严格保密（见 §4.12 拆分）。
 
+**已拍板（补充 2026-10-15 第二轮）**
+9. ✅ 报告尺寸/字号：两档 PNG 均 **A4 宽**；轻量批语图 **小四（12pt）**；均**长图**；
+   渲染方法 = HTML(KaTeX/MathJax) → Playwright `full_page` 截图（旧代码方法已确认，见 §4.7）；
+10. ✅ `class_map` 自动建议按 **文件名**匹配（更准确）；
+11. ✅ brute-force **默认开启题目/姓名一致性核对**（不一致只标注，不阻断）。
+
 **待定（实施时再定）**
-- 轻量批语图的默认宽度/字号/是否带"人工批阅"水印字样；
-- `class_map` 自动建议的匹配口径（班级名相似度 vs roster 文件名）；
-- brute-force 模式是否默认开启"题目/姓名一致性核对"（建议开启，失败仅在报告里标注）。
+- 轻量批语图是否带"人工批阅"字样水印；
+- 模型名历史是否额外提供"从 provider 拉取模型列表"（可选增强）；
+- 是否加"默认 provider"标记（新建任务预选）。
 
 ## 7. 验收（初拟）
 
