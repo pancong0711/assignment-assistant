@@ -217,8 +217,8 @@
 
 | # | 阶段 | 交付物 | 状态 |
 |---|---|---|---|
-| §1 | 班级↔工作区映射（`xxt.class_map` + PWA 关联 UI + CLI `--xxt-class`） | `settings`/`workspace` + PWA | ⏳ |
-| §2 | AI 设置区 + **配置/密钥拆分**（`settings.local.json` + `settings.local.secrets.json`；多 provider 记忆/勾选/掩码/清除；一般/batch 开关） | schema + PWA 设置区 + serve 端点 | ⏳ |
+| §1 | 班级↔工作区映射（`xxt.class_map` + 按文件名建议 + CLI/PWA） | `xxt/classmap.py` + CLI `xxt class-map` + serve `/xxt/class-map` | ✅ engine/CLI/serve 完成（单测 3 例）；PWA UI 随 §6 |
+| §2 | AI 设置区 + **配置/密钥拆分**（多 provider 记忆/勾选/掩码/清除；一般/batch 开关） | `settings_store.py` + `grading/providers.py` + CLI `llm config\|provider` + serve `/llm/*` | ✅ engine/CLI/serve 完成（单测 7 例）；PWA UI 随 §6 |
 | §3 | 作业包挂接（tag ↔ taskpad；省 token 的最简包优先）+ tag 勾选 | PWA + engine 解析 | ⏳ |
 | §4 | engine：`assist grade` 串"批阅下载目录 + 作业包"；两模式（brute-force / 优化）；tag 指令；诊断信息 | `grading/*` + CLI | ⏳ |
 | §5 | 批阅报告（固定版式 md/html/png；AI/人工标注；LaTeX→PNG；上传前生成） | `grading/report.py` + render CLI + PWA | ⏳ |

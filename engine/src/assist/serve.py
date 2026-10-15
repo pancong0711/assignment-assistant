@@ -949,6 +949,63 @@ class Handler(BaseHTTPRequestHandler):
                                    journal_params={"courseId": cid, "classId": kid, "directoryId": directory})
             self._json({"ok": True, "job_id": job_id})
             return
+        if u.path == "/xxt/class-map":
+            payload: dict = {}
+            try:
+                length = int(self.headers.get("Content-Length") or 0)
+                if length:
+                    payload = json.loads(self.rfile.read(length).decode("utf-8")) or {}
+            except Exception as exc:  # noqa: BLE001
+                self._json({"ok": False, "error": f"bad json: {exc}"}, 400)
+                return
+            from .xxt import classmap
+            ws = Path(self.ws).resolve()
+            cid, kid = str(payload.get("courseId") or ""), str(payload.get("classId") or "")
+            if payload.get("auto"):
+                rep = classmap.resolve_class_dir(ws, cid, kid, str(payload.get("name") or ""),
+                                                 auto_write=bool(payload.get("write")))
+            else:
+                rep = {"ok": True, "map": classmap.set_class_dir(ws, cid, kid,
+                                                                 str(payload.get("classDir") or ""))}
+            self._json(rep, 200 if rep.get("ok", True) else 400)
+            return
+        if u.path == "/llm/provider":
+            payload: dict = {}
+            try:
+                length = int(self.headers.get("Content-Length") or 0)
+                if length:
+                    payload = json.loads(self.rfile.read(length).decode("utf-8")) or {}
+            except Exception as exc:  # noqa: BLE001
+                self._json({"ok": False, "error": f"bad json: {exc}"}, 400)
+                return
+            from .grading import providers
+            ws = Path(self.ws).resolve()
+            action = str(payload.get("action") or "set")
+            if action == "delete":
+                rep = providers.delete_provider(ws, str(payload.get("name") or ""))
+            elif action == "stage":
+                rep = providers.set_stage(ws, str(payload.get("stage") or ""),
+                                          provider=str(payload.get("provider") or ""),
+                                          model=str(payload.get("model") or ""),
+                                          batch=payload.get("batch"))
+            else:
+                key = payload.get("api_key")
+                rep = providers.save_provider(
+                    ws, str(payload.get("name") or ""),
+                    base_url=str(payload.get("base_url") or ""),
+                    api_key=(None if key is None else str(key)),
+                    batch_support=payload.get("batch_support"),
+                    model=str(payload.get("model") or ""))
+            rep["config"] = providers.public_config(ws)
+            self._json(rep, 200 if rep.get("ok") else 400)
+            return
+        if u.path == "/llm/migrate":
+            from .grading import providers
+            ws = Path(self.ws).resolve()
+            rep = providers.migrate_legacy(ws)
+            rep["config"] = providers.public_config(ws)
+            self._json(rep)
+            return
         if u.path == "/xxt/grade/draft":
             payload: dict = {}
             try:
@@ -1476,6 +1533,16 @@ class Handler(BaseHTTPRequestHandler):
                 return
             self._json(work_detail(_xxt_home() / "xxt-storage.json", cid, kid, cpi, wid))
             return
+        elif u.path == "/xxt/class-map":
+            # D86 §1：映射 + 本地候选
+            from .xxt import classmap
+            ws = Path(self.ws).resolve()
+            self._json({"ok": True, "map": classmap.read_class_map(ws),
+                        "candidates": classmap.list_class_candidates(ws)})
+        elif u.path == "/llm/config":
+            # D86 §2：provider（掩码）+ 两段式
+            from .grading import providers
+            self._json({"ok": True, **providers.public_config(Path(self.ws).resolve())})
         elif u.path.startswith("/xxt/grade/drafts/"):
             # D85 §3：读本地人工批阅草稿 <xxt_home>/grade-drafts/<class>/<work>.json
             m = re.fullmatch(r"/xxt/grade/drafts/([0-9A-Za-z\-_]{1,40})/([0-9A-Za-z\-_]{1,40})", u.path)

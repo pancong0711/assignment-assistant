@@ -499,6 +499,56 @@ def roster_rain(obj, files, out, workspace, verbose):
     click.echo(_j.dumps(summary.get("rows", [])[:5], ensure_ascii=False, indent=1))
 
 
+@cli.group("llm", help="D86：LLM provider / 两段式配置（key 只掩码回显，绝不入日志）")
+def llm():
+    pass
+
+
+@llm.command("config")
+@click.option("--migrate", is_flag=True, default=False, help="把旧 llm.base_url/api_key/model 迁移为 provider")
+@click.option("--workspace", "-w", default=None)
+def llm_config(migrate, workspace):
+    """D86 §2：查看（掩码）/迁移 LLM provider 与两段式配置。"""
+    from .workspace import find_workspace
+    from .grading import providers
+    ws = find_workspace(workspace)
+    rep = {}
+    if migrate:
+        rep["migrate"] = providers.migrate_legacy(ws)
+    rep["config"] = providers.public_config(ws)
+    click.echo(json.dumps(rep, ensure_ascii=False, indent=1))
+
+
+@llm.command("provider")
+@click.option("--action", type=click.Choice(["list", "set", "delete", "stage"]), default="list")
+@click.option("--name", default="", help="provider 名称")
+@click.option("--base-url", "base_url", default="")
+@click.option("--api-key", "api_key", default=None, help="留空=不改；--clear-key 显式清除")
+@click.option("--clear-key", is_flag=True, default=False)
+@click.option("--batch", "batch_support", is_flag=True, default=False, help="该 provider 支持 batch")
+@click.option("--model", default="", help="模型名（会记入该 provider 的模型历史）")
+@click.option("--stage", default="", type=click.Choice(["", "transcription", "evaluation"]))
+@click.option("--workspace", "-w", default=None)
+def llm_provider(action, name, base_url, api_key, clear_key, batch_support, model, stage, workspace):
+    """D86 §2：provider 管理（list/set/delete/stage）。key 只掩码回显，绝不入日志。"""
+    from .workspace import find_workspace
+    from .grading import providers
+    ws = find_workspace(workspace)
+    if action == "list":
+        rep = {"ok": True, "config": providers.public_config(ws)}
+    elif action == "delete":
+        rep = providers.delete_provider(ws, name)
+    elif action == "stage":
+        rep = providers.set_stage(ws, stage, provider=name, model=model,
+                                  batch=(True if batch_support else None))
+    else:
+        key_arg = "" if clear_key else api_key
+        rep = providers.save_provider(ws, name, base_url=base_url, api_key=key_arg,
+                                      batch_support=(True if batch_support else None), model=model)
+    click.echo(json.dumps(rep, ensure_ascii=False, indent=1))
+    raise SystemExit(0 if rep.get("ok") else 2)
+
+
 @cli.command()
 @click.option("--task", "task_path", required=True, help="任务包 JSON 路径（grade 节驱动）")
 @click.option("--images", "images_dir", default=None, help="学生作业图片目录（文件名=学生名或学号-题号）")

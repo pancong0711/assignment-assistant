@@ -429,6 +429,37 @@ def register(group: click.Group) -> None:
         click.echo(json.dumps(rep, ensure_ascii=False, indent=1))
         raise SystemExit(0 if rep.get("ok") else 2)
 
+    @group.command("class-map")
+    @click.option("--list", "do_list", is_flag=True, default=False, help="列出当前映射与本地候选")
+    @click.option("--course", "course_id", default="")
+    @click.option("--class", "class_id", default="")
+    @click.option("--name", "class_name", default="", help="学习通班级名（用于自动建议）")
+    @click.option("--dir", "class_dir", default="", help="直接指定 class_dir（如 classes/化工25）")
+    @click.option("--auto", is_flag=True, default=False,
+                  help="按班级名（文件名匹配）自动建议；精确命中时写入映射")
+    def xxt_class_map(do_list, course_id, class_id, class_name, class_dir, auto):
+        """D86 §1：学习通班级 ↔ workspace 班级目录 映射（xxt.class_map）。"""
+        from . import classmap
+        from ..workspace import find_workspace
+        ws = find_workspace(None)
+        if do_list or not (course_id and class_id):
+            rep = {"ok": True, "map": classmap.read_class_map(ws),
+                   "candidates": classmap.list_class_candidates(ws)}
+            click.echo(json.dumps(rep, ensure_ascii=False, indent=1))
+            return
+        if class_dir:
+            rep = {"ok": True, "action": "set",
+                   "map": classmap.set_class_dir(ws, course_id, class_id, class_dir)}
+        else:
+            rep = classmap.resolve_class_dir(ws, course_id, class_id, class_name, auto_write=bool(auto))
+            rep["ok"] = bool(rep.get("classDir"))
+        _journal("xxt_class_map",
+                 params={"courseId": course_id, "classId": class_id, "dir": rep.get("classDir"),
+                         "source": rep.get("source")},
+                 result="ok" if rep.get("ok") else "fail")
+        click.echo(json.dumps(rep, ensure_ascii=False, indent=1))
+        raise SystemExit(0 if rep.get("ok") else 2)
+
     @group.command("mark-submitted")
     @click.option("--course", "course_id", required=True)
     @click.option("--class", "class_id", required=True)
