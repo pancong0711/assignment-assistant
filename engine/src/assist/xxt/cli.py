@@ -429,6 +429,119 @@ def register(group: click.Group) -> None:
         click.echo(json.dumps(rep, ensure_ascii=False, indent=1))
         raise SystemExit(0 if rep.get("ok") else 2)
 
+    @group.command("mark-submitted")
+    @click.option("--course", "course_id", required=True)
+    @click.option("--class", "class_id", required=True)
+    @click.option("--cpi", default="0")
+    @click.option("--work", "work_id", required=True, help="作业库 workId（work-library 条目）")
+    @click.option("--student", required=True, help="学生姓名（在批阅列表内精确匹配）")
+    @click.option("--score", default=0.0, type=float, help="设为已交时填的分数（默认 0，作补交标记）")
+    @click.option("--confirm-send", "send", is_flag=True, default=False,
+                  help="真正点「确定」（默认 dry-run：只填弹窗不提交）")
+    @click.option("--storage", "storage", default=None, type=click.Path(dir_okay=False))
+    def xxt_mark_submitted(course_id, class_id, cpi, work_id, student, score, send, storage):
+        """D84 §3：把某「未交」学生设为已交（补交/测试用；默认 dry-run，白名单限制）。"""
+        from .grade_upload import mark_submitted
+        from ..workspace import find_workspace
+        rep = mark_submitted(storage=default_storage(None), course_id=course_id,
+                             class_id=class_id, cpi=cpi, work_id=work_id, student=student,
+                             score=score, send=bool(send), workspace=find_workspace(None))
+        _journal("xxt_mark_submitted",
+                 params={"courseId": course_id, "classId": class_id, "workId": work_id,
+                         "student": student, "mode": rep.get("mode")},
+                 result="ok" if rep.get("ok") else "fail",
+                 error=str(rep.get("error") or "")[:200])
+        click.echo(json.dumps(rep, ensure_ascii=False, indent=1))
+        raise SystemExit(0 if rep.get("ok") else 2)
+
+    @group.command("grade-upload")
+    @click.option("--course", "course_id", required=True)
+    @click.option("--class", "class_id", required=True)
+    @click.option("--cpi", default="0")
+    @click.option("--work", "work_id", required=True, help="作业库 workId")
+    @click.option("--student", default="", help="学生姓名（与 --work-answer-id 二选一）")
+    @click.option("--work-answer-id", "work_answer_id", default="", help="直接指定 workAnswerId")
+    @click.option("--comment", default="", help="作业批语（纯文本自动转段落；也可直接给 HTML）")
+    @click.option("--comment-image", "comment_images", multiple=True,
+                  help="评语图片（workspace 内 jpg/png 等，可多次）")
+    @click.option("--question-comment", "question_comments", multiple=True,
+                  help="题目批语（按题序，可多次）")
+    @click.option("--score", "total_score", type=float, default=None, help="总分（#tmpscore）")
+    @click.option("--question-score", "question_scores", multiple=True,
+                  help='每题分，逗号分隔（如 "10,20,30"），可多次')
+    @click.option("--confirm-send", "send", is_flag=True, default=False,
+                  help="真正提交批阅（默认 dry-run：只填入并读回校验）")
+    @click.option("--force", is_flag=True, default=False, help="已批阅也覆盖提交")
+    @click.option("--task", "task_path", default=None, type=click.Path(exists=True, dir_okay=False),
+                  help="任务包 JSON：从批阅产物（evaluations）装配批语/分数")
+    @click.option("--all", "all_students", is_flag=True, default=False,
+                  help="对产物内全部学生上传（默认仅 --student 指定的一人）")
+    @click.option("--storage", "storage", default=None, type=click.Path(dir_okay=False))
+    def xxt_grade_upload(course_id, class_id, cpi, work_id, student, work_answer_id,
+                         comment, comment_images, question_comments, total_score,
+                         question_scores, send, force, task_path, all_students, storage):
+        """D84 §2：批阅页上传批语（文字+图片）/分数并提交（默认 dry-run，白名单限制）。"""
+        from .grade_upload import upload_grade
+        from .marking import parse_question_scores
+        from .notice import safe_attachment_path
+        from ..workspace import find_workspace
+        ws = find_workspace(None)
+        imgs: list[str] = []
+        for raw in comment_images:
+            pth = safe_attachment_path(raw, ws)
+            if pth is None:
+                raise click.UsageError(f"评语图片被拒绝（需在 workspace 内且格式在白名单）：{raw}")
+            imgs.append(str(pth))
+        scores: list[float] = []
+        for spec in question_scores:
+            scores.extend(parse_question_scores(spec))
+        # §4：--task 时从批阅产物装配（评语=feedback_md、分数=total/per_question）
+        targets: list[dict] = [{}]
+        if task_path:
+            from .grade_upload import build_upload_payloads, find_payload
+            payloads = build_upload_payloads(ws, task_path)
+            if all_students:
+                targets = payloads
+            elif student:
+                hit = find_payload(payloads, student)
+                targets = [hit] if hit else []
+            else:
+                raise click.UsageError("--task 需配合 --student 或 --all")
+            if not targets:
+                click.echo(json.dumps({"ok": False, "error": f"批阅产物中未找到学生：{student}",
+                                       "payloads": [x["student"] for x in payloads]},
+                                      ensure_ascii=False, indent=1))
+                raise SystemExit(2)
+
+        reps: list[dict] = []
+        for tgt in targets:
+            stu = student or str(tgt.get("student") or "")
+            rep = upload_grade(storage=default_storage(None), course_id=course_id,
+                               class_id=class_id, cpi=cpi, work_id=work_id, student=stu,
+                               work_answer_id=work_answer_id,
+                               comment=comment or str(tgt.get("comment") or ""),
+                               comment_images=imgs, question_comments=list(question_comments),
+                               total_score=(total_score if total_score is not None
+                                            else tgt.get("total_score")),
+                               question_scores=(scores or tgt.get("question_scores") or None),
+                               send=bool(send), force=bool(force), workspace=ws)
+            reps.append(rep)
+            if len(targets) > 1:
+                click.echo(json.dumps(rep, ensure_ascii=False, indent=1))
+        rep = reps[0] if len(reps) == 1 else {
+            "ok": all(x.get("ok") for x in reps), "count": len(reps),
+            "okCount": sum(1 for x in reps if x.get("ok")),
+            "results": reps}
+        _journal("xxt_grade_upload",
+                 params={"courseId": course_id, "classId": class_id, "workId": work_id,
+                         "student": student or work_answer_id, "mode": rep.get("mode"),
+                         "score": total_score, "images": len(imgs),
+                         "task": task_path, "all": bool(all_students)},
+                 result="ok" if rep.get("ok") else "fail",
+                 error=str(rep.get("error") or "")[:200])
+        click.echo(json.dumps(rep, ensure_ascii=False, indent=1))
+        raise SystemExit(0 if rep.get("ok") else 2)
+
     @group.group("run")
     def xxt_run():
         """run 管理（D73-9）：导入旧 run JSON，使其在 PWA 可见。"""

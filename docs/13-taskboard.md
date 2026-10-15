@@ -1378,3 +1378,16 @@ applyManualTranslation/setTranslationRatio 中 setTranslationRatio 保留——�
 - 新建草稿 PWA 修复；
 - 上传：目标班单份作业做“期末补交”试跑；
 - LLM：两套模型 + 一般/batch 调用；晚间协作两步批阅。
+
+
+---
+
+## D84 · 批阅回传（设为已交 + 评语/图片上传 + 打分）（2026-10-15）
+
+- 主需求单：`docs/37-D84-grade-upload.md`；
+- 拆两命令：`assist xxt mark-submitted`（设为已交，补交/测试用）与
+  `assist xxt grade-upload`（作业批语文字+图片 / 题目批语 / 每题分 / 总分 / 提交）；
+- 两者均：白名单校验 + 默认 dry-run + receipt + journal；真提交需 `--confirm-send`；
+- 蓝本：遗留 `_legacy/2601playwright/src/uploader.py` + `submit_v3.py`（已真机跑通）；
+- 实施顺序：§1 批阅页写入原语 → §2 grade-upload → §3 mark-submitted →
+  §4 grading 产物装配 → §5 PWA 入口 → §6 收口。
