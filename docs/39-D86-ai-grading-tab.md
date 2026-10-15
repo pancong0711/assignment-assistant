@@ -45,11 +45,46 @@
 - 「逐生批阅」= **人工批阅**（沿用 D85 逐生预览里的人工批阅栏）：**批语默认留空、分数默认 100**，由教师填写/修改；
 - 「批阅」选项卡 → 改名 **「AI 辅助批阅」** 选项卡（AI 设置 + 任务 + 审核 + 报告 + 上传集中在此）。
 
-### 4.2 设置区（两段式 LLM）
+### 4.2 设置区：provider 统一管理 + 两段式引用（2026-10-15 用户细化）
 
-- 字段：provider/base_url、api_key、（可选）转写模型、评阅模型、batch 开关；
-- **每次填写默认保存**、自动记忆、下次打开即回显；支持保存多个 provider 并**勾选当前使用**；
-- key 安全沿用 docs/26 口径：`type=password`、引擎写入 `settings.local.json`(0600)、只回显 `sk-****abcd`、日志只记 provider 名/base_url host；提供「清除 key」。
+设计为**两层**：provider 建一次、两段式只做"勾选 + 填模型名"。
+
+**A. Provider 管理区（统一设置，只做一次）**
+
+- 列表式管理，每个 provider 一条：
+  `{name, base_url, api_key, models[], batch_support}`；
+- 支持 新增 / 编辑 / 删除 / 「清除 key」；
+- `base_url` 提供内置默认可下拉（如 Aliyun DashScope OpenAI 兼容模式
+  `https://dashscope.aliyuncs.com/compatible-mode/v1`）+ 自定义；
+- `batch_support` 标记该 provider 是否支持 batch（用于 §4.11 的开关可用性）。
+
+**B. 两段式批阅设置（只引用 provider）**
+
+| 段 | 控件 |
+|---|---|
+| 转写（图片→Markdown，多模态） | **勾选 provider**（单选） + **模型名输入框** |
+| 评阅（文本→分数/评语） | **勾选 provider**（单选） + **模型名输入框** + `batch` 开关（provider 不支持则置灰并提示） |
+
+- 两段**可以选不同 provider**（例：多模态用 A 家、文本评阅用 B 家）；
+- **模型名"填写即记录"**：按 provider 累积为候选列表（去重、上限如 20），
+  下次直接下拉勾选；也可从 provider 拉取模型列表（可选增强，失败不阻断）。
+
+**C. 记忆与回显（用户要求）**
+
+- provider 列表、每个 provider 的模型名历史、两段式的 provider/模型选择
+  **全部"填写即保存"**，下次打开即回显；无需"保存"按钮；
+- 选择项以**勾选/下拉**呈现，避免每次手打 base_url/key。
+
+**D. 密钥（沿用"统一管理"）**
+
+- **每个 provider 各存一份 key**（已拍板），落 `settings.local.secrets.json`（0600，见 §4.12）；
+- PWA 只回显掩码 `sk-****abcd`；编辑时**留空 = 不修改**；清除需显式操作；
+- 引擎日志/journal 只记 provider 名与 base_url host，绝不记 key。
+
+**E. 兼容/迁移**
+
+- 旧配置 `llm.base_url` / `llm.api_key` / `llm.model` → 迁移为 `providers[0]`，
+  两段式默认引用它；PWA 提示一次"已迁移"。
 
 ### 4.3 AI 批阅班级范围（白名单的"AI 版"）
 
