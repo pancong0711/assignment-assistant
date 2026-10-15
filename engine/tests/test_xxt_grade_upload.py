@@ -9,7 +9,7 @@ from assist.xxt.grade_upload import find_student_row, _write_receipt, receipt_di
 ROWS = [
     {"name": "张三", "status": "待批阅", "workAnswerId": "111"},
     {"name": "李四", "status": "已批阅", "workAnswerId": "222"},
-    {"name": "潘聪（未交）", "status": "", "workAnswerId": ""},
+    {"name": "学生丙（未交）", "status": "", "workAnswerId": ""},
 ]
 
 
@@ -22,7 +22,7 @@ def test_find_student_by_work_answer_id():
 
 
 def test_find_student_substring_fuzzy():
-    assert find_student_row(ROWS, "潘聪")["name"] == "潘聪（未交）"
+    assert find_student_row(ROWS, "学生丙")["name"] == "学生丙（未交）"
 
 
 def test_find_student_case_insensitive_and_missing():
