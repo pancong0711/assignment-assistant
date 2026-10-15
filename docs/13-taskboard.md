@@ -1424,4 +1424,7 @@ applyManualTranslation/setTranslationRatio 中 setTranslationRatio 保留——�
   一键生成报告 → 一键上传全部（未批阅给 N 提示 + 弹窗一键 AI）/ 两种模式（brute-force 与优化）/
   Aliyun DashScope batch）；
 - 覆盖语义确认：二次上传 = **整段替换**批语 + 覆盖分数；已批阅默认拒绝，需 force；
-- 状态：讨论中，待 §6 拍板项确认后按 §5 分期实施。
+- 2026-10-15 拍板：勾选粒度=多级列表勾到作业；作业包=最简包+tag 为主；映射表=settings.local.json 按班级名自动建议；
+  **成绩单多源加权、只增不覆盖**；报告 AI/人工同版式仅标注不同且都要 PNG；多 provider 各存一份 key（拆 `settings.local.secrets.json`）；
+  先做一般提交闭环再上 DashScope batch；
+- 状态：需求已细化，待开工（按 §5 分期）。

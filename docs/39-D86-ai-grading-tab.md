@@ -70,8 +70,19 @@
 ### 4.5 班级 ↔ 工作区关联（新增，缺少的一环）
 
 - 目标：在学习通班级/作业行上直接看到并用上"该班的 tag/作业纸"；
-- 设计候选：`settings.local.json → xxt.class_map: {"<courseId>:<classId>": "classes/化工25"}`（或 workspace 内 `classes/_xxt-map.json`），PWA 提供"关联班级目录"的选择/自动建议（按班级名相似度）；
+- 落点（已拍板）：`settings.local.json → xxt.class_map: {"<courseId>:<classId>": "classes/化工25"}`；
+- **按班级名自动建议**（学习通班级名 ↔ workspace `classes/*` 目录名/roster 文件名相似度），教师确认后写入；
 - 该映射同时供 CLI 使用（`assist grade --xxt-class <courseId>:<classId>` 直接解析 class_dir + 作业包）。
+
+**⚠️ 与"成绩单"的区别（用户 2026-10-15 提醒，重要）**：
+
+- `class_map` 只解决"学习通班级 → 本地班级目录"，**与成绩源无关、不涉及覆盖**；
+- **一个班级对应多份成绩单**（自定义 / 雨课堂 / 学习通导出…），且**随时间更新/新增**：
+  按我们的打分标准是**多份成绩加权**，因此 **不得简单覆盖**；
+- 现状已支持该模型：roster store 的 `sources[]`（每源 `uid` / `fileName` / `sheetName` /
+  `includedColumns[].weight` / `weight`）+ `merge_scores` 加权平均；同班多次成绩**各自成源、共存**；
+- 本单后续只需保证：**导入新成绩单 = 新增一个源（可重名区分/带日期）**，绝不覆盖已有源；
+  在「AI 辅助批阅」选项卡里如需展示"某次作业对应哪个 tag"，只做**只读引用**。
 
 ### 4.6 作业行显示与操作
 
@@ -84,6 +95,10 @@
 
 - 需要一个**固定、专业严谨的版式**（参考旧代码报告），用于"查看批阅情况"时**直接修改**（含 LaTeX 与插入附件如图片）；
 - **人工批阅也要形成报告**，版式与 AI 报告一致，但**明确标注「人工批阅报告」**（AI 报告标注「AI 批阅报告」）；
+- **两档报告（已拍板）**：
+  - **正式报告**（本选项卡）：带标题/分段落/逐题依据，AI 与人工同版式仅标注不同；
+  - **轻量批语图**（「预览-学习通」里的人工批阅）：**也要出 PNG**（LaTeX → 公式），
+    但不追求正式报告的标题/分段落结构，够用即可；
 - 报告应在上传**之前**生成：即按钮顺序为 **一键生成批阅报告 → 一键上传批阅报告**；
 - 与「预览-学习通」里的人工批阅可以**不同风格**（本处 = 报告风格）。
 
@@ -101,7 +116,7 @@
 - 总分：写 `#tmpscore` → **覆盖**；每题分同理（逐题输入框覆盖）；
 - 提交：`markAction(1)` 再次提交 → 平台以本次内容为准；
 - **幂等保护**：`grade-upload` 若读到该生已是「已批阅」状态，默认**拒绝**（需 `--force` / PWA「强制覆盖上传」）。
-- 待确认：是否需要"**合并**（保留原批语再追加）"选项？（默认建议仍是替换，保持本地=平台）
+- 已拍板：**不做合并选项**，一律整段替换（本地=平台，语义最简、可重复执行）
 
 ### 4.10 AI 批阅两种模式
 
@@ -122,12 +137,32 @@
 - 先设计好 **base_url / api_key / 模式开关**（一般提交 vs batch 提交），**在教师电脑上实测**（本机无法测）；
 - 因此代码要**输出足够诊断信息**（请求 id、批次 id、状态、错误原文、可复制的 JSONL/日志路径），便于教师把报错发给开发者。
 
+### 4.12 配置与密钥：`settings.local.json` 的边界与拆分（回答"3.1"）
+
+**现状（实测）**：`settings.local.json` 只被读到两类键——
+`xxt.*`（`write_allowlist` / `notice_attachment_exts`，未来 + `class_map`）与
+`llm.*`（`base_url` / `api_key` / `model` / `transcription_model` / `evaluation_model` +
+`transcription/evaluation` 覆盖）；另有 `watermark` 覆盖与字体 `user_cfg` 同源读取。
+当前文件 **< 1 KB**（本机实测 136 B）——即使存 10 个 provider + 50 个班级映射也只有几 KB，
+**不是体积问题**。
+
+**真正的问题**是"密钥与非敏感配置混在一个文件"，不利备份/同步/排错。建议拆分（已拍板方向）：
+
+| 文件 | 内容 | 权限/红线 |
+|---|---|---|
+| `settings.local.json` | `xxt.*`（白名单/附件名单/**class_map**）、`watermark`、AI 偏好（模式/provider 勾选）、非敏感开关 | 非敏感；`.gitignore` 已忽略 |
+| **`settings.local.secrets.json`** | `llm.providers[]` 的 `api_key`（**每个 provider 各一份**） | 0600；`.gitignore` 已覆盖 `settings.local.*.json`；check-secrets 红名单 |
+
+- PWA 只显示掩码（`sk-****abcd`）；「清除 key」删除对应 provider 的密钥；
+- 引擎日志/journal **只记 provider 名与 base_url host**，绝不记 key（沿用 docs/26 §D75-9 口径）；
+- 兼容：若仍写在 `settings.local.json` 的 `llm.api_key`，按"单 provider 缺省"读取，并在 PWA 提示迁移。
+
 ## 5. 分期实施（进度表，待执行）
 
 | # | 阶段 | 交付物 | 状态 |
 |---|---|---|---|
 | §1 | 班级↔工作区映射（`xxt.class_map` + PWA 关联 UI + CLI `--xxt-class`） | `settings`/`workspace` + PWA | ⏳ |
-| §2 | AI 设置区（多 provider 记忆/勾选/掩码/清除 + 一般/batch 开关） | `settings.local.json` schema + PWA 设置区 + serve 端点 | ⏳ |
+| §2 | AI 设置区 + **配置/密钥拆分**（`settings.local.json` + `settings.local.secrets.json`；多 provider 记忆/勾选/掩码/清除；一般/batch 开关） | schema + PWA 设置区 + serve 端点 | ⏳ |
 | §3 | 作业包挂接（tag ↔ taskpad；省 token 的最简包优先）+ tag 勾选 | PWA + engine 解析 | ⏳ |
 | §4 | engine：`assist grade` 串"批阅下载目录 + 作业包"；两模式（brute-force / 优化）；tag 指令；诊断信息 | `grading/*` + CLI | ⏳ |
 | §5 | 批阅报告（固定版式 md/html/png；AI/人工标注；LaTeX→PNG；上传前生成） | `grading/report.py` + render CLI + PWA | ⏳ |
@@ -135,16 +170,23 @@
 | §7 | batch（DashScope）+ 成本/诊断信息 | `grading/llm_batch.py` + CLI | ⏳ |
 | §8 | 文档与真机验证（教师机实测两种提交模式） | docs/13/16/39 | ⏳ |
 
-## 6. 待讨论 / 待拍板
+## 6. 拍板与待定（2026-10-15）
 
-1. §4.3 勾选粒度：多级列表勾到"作业"（A）还是"班级白名单 + 作业行勾选"（B）？
-2. §4.4 作业包挂接：确认"最简作业包 + tag"为主、整班包为辅？
-3. §4.5 映射表落点：`settings.local.json` 还是 workspace 文件？是否要自动建议（班级名相似度）？
-4. §4.9 二次上传：确认"整段替换"；是否需要"合并（追加）"选项？
-5. §4.10 默认模式：优化模式为默认、brute-force 作为可选？
-6. §4.7 报告：AI 与人工报告版式完全一致（仅标注不同）？人工报告是否也要导出 PNG？
-7. §4.11 batch：先做"一般提交（实时+并发）"闭环，再上 batch？（建议是）
-8. §4.2 多 provider 记忆：key 是每个 provider 各存一份，还是共用一份？（建议各存一份，均掩码）
+**已拍板**
+1. ✅ 勾选粒度：**多级列表直接勾到"作业"**（方案 A，逐生/逐 tag 勾选在作业行体现）；
+2. ✅ 作业包挂接：**"最简作业包 + tag"为主**，整班包仅 brute-force/核对时用；
+3. ✅ 映射表落点：`settings.local.json → xxt.class_map`，**按班级名自动建议**后由教师确认；
+   并明确：**成绩单是"多源共存 + 加权"、随更新只增不覆盖**（见 §4.5 警告）；
+4. ✅ 二次上传：**整段替换**（不做合并）；
+5. ✅ 默认模式：**优化模式为默认**（brute-force 可选兜底）；
+6. ✅ 报告：AI/人工**版式一致、仅标注不同**；**人工报告也要 PNG**（轻量档不必正式版式）；
+7. ✅ batch 顺序：先做 **一般提交（实时+并发）闭环**，再上 DashScope batch；
+8. ✅ 多 provider：**每个 provider 各存一份 key**，PWA 掩码显示，代码/日志严格保密（见 §4.12 拆分）。
+
+**待定（实施时再定）**
+- 轻量批语图的默认宽度/字号/是否带"人工批阅"水印字样；
+- `class_map` 自动建议的匹配口径（班级名相似度 vs roster 文件名）；
+- brute-force 模式是否默认开启"题目/姓名一致性核对"（建议开启，失败仅在报告里标注）。
 
 ## 7. 验收（初拟）
 
