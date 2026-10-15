@@ -43,6 +43,19 @@ SYNTHETIC_STUDENTS = [
 _PAGE_W_MM = {"portrait": 210.0, "landscape": 297.0}
 
 
+def _normalize_figure_pos(pos) -> str:
+    """D83-2：题图位置四态归一 + 旧值兼容（与 paper/layout.normalize_figure_pos 同口径）。"""
+    p = str(pos or "text-right").strip().lower()
+    p = {"lt": "text-left", "rt": "text-right", "center": "below-right"}.get(p, p)
+    return p if p in ("text-right", "text-left", "below-left", "below-right") else "text-right"
+
+
+def _normalize_indent(indent) -> str:
+    """D83-3：题号缩进三态（none 默认 / first / hanging）。"""
+    i = str(indent or "none").strip().lower()
+    return i if i in ("none", "first", "hanging") else "none"
+
+
 def template_dirs() -> list[Path]:
     """模板搜索路径：engine/templates（仓库/源码形态）→ 包内 templates
     （wheel 安装形态，pyproject force-include 落到 assist/templates）。"""
@@ -246,10 +259,11 @@ def build_context(task: dict, students: list[dict], kb_dir: Path, ws: Path,
         "footer_text": str((lay.get("footer") or {}).get("text") or ""),
         "figure": {
             "scale": float((lay.get("figure") or {}).get("scale") or 1.0),
-            "pos": str((lay.get("figure") or {}).get("pos") or "rt"),
+            "pos": _normalize_figure_pos((lay.get("figure") or {}).get("pos")),
             "max_w_mm": float((lay.get("figure") or {}).get("max_w_mm") or 45.0),
             "max_h_mm": float((lay.get("figure") or {}).get("max_h_mm") or 60.0),
         },
+        "indent": _normalize_indent(lay.get("indent")),
         "katex_version": KATEX_VERSION,
     }
     stu_out = []

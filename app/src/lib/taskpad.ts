@@ -31,6 +31,9 @@ export interface TaskpadLayoutFooter {
   [k: string]: unknown
 }
 
+/** D83-2：题图位置四态（与引擎/模板同口径）。 */
+export type FigurePos = 'text-right' | 'text-left' | 'below-left' | 'below-right'
+
 export interface TaskpadLayout {
   orientation: Orientation
   /** 每页题数 1..MAX_PER_PAGE（缺省 竖1横2；显式网格由 grid_rows/grid_cols 控制） */
@@ -39,10 +42,12 @@ export interface TaskpadLayout {
   grid_rows?: number
   /** D61：显式网格列数；缺省（旧任务）按 orientation+per_page 兼容推导 */
   grid_cols?: number
-  /** D82-C：题图缩放与位置（全局，scale=1 默认；pos=lt/rt/center） */
-  figure?: { scale?: number; pos?: 'lt' | 'rt' | 'center'; max_w_mm?: number; max_h_mm?: number }
+  /** D82-C/D83-2：题图缩放与位置（四态；旧值 lt/rt/center 兼容归一） */
+  figure?: { scale?: number; pos?: FigurePos | 'lt' | 'rt' | 'center'; max_w_mm?: number; max_h_mm?: number }
   /** D82：题号规则 auto（连续 1./2.）/ id（题库 id） */
   numbering?: 'auto' | 'id'
+  /** D83-3：题号+题干缩进（none 默认 / first 首行 / hanging 悬挂） */
+  indent?: 'none' | 'first' | 'hanging'
   header: TaskpadLayoutHeader
   footer: TaskpadLayoutFooter
 }
@@ -358,7 +363,7 @@ function parseFigure(raw: unknown): TaskpadLayout['figure'] {
   const out: NonNullable<TaskpadLayout['figure']> = {}
   const scale = Number(f.scale)
   if (Number.isFinite(scale)) out.scale = Math.max(0.1, Math.min(2, scale))
-  if (f.pos === 'lt' || f.pos === 'rt' || f.pos === 'center') out.pos = f.pos
+  if (typeof f.pos === 'string' && f.pos) out.pos = f.pos as FigurePos
   const w = Number(f.max_w_mm)
   if (Number.isFinite(w) && w > 0) out.max_w_mm = w
   const h = Number(f.max_h_mm)
@@ -399,6 +404,7 @@ export function parseTaskpad(raw: unknown): Taskpad {
       footer: (layout.footer ?? {}) as TaskpadLayoutFooter,
       figure: parseFigure(layout.figure),
       numbering: layout.numbering === 'id' ? 'id' : layout.numbering === 'auto' ? 'auto' : undefined,
+      indent: layout.indent === 'first' || layout.indent === 'hanging' ? layout.indent : undefined,
     },
     items: Array.isArray(o.items)
       ? (o.items as Record<string, unknown>[]).map((it) => {

@@ -254,8 +254,8 @@ def test_sheet_html_d82_numbering_labels_and_figure_box(ws: Path):
     # figure 最大框透传到模板（图片 style 与 CSS）
     assert "max-width:33.0mm" in html
     assert "max-height: 28.0mm" in html or "max-height:28.0mm" in html
-    # 两列/悬挂缩进块存在
-    assert 'class="q-body"' in html
+    # 两列/缩进块存在（D83：q-body 现带 indent-* 修饰类）
+    assert 'class="q-body' in html
 
 
 def test_sheet_html_auto_numbering_sequential(ws: Path):

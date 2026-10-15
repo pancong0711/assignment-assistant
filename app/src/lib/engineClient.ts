@@ -883,7 +883,7 @@ export async function copyXxtWork(engineAddr: string, token: string | undefined,
   return (await res.json()) as { ok?: boolean; newWorkLibraryId?: string; error?: string }
 }
 
-export async function startXxtWorkCreate(engineAddr: string, token: string | undefined, payload: { courseId: string; classId: string; cpi: string; title: string; stemHtml: string; directoryId?: string }): Promise<string> {
+export async function startXxtWorkCreate(engineAddr: string, token: string | undefined, payload: { courseId: string; classId: string; cpi: string; title: string; stemHtml: string; directoryId?: string; attachments?: { name: string; data_b64: string }[] }): Promise<string> {
   const base = normalizeEngineAddr(engineAddr)
   const res = await fetch(engineUrlWithToken(base, '/xxt/work/create', token), {
     method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(payload),

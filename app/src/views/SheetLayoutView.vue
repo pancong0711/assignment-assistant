@@ -97,9 +97,9 @@ const footerText = ref('')
 
 watch(headTitle, (v) => { pad.current.layout.header.title = v })
 watch(footerText, (v) => { pad.current.layout.footer.text = v })
-function figureCfg() { return pad.current.layout.figure ?? (pad.current.layout.figure = { scale: 1, pos: 'rt' }) }
+function figureCfg() { return pad.current.layout.figure ?? (pad.current.layout.figure = { scale: 1, pos: 'text-right' }) }
 function setFigureScale(v: number) { figureCfg().scale = Math.max(0.1, Math.min(2, Number(v) || 1)) }
-function setFigurePos(v: string) { figureCfg().pos = (v as 'lt' | 'rt' | 'center') }
+function setFigurePos(v: string) { figureCfg().pos = (v as 'text-right' | 'text-left' | 'below-left' | 'below-right') }
 /** D82-C：题图最大框（mm）；非法值回落缺省 45×60，与引擎同口径。 */
 function setFigureMaxW(v: unknown) {
   const n = Number(v)
@@ -111,6 +111,8 @@ function setFigureMaxH(v: unknown) {
 }
 /** D82：题号规则 auto=连续 1./2.；id=题库题号。 */
 function setNumbering(v: string) { pad.current.layout.numbering = v === 'id' ? 'id' : 'auto' }
+/** D83-3：题号缩进 none/first/hanging（默认 none）。 */
+function setIndent(v: string) { pad.current.layout.indent = v === 'first' ? 'first' : v === 'hanging' ? 'hanging' : 'none' }
 
 // 从作业纸初始化表单（当前包切换/载入/导入后也同步；③段载入后通过 current.id 触发）
 function syncFromPad() {
@@ -229,10 +231,11 @@ function saveOnly() {
             <span class="hint">{{ (figureCfg().scale ?? 1).toFixed(1) }}×</span>
           </label>
           <label class="field">题图位置：
-            <select :value="figureCfg().pos ?? 'rt'" @change="setFigurePos(($event.target as HTMLSelectElement).value)">
-              <option value="rt">右上</option>
-              <option value="lt">左上</option>
-              <option value="center">居中</option>
+            <select :value="figureCfg().pos ?? 'text-right'" @change="setFigurePos(($event.target as HTMLSelectElement).value)">
+              <option value="text-right">文左图右（同行）</option>
+              <option value="text-left">文右图左（同行）</option>
+              <option value="below-left">题文满行·图下一行左</option>
+              <option value="below-right">题文满行·图下一行右</option>
             </select>
           </label>
           <label class="field">题图最大宽：
@@ -250,6 +253,14 @@ function saveOnly() {
                     @change="setNumbering(($event.target as HTMLSelectElement).value)">
               <option value="auto">连续编号（1./2.）</option>
               <option value="id">题库题号</option>
+            </select>
+          </label>
+          <label class="field">题号缩进：
+            <select :value="pad.current.layout.indent ?? 'none'"
+                    @change="setIndent(($event.target as HTMLSelectElement).value)">
+              <option value="none">默认（题号紧挨文字）</option>
+              <option value="first">首行缩进</option>
+              <option value="hanging">悬挂缩进</option>
             </select>
           </label>
         </p>

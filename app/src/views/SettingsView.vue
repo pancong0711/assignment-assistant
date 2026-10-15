@@ -142,13 +142,24 @@ async function restartEngineNow() {
 }
 
 /** D56-J5：刷新 workspace 句柄状态（会话内 + IndexedDB 恢复）。 */
-async function refreshWorkspaceState() {
+const wsNeedPermission = ref(false)
+const wsLoadedCount = ref(0)
+async function refreshWorkspaceState(rescan = false) {
   try {
-    const { restoreKbDir, getKbDirHandle } = await import('../stores/kb')
-    await restoreKbDir()
-    const h = getKbDirHandle()
-    dirHandleConnected.value = !!h
-    dirName.value = h?.name ?? ''
+    if (rescan) {
+      const { useKbStore } = await import('../stores/kb')
+      const r = await useKbStore().restoreWorkspace()
+      wsNeedPermission.value = r.needPermission
+      wsLoadedCount.value = r.loaded.length
+      dirHandleConnected.value = r.restored
+      dirName.value = r.restored ? (dirName.value || '') : dirName.value
+    } else {
+      const { restoreKbDir, getKbDirHandle } = await import('../stores/kb')
+      await restoreKbDir()
+      const h = getKbDirHandle()
+      dirHandleConnected.value = !!h
+      dirName.value = h?.name ?? ''
+    }
   } catch { dirHandleConnected.value = false }
 }
 
@@ -593,8 +604,10 @@ onMounted(() => {
         <code>--katex local</code> 时读取本卡安装的 workspace 离线包。
       </p>
       <p class="hint">
-        workspace 目录：<b>{{ dirHandleConnected ? '✅ 已连接（可直接写盘，刷新后自动恢复）' : '⚠ 未连接（点安装时会让你选一次目录；若引擎在线也可由引擎服务端直装）' }}</b>
-        <span v-if="dirName">（{{ dirName }}）</span>
+        workspace 目录：<b>{{ dirHandleConnected ? '✅ 已连接（可直接写盘，刷新后自动恢复并重扫题库/题图）' : wsNeedPermission ? '🔑 已记住目录，但需重新授权（浏览器安全要求，需你点一下）' : '⚠ 未连接（点安装时会让你选一次目录；若引擎在线也可由引擎服务端直装）' }}</b>
+        <span v-if="dirName">（{{ dirName }}<template v-if="wsLoadedCount"> · 已载入 {{ wsLoadedCount }} 项</template>）</span>
+        <button class="btn small" style="margin-left:8px" @click="refreshWorkspaceState(true)"
+          title="D83-1：从 IndexedDB 恢复目录句柄并重新扫描 kb/*.xlsx 与 kb/fig（刷新后题图/题库自动恢复）">🔄 恢复并重扫</button>
       </p>
       <p>
         <button class="btn" :disabled="katexChecking" @click="checkKatex">{{ katexChecking ? '检查中…' : '自检 KaTeX 资源' }}</button>

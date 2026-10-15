@@ -76,6 +76,7 @@ def sheets_from_task(task_path: Path, ws: Path, out_dir: Path | None = None,
     figure_pos = str(fig.get("pos") or "rt")
     figure_max_w = float(fig.get("max_w_mm") or 45.0)
     figure_max_h = float(fig.get("max_h_mm") or 60.0)
+    figure_indent = str(lay.get("indent") or "none")
 
     roster_fn = ws / task.get("class_dir", "classes") / "roster" / f"{task['id']}-roster.xlsx"
     if not roster_fn.parent.exists():
@@ -111,6 +112,7 @@ def sheets_from_task(task_path: Path, ws: Path, out_dir: Path | None = None,
         figure_pos=figure_pos,
         figure_max_w_mm=figure_max_w,
         figure_max_h_mm=figure_max_h,
+        figure_indent=figure_indent,
     )
 
 

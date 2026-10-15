@@ -8,6 +8,8 @@
 from __future__ import annotations
 
 import json
+
+from loguru import logger
 import re
 import time
 from pathlib import Path
@@ -19,10 +21,19 @@ WORK_TEST_ALLOWLIST = {
 
 
 def validate_work_target(course_id: str, class_id: str, workspace=None) -> str | None:
-    from .allowlist import is_allowed
+    from .allowlist import is_allowed, read_allowlist, _settings_path
     if not is_allowed(str(course_id), str(class_id), workspace):
-        return (f"写操作白名单拒绝：courseId={course_id}, classId={class_id}；"
-                "请在「发布-学习通」中勾选该班级加入白名单")
+        # D83-5.0：回显实际读取的白名单文件与条目，便于一眼看出「勾选了却被拒」是否 workspace 不一致
+        try:
+            entries = read_allowlist(workspace)
+            path = _settings_path(workspace)
+        except Exception:  # noqa: BLE001
+            entries, path = [], "?"
+        names = ", ".join(f"{e.get('courseId')}:{e.get('classId')}"
+                          + (f"({e.get('name')})" if e.get("name") else "") for e in entries) or "（空）"
+        return (f"写操作白名单拒绝：请求 courseId={course_id}, classId={class_id}；"
+                f"实际读取白名单文件 {path}，当前条目：{names}。"
+                "请确认该班级已在「发布-学习通」勾选（注意 workspace 是否一致）")
     return None
 
 
@@ -254,12 +265,71 @@ def work_detail(storage, course_id: str, class_id: str, cpi: str, work_library_i
     return {"ok": True, "title": title, "stemHtml": stem, "workUsed": str(work_used).lower() == "true"}
 
 
+def _work_attachment_count(page) -> int:
+    """统计作业简答题编辑器（id=content）里的附件/图片块。"""
+    try:
+        content = page.evaluate("UE.getEditor('content').getContent()") or ""
+        return (len(re.findall(r'class="editor-iframe"', content))
+                + len(re.findall(r'class="drag-image-wrap"', content)))
+    except Exception:
+        return -1
+
+
+def _upload_work_attachments(page, att_paths: list[Path]) -> list[str]:
+    """D83-7：把本地附件上传插入到那道唯一简答题的正文（复用通知的 WebUploader 通道）。"""
+    uploaded: list[str] = []
+    # 让附件按钮可交互（不同页面可能有多个 hidden input）
+    try:
+        btn = page.locator(".edui-for-attachment").first
+        btn.scroll_into_view_if_needed(timeout=3000)
+        btn.click(timeout=5000)
+    except Exception as exc:  # noqa: BLE001
+        logger.warning(f"附件按钮点击失败（继续尝试直接注入 input）：{str(exc)[:160]}")
+    count = _work_attachment_count(page)
+    for apath in att_paths:
+        before = count
+        loc = page.locator('.edui-for-attachment input[type=file]').first
+        if loc.count() == 0:
+            loc = page.locator('input[type=file]').first
+        loc.wait_for(state="attached", timeout=10000)
+        loc.set_input_files(str(apath))
+        deadline = time.time() + 90
+        ok = False
+        while time.time() < deadline:
+            count = _work_attachment_count(page)
+            if count > before:
+                ok = True
+                break
+            page.wait_for_timeout(1000)
+        if not ok:
+            raise RuntimeError(f"附件未插入简答题正文：{apath.name}")
+        uploaded.append(apath.name)
+    if uploaded:
+        page.wait_for_timeout(2500)  # WebUploader 收尾请求
+    return uploaded
+
+
 def create_work(storage, course_id: str, class_id: str, cpi: str, title: str,
-                stem_html: str, directory_id: str = "0") -> dict:
-    """新建 1 道简答题草稿，保存到指定作业库文件夹；返回 workLibraryId。"""
-    err = validate_work_target(course_id, class_id)
+                stem_html: str, directory_id: str = "0",
+                attachments: "list[str] | None" = None, workspace=None) -> dict:
+    """新建 1 道简答题草稿（可带附件），保存到指定作业库文件夹；返回 workLibraryId。
+
+    D83-7：attachments 为本地文件路径列表（图片/pdf/doc 等，按通知同款扩展名白名单校验），
+    全部内嵌插入到那道唯一简答题的正文里。
+    """
+    err = validate_work_target(course_id, class_id, workspace)
     if err:
         return {"ok": False, "error": err}
+    # 附件路径安全校验（复用 notice.safe_attachment_path：限 workspace 内 + 扩展名白名单）
+    att_paths: list[Path] = []
+    if attachments:
+        from .notice import safe_attachment_path
+        ws = Path(workspace).resolve() if workspace else None
+        for a in attachments:
+            pth = safe_attachment_path(a, ws)
+            if pth is None:
+                return {"ok": False, "error": f"附件被拒绝（越界或格式不在白名单）：{a}"}
+            att_paths.append(pth)
     from playwright.sync_api import sync_playwright
     from .session import check_session, _launch
     storage = Path(storage)
@@ -282,6 +352,14 @@ def create_work(storage, course_id: str, class_id: str, cpi: str, title: str,
         page.wait_for_timeout(2500)
         page.evaluate("""(stem) => { const ed=UE.getEditor('content'); if (ed) ed.setContent(stem); }""", stem_html or "<p></p>")
         page.wait_for_timeout(500)
+        # D83-7：附件内嵌进这道简答题正文
+        if att_paths:
+            try:
+                _upload_work_attachments(page, att_paths)
+            except Exception as exc:  # noqa: BLE001
+                browser.close()
+                return {"ok": False, "error": f"附件上传失败：{exc}",
+                        "attachmentsTried": [p.name for p in att_paths]}
         page.locator("a.jb_btn", has_text="完成").first.click(timeout=10000)
         page.wait_for_timeout(4000)
         work_id = page.eval_on_selector("#workid", "e=>e.value") if page.query_selector("#workid") else ""
@@ -291,7 +369,8 @@ def create_work(storage, course_id: str, class_id: str, cpi: str, title: str,
         page.locator("a", has_text="保存").first.click(timeout=10000)
         page.wait_for_timeout(5000)
         browser.close()
-    return {"ok": bool(work_id), "workLibraryId": work_id, "title": title, "requests": reqs[-8:]}
+    return {"ok": bool(work_id), "workLibraryId": work_id, "title": title,
+            "attachments": [p.name for p in att_paths], "requests": reqs[-8:]}
 
 def _index_path() -> Path:
     return _receipt_dir() / "index.json"

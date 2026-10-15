@@ -133,7 +133,8 @@ body {
 .sheet-page.landscape { width: 297mm; height: 209mm; }
 .sheet-header { border-bottom: 2px solid var(--line); text-align: center; font-weight: 700; padding-bottom: 2mm; }
 .sh-title { font-size: 16pt; }
-.sh-info { display: flex; justify-content: space-between; gap: 3mm; flex-wrap: wrap;
+/* D83-4：信息行各 span 等宽左对齐、铺满整行；页眉不放日期（页脚保留） */
+.sh-info { display: grid; grid-auto-flow: column; grid-auto-columns: 1fr; gap: 2mm;
   font-weight: 400; font-size: 10.5pt; text-align: left; margin-top: 1.6mm; color: #222; }
 .sh-assign { color: var(--muted); }
 .sheet-body { flex: 1; display: grid; gap: 3mm; min-height: 0; min-width: 0; }
@@ -142,7 +143,14 @@ body {
 .sheet-body.divided .sheet-frame { overflow: hidden; word-break: break-word; }
 .sheet-frame { min-width: 0; min-height: 0; border: 1px dashed var(--hairline);
   border-radius: 2mm; padding: 3mm; overflow: hidden; display: flex; flex-direction: row; align-items: flex-start; gap: 3mm; }
-.q-body { flex: 1; min-width: 0; padding-left: 7mm; text-indent: -7mm; }
+/* D83-2：四态位置 —— text-right/left 同行两列；below-* 题文满宽、图下一行 */
+.sheet-frame.pos-text-left { flex-direction: row-reverse; }
+.sheet-frame.pos-below-left, .sheet-frame.pos-below-right { flex-direction: column; align-items: stretch; }
+.sheet-frame.pos-below-left .q-img, .sheet-frame.pos-below-left .q-img-ph { align-self: flex-start; }
+.sheet-frame.pos-below-right .q-img, .sheet-frame.pos-below-right .q-img-ph { align-self: flex-end; }
+.q-body { flex: 1; min-width: 0; }
+.q-body.indent-first { text-indent: 2em; }
+.q-body.indent-hanging { padding-left: 7mm; text-indent: -7mm; }
 .sheet-body.divided .sheet-frame { border: none; border-radius: 0; padding: 3mm 4mm; }
 .q-id { font-weight: 700; color: var(--accent); font-size: 11pt; }
 .q-tag { font-weight: 400; color: var(--muted); font-size: 9pt; }
@@ -251,15 +259,31 @@ function wmLayerHtml(wm: WmResolved[], pageText: boolean, pageN: number): string
   return parts.join('')
 }
 
+/** D83-2：题图位置四态归一 + 旧值兼容（与引擎 paper/layout.normalize_figure_pos 同口径）。 */
+export function normalizeFigurePos(pos?: string): 'text-right' | 'text-left' | 'below-left' | 'below-right' {
+  const p = String(pos ?? 'text-right').trim().toLowerCase()
+  const legacy: Record<string, string> = { lt: 'text-left', rt: 'text-right', center: 'below-right' }
+  const v = legacy[p] ?? p
+  return (['text-right', 'text-left', 'below-left', 'below-right'].includes(v)
+    ? v : 'text-right') as 'text-right' | 'text-left' | 'below-left' | 'below-right'
+}
+
+/** D83-3：题号缩进三态归一（none 默认 / first / hanging）。 */
+export function normalizeIndent(indent?: string): 'none' | 'first' | 'hanging' {
+  const i = String(indent ?? 'none').trim().toLowerCase()
+  return (['none', 'first', 'hanging'].includes(i) ? i : 'none') as 'none' | 'first' | 'hanging'
+}
+
 /** B3/D46-5：题图渲染——有 img_path 且 figAssets 命中 basename → 真图；否则占位框（现状）。 */
 function figHtml(imgPath?: string, figAssets?: Record<string, string>,
-                 figure?: { scale?: number; pos?: 'lt' | 'rt' | 'center'; max_w_mm?: number; max_h_mm?: number }): string {
+                 figure?: { scale?: number; pos?: string; max_w_mm?: number; max_h_mm?: number }): string {
   if (!imgPath) return ''
   const base = imgPath.split('/').pop() ?? imgPath
   const hit = figAssets?.[base]
   const scale = Math.max(0.2, Math.min(2, Number(figure?.scale ?? 1)))
-  const pos = figure?.pos ?? 'rt'
-  const align = pos === 'rt' ? 'flex-end' : pos === 'lt' ? 'flex-start' : 'center'
+  const pos = normalizeFigurePos(figure?.pos)
+  const align = pos === 'below-left' ? 'flex-start' : pos === 'below-right' ? 'flex-end'
+    : pos === 'text-left' ? 'flex-start' : 'flex-end'
   const maxH = Number(figure?.max_h_mm ?? 52)
   const maxW = Number(figure?.max_w_mm ?? 45)
   const style = `max-height:${(maxH * scale).toFixed(1)}mm; max-width:${(Math.max(10, maxW) * scale).toFixed(1)}mm; align-self:${align}`
@@ -441,12 +465,11 @@ function pageBlockHtml(pad: Taskpad, items: SheetHtmlItem[], stu: SheetHtmlStude
     <div class="sh-info">
       ${course ? `<span>课程：${escapeHtml(course)}</span>\n      ` : ''}${rosterSpan}
       <span class="sh-assign">作业：${escapeHtml(pad.id)}</span>
-      <span class="sh-assign">日期：${escapeHtml(date)}</span>
     </div>
   </div>
   <div class="sheet-body${lines.length ? ' divided' : ''}" data-grid="${grid.rows}x${grid.cols}" data-order="${grid.order}" data-rows="${grid.rows}" data-cols="${grid.cols}" style="${gridBodyStyle(grid.rows, grid.cols, grid.order)}">
-    ${frames}${items.map((fr) => `<div class="sheet-frame">
-      <div class="q-body">
+    ${frames}${items.map((fr) => `<div class="sheet-frame pos-${normalizeFigurePos(pad.layout.figure?.pos)}">
+      <div class="q-body indent-${normalizeIndent(pad.layout.indent)}">
         <div class="q-content">${escapeHtml(fr.no ? `${fr.no}  ` : '')}${escapeHtml(fr.content)}</div>
         ${(includeSolution && fr.solution) ? `<div class="q-solution">参考答案：${escapeHtml(fr.solution)}</div>` : ''}
       </div>

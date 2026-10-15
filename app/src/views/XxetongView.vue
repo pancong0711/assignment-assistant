@@ -14,6 +14,7 @@ import type { XxtReviewImageWork, XxtReviewManifestStudent, XxtReviewProbe,
   XxtReviewStudent, XxtStorageStats } from '../lib/engineClient'
 import { useSettingsStore } from '../stores/settings'
 import { useXxtJobsStore } from '../stores/xxtJobs'
+import { useXxtRunStore } from '../stores/xxtRun'
 import ProcessStreamView from '../components/ProcessStreamView.vue'
 
 /* 学习通 tab（D63 T7/T8 实装，docs/16 §20）：
@@ -24,6 +25,7 @@ import ProcessStreamView from '../components/ProcessStreamView.vue'
 
 const settings = useSettingsStore()
 const xxtJobs = useXxtJobsStore()
+const xxtRun = useXxtRunStore()
 const engUrl = computed(() => settings.engineUrl)
 const tok = computed(() => settings.engineToken)
 
@@ -327,6 +329,7 @@ async function loadRun(id: string) {
       throw new Error('该条目不是有效的 run（可能已损坏或不是 run）')
     }
     curRun.value = String(raw['run_id'] || id)
+    xxtRun.setCurrentRun(curRun.value)
     courses.value = normalizeCourses(raw['courses'])
     loadSteps.value = ((raw['steps'] as unknown[]) || []) as typeof loadSteps.value
     runMsg.value = `run ${curRun.value} 已载入（${courses.value.reduce((a, c) => a + c.classes.length, 0)} 班）`

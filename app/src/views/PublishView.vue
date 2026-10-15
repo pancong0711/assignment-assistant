@@ -2,13 +2,15 @@
 import { computed, onMounted, onUnmounted, ref } from 'vue'
 import {
   copyXxtWork, createXxtWorkFolder, fetchXxtAttachmentWhitelist, fetchXxtLoginJob, fetchXxtNoticeAttachments, fetchXxtRun, fetchXxtRuns, fetchXxtWorkDetail,
-  fetchXxtWorkFolders, fetchXxtWorkList, fetchXxtWriteAllowlist, saveXxtAttachmentWhitelist, saveXxtWriteAllowlist,
+  fetchXxtTargets, fetchXxtWorkFolders, fetchXxtWorkList, fetchXxtWriteAllowlist, saveXxtAttachmentWhitelist, saveXxtWriteAllowlist,
   startXxtNoticeSend, startXxtWorkCreate, startXxtWorkPublish, uploadXxtNoticeFiles,
 } from '../lib/engineClient'
 import type { XxtAllowItem, XxtNoticeAttachment, XxtWorkFolder, XxtWorkLibraryItem } from '../lib/engineClient'
 import { useSettingsStore } from '../stores/settings'
+import { useXxtRunStore } from '../stores/xxtRun'
 
 const settings = useSettingsStore()
+const xxtRun = useXxtRunStore()
 const engUrl = computed(() => settings.engineUrl)
 const tok = computed(() => settings.engineToken)
 
@@ -25,26 +27,55 @@ const logTitle = ref('')
 const logLines = ref<string[]>([])
 
 function key(c: { courseId: string; classId: string }): string { return `${c.courseId}:${c.classId}` }
+/** D83-5.2：作业库文件夹按“班级”而非仅课程记忆（学习通文件夹按班级独立）。 */
+function folderKeyOf(c: { courseId: string; classId: string }): string { return `${c.courseId}:${c.classId}` }
 const allowKeys = ref<Record<string, boolean>>({})
 function allowed(c: { courseId: string; classId: string }): boolean { return allowKeys.value[key(c)] === true }
+
+/** D83-6：班级来源 = 共享「当前 run」；为空回落 runs[0]。
+ *  可选合并 targets 全量发现（showAllDiscovered），使不在当前 run 的班也能加入白名单。 */
+const showAllDiscovered = ref(false)
+async function toggleShowAll() { await loadClasses(); await loadAllow() }
 
 async function loadClasses() {
   try {
     const runs = await fetchXxtRuns(engUrl.value, tok.value)
     if (!runs.length) { msg.value = '暂无已提取批次；请先到「作业预览-学习通」提取班级。'; return }
-    const r = (await fetchXxtRun(engUrl.value, tok.value, runs[0].run_id)) as {
+    // 优先共享当前 run，其次回落最新 run；若该 run 已不存在再回落 runs[0]
+    const want = xxtRun.currentRunId && runs.some(r => r.run_id === xxtRun.currentRunId)
+      ? xxtRun.currentRunId : runs[0].run_id
+    const r = (await fetchXxtRun(engUrl.value, tok.value, want)) as {
       run_id?: string; courses?: { courseId?: string; name?: string; cpi?: string;
       classes?: { classId?: string; name?: string }[] }[]
     }
-    runId.value = String(r.run_id || runs[0].run_id)
-    const out: PubClass[] = []
-    for (const c of r.courses || []) for (const k of c.classes || []) out.push({
-      courseId: String(c.courseId), courseName: c.name || String(c.courseId),
-      cpi: String(c.cpi || '0'), classId: String(k.classId), name: k.name || String(k.classId),
-    })
+    runId.value = String(r.run_id || want)
+    xxtRun.setCurrentRun(runId.value)
+    const map = new Map<string, PubClass>()
+    for (const c of r.courses || []) for (const k of c.classes || []) {
+      const pc: PubClass = { courseId: String(c.courseId), courseName: c.name || String(c.courseId),
+        cpi: String(c.cpi || '0'), classId: String(k.classId), name: k.name || String(k.classId) }
+      map.set(key(pc), pc)
+    }
+    if (showAllDiscovered.value) {
+      for (const pc of await fetchDiscoveredClasses()) if (!map.has(key(pc))) map.set(key(pc), pc)
+    }
+    const out = [...map.values()]
     classes.value = out
-    for (const c of out) { if (!(c.courseId in folderMap.value)) folderMap.value[c.courseId] = { directoryId: '0', name: '根目录' } }
+    for (const c of out) { const fk = folderKeyOf(c); if (!(fk in folderMap.value)) folderMap.value[fk] = { directoryId: '0', name: '根目录' } }
   } catch (e) { msg.value = `读取班级失败：${String(e)}` }
+}
+
+/** D83-5.3：从 targets.json 全量发现读班级（不含 cpi → 缺省 '0'），失败静默返回空。 */
+async function fetchDiscoveredClasses(): Promise<PubClass[]> {
+  try {
+    const t = await fetchXxtTargets(engUrl.value, tok.value)
+    const out: PubClass[] = []
+    for (const c of t.courses || []) for (const k of c.classes || []) out.push({
+      courseId: String(c.courseId), courseName: c.name || String(c.courseId),
+      cpi: String((c as { cpi?: string }).cpi || '0'), classId: String(k.classId), name: k.name || String(k.classId),
+    })
+    return out
+  } catch { return [] }
 }
 async function loadAllow() {
   try {
@@ -56,10 +87,12 @@ async function loadAllow() {
 }
 async function toggleAllow(c: PubClass, ev: Event) {
   const on = (ev.target as HTMLInputElement).checked
-  const next: Record<string, boolean> = { ...allowKeys.value }
-  if (on) next[key(c)] = true; else delete next[key(c)]
+  // D83-5.3：按 id 增量保存（当前列表 ∪ 已保存白名单），避免因 classes.value 不含某班而丢失/加不上
+  const next: Record<string, PubClass> = {}
+  for (const x of classes.value) if (allowKeys.value[key(x)]) next[key(x)] = x
+  if (on) next[key(c)] = c; else delete next[key(c)]
   try {
-    const items: XxtAllowItem[] = classes.value.filter(x => next[key(x)] === true)
+    const items: XxtAllowItem[] = Object.values(next)
       .map(x => ({ courseId: x.courseId, classId: x.classId, name: x.name }))
     await saveXxtWriteAllowlist(engUrl.value, tok.value, items)
     await loadAllow()
@@ -99,7 +132,7 @@ function cacheSet(key: string, data: unknown) {
 async function loadFolders(force = false) {
   const c = classes.value.find(x => key(x) === workTarget.value)
   if (!c) { folderList.value = []; return }
-  const ck = `xxt-work-folders-cache-v2:${c.courseId}`
+  const ck = `xxt-work-folders-cache-v3:${folderKeyOf(c)}`
   if (!force) {
     const hit = cacheGet<XxtWorkFolder[]>(ck)
     if (hit) { folderList.value = hit; return }
@@ -107,9 +140,10 @@ async function loadFolders(force = false) {
   try {
     folderList.value = await fetchXxtWorkFolders(engUrl.value, tok.value, c.courseId, c.classId, c.cpi)
     cacheSet(ck, folderList.value)
-    const cur = folderMap.value[c.courseId]
+    const fk = folderKeyOf(c)
+    const cur = folderMap.value[fk]
     if (!cur || !folderList.value.some(f => f.directoryId === cur.directoryId)) {
-      folderMap.value[c.courseId] = { directoryId: '0', name: '根目录' }
+      folderMap.value[fk] = { directoryId: '0', name: '根目录' }
       persistFolderMap()
     }
   } catch (e) { msg.value = `文件夹读取失败：${String(e)}` }
@@ -172,7 +206,7 @@ function showPreview(title: string, lines: string[]) {
 }
 function previewNotice() {
   const c = classes.value.find(x => key(x) === noticeTarget.value)
-  if (!c || !allowed(c)) { msg.value = '请选择白名单内班级'; return }
+  if (!c || !allowed(c)) { msg.value = '该班未加入写操作白名单：请在页面上方「写操作白名单」勾选后再试'; return }
   const names = attNames()
   showPreview('通知发布预览', [
     `发布班级：${c.courseName} / ${c.name}`,
@@ -228,6 +262,29 @@ const workStem = ref('')
 const workUsed = ref(false)
 const draftTitle = ref('')
 const draftStem = ref('请查看学习通班级消息，打印自己的那份作业纸，手写完成，签名并记录日期，拍照原图上传，纸质版于作业截止后课前提交。')
+
+/** D83-7：新建草稿的附件（图片/pdf/doc…），随 createDraft 以 base64 一并提交，内嵌进那道简答题正文。 */
+interface DraftAtt { name: string; data_b64: string; size: number }
+const draftAtts = ref<DraftAtt[]>([])
+const draftAttInput = ref<HTMLInputElement | null>(null)
+function pickDraftAtt() { draftAttInput.value?.click() }
+async function onDraftAttUpload(ev: Event) {
+  const input = ev.target as HTMLInputElement
+  const allFiles = Array.from(input.files || [])
+  if (!allFiles.length) return
+  const files = allFiles.filter(f => attAllowed(f.name))
+  if (files.length < allFiles.length) msg.value = `已忽略 ${allFiles.length - files.length} 个不在白名单内的文件`
+  const items: DraftAtt[] = []
+  for (const f of files.slice(0, 10)) {
+    const bytes = new Uint8Array(await f.arrayBuffer())
+    let bin = ''; for (let i = 0; i < bytes.length; i++) bin += String.fromCharCode(bytes[i])
+    items.push({ name: f.name, data_b64: btoa(bin), size: f.size })
+  }
+  draftAtts.value = [...draftAtts.value, ...items].slice(0, 10)
+  msg.value = `草稿附件 ${draftAtts.value.length} 个（将内嵌进简答题）`
+  input.value = ''
+}
+function removeDraftAtt(i: number) { draftAtts.value.splice(i, 1) }
 const startTime = ref('')
 const endTime = ref('')
 const allowLate = ref(true)
@@ -255,8 +312,8 @@ function refreshStale() {
 async function loadWorks(force = false) {
   const c = classes.value.find(x => key(x) === workTarget.value)
   if (!c) { works.value = []; return }
-  const dir = folderMap.value[c.courseId]?.directoryId || '0'
-  const ck = `xxt-work-list-cache-v2:${c.courseId}:${dir}`
+  const dir = folderMap.value[folderKeyOf(c)]?.directoryId || '0'
+  const ck = `xxt-work-list-cache-v3:${folderKeyOf(c)}:${dir}`
   if (!force) {
     const hit = cacheGet<XxtWorkLibraryItem[]>(ck)
     if (hit) {
@@ -296,7 +353,9 @@ async function createDraft() {
     const jobId = await startXxtWorkCreate(engUrl.value, tok.value, {
       courseId: c.courseId, classId: c.classId, cpi: c.cpi,
       title: draftTitle.value.trim(), stemHtml: draftStem.value.trim(),
-      directoryId: folderMap.value[c.courseId]?.directoryId || '0',
+      directoryId: folderMap.value[folderKeyOf(c)]?.directoryId || '0',
+      // D83-7：附件 base64（serve 端按通知扩展名白名单落盘 → CLI --attach 内嵌进简答题）
+      attachments: draftAtts.value.map(a => ({ name: a.name, data_b64: a.data_b64 })),
     })
     const res = await poll(jobId)
     const all = res.lines.join('\n')
@@ -305,6 +364,7 @@ async function createDraft() {
     if (res.ok && m) {
       workPick.value = m[1]
       await loadDetail()
+      draftAtts.value = []
       msg.value = `作业草稿已创建并选中：${draftTitle.value.trim()}`
     } else {
       msg.value = res.ok ? '作业草稿已创建，请刷新作业库查看。' : `新建失败：${all.slice(-300)}`
@@ -386,25 +446,27 @@ async function poll(jobId: string): Promise<{ ok: boolean; lines: string[] }> {
 
 const folderCur = computed(() => {
   const c = classes.value.find(x => key(x) === workTarget.value)
-  return c ? (folderMap.value[c.courseId] || { directoryId: '0', name: '根目录' }) : { directoryId: '0', name: '根目录' }
+  return c ? (folderMap.value[folderKeyOf(c)] || { directoryId: '0', name: '根目录' }) : { directoryId: '0', name: '根目录' }
 })
-function setFolder(cid: string, ev: Event) {
+function setFolder(ev: Event) {
+  const c = classes.value.find(x => key(x) === workTarget.value)
+  if (!c) return
   const id = (ev.target as HTMLSelectElement).value
   const f = folderList.value.find(x => x.directoryId === id) || { directoryId: '0', name: '根目录' }
-  folderMap.value = { ...folderMap.value, [cid]: f }
+  folderMap.value = { ...folderMap.value, [folderKeyOf(c)]: f }
   persistFolderMap()
   void loadWorks()
 }
 const newFolderName = ref('')
 async function createFolder() {
   const c = classes.value.find(x => key(x) === workTarget.value)
-  if (!c || !allowed(c)) { msg.value = '请选择白名单班级'; return }
+  if (!c || !allowed(c)) { msg.value = '该班未加入写操作白名单：请在页面上方「写操作白名单」勾选后再试'; return }
   if (!newFolderName.value.trim()) { msg.value = '请输入文件夹名'; return }
   busy.value = true; msg.value = '正在创建文件夹……'
   try {
     const r = await createXxtWorkFolder(engUrl.value, tok.value, {
       courseId: c.courseId, classId: c.classId, cpi: c.cpi,
-      directoryId: folderMap.value[c.courseId]?.directoryId || '0',
+      directoryId: folderMap.value[folderKeyOf(c)]?.directoryId || '0',
       title: newFolderName.value.trim(),
     })
     if (!r.ok) throw new Error(r.error || '创建失败')
@@ -426,7 +488,7 @@ async function copySelectedWork() {
   try {
     const r = await copyXxtWork(engUrl.value, tok.value, {
       courseId: c.courseId, classId: c.classId, cpi: c.cpi,
-      directoryId: folderMap.value[c.courseId]?.directoryId || '0',
+      directoryId: folderMap.value[folderKeyOf(c)]?.directoryId || '0',
       workLibraryId: w.workLibraryId, title,
     })
     if (!r.ok) throw new Error(r.error || '复制失败')
@@ -458,9 +520,13 @@ onUnmounted(() => document.removeEventListener('visibilitychange', refreshStale)
     <div class="card">
       <h3>写操作白名单 <small>默认全部关闭；按课程折叠，勾选后该班才可发布</small></h3>
       <div v-if="classes.length" style="border:1px solid var(--c-border); border-radius:8px; padding:8px">
-        <div style="display:flex; gap:8px; margin-bottom:6px">
+        <div style="display:flex; gap:8px; margin-bottom:6px; align-items:center">
           <button class="btn small" @click="expandAllAllow(true)">展开全部</button>
           <button class="btn small" @click="expandAllAllow(false)">折叠全部</button>
+          <label class="hint" style="display:flex; align-items:center; gap:4px; margin-left:8px">
+            <input type="checkbox" v-model="showAllDiscovered" @change="toggleShowAll" />
+            显示全部已发现班级（含不在当前批次的班）
+          </label>
         </div>
         <div style="max-height:280px; overflow:auto">
           <details v-for="g in allowGroups()" :key="'ag'+g.courseId" :open="allowExpandedState(g.courseId)"
@@ -518,7 +584,7 @@ onUnmounted(() => document.removeEventListener('visibilitychange', refreshStale)
         <option v-for="c in classes" :key="'w'+key(c)" :value="key(c)" :disabled="!allowed(c)">{{ c.courseName }} / {{ c.name }}</option>
       </select></label></p>
       <p><label class="field">作业库文件夹：
-        <select :value="folderCur.directoryId" style="width:260px" @change="setFolder(classes.find(x => key(x) === workTarget)?.courseId || '', $event)">
+        <select :value="folderCur.directoryId" style="width:260px" @change="setFolder($event)">
           <option value="0">根目录</option>
           <option v-for="f in folderList" :key="f.directoryId" :value="f.directoryId">{{ f.name }}</option>
         </select>
@@ -529,6 +595,18 @@ onUnmounted(() => document.removeEventListener('visibilitychange', refreshStale)
       <div style="border:1px dashed var(--c-border); border-radius:8px; padding:8px; margin:8px 0">
         <p><b>新建作业草稿（1 道简答题）</b></p>
         <p><input v-model="draftTitle" placeholder="作业标题" style="width:min(420px,90%)" /></p>
+        <!-- D83-7：附件内嵌进这道简答题；格式白名单复用发布通知那套 -->
+        <p class="hint">附件（{{ attExts.join('/') }}，最多 10 个）：
+          <button class="btn small" @click="pickDraftAtt">＋ 选择附件</button>
+          <input ref="draftAttInput" type="file" multiple :accept="attAccept" style="display:none" @change="onDraftAttUpload" />
+          <span v-if="!draftAtts.length">未选择</span>
+        </p>
+        <p v-if="draftAtts.length" style="margin:2px 0">
+          <label v-for="(a, i) in draftAtts" :key="'da'+i" style="display:inline-block; margin-right:10px; font-size:13px">
+            📎 {{ a.name }}（{{ Math.round(a.size/1024) }}KB）
+            <button class="btn small" @click="removeDraftAtt(i)">✕</button>
+          </label>
+        </p>
         <p><textarea v-model="draftStem" rows="3" placeholder="简答题干" style="width:min(640px,92%)"></textarea></p>
         <button class="btn" :disabled="busy" @click="createDraft">＋ 新建草稿到所选文件夹</button>
       </div>

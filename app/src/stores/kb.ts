@@ -147,6 +147,22 @@ export const useKbStore = defineStore('kb', {
       this.dirty = true
       this.persist()
     },
+    /** D83-1：启动/刷新时恢复 workspace —— 恢复句柄 + 权限，成功后自动重扫 kb/*.xlsx 与 kb/fig。
+     *  返回 { restored, needPermission, loaded } 供设置页展示状态。 */
+    async restoreWorkspace(): Promise<{ restored: boolean; needPermission: boolean; loaded: string[] }> {
+      const empty = { restored: false, needPermission: false, loaded: [] as string[] }
+      try {
+        const { loadDirHandle, ensureDirPermission } = await import('../lib/dirHandleStore')
+        const h = await loadDirHandle()
+        if (!h) return empty
+        const ok = await ensureDirPermission(h)
+        if (!ok) return { restored: false, needPermission: true, loaded: [] }
+        setKbDirHandle(h)
+        this.fsDirName = h.name
+        const r = await this.loadWorkspaceKbFiles(h)
+        return { restored: true, needPermission: false, loaded: r.loaded }
+      } catch { return empty }
+    },
     async connectWorkspaceDir(): Promise<boolean> {
       const dir = await pickDirectory()
       if (!dir) return false

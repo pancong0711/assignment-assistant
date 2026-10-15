@@ -384,13 +384,18 @@ def register(group: click.Group) -> None:
     @click.option("--title", required=True)
     @click.option("--stem", "stem_html", required=True, help="简答题干（纯文本或 HTML）")
     @click.option("--directory-id", "directory_id", default="0", help="作业库文件夹 ID（默认根目录）")
-    def xxt_work_create(course_id, class_id, cpi, title, stem_html, directory_id):
-        """新建 1 道简答题草稿（白名单限制）。"""
+    @click.option("--attach", "attachments", multiple=True,
+                  help="D83-7：附件本地路径（图片/pdf/doc 等，可多次；内嵌进那道简答题正文；按通知扩展名白名单校验）")
+    def xxt_work_create(course_id, class_id, cpi, title, stem_html, directory_id, attachments):
+        """新建 1 道简答题草稿（可带附件；白名单限制）。"""
         from .work import create_work
-        rep = create_work(default_storage(None), course_id, class_id, cpi, title, stem_html, directory_id)
+        from ..workspace import find_workspace
+        rep = create_work(default_storage(None), course_id, class_id, cpi, title, stem_html,
+                          directory_id, list(attachments), find_workspace(None))
         _journal("xxt_work_create",
                  params={"courseId": course_id, "classId": class_id, "title": title,
-                         "directoryId": directory_id, "workLibraryId": rep.get("workLibraryId")},
+                         "directoryId": directory_id, "workLibraryId": rep.get("workLibraryId"),
+                         "attachments": rep.get("attachments") or []},
                  result="ok" if rep.get("ok") else "fail",
                  error=str(rep.get("error") or "")[:200])
         click.echo(json.dumps(rep, ensure_ascii=False, indent=1))

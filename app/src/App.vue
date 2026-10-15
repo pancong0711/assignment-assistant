@@ -58,11 +58,11 @@ onMounted(() => {
   onScroll()
   window.addEventListener('scroll', onScroll, { passive: true })
 })
-// D55/H1：启动时恢复 workspace 目录句柄（IndexedDB 持久化 + 权限恢复）
+// D55/H1 → D83-1：启动时恢复 workspace 目录句柄，并自动重扫 kb/*.xlsx + kb/fig（刷新即恢复题图/题库）
 onMounted(async () => {
   try {
-    const { restoreKbDir } = await import('./stores/kb')
-    await restoreKbDir()
+    const { useKbStore } = await import('./stores/kb')
+    await useKbStore().restoreWorkspace()
   } catch { /* noop */ }
 })
 onUnmounted(() => {

@@ -96,6 +96,7 @@ def batch_sheets(roster_fn: Path, task_files: list[Path], ws: Path,
             figure_pos=str((lay.get("figure") or {}).get("pos") or "rt"),
             figure_max_w_mm=float((lay.get("figure") or {}).get("max_w_mm") or 45.0),
             figure_max_h_mm=float((lay.get("figure") or {}).get("max_h_mm") or 60.0),
+            figure_indent=str(lay.get("indent") or "none"),
         )
         generated += files
         seen[tag] = pad_names.get(tag, pad.get("id"))

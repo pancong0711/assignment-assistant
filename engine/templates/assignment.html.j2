@@ -60,7 +60,8 @@ body {
 .sheet-page.landscape { width: 297mm; height: 209mm; }
 .sheet-header { border-bottom: 2px solid var(--line); text-align: center; font-weight: 700; padding-bottom: 2mm; }
 .sh-title { font-size: 16pt; }
-.sh-info { display: flex; justify-content: space-between; gap: 3mm; flex-wrap: wrap;
+/* D83-4：信息行各 span 等宽左对齐、铺满整行；页眉不放日期（页脚保留） */
+.sh-info { display: grid; grid-auto-flow: column; grid-auto-columns: 1fr; gap: 2mm;
   font-weight: 400; font-size: 10.5pt; text-align: left; margin-top: 1.6mm; color: #222; }
 .sh-assign { color: var(--muted); }
 .sheet-body { flex: 1; display: grid; gap: 3mm; min-height: 0; min-width: 0; }
@@ -69,7 +70,14 @@ body {
 .sheet-frame { min-width: 0; min-height: 0; border: 1px dashed var(--hairline);
   border-radius: 2mm; padding: 3mm; overflow: hidden; display: flex; flex-direction: row; align-items: flex-start; gap: 3mm; }
 .sheet-body.divided .sheet-frame { border: none; border-radius: 0; padding: 3mm 4mm; }
-.q-body { flex: 1; min-width: 0; padding-left: 7mm; text-indent: -7mm; }
+/* D83-2：四态位置 —— text-right/left 同行两列；below-* 题文满宽、图下一行 */
+.sheet-frame.pos-text-left { flex-direction: row-reverse; }
+.sheet-frame.pos-below-left, .sheet-frame.pos-below-right { flex-direction: column; align-items: stretch; }
+.sheet-frame.pos-below-left .q-img, .sheet-frame.pos-below-left .q-img-ph { align-self: flex-start; }
+.sheet-frame.pos-below-right .q-img, .sheet-frame.pos-below-right .q-img-ph { align-self: flex-end; }
+.q-body { flex: 1; min-width: 0; }
+.q-body.indent-first { text-indent: 2em; }
+.q-body.indent-hanging { padding-left: 7mm; text-indent: -7mm; }
 .q-id { font-weight: 700; color: var(--accent); font-size: 11pt; }
 .q-tag { font-weight: 400; color: var(--muted); font-size: 9pt; }
 .q-content { font-size: 11.5pt; line-height: 1.8; white-space: pre-wrap; }
@@ -132,14 +140,13 @@ body {
       <span>学号：{{ stu.number }}</span>
       <span>姓名：{{ stu.name }}</span>{% endif %}
       <span class="sh-assign">作业：{{ doc.id }}</span>
-      <span class="sh-assign">日期：{{ doc.date }}</span>
     </div>
   </div>
   <div class="sheet-body{% if pg.grid_lines %} divided{% endif %}" data-grid="{{ doc.grid }}" data-order="{{ doc.grid_order }}" data-rows="{{ doc.grid_rows }}" data-cols="{{ doc.grid_cols }}" style="{{ doc.grid_body_style }}">
     {% for ln in pg.grid_lines %}<div class="sf-line {{ ln.dir }}" style="{{ ln.style }}"></div>
     {% endfor %}{% for fr in pg.frames %}
-    <div class="sheet-frame">
-      <div class="q-body">
+    <div class="sheet-frame pos-{{ doc.figure.pos }}">
+      <div class="q-body indent-{{ doc.indent }}">
         <div class="q-content">{% if fr.no %}{{ fr.no }}  {% endif %}{{ fr.content }}{% if fr.tag %} <span class="q-tag">【{{ fr.tag }}】</span>{% endif %}</div>
         {% if doc.include_solution and fr.solution %}<div class="q-solution">参考答案：{{ fr.solution }}</div>{% endif %}
       </div>

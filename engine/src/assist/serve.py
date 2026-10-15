@@ -89,8 +89,20 @@ _RESTART_ARGS: tuple = (  # ('serve', --workspace …)：python -c 入口的 cli
 _JOBS_LOCK: threading.Lock = threading.Lock()
 _ENGINE_ROOT = Path(__file__).resolve().parents[2]
 
+# serve 实际使用的 workspace（serve() 启动时写入）。_ws() 优先返回它，
+# 避免「serve --workspace X 但 ASSIST_WORKSPACE 未设」时 find_workspace(None) 解析到别处，
+# 导致白名单由 X 写入、却由 CLI 子进程从另一目录读取 → 已勾选班级被误拒（D83-5.0）。
+_SERVE_WS: Path | None = None
+
+
+def _set_serve_ws(ws: Path) -> None:
+    global _SERVE_WS
+    _SERVE_WS = Path(ws).resolve()
+
 
 def _ws() -> Path:
+    if _SERVE_WS is not None:
+        return _SERVE_WS
     from .workspace import find_workspace
     return Path(find_workspace(None)).resolve()
 
@@ -895,6 +907,16 @@ class Handler(BaseHTTPRequestHandler):
                 return
             args = ["xxt", "work-create", "--course", cid, "--class", kid, "--cpi", cpi,
                     "--title", title, "--stem", stem, "--directory-id", directory]
+            # D83-7：附件（base64 items）→ 落 workspace 临时目录 → 作为 --attach 传给 CLI；
+            #        扩展名白名单复用通知那套（settings.local.json → xxt.notice_attachment_exts）。
+            att_items = payload.get("attachments") or []
+            if att_items:
+                from .xxt.allowlist import read_notice_attachment_exts
+                from .xxt.notice import save_notice_uploads
+                saved = save_notice_uploads(Path(self.ws).resolve(), att_items,
+                                            allowed_exts=read_notice_attachment_exts(Path(self.ws).resolve()))
+                for it in saved:
+                    args += ["--attach", str(it.get("path"))]
             home = _xxt_home(); env = _xxt_env(home); cwd = str(_ws())
             ok, detail = _xxt_preflight(cwd, env)
             if not ok:
@@ -920,7 +942,7 @@ class Handler(BaseHTTPRequestHandler):
                 self._json({"ok": False, "error": "courseId/classId/workLibraryId/cpi 必填"}, 400)
                 return
             from .xxt.work import validate_work_target
-            err = validate_work_target(ids["courseId"], ids["classId"])
+            err = validate_work_target(ids["courseId"], ids["classId"], Path(self.ws).resolve())
             if err:
                 self._json({"ok": False, "error": err}, 400)
                 return
@@ -1573,6 +1595,7 @@ def serve(workspace: str | None, host: str = "127.0.0.1", port: int = 8601,
     from .log import setup_logging
     setup_logging(False)
     ws = Path(workspace).expanduser().resolve() if workspace else _ws()
+    _set_serve_ws(ws)
     Handler.ws = ws
     token = ""
     if lan:

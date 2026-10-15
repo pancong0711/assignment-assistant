@@ -34,10 +34,29 @@ def _contents_style():
     return ParagraphStyle("assign_text", fontName="simsun", fontSize=11, leading=16)
 
 
-def _hanging_style():
-    """D82：题号+题干悬挂缩进（续行与内容起始对齐）。"""
-    return ParagraphStyle("assign_hanging", fontName="simsun", fontSize=11, leading=16,
-                          leftIndent=13 * mm, firstLineIndent=-13 * mm)
+def normalize_figure_pos(pos: str | None) -> str:
+    """D83-2：题图位置四态归一 + 旧值兼容。
+
+    text-right（默认）文左图右同行 / text-left 文右图左同行 /
+    below-left 题文满宽、图另起一行左 / below-right 题文满宽、图另起一行右。
+    旧值 lt/rt/center 兼容映射。
+    """
+    p = str(pos or "text-right").strip().lower()
+    legacy = {"lt": "text-left", "rt": "text-right", "center": "below-right"}
+    p = legacy.get(p, p)
+    return p if p in ("text-right", "text-left", "below-left", "below-right") else "text-right"
+
+
+def _question_style(indent: str = "none") -> ParagraphStyle:
+    """D83-3：题号+题干缩进三态。none（默认，紧挨文字）/ first（首行缩进）/ hanging（悬挂）。"""
+    ind = str(indent or "none").strip().lower()
+    if ind == "first":
+        return ParagraphStyle("assign_first", fontName="simsun", fontSize=11, leading=16,
+                              firstLineIndent=2 * 12, leftIndent=0)
+    if ind == "hanging":
+        return ParagraphStyle("assign_hanging", fontName="simsun", fontSize=11, leading=16,
+                              leftIndent=13 * mm, firstLineIndent=-13 * mm)
+    return ParagraphStyle("assign_none", fontName="simsun", fontSize=11, leading=16)
 
 
 def _fitted_image(img_path: str, max_w: float, max_h: float,
@@ -57,44 +76,65 @@ def _fitted_image(img_path: str, max_w: float, max_h: float,
     return im
 
 
-def _question_flowable(no: str, content: str, img_path: str, frame,
-                       figure_scale: float = 1.0, figure_pos: str = "rt",
-                       max_box_w_mm: float = 45.0, max_box_h_mm: float = 60.0):
-    """D82：题号+题干（悬挂缩进）+ 右上插图的两列块；无图时单列。"""
+def _content_paragraph(no: str, content: str, indent: str = "none"):
     text = f"{no or ''}  {content or ''}".strip()
-    left = Paragraph(text or " ", _hanging_style())
-    if img_path and Path(img_path).exists():
-        # 最大框不得超过 frame（避免用户设 180×240 之类超出纸面），并留 4mm 边距
-        eff_box_w = min(float(max_box_w_mm or 45.0), max(20.0, frame.width / mm - 8))
-        eff_box_h = min(float(max_box_h_mm or 60.0), max(20.0, frame.height / mm - 8))
-        # frame 内留 4mm 竖向余量：图片高度不得贴满 frame（否则 reportlab 判定 too large）
-        im = _fitted_image(img_path, frame.width, max(10.0, frame.height - 4 * mm),
-                           figure_scale, figure_pos, eff_box_w, eff_box_h)
-        img_w = min(float(im.drawWidth), frame.width * 0.6)
-        left_w = max(20 * mm, frame.width - img_w - 4 * mm)
-        # 防溢出：两列宽之和不超过 frame（极端字号/窄 frame 下的兜底）
-        if left_w + img_w > frame.width:
-            left_w = max(10 * mm, frame.width - img_w)
-        # 表格不可跨 frame 拆分：预估题干高度，超 frame 时退回单列（Paragraph 可续页拆分），
-        # 图片置于题后，避免 reportlab LayoutError 直接失败。
-        try:
-            tw, th = left.wrap(left_w, frame.height)
-        except Exception:  # noqa: BLE001 —— 预估失败时保守走单列
-            tw, th = left_w, frame.height + 1
-        if th > frame.height - 2 * mm or float(im.drawHeight) > frame.height:
-            return [left, im]
-        # 位置 lt：图在左列；rt/center：图在右列（与 PWA sheetHtml 同口径）
-        cells, widths = ([im, left], [img_w, left_w]) if figure_pos == "lt" \
-            else ([left, im], [left_w, img_w])
-        return Table([cells], colWidths=widths,
-                     style=TableStyle([
-                         ("VALIGN", (0, 0), (-1, -1), "TOP"),
-                         ("LEFTPADDING", (0, 0), (-1, -1), 0),
-                         ("RIGHTPADDING", (0, 0), (-1, -1), 0),
-                         ("TOPPADDING", (0, 0), (-1, -1), 0),
-                         ("BOTTOMPADDING", (0, 0), (-1, -1), 0),
-                     ]))
-    return left
+    return Paragraph(text or " ", _question_style(indent))
+
+
+def _question_flowable(no: str, content: str, img_path: str, frame,
+                       figure_scale: float = 1.0, figure_pos: str = "text-right",
+                       max_box_w_mm: float = 45.0, max_box_h_mm: float = 60.0,
+                       indent: str = "none"):
+    """D83：题号+题干 + 插图，四态位置（text-right/left 同行；below-left/right 下一行）。
+
+    - text-right/text-left：文字与图同一行、两列；题干列宽扣除图宽。
+    - below-left/below-right：题文占满整行，图另起一行左/右对齐。
+    - 缩进三态见 _question_style；图过大或题干过高时退回单列续页，避免 LayoutError。
+    """
+    pos = normalize_figure_pos(figure_pos)
+    has_img = bool(img_path) and Path(img_path).exists()
+    if not has_img:
+        return _content_paragraph(no, content, indent)
+
+    # 最大框不得超过 frame（留 4mm 竖向余量，避免 reportlab 判定 too large）
+    eff_box_w = min(float(max_box_w_mm or 45.0), max(20.0, frame.width / mm - 8))
+    eff_box_h = min(float(max_box_h_mm or 60.0), max(20.0, frame.height / mm - 8))
+    h_align = {"text-left": "LEFT", "below-left": "LEFT"}.get(pos, "RIGHT")
+    box_w_limit = frame.width * (0.6 if pos in ("text-right", "text-left") else 0.95)
+    im = _fitted_image(img_path, box_w_limit, max(10.0, frame.height - 4 * mm),
+                       figure_scale, "lt" if h_align == "LEFT" else "rt",
+                       eff_box_w, eff_box_h)
+
+    if pos in ("below-left", "below-right"):
+        # 题文满宽（整行），图另起一行左/右对齐
+        para = _content_paragraph(no, content, indent)
+        im.hAlign = h_align
+        return [para, im]
+
+    # 同行两列：text-right = [文, 图]；text-left = [图, 文]
+    para = _content_paragraph(no, content, indent)
+    img_w = min(float(im.drawWidth), frame.width * 0.6)
+    text_w = max(20 * mm, frame.width - img_w - 4 * mm)
+    if text_w + img_w > frame.width:
+        text_w = max(10 * mm, frame.width - img_w)
+    # 表格不可跨 frame：题干过高或图过高 → 退回单列（Paragraph 可续页）
+    try:
+        _tw, th = para.wrap(text_w, frame.height)
+    except Exception:  # noqa: BLE001
+        th = frame.height + 1
+    if th > frame.height - 2 * mm or float(im.drawHeight) > frame.height:
+        im.hAlign = h_align
+        return [para, im]
+    cells, widths = ([para, im], [text_w, img_w]) if pos == "text-right" \
+        else ([im, para], [img_w, text_w])
+    return Table([cells], colWidths=widths,
+                 style=TableStyle([
+                     ("VALIGN", (0, 0), (-1, -1), "TOP"),
+                     ("LEFTPADDING", (0, 0), (-1, -1), 0),
+                     ("RIGHTPADDING", (0, 0), (-1, -1), 0),
+                     ("TOPPADDING", (0, 0), (-1, -1), 0),
+                     ("BOTTOMPADDING", (0, 0), (-1, -1), 0),
+                 ]))
 
 
 # ---------------- 内容 frame ----------------
@@ -228,8 +268,9 @@ def make_pdf(students: list[dict], items_of_student, out_dir: Path,
              user_cfg: dict | None = None,
              per_page: int | None = None,
              grid_rows: int | None = None, grid_cols: int | None = None,
-             figure_scale: float = 1.0, figure_pos: str = "rt",
-             figure_max_w_mm: float = 45.0, figure_max_h_mm: float = 60.0) -> list[Path]:
+             figure_scale: float = 1.0, figure_pos: str = "text-right",
+             figure_max_w_mm: float = 45.0, figure_max_h_mm: float = 60.0,
+             figure_indent: str = "none") -> list[Path]:
     """students: [{name, number, class}]；items_of_student(i) → [(content, img, tag, no)]。
 
     D61：per_page = 每页题数 N；grid_rows/grid_cols = 显式网格。
@@ -258,7 +299,7 @@ def make_pdf(students: list[dict], items_of_student, out_dir: Path,
                                 per_page=n, dividers_ok=g["capacity"] > 1,
                                 grid_rows=grid_rows, grid_cols=grid_cols))])
         flow = _flow_by_order(items, frames, n, figure_scale, figure_pos,
-                               figure_max_w_mm, figure_max_h_mm)
+                               figure_max_w_mm, figure_max_h_mm, figure_indent)
         doc.build(flow)
 
         if watermark:
@@ -282,8 +323,8 @@ def make_pdf(students: list[dict], items_of_student, out_dir: Path,
 # ---------------- flow ----------------
 
 def _flow_by_order(items, frames, per_page: int, figure_scale: float = 1.0,
-                   figure_pos: str = 'rt', figure_max_w_mm: float = 45.0,
-                   figure_max_h_mm: float = 60.0):
+                   figure_pos: str = 'text-right', figure_max_w_mm: float = 45.0,
+                   figure_max_h_mm: float = 60.0, figure_indent: str = 'none'):
     n_pages = max(1, (len(items) + per_page - 1) // per_page)
     flow = []
     for page_i in range(n_pages):
@@ -292,7 +333,7 @@ def _flow_by_order(items, frames, per_page: int, figure_scale: float = 1.0,
             content, img_path, _tag, no = item
             f = frames[k]
             _fl = _question_flowable(no, content, img_path, f, figure_scale,
-                                     figure_pos, figure_max_w_mm, figure_max_h_mm)
+                                     figure_pos, figure_max_w_mm, figure_max_h_mm, figure_indent)
             if isinstance(_fl, list):
                 flow.extend(_fl)
             else:
@@ -304,8 +345,8 @@ def _flow_by_order(items, frames, per_page: int, figure_scale: float = 1.0,
     return flow
 
 
-def _portrait_flow(items, frames, figure_scale: float = 1.0, figure_pos: str = 'rt',
-                   figure_max_w_mm: float = 45.0, figure_max_h_mm: float = 60.0):
+def _portrait_flow(items, frames, figure_scale: float = 1.0, figure_pos: str = 'text-right',
+                   figure_max_w_mm: float = 45.0, figure_max_h_mm: float = 60.0, figure_indent: str = 'none'):
     per_page = len(frames)
     flow = []
     n_pages = max(1, (len(items) + per_page - 1) // per_page)
@@ -315,7 +356,7 @@ def _portrait_flow(items, frames, figure_scale: float = 1.0, figure_pos: str = '
             content, img_path, _tag, no = item
             f = frames[k]
             _fl = _question_flowable(no, content, img_path, f, figure_scale,
-                                     figure_pos, figure_max_w_mm, figure_max_h_mm)
+                                     figure_pos, figure_max_w_mm, figure_max_h_mm, figure_indent)
             if isinstance(_fl, list):
                 flow.extend(_fl)
             else:
