@@ -227,8 +227,8 @@ CLI `assist render --md|--text --out --kind ai|human`；实测输出 **794px 宽
 | §3 | 作业包挂接（tag ↔ taskpad；最简包优先）+ tag 勾选 | `grading/inputs.py`（pads_by_tag / students_with_tags / build_plan） | ✅ engine 完成（PWA UI 随 §6） |
 | §4 | engine：`assist grade` 串"批阅下载目录 + 作业包"；两模式；tag 指令；诊断 | `grading/{inputs,prompts,flow}.py` + CLI `--xxt-class/--plan/--mode/--tags/--limit/--dry-plan` | ✅ engine/CLI 完成（单测 5 例；`diagnostics.jsonl`） |
 | §5 | 批阅报告（固定版式 md/html/png；AI/人工标注；LaTeX→PNG；上传前生成） | `report.py`（A4/小四/长图 + KaTeX）+ CLI `assist render` | ✅ engine/CLI 完成（真机出图 794px 宽/长图、公式渲染）；PWA 随 §6 |
-| §6 | PWA「AI 辅助批阅」选项卡：设置/provider、班级映射、作业包挂接、tag 勾选、开始批阅、逐生查看/修改、一键生成报告、一键上传全部 | `XxetongView.vue` + serve | ⏳（待做；engine 端点已就绪） |
-| §7 | batch（DashScope）+ 成本/诊断信息 | `grading/llm_batch.py` + CLI | ⏳（待做） |
+| §6 | PWA「AI 辅助批阅」选项卡：设置/provider、班级映射、tag 勾选、开始批阅、逐生查看/修改、一键生成报告、一键上传全部 | `XxetongView.vue` + serve | 🔄 进行中（engine 端点陆续就绪） |
+| §7 | batch（DashScope）+ 成本/诊断信息 | `grading/llm_batch.py` + CLI `llm batch` | ✅ engine/CLI（默认 dry-run；JSONL+说明+submit/poll/download 诊断；单测 5 例含 key 掩码回归） |
 | §8 | 文档与真机验证（教师机实测两种提交模式） | docs/13/16/39 | 🔄 文档随各阶段更新；教师机实测待用户 |
 
 ## 6. 拍板与待定（2026-10-15）
