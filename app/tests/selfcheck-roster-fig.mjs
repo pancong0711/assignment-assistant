@@ -65,20 +65,52 @@ const sh = await import('./sheetHtml.bundle.mjs')
 
 /* ---------- D) D47 真实形态回归（legacy fixtures，文件缺失时 skip-safe） ---------- */
 {
+  // legacy 目录不在 CI 检出：逐个 case 独立 skip-safe，避免一个文件缺失吞掉全部断言。
+  // 期望值 = 引擎同口径实测（engine/roster/scores.py ADAPTERS），保证 PWA↔engine 对齐。
   const fs = require('node:fs')
-  const repo = '/home/bot2603/Projects/2609-assignment-assistant'
-  try {
-    const { readScoreSourceXlsx: r } = rx
-    const toArr = (f) => fs.readFileSync(f)
-    const exam = await r(toArr(repo + '/_legacy/2603paperDesign/data/custom/化工251-成绩统计.xlsx'), 'g.xlsx', 'exam')
-    assert.ok(Object.keys(exam.scores).length === 33, 'D47: exam 真表 33 人')
-    const xxtBuf = toArr(repo + '/_legacy/2603paperDesign/data/xxt/teachera-化工25_统计一键导出-0317.xlsx')
-    const xa = await r(xxtBuf, 'x.xlsx', 'xuexitong_assignment')
-    assert.ok(Object.keys(xa.scores).length === 31, 'D47: xxt_assignment crostab 31 人')
-    const rain = await r(toArr(repo + '/_legacy/2603paperDesign/data/rainclass/大学物理C1-化工25--汇总-数据表-20260603221923_18346241.xlsx'), 'r.xlsx', 'rainclass')
-    assert.ok(Object.keys(rain.scores).length === 67, 'D47: rainclass 67 人（锁定汇总表）')
-    console.log('   D47 legacy-file regression: PASS')
-  } catch { /* legacy 文件不在 CI 检出 → skip-safe */ }
+  const path = require('node:path')
+  const { fileURLToPath } = require('node:url')
+  const repo = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..', '..')
+  const ROOT = path.join(repo, '_legacy', '2603paperDesign', 'data')
+  const firstMatch = (dir, re) => {
+    try {
+      const hit = fs.readdirSync(dir).find((f) => re.test(f))
+      return hit ? path.join(dir, hit) : null
+    } catch { return null }
+  }
+  const { readScoreSourceXlsx: r } = rx
+  const toArr = (f) => fs.readFileSync(f)
+  let ran = 0
+
+  // ① xuexitong_assignment：真实"统计一键导出"（须锁定"作业统计" sheet 且解析出人）
+  const xxt = firstMatch(path.join(ROOT, 'xxt'), /化工25_统计一键导出-0317\.xlsx$/)
+  if (xxt) {
+    const xa = await r(toArr(xxt), 'x.xlsx', 'xuexitong_assignment')
+    assert.equal(xa.sheetName, '作业统计', 'D47: xxt_assignment 锁定"作业统计"表')
+    assert.ok(Object.keys(xa.scores).length > 30, 'D47: xxt_assignment 解析出学生（>30）')
+    ran++
+  }
+
+  // ② rainclass：真实汇总表（须锁定"汇总"sheet 且解析出人；人数随日期增长，不硬编码）
+  const rain = firstMatch(path.join(ROOT, 'rainclass'), /化工25--汇总-数据表-.*\.xlsx$/)
+  if (rain) {
+    const rr = await r(toArr(rain), 'r.xlsx', 'rainclass')
+    assert.ok(/汇总/.test(rr.sheetName), 'D47: rainclass 锁定"汇总"表')
+    assert.ok(Object.keys(rr.scores).length > 30, 'D47: rainclass 解析出学生（>30）')
+    ran++
+  }
+
+  // ③ exam：真实"成绩统计"表含**标题行**（首行非表头），engine read_exam 尚不能三段式定位，
+  //    属已知 PWA/engine 待对齐项（docs/12 §E5 后续）——此处只记录、不硬断言 parity。
+  const exam = firstMatch(path.join(ROOT, 'custom'), /化工251-成绩统计\.xlsx$/)
+  if (exam) {
+    const ex = await r(toArr(exam), 'g.xlsx', 'exam')
+    assert.ok(Object.keys(ex.scores).length > 0, 'D47: exam 真表可解析（人数口径待与 engine 对齐）')
+    ran++
+  }
+
+  if (ran === 0) console.log('   D47 legacy-file regression: SKIP（legacy 文件不在当前检出）')
+  else console.log(`   D47 legacy-file regression: PASS（${ran} 个真实文件）`)
 }
 
 /* ---------- E) D55-H3 多列模型 + 原始分加权平均 + 黑名单 ---------- */

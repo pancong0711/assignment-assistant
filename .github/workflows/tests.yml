@@ -60,9 +60,8 @@ jobs:
           npm ci
           npm run build
           npm run build -- --base=./ --outDir dist-test --emptyOutDir false
-          node tests/selfcheck-watermark-or-doctor.mjs || true
-          node tests/selfcheck-family.mjs || true
-          npm run selfcheck:roster-fig
+          # 硬门禁：selfcheck 家族全部必须通过（D19/D47 family 语义 + 变体 + 水印 + 题图）
+          npm run selfcheck
           test -f dist/index.html
 
       - name: LAN selftest（headless chromium via playwright 缓存可用时）

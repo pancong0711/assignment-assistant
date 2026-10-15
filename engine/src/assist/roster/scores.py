@@ -20,11 +20,15 @@ from openpyxl import load_workbook
 
 def _rows_of(path: Path, sheet: int | str | None = None, header_row: int = 0):
     wb = load_workbook(path, read_only=True)
-    name = sheet if isinstance(sheet, int) else None
-    if name is None and isinstance(sheet, str):
-        # 按关键词匹配 sheet 名（迁移 _addScoreExamStat 的 sheet_keyword 语义）
-        name = next((s for s in wb.sheetnames if sheet in s), 0)
-    ws = wb.worksheets[int(name) if name is not None else 0]
+    idx = 0
+    if isinstance(sheet, int):
+        idx = sheet
+    elif isinstance(sheet, str):
+        # 按关键词匹配 sheet 名（迁移 _addScoreExamStat 的 sheet_keyword 语义）；
+        # 命中直接用名字定位（此前对名字 int() 会 ValueError），未命中回落首表。
+        hit = next((s for s in wb.sheetnames if sheet in s), None)
+        idx = wb.sheetnames.index(hit) if hit else 0
+    ws = wb.worksheets[idx]
     out = list(ws.iter_rows(values_only=True))
     wb.close()
     return out
@@ -114,7 +118,7 @@ def read_xuexitong_assignment(path: Path, weight: float = 1.0,
             for r in rows[sr + 1:]:
                 try:
                     sc = float(r[k])
-                except (TypeError, IndexError):
+                except (TypeError, ValueError, IndexError):
                     continue
                 name = str(r[name_i]).strip() if name_i < len(r) and r[name_i] is not None else ""
                 if name:
@@ -150,7 +154,7 @@ def read_xuexitong_stat(path: Path, sheet_keyword: str = "章节测验",
         for j in cols:
             try:
                 v = float(r[j])
-            except (TypeError, IndexError):
+            except (TypeError, ValueError, IndexError):
                 continue
             if v == 0:  # 迁移语义：非 0 才计入
                 continue

@@ -315,6 +315,42 @@ C1 登录/课程/作业浏览/下载（迁 2601 xuexitong 模块）；C2 上传=
 
 ---
 
+# 2026-10-15 · 学习通成绩源 PWA↔engine 口径回归修复（E5 crostab 重写尾巴）
+
+**现象**：`app/tests/selfcheck-family.mjs` 第 3 例 `xuexitong_assignment` 断言 A=75 实得 80（干净 HEAD 即失败），
+CI 因 `|| true` 软容错一直掩盖。
+
+**根因**：
+- 测试 fixture（D19 提交）忠实编码了 docs/05-D19 口径「前 8 行扫描**含"成绩"的行**（子串）+ 各成绩列均分」，
+  引擎 `read_xuexitong_assignment` 实测 A=75/B=70 一致；且合成 fixture 用 `作业1成绩` 表头、无姓名列。
+- PWA `detectCrostab`（E5 `5f34228` 重写）改为「标题行含**姓名** + 标记行**恰好等于"成绩"** + 姓名列必须命中」，
+  合成/旧形态 `作业1成绩` 不触发 → 落入 custom 兜底按「数值最多列」取错列 → A=80。
+- E5 文档自注「建议 fixture 实测一次」未落实，fixture 未同步。
+
+**修复**（PWA 向引擎口径对齐，docs/05-D19 为准）：
+1. PWA `detectCrostab`：标记行改**子串**匹配"成绩"（≥1 列即可），不再硬性要求标题行含姓名；
+2. PWA `buildCrostabSource`：姓名列缺省回落第 0 列（引擎 name_i=0 同口径）；scoreCols 用子串；
+   `xuexitong_stat` 非 0 才计入（引擎 `read_xuexitong_stat` 迁移语义）；
+3. PWA 多 sheet 探测按 family 优先锁定（assignment→作业统计 / stat→章节测验）；
+4. 引擎 `_rows_of`：按名字关键词命中 sheet 时直接用名字定位（此前 `int(name)` 对中文表名 ValueError）；
+5. 引擎 `read_xuexitong_assignment/stat`：`float()` 增捕 `ValueError`（openpyxl 空格 = `''`）。
+
+**验证**：合成 fixture 5 例（app selfcheck-family 全部通过）+ engine pytest 6 例
+（`engine/tests/test_scores_xuexitong.py`）+ 真实 legacy 文件（xxt_0518 作业统计 67/67、章节测验 44/44、
+rainclass 67/67，PWA↔engine 全等，仅末位浮点四舍五入噪声）。
+
+**门禁加固**：新增 npm `selfcheck:family` / `selfcheck:variants` / `selfcheck`；CI `tests.yml` 去掉
+`selfcheck-family.mjs || true`，改为 `npm run selfcheck` 硬门禁；`selfcheck-roster-fig.mjs` D47 legacy 块
+改按存在文件动态发现、断言结构性（锁定 sheet + 解析出人），不再因文件名漂移静默跳过。
+
+**遗留（已知 PWA/engine 仍未对齐，另行任务）**：
+- `exam` 真实「成绩统计」表首行是标题行而非表头：PWA 三段式 `locateHeader` 能定位，engine `read_exam`
+  直接把首行当表头 → 找不到"期末"列、回落也取不到（返回空）。需给 engine `read_exam` 加同款三段式。
+- `xuexitong_stat` 的 sheet 关键字匹配：engine 默认"章节测验"，PWA 现按 family 优先——已一致，但真实文件
+  若关键字命名不同仍需放宽。
+
+---
+
 # 2026-09-29 · E5 实施完成（真实形态适配大修）—— 第 11 轮反馈全部清账
 
 - ✅ 通用三段式 locateHeader（上溯 extent 至 20 行）+ 数据区 .xs 文件学号无损（zjxu 名册 13 位文本原值）；

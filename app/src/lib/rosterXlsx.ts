@@ -316,15 +316,20 @@ export function columnScoreOf(
   return null
 }
 
-/** D47-3：学习通 crostab 探测（"学生姓名"标题行 + 下一行"成绩"标记行）。 */
+/** D47-3：学习通 crostab 探测（标题行 + 下一行"成绩"标记行）。
+ *
+ *  与引擎 `read_xuexitong_assignment`（docs/05-D19）同口径：
+ *  - 标记行 = 前 8 行内首个含子串"成绩"的单元格所在行（真实文件是精确"成绩"，
+ *    合成/旧 fixture 可能是"作业1成绩"，故用子串而非全等）；
+ *  - 标题行 = 标记行上一行；至少 1 个成绩列即可（不再硬性要求标题行含"姓名"，
+ *    姓名列缺省回落到第 0 列——引擎同：name_i=0）。
+ */
 function detectCrostab(matrix: string[][]): { titleI: number; markI: number } | null {
   for (let i = 0; i < Math.min(12, matrix.length - 1); i++) {
-    const title = (matrix[i] ?? []).map((c) => String(c).trim())
     const mark = (matrix[i + 1] ?? []).map((c) => String(c).trim())
-    const hasNameHeader = title.some((c) => /学生姓名|姓名|name/i.test(c))
-    const scoreMarks = mark.filter((c) => c === '成绩').length
-    if (hasNameHeader && scoreMarks >= 2) {
-      // 数据行校验：标记行下第二行（数据首个）姓名列非空数字列存在
+    const scoreMarks = mark.filter((c) => c.includes('成绩')).length
+    if (scoreMarks >= 1) {
+      // 标题行 = 标记行上一行（引擎语义）；无标题行时用空行占位
       return { titleI: i, markI: i + 1 }
     }
   }
@@ -337,11 +342,14 @@ function detectCrostab(matrix: string[][]): { titleI: number; markI: number } | 
 function buildCrostabSource(m: RawSheet, family: ScoreFamily, cr: { titleI: number; markI: number }): ScoreSource {
   const title = (m.matrix[cr.titleI] ?? []).map((c) => String(c).trim())
   const mark = (m.matrix[cr.markI] ?? []).map((c) => String(c).trim())
-  const ni = Math.max(0, title.findIndex((c) => /学生姓名|姓名|name/i.test(c)))
+  // 姓名列：标题行"姓名/学生姓名/name"优先；缺省回落第 0 列（与引擎 name_i=0 同口径）
+  const nameHit = title.findIndex((c) => /学生姓名|姓名|name/i.test(c))
+  const ni = nameHit >= 0 ? nameHit : 0
   const numberI = findNumberIndex(title)
   const scoreCols: Array<{ name: string; index: number }> = []
   for (let k = 0; k < Math.max(title.length, mark.length); k++) {
-    if (mark[k] === '成绩') scoreCols.push({ name: title[k] || `作业/测验${k}`, index: k })
+    // 子串"成绩"（引擎 `"成绩" in v` 同口径），兼容"作业1成绩"等表头
+    if (mark[k].includes('成绩')) scoreCols.push({ name: title[k] || `作业/测验${k}`, index: k })
   }
   const dataRows = m.matrix.slice(cr.markI + 1).filter((r) => r.some((c) => String(c).trim() !== ''))
   const rows = dataRows.map((r) => {
@@ -351,13 +359,18 @@ function buildCrostabSource(m: RawSheet, family: ScoreFamily, cr: { titleI: numb
   })
   const perStu: Record<string, number> = {}
   const numbers: Record<string, number> = {}
+  // xuexitong_stat：非 0 才计入（engine read_xuexitong_stat 迁移语义）；
+  // xuexitong_assignment：全计入（engine 不跳 0）
+  const skipZero = family === 'xuexitong_stat'
   for (const r of dataRows) {
     const nm = String(r[ni] ?? '').trim()
     if (!nm) continue
     const vals: number[] = []
     for (const c of scoreCols) {
       const v = num(r[c.index] ?? '')
-      if (v !== null) vals.push(v)
+      if (v === null) continue
+      if (skipZero && v === 0) continue
+      vals.push(v)
     }
     if (vals.length) {
       const avg = vals.reduce((a, b) => a + b, 0) / vals.length
@@ -431,7 +444,10 @@ export async function readScoreSourceXlsx(
   //    避免 B1 pickBestSheet 行数启发式误选"任务点完成详情"等无关表）
   if (family === 'xuexitong_assignment' || family === 'xuexitong_stat') {
     const wbAll = XLSX.read(buf, { type: 'array' })
-    for (const sn of wbAll.SheetNames) {
+    // 优先名含关键字的 sheet（assignment→作业统计；stat→章节测验），其余按原顺序兜底
+    const prefer = family === 'xuexitong_stat' ? /章节测验/ : /作业统计/
+    const order = [...wbAll.SheetNames].sort((a, b) => (prefer.test(b) ? 1 : 0) - (prefer.test(a) ? 1 : 0))
+    for (const sn of order) {
       const mm: string[][] = (XLSX.utils.sheet_to_json(wbAll.Sheets[sn], { header: 1, defval: '' }) as unknown[])
         .map((r) => (Array.isArray(r) ? r.map((c) => String(c)) : []))
       const hit = detectCrostab(mm)
