@@ -118,8 +118,9 @@ def test_full_flow_artifacts_and_journal(ws):
     assert ev["total_score"] == 95  # 错误1处(扣5)，签名齐
     assert ev["per_question_scores"] == [95]
     assert ev["feedback_md"] and "想一想" in Path(r1).read_text(encoding="utf-8")
-    # HTML 带 MathJax
-    assert "MathJax" in (bucket / "reports" / "学生A.html").read_text(encoding="utf-8")
+    # HTML 报告：D86 起改用自托管 KaTeX（离线）+ 来源标注
+    _html = (bucket / "reports" / "学生A.html").read_text(encoding="utf-8")
+    assert "katex" in _html.lower() and "AI 批阅报告" in _html
     # 多张图并到同一学生（文件名前缀分组）
     assert len(group := list((bucket / "transcripts").glob("*.json"))) == 2  # 学生A/B
     # journal（D8）

@@ -137,6 +137,11 @@
 - **尺寸/字号（已拍板）**：两档 PNG 均为 **A4 纸宽**（210mm）；轻量批语图字号 **小四（12pt）**；
   输出为**长图**（高度随内容增长）。
 
+**实施状态（2026-10-15）**：engine 侧已实现并通过真机出图验证——
+`report.py::report_html / html_to_png / render_report_png / render_comment_png`，
+CLI `assist render --md|--text --out --kind ai|human`；实测输出 **794px 宽（A4@96dpi）× 长图**，
+公式经自托管 KaTeX 渲染；`generate_report(..., kind=...)` 随批阅流程出 md/html/png。
+
 **渲染方法（旧代码确认，2026-10-15）**：`_legacy/2601playwright/src/report_generator.py`
 
 - Markdown → HTML（`markdown` 库 + tables/fenced_code）；
@@ -219,12 +224,12 @@
 |---|---|---|---|
 | §1 | 班级↔工作区映射（`xxt.class_map` + 按文件名建议 + CLI/PWA） | `xxt/classmap.py` + CLI `xxt class-map` + serve `/xxt/class-map` | ✅ engine/CLI/serve 完成（单测 3 例）；PWA UI 随 §6 |
 | §2 | AI 设置区 + **配置/密钥拆分**（多 provider 记忆/勾选/掩码/清除；一般/batch 开关） | `settings_store.py` + `grading/providers.py` + CLI `llm config\|provider` + serve `/llm/*` | ✅ engine/CLI/serve 完成（单测 7 例）；PWA UI 随 §6 |
-| §3 | 作业包挂接（tag ↔ taskpad；省 token 的最简包优先）+ tag 勾选 | PWA + engine 解析 | ⏳ |
-| §4 | engine：`assist grade` 串"批阅下载目录 + 作业包"；两模式（brute-force / 优化）；tag 指令；诊断信息 | `grading/*` + CLI | ⏳ |
-| §5 | 批阅报告（固定版式 md/html/png；AI/人工标注；LaTeX→PNG；上传前生成） | `grading/report.py` + render CLI + PWA | ⏳ |
-| §6 | PWA「AI 辅助批阅」选项卡：开始批阅（job/进度）、逐生查看/修改、一键生成报告、一键上传全部（含未批阅提示 + 弹窗一键 AI） | `XxetongView.vue` + serve | ⏳ |
-| §7 | batch（DashScope）+ 成本/诊断信息 | `grading/llm_batch.py` + CLI | ⏳ |
-| §8 | 文档与真机验证（教师机实测两种提交模式） | docs/13/16/39 | ⏳ |
+| §3 | 作业包挂接（tag ↔ taskpad；最简包优先）+ tag 勾选 | `grading/inputs.py`（pads_by_tag / students_with_tags / build_plan） | ✅ engine 完成（PWA UI 随 §6） |
+| §4 | engine：`assist grade` 串"批阅下载目录 + 作业包"；两模式；tag 指令；诊断 | `grading/{inputs,prompts,flow}.py` + CLI `--xxt-class/--plan/--mode/--tags/--limit/--dry-plan` | ✅ engine/CLI 完成（单测 5 例；`diagnostics.jsonl`） |
+| §5 | 批阅报告（固定版式 md/html/png；AI/人工标注；LaTeX→PNG；上传前生成） | `report.py`（A4/小四/长图 + KaTeX）+ CLI `assist render` | ✅ engine/CLI 完成（真机出图 794px 宽/长图、公式渲染）；PWA 随 §6 |
+| §6 | PWA「AI 辅助批阅」选项卡：设置/provider、班级映射、作业包挂接、tag 勾选、开始批阅、逐生查看/修改、一键生成报告、一键上传全部 | `XxetongView.vue` + serve | ⏳（待做；engine 端点已就绪） |
+| §7 | batch（DashScope）+ 成本/诊断信息 | `grading/llm_batch.py` + CLI | ⏳（待做） |
+| §8 | 文档与真机验证（教师机实测两种提交模式） | docs/13/16/39 | 🔄 文档随各阶段更新；教师机实测待用户 |
 
 ## 6. 拍板与待定（2026-10-15）
 

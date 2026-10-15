@@ -499,6 +499,31 @@ def roster_rain(obj, files, out, workspace, verbose):
     click.echo(_j.dumps(summary.get("rows", [])[:5], ensure_ascii=False, indent=1))
 
 
+@cli.command("render")
+@click.option("--md", "md_file", default="", help="Markdown 报告文件（正式报告）")
+@click.option("--text", "text", default="", help="批语纯文本（轻量批语图）")
+@click.option("--out", "out_path", required=True, help="输出 PNG 路径")
+@click.option("--kind", type=click.Choice(["ai", "human"]), default="ai")
+@click.option("--title", default="")
+@click.option("--subtitle", default="", help="如：学生A · 大学物理")
+@click.option("--katex-dir", "katex_dir", default="", help="自托管 KaTeX 目录（缺省自动探测）")
+def render(md_file, text, out_path, kind, title, subtitle, katex_dir):
+    """D86 §5：把 Markdown 报告 / 批语文本渲染成 PNG（A4 宽 / 小四 / 长图，KaTeX 公式）。"""
+    from .grading import report as _rep
+    kd = Path(katex_dir).expanduser() if katex_dir else None
+    if md_file:
+        md = Path(md_file).expanduser().read_text(encoding="utf-8")
+        png = _rep.render_report_png(md, out_path, kind=kind, title=title or "批阅报告",
+                                     subtitle=subtitle, katex_dir=kd)
+    elif text:
+        png = _rep.render_comment_png(text, out_path, kind=kind, title=title,
+                                      subtitle=subtitle, katex_dir=kd)
+    elif md_file == "" and text == "":
+        raise click.UsageError("需要 --md 或 --text")
+    click.echo(str(png) if png else "（未渲染：playwright/浏览器不可用，已跳过 PNG）")
+    raise SystemExit(0 if png else 2)
+
+
 @cli.group("llm", help="D86：LLM provider / 两段式配置（key 只掩码回显，绝不入日志）")
 def llm():
     pass
@@ -555,20 +580,63 @@ def llm_provider(action, name, base_url, api_key, clear_key, batch_support, mode
 @click.option("--rerun", "rerun", default=None,
               type=click.Choice(["download", "transcribe", "evaluate", "report", "upload"]),
               help="单步重跑（指定 step 名，只重跑该步）")
+@click.option("--xxt-class", "xxt_class", default="",
+              help="D86：学习通班级 <courseId>:<classId>（用 class_map 解析 class_dir 并装配 plan）")
+@click.option("--work", "work_id", default="", help="D86：学习通 workId（批阅下载目录定位用）")
+@click.option("--plan", "plan_path", default="", help="D86：已有批阅任务清单 plan.json（或用 --xxt-class 现装配）")
+@click.option("--mode", "mode", default="", type=click.Choice(["", "optimized", "brute"]),
+              help="D86：optimized（默认，给题目/答案）| brute（先自己作答再比对）")
+@click.option("--tags", "tags", default="", help="D86：只批阅这些 tag（逗号分隔）")
+@click.option("--limit", "limit", default=0, type=int, help="D86：只处理前 N 名学生（0=全部）")
+@click.option("--dry-plan", "dry_plan", is_flag=True, default=False, help="只装配并打印 plan 摘要，不调 LLM")
 @click.option("--workspace", "-w", default=None)
 @click.option("--verbose", "-v", is_flag=True)
 @click.pass_obj
-def grade(obj, task_path, images_dir, rerun, workspace, verbose):
+def grade(obj, task_path, images_dir, rerun, xxt_class, work_id, plan_path, mode, tags,
+          limit, dry_plan, workspace, verbose):
     """AI 批阅：transcribe → evaluate → report（阶段3；download/upload 属阶段4）。
 
     任务包 grade.steps 驱动；journal 运行记录写入
     classes/<class>/grading/<task>/journal.jsonl（05-D8）；
-    apikey 从 workspace settings.local.json 的 llm 段读（绝不入代码/日志）。
+    LLM 配置读 workspace（`assist llm provider --action set|stage`；key 绝不入日志）。
+
+    D86：`--xxt-class <courseId>:<classId> [--work <workId>]` 会用
+    `xxt.class_map` + 带 tag 名单 + `<ws>/tasks/*.taskpad.json` + 批阅下载目录
+    装配「批阅任务清单」（plan.json），并按学生 tag 取题目/参考答案。
     """
+    import json as _json
     from .grading.flow import run_task, run_step
+    from .grading import inputs as _inputs
     ws = _setup(verbose or obj.get("verbose"), workspace)
     tp = Path(task_path).expanduser().resolve()
+    task = _json.loads(tp.read_text(encoding="utf-8"))
+    task_id = str(task.get("id") or "task")
+
+    plan = None
+    if plan_path:
+        plan = _inputs.load_plan(ws, Path(plan_path).stem) or _json.loads(
+            Path(plan_path).read_text(encoding="utf-8"))
+    elif xxt_class:
+        cid, _, kid = str(xxt_class).partition(":")
+        from .xxt import classmap
+        resolved = classmap.resolve_class_dir(ws, cid, kid, str(task.get("class") or ""))
+        class_dir = resolved.get("classDir") or str(task.get("class_dir") or "classes")
+        tag_list = [t.strip() for t in str(tags).split(",") if t.strip()]
+        plan = _inputs.build_plan(ws, task_id=task_id, class_dir=class_dir,
+                                  class_id=kid, work_id=work_id, mode=(mode or "optimized"),
+                                  tags=tag_list)
+        if limit and plan.get("students"):
+            plan["students"] = plan["students"][:limit]
+        _inputs.save_plan(ws, class_dir, plan)
+    if dry_plan or (plan and dry_plan):
+        click.echo(_json.dumps(_inputs.plan_summary(plan or {}), ensure_ascii=False, indent=1))
+        return
+
     kwargs = {"images_dir": images_dir} if images_dir else {}
+    if plan:
+        kwargs["plan"] = plan
+        if mode:
+            kwargs["mode"] = mode
     rec = run_step(tp, ws, rerun, **kwargs) if rerun else run_task(tp, ws, **kwargs)
     click.echo(f"完成 run_id={rec['run_id']} steps={rec['steps_done']}\n产物目录={rec['bucket']}")
 

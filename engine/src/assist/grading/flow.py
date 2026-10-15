@@ -92,18 +92,66 @@ def _paths(base: Path) -> dict[str, Path]:
              ("evaluations", "evaluations"), ("reports", "reports"))}
 
 
+def _diag(ctx: dict, **fields) -> None:
+    """D86：诊断信息落盘（provider/模型/mode/错误原文），便于教师把它发回来排查。"""
+    import json as _json
+    row = {"ts": time.strftime("%Y-%m-%d %H:%M:%S"), "taskId": (ctx.get("task") or {}).get("id"),
+           "mode": ctx.get("mode") or "optimized", "run_id": ctx.get("run_id")}
+    row.update({k: v for k, v in fields.items() if v is not None})
+    try:
+        with open(ctx["diag"], "a", encoding="utf-8") as fh:
+            fh.write(_json.dumps(row, ensure_ascii=False) + "\n")
+    except Exception:  # noqa: BLE001
+        pass
+
+
+def _plan_student_images(ctx: dict) -> "dict[str, list]":
+    """plan 模式下 学生→图片 路径（绝对路径直接可用）。"""
+    from pathlib import Path as _P
+    out: dict = {}
+    for stu in ((ctx.get("plan") or {}).get("students") or []):
+        imgs = [_P(x) for x in (stu.get("images") or [])]
+        if stu.get("name") and imgs:
+            out[str(stu["name"])] = imgs
+    return out
+
+
 def _run_transcribe(ctx: dict, client, transcripts_dir: Path) -> list[Path]:
-    images_dir: Path = ctx["images_dir"]
-    groups = group_images(images_dir)
-    if not groups:
-        logger.warning(f"图片目录为空（无 .png/.jpg 等文件），跳过转录: {images_dir}")
-        return []
     model = (ctx["task"].get("grade", {}).get("models", {}) or {}).get("transcription")
+    plan_groups = _plan_student_images(ctx) if ctx.get("plan") else {}
+    if plan_groups:
+        groups = plan_groups
+        logger.info(f"[转录] plan 模式：{len(groups)} 名学生")
+    else:
+        images_dir: Path = ctx["images_dir"]
+        groups = group_images(images_dir)
+        if not groups:
+            logger.warning(f"图片目录为空（无 .png/.jpg 等文件），跳过转录: {images_dir}")
+            return []
     outs = []
     for student, imgs in sorted(groups.items()):
         logger.info(f"[转录] {student}（{len(imgs)} 张）")
-        outs.append(transcribe_student(client, imgs, student, transcripts_dir, model=model))
+        try:
+            outs.append(transcribe_student(client, list(imgs), student, transcripts_dir, model=model))
+        except Exception as exc:  # noqa: BLE001 —— 单生失败不阻断全班，落诊断
+            logger.error(f"[转录失败] {student}: {str(exc)[:200]}")
+            _diag(ctx, step="transcribe", student=student, error=str(exc)[:500],
+                  model=model, images=[getattr(x, "name", str(x)) for x in imgs])
+            raise
     return outs
+
+
+def _plan_items_for(ctx: dict, student: str) -> "list[dict] | None":
+    """plan 模式下该生的题目（转成 evaluate 期望的 {序号,content,solution,tag} 形状）。"""
+    for stu in ((ctx.get("plan") or {}).get("students") or []):
+        if str(stu.get("name")) != student:
+            continue
+        out = []
+        for i, q in enumerate(stu.get("questions") or [], start=1):
+            out.append({"序号": q.get("no") or i, "content": q.get("content") or "",
+                        "solution": q.get("solution") or "", "tag": stu.get("tag") or ""})
+        return out or None
+    return None
 
 
 def _run_evaluate(ctx: dict, client, evaluations_dir: Path) -> list[Path]:
@@ -111,8 +159,9 @@ def _run_evaluate(ctx: dict, client, evaluations_dir: Path) -> list[Path]:
     model = (ctx["task"].get("grade", {}).get("models", {}) or {}).get("evaluation")
     outs = []
     for tf in sorted(ctx["transcripts_dir"].glob("[!_]*.json")):
+        items = _plan_items_for(ctx, tf.stem) if ctx.get("plan") else None
         try:
-            outs.append(evaluate_student(client, tf, tasks_items, evaluations_dir,
+            outs.append(evaluate_student(client, tf, items or tasks_items, evaluations_dir,
                                          homework_name=ctx.get("homework", ""), model=model))
             logger.info(f"[评阅] OK {tf.stem}")
         except Exception as e:  # noqa: BLE001 —— 单生失败不阻断全班
@@ -131,7 +180,9 @@ def _run_report(ctx: dict, reports_dir: Path) -> list[Path]:
         if not ef.exists():
             logger.warning(f"[报告] skip {tf.stem}: 无评阅文件")
             continue
-        outs += generate_report(tf, ef, reports_dir)
+        kind = "human" if str(ctx.get("report_kind") or "").startswith("human") else "ai"
+        outs += generate_report(tf, ef, reports_dir, kind=kind,
+                                subtitle=str((ctx.get("plan") or {}).get("classDir") or ""))
     summary = generate_summary_xlsx(ctx["evaluations_dir"], reports_dir / "summary.xlsx")
     outs.append(summary)
     g = generate_global_report(ctx["evaluations_dir"], reports_dir / "_global_report.md")
@@ -141,7 +192,8 @@ def _run_report(ctx: dict, reports_dir: Path) -> list[Path]:
 
 
 def run_task(task_path: Path, ws: Path, images_dir: Path | None = None,
-             rerun: str | None = None) -> dict:
+             rerun: str | None = None, plan: "dict | None" = None,
+             mode: str = "") -> dict:
     """任务包 grade 节驱动的执行入口。
 
     Args:
@@ -180,7 +232,15 @@ def run_task(task_path: Path, ws: Path, images_dir: Path | None = None,
         "evaluations": p["evaluations"],  # alias
         "journal": journal,
         "run_id": run_id,
+        "plan": plan,
+        "mode": (str(mode) or (plan or {}).get("mode") or "optimized"),
+        "diag": base / "diagnostics.jsonl",
+        "report_kind": (plan or {}).get("reportKind") or "ai",
     }
+    if plan:
+        students = (plan.get("students") or [])
+        logger.info(f"plan 模式：{len(students)} 名学生（mode={ctx['mode']}，"
+                    f"tags={plan.get('tags')}）")
 
     to_run = [rerun] if rerun else steps
     for step in to_run:
@@ -234,6 +294,7 @@ class RuntimeNotFoundError(RuntimeError):
     """评估前置产物缺失（转录不存在）。"""
 
 
-def run_step(task_path: Path, ws: Path, step: str, images_dir: Path | None = None) -> dict:
+def run_step(task_path: Path, ws: Path, step: str, images_dir: Path | None = None,
+             **kwargs) -> dict:
     """--rerun 单步（最小实现）：等价 run_task(rerun=step)，参数同 journal。"""
-    return run_task(task_path, ws, images_dir=images_dir, rerun=step)
+    return run_task(task_path, ws, images_dir=images_dir, rerun=step, **kwargs)

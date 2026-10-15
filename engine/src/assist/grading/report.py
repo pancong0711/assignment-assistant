@@ -1,14 +1,14 @@
-"""report.py — 批阅报告生成（Markdown + HTML MathJax）＋全局报告/汇总 xlsx。
+"""D86 §5：批阅报告（固定版式）+ 轻量批语图（A4 宽 / 小四 / 长图）。
 
-迁移自 _legacy/2601playwright/src/report_generator.py：
-- A4_CSS / MATHJAX_CDN / _build_report_md 结构照搬；
-- HTML 公式用 MathJax CDN 渲染；
-- PNG 截图（Playwright）属阶段4 —— 留 TODO 不实现；
-- 汇总 xlsx 改用 openpyxl（去 pandas 依赖，不新增轮子）；
-- MD→HTML 用内置轻量转换器（免新增 markdown 依赖；阶段4 如需更完整
-  语法再按需引入库）。
+版式（用户 2026-10-15 拍板）：两档 PNG 均为 **A4 纸宽（210mm）**；
+轻量批语图字号 **小四（12pt）**；输出**长图**（`full_page`）。
+渲染方法迁移自 `_legacy/2601playwright/src/report_generator.py`：
+Markdown → HTML → Playwright 截图；公式改用**自托管 KaTeX**（离线可用，CDN 兜底）。
+
+两档：
+- 正式报告（AI/人工同版式，仅标注不同）→ `generate_report(..., kind="ai"|"human")`
+- 轻量批语图（预览-学习通里的人工批阅）→ `render_comment_png(text, out, kind="human")`
 """
-
 from __future__ import annotations
 
 import html as _html
@@ -19,41 +19,180 @@ from pathlib import Path
 from loguru import logger
 from openpyxl import Workbook
 
-# VB-7（docs/14）：与 templates/assignment.html.j2（HTML 打印主通道单一事实源）
-# 的同源提示。现阶段批阅报告 md_to_html 逻辑不动；H4 会话统一切换晚于此占位。
-TEMPLATE_HINT = (
-    "同源说明见上方 TODO 块。")
+A4_WIDTH_MM = 210
+BODY_FONT_PT = 12          # 小四
 
-
-# ---- 迁移自 report_generator.A4_CSS ----
-# TODO(VB-7, docs/14)：批阅报告页/页脚/水印风格将与 templates/assignment.html.j2
-#  （docs/14 §VB-1 单一事实源，HTML 打印主通道模板）统一——本 CSS/A4 结构与
-#  该模板共享"每生分页块 + @page A4"语义，现阶段逻辑不动，仅作同源占位：
-#  待 S2a/H4 会话把 md_to_html 输出切到 j2 渲染时复用同一模板对象（05-D1 超集）。
-#  相关 pull 引用（校测/PR 后补充）：docs/14 §VB-7、docs/13 §M-H/H4。
-A4_CSS = """
+REPORT_CSS = """
 @page { size: A4; margin: 2cm; }
-body {
-    font-family: 'SimSun', 'Noto Sans SC', 'Microsoft YaHei', serif;
-    font-size: 12pt; line-height: 1.8;
-    width: 210mm; padding: 25mm; margin: 0 auto; color: #222;
-}
+html, body { margin: 0; padding: 0; background: #fff; }
+body { font-family: 'SimSun', 'Noto Sans SC', 'Microsoft YaHei', serif;
+       font-size: 12pt; line-height: 1.8; box-sizing: border-box;
+       width: 100%; padding: 18mm 15mm; color: #222; }
 h1 { font-size: 18pt; text-align: center; border-bottom: 2px solid #333; padding-bottom: 8px; }
-h2 { font-size: 15pt; margin-top: 22px; border-bottom: 1px solid #aaa; padding-bottom: 4px; }
-h3 { font-size: 13pt; margin-top: 16px; }
+h2 { font-size: 15pt; margin-top: 20px; border-bottom: 1px solid #aaa; padding-bottom: 4px; }
+h3 { font-size: 13pt; margin-top: 14px; }
 table { width: 100%; border-collapse: collapse; margin: 10px 0; }
 td, th { border: 1px solid #ccc; padding: 5px 8px; text-align: left; font-size: 11pt; }
 th { background: #f0f0f0; }
-blockquote{ border-left:3px solid #d80; margin:8px 0; padding:4px 10px; background:#fff7ee; color:#8a4a00;}
-.footer { text-align: center; color: #999; font-size: 10pt; margin-top: 30px; }
+.report-tag { text-align: center; font-size: 10pt; color: #666; margin: 4px 0 18px; }
+.report-tag.human { color: #7a4b00; font-weight: 600; }
+.report-tag.ai { color: #14532d; font-weight: 600; }
+.quality { color: #444; font-size: 10pt; }
 """
 
-# ---- 迁移自 report_generator.MATHJAX_CDN ----
-MATHJAX_CDN = ('<script>MathJax={tex:{inlineMath:[["$","$"],["\\\\(","\\\\)"]]},chtml:{scale:1.2}};</script>'
-               '<script src="https://cdn.jsdelivr.net/npm/mathjax@3/es5/tex-chtml.js"></script>')
+KIND_LABEL = {"ai": "AI 批阅报告", "human": "人工批阅报告"}
 
 
-# ---- 迁移自 report_generator._build_report_md（2601 结构保留）----
+def _md_to_html(md_text: str) -> str:
+    try:                                   # 有 markdown 库则正规转换
+        import markdown as _md
+        return _md.markdown(md_text, extensions=["tables", "fenced_code"])
+    except Exception:                      # noqa: BLE001 —— 无依赖时最小降级
+        out = []
+        for line in str(md_text or "").splitlines():
+            t = line.rstrip()
+            if t.startswith("### "):
+                out.append(f"<h3>{_html.escape(t[4:])}</h3>")
+            elif t.startswith("## "):
+                out.append(f"<h2>{_html.escape(t[3:])}</h2>")
+            elif t.startswith("# "):
+                out.append(f"<h1>{_html.escape(t[2:])}</h1>")
+            elif t.strip():
+                out.append(f"<p>{_html.escape(t)}</p>")
+        return "\n".join(out)
+
+
+def find_katex_dir(explicit=None) -> "Path | None":
+    """找自托管 KaTeX（离线渲染）：显式 > 仓库 app/public/katex > <ws>/assets/katex。"""
+    cands = []
+    if explicit:
+        cands.append(Path(explicit))
+    repo = Path(__file__).resolve().parents[4]
+    cands.append(repo / "app" / "public" / "katex")
+    try:
+        from ..workspace import find_workspace
+        cands.append(Path(find_workspace(None)) / "assets" / "katex")
+    except Exception:  # noqa: BLE001
+        pass
+    for c in cands:
+        if c and (c / "katex.min.css").is_file() and (c / "contrib" / "auto-render.min.js").is_file():
+            return c
+    return None
+
+
+def _katex_head(katex_dir: "Path | None") -> str:
+    if katex_dir:
+        base = katex_dir.resolve().as_uri()
+        return (f'<link rel="stylesheet" href="{base}/katex.min.css">'
+                f'<script src="{base}/katex.min.js"></script>'
+                f'<script src="{base}/contrib/auto-render.min.js"></script>')
+    return ('<link rel="stylesheet" '
+            'href="https://cdn.jsdelivr.net/npm/katex@0.16.4/dist/katex.min.css">'
+            '<script src="https://cdn.jsdelivr.net/npm/katex@0.16.4/dist/katex.min.js"></script>'
+            '<script src="https://cdn.jsdelivr.net/npm/katex@0.16.4/dist/contrib/auto-render.min.js"></script>')
+
+
+def report_html(md_text: str, *, kind: str = "ai", title: str = "",
+                subtitle: str = "", katex_dir: "Path | None" = None) -> str:
+    """Markdown → 报告 HTML（A4 版式 + KaTeX + 来源标注）。"""
+    body = _md_to_html(md_text)
+    label = KIND_LABEL.get(str(kind or "ai").lower(), KIND_LABEL["ai"])
+    h1 = f"<h1>{_html.escape(title)}</h1>" if title else ""
+    sub = f'<div class="report-tag">{_html.escape(subtitle)}</div>' if subtitle else ""
+    tag = f'<div class="report-tag {kind}">{label}</div>'
+    return f"""<!DOCTYPE html><html><head><meta charset="utf-8">
+<style>{REPORT_CSS}</style>{_katex_head(katex_dir or find_katex_dir())}
+</head><body>{h1}{tag}{sub}{body}
+<script>
+(function() {{
+  function done() {{ window.__ASSIST_KATEX_DONE__ = true; }}
+  if (window.renderMathInElement) {{
+    try {{ renderMathInElement(document.body, {{delimiters: [
+      {{left: '$$', right: '$$', display: true}},
+      {{left: '$', right: '$', display: false}},
+      {{left: '\\(', right: '\\)', display: false}},
+      {{left: '\\[', right: '\\]', display: true}}]}}); }} catch (e) {{}}
+    done();
+  }} else {{ done(); }}
+}})();
+</script></body></html>"""
+
+
+def html_to_png(html_text: str, out_path, *, width: int = 794, wait_ms: int = 5000) -> "Path | None":
+    """HTML → 长图（Playwright Chromium，`full_page=True`）；缺 playwright 返回 None。"""
+    out = Path(out_path)
+    out.parent.mkdir(parents=True, exist_ok=True)
+    try:
+        from playwright.sync_api import sync_playwright
+    except Exception as exc:  # noqa: BLE001
+        logger.warning(f"未安装 playwright，跳过 PNG 渲染（{exc}）")
+        return None
+    with sync_playwright() as pw:
+        from ..xxt.browsers import ARGS, launch_attempts
+        browser = None
+        last = None
+        for kwargs in launch_attempts():
+            try:
+                browser = pw.chromium.launch(headless=True, args=ARGS, **kwargs)
+                break
+            except Exception as exc:  # noqa: BLE001
+                last = exc
+        if browser is None:
+            logger.warning(f"浏览器不可用，跳过 PNG：{last}")
+            return None
+        try:
+            page = browser.new_page(viewport={"width": int(width), "height": 1123})
+            page.set_content(html_text, wait_until="load")
+            try:
+                page.wait_for_function("() => window.__ASSIST_KATEX_DONE__ === true",
+                                       timeout=wait_ms)
+            except Exception:  # noqa: BLE001
+                pass
+            page.wait_for_timeout(600)
+            page.screenshot(path=str(out), full_page=True)
+        finally:
+            try:
+                browser.close()
+            except Exception:  # noqa: BLE001
+                pass
+    return out
+
+
+def render_report_png(md_text: str, out_path, *, kind: str = "ai", title: str = "",
+                      subtitle: str = "", katex_dir=None, width: int = 794):
+    """Markdown → 报告 PNG（A4 宽 / 长图）。"""
+    return html_to_png(report_html(md_text, kind=kind, title=title, subtitle=subtitle,
+                                   katex_dir=katex_dir), out_path, width=width)
+
+
+def render_comment_png(text: str, out_path, *, kind: str = "human", title: str = "",
+                       subtitle: str = "", katex_dir=None, width: int = 794):
+    """轻量批语图：纯文本/含 LaTeX 的批语 → PNG（A4 宽 / 小四 / 长图）。
+
+    不追求正式报告的标题/分段落结构（仅可选 title/subtitle）。
+    """
+    lines = [f"<p>{_html.escape(x)}</p>" if x.strip() else "" for x in str(text or "").splitlines()]
+    body = "\n".join(lines) or "<p>（空批语）</p>"
+    label = KIND_LABEL.get(str(kind or "human").lower(), KIND_LABEL["human"])
+    h1 = f"<h1>{_html.escape(title)}</h1>" if title else ""
+    sub = f'<div class="report-tag">{_html.escape(subtitle)}</div>' if subtitle else ""
+    html_text = f"""<!DOCTYPE html><html><head><meta charset="utf-8">
+<style>{REPORT_CSS}</style>{_katex_head(katex_dir or find_katex_dir())}
+</head><body>{h1}<div class="report-tag {kind}">{label}</div>{sub}{body}
+<script>
+(function() {{
+  if (window.renderMathInElement) {{
+    try {{ renderMathInElement(document.body, {{delimiters: [
+      {{left: '$$', right: '$$', display: true}},
+      {{left: '$', right: '$', display: false}},
+      {{left: '\\(', right: '\\)', display: false}}]}}); }} catch (e) {{}}
+  }}
+  window.__ASSIST_KATEX_DONE__ = true;
+}})();
+</script></body></html>"""
+    return html_to_png(html_text, out_path, width=width)
+
+
 def build_report_md(transcript_path: Path, eval_path: Path) -> str:
     t_data = json.loads(Path(transcript_path).read_text(encoding="utf-8"))
     e_data = json.loads(Path(eval_path).read_text(encoding="utf-8"))
@@ -173,8 +312,13 @@ def md_to_html(md_text: str) -> str:
 # TODO(阶段4)：_html_to_png —— Playwright 截图（迁移自 report_generator._html_to_png），
 # 依赖 Playwright 内核安装（D14 PLAYWRIGHT_BROWSERS_PATH），阶段4 一并实现 A4 PNG。
 
-def generate_report(transcript_path: Path, eval_path: Path, out_dir: Path) -> list[Path]:
-    """一份学生报告：Markdown + HTML（MathJax）。迁移自 report_generator.generate_report。"""
+def generate_report(transcript_path: Path, eval_path: Path, out_dir: Path,
+                    *, kind: str = "ai", subtitle: str = "", render_png: bool = True,
+                    katex_dir=None) -> list[Path]:
+    """一份学生报告：Markdown + HTML(**报告版式**) + PNG（A4 宽/长图；缺 playwright 时跳过）。
+
+    `kind="ai"|"human"` → 报告标题下标注「AI 批阅报告 / 人工批阅报告」（同版式，仅标注不同）。
+    """
     out = Path(out_dir)
     out.mkdir(parents=True, exist_ok=True)
     base = Path(eval_path).stem
@@ -182,8 +326,16 @@ def generate_report(transcript_path: Path, eval_path: Path, out_dir: Path) -> li
     md_file = out / f"{base}.md"
     md_file.write_text(md, encoding="utf-8")
     html_file = out / f"{base}.html"
-    html_file.write_text(md_to_html(md), encoding="utf-8")
-    return [md_file, html_file]
+    title = f"{base} 批阅报告"
+    html_file.write_text(report_html(md, kind=kind, title=title, subtitle=subtitle,
+                                     katex_dir=katex_dir), encoding="utf-8")
+    outs = [md_file, html_file]
+    if render_png:
+        png = render_report_png(md, out / f"{base}.png", kind=kind, title=title,
+                                subtitle=subtitle, katex_dir=katex_dir)
+        if png:
+            outs.append(png)
+    return outs
 
 
 def generate_summary_xlsx(eval_dir: Path, output_path: Path) -> Path:

@@ -105,11 +105,11 @@ def _mk_class(ws: Path, dirname: str, roster_file: str):
 
 def test_suggest_by_roster_filename(tmp_path: Path):
     _mk_class(tmp_path, "chem25", "化工25-点名册.xlsx")
-    _mk_class(tmp_path, "env25", "环境25-点名册.xlsx")
+    _mk_class(tmp_path, "env25", "示例乙班-点名册.xlsx")
     sug = classmap.suggest_class_dir(tmp_path, "化工25")
     assert sug and sug[0]["classDir"] == "classes/chem25"
     assert sug[0]["matchedFile"] == "化工25-点名册.xlsx"
-    assert classmap.suggest_class_dir(tmp_path, "机械25") == []
+    assert classmap.suggest_class_dir(tmp_path, "不存在的班") == []
 
 
 def test_resolve_and_set_class_dir(tmp_path: Path):
