@@ -1431,3 +1431,24 @@ applyManualTranslation/setTranslationRatio 中 setTranslationRatio 保留——�
   PWA AI 面板/本地草稿/一键生成报告/一键上传全部/batch dry-run 诊断）；
   §8 收尾已完成文档（docs/16 §28 解冻记录、docs/15 教师手册、docs/04 配置契约）；
   剩余仅**教师机实测**（配 key 跑一班 + batch 上报错）。
+
+
+---
+
+## D87 · 素材目录（workspace 优先）+ 水印样式库（2026-10-15）
+
+- 主需求单：`docs/40-D87-assets-watermark-styles.md`；
+- 根因：PWA 图层只写任务包、引擎只读 settings/内置三槽 → 自定义图层对 PDF 无效；
+  相对路径 `assets/watermark/x` 被判为 `assets_dir/assets/watermark/x` → 文件不存在被跳过；
+  缩略图仅 localStorage dataURL（清缓存即消失），界面仍显示从未落盘的"路径提示"；
+- 方案：`<ws>/assets/{watermark/styles,fonts,report}`（workspace 优先 + `--assets-dir`）；
+  命名样式 JSON（default 单选）+ 解析优先级 items > style_ref > 默认样式 > 内置三槽；
+  serve `GET /watermark/styles`、`POST /watermark/style|upload`；CLI `assist watermark …`。
+
+## D88 · 整班预览混合示例修复 + 「AI 辅助批阅」选项卡（2026-10-15）
+
+- 主需求单：`docs/41-D88-class-preview-and-ai-tab.md`；
+- 根因：整班预览未传 opts.students，未匹配到学生的包回落 SYNTHETIC（学生A/classA）→ 混合；未匹配学生被静默丢弃；
+- 修：a) `syntheticFallback` 开关（整班关闭、空包跳过）；b) 未匹配学生列名 + manifest；
+  c) 页眉班级解析 `stu.class → 学习通班级名/class_dir → 空`（三端同步 + parity 哨兵）；
+- AI 入口（方案 A）：`GradingView` 重构为「AI 辅助批阅」（六区），迁移并删除 XxetongView 的临时面板，保留离线 CLI 块。
