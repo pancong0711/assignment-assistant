@@ -93,6 +93,15 @@ def _resolve_asset(ws: Path, hint: str, assets_dir: Path | None) -> Path | None:
         return p if p.exists() else None
     cands = [ws / hint, ws / "assets" / hint, ws / "assets" / "watermark" / p.name,
              ws / "kb" / hint]
+    try:  # D87 兼容：'assets/watermark/x' → 'watermark/x'
+        from .watermark_styles import normalize_image_ref
+        nr = normalize_image_ref(hint)
+        if nr and nr != hint:
+            cands += [ws / nr, ws / "assets" / nr]
+            if assets_dir:
+                cands.append(assets_dir / nr)
+    except Exception:  # noqa: BLE001
+        pass
     if assets_dir:
         cands += [assets_dir / hint, assets_dir / "watermark" / p.name]
     for c in cands:
@@ -115,10 +124,32 @@ def _watermark_items(task: dict, ws: Path, assets_dir: Path | None,
     2) legacy 三槽 university/text/boat（str 路径 | {path,pos,ratio,alpha}）
        → university→rt、text→lm、boat→lb；
     3) 空 = engine 默认三槽占位（rt/lm/lb），能找到 engine assets logo 则内嵌。
+
+    D87 §3.2：作业纸仅给 `style_ref`（无内联 items）时，按优先级
+    `items > style_ref > 默认样式 > 内置三槽` 解析为 items（与 PDF 通道同口径）。
     """
     wm = task.get("watermark") or {}
     raw_items: list[dict] = []
-    if isinstance(wm.get("items"), list) and wm.get("items"):
+    # D87：无内联 items 且声明了 style_ref（或存在默认样式）→ 样式库解析
+    if not (isinstance(wm.get("items"), list) and wm.get("items")):
+        try:
+            from .watermark_styles import resolve_pad_watermark
+            spec = resolve_pad_watermark(Path(assets_dir) if assets_dir else
+                                         Path(ws) / "assets", wm)
+            if spec.get("source") not in ("builtin",) and spec.get("items"):
+                for it in spec["items"]:
+                    if not isinstance(it, dict) or not it.get("image"):
+                        continue
+                    raw_items.append({
+                        "image": str(it.get("image")),
+                        "pos": str(it.get("pos") or "mm"),
+                        "ratio": float(it.get("ratio") or 0.2),
+                        "alpha": float(it.get("alpha") if it.get("alpha") is not None else 0.5)})
+        except Exception:  # noqa: BLE001
+            raw_items = []
+    if raw_items:
+        pass
+    elif isinstance(wm.get("items"), list) and wm.get("items"):
         for it in wm["items"]:
             if not isinstance(it, dict) or not it.get("image"):
                 continue

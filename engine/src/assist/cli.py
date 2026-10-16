@@ -302,10 +302,12 @@ def sheet_demo(obj, out, orientation, no_watermark, workspace, verbose):
               help="公式资源引用：cdn（缺省，现状）或 local（../katex/ 相对引用——配合设置中心「安装到 workspace」的 sheets/katex/ 离线渲染，docs/13 D53-G3）")
 @click.option("--students", "students_mode", default="roster", type=click.Choice(["roster", "sample", "blank"], case_sensitive=False),
               help="名单口径：roster（缺省，--roster 及合成名单）；sample（合成 学生A/B 2 份模板样例）；blank（单份空白模板：页眉学籍三空位）")
+@click.option("--assets-dir", "assets_dir", default=None,
+              help="显式素材目录（水印图/字体）；缺省 workspace 优先，回落 engine/assets（D87）")
 @click.option("--workspace", "-w", default=None)
 @click.option("--verbose", "-v", is_flag=True)
 @click.pass_obj
-def sheet_html(obj, task_path, roster_path, out, no_watermark, no_solution, students_mode, katex_mode, workspace, verbose):
+def sheet_html(obj, task_path, roster_path, out, no_watermark, no_solution, students_mode, katex_mode, assets_dir, workspace, verbose):
     """按任务包生成整班自包含 HTML（浏览器打印主通道，docs/14 §VB-1/2/3 / 05-D30）。
 
     单文件承载整班多页：每生分页块（page-break-after）、@page A4 横/竖版、
@@ -321,7 +323,8 @@ def sheet_html(obj, task_path, roster_path, out, no_watermark, no_solution, stud
         out_path=Path(out).expanduser().resolve() if out else None,
         roster_path=roster_path, no_watermark=no_watermark,
         include_solution=not no_solution, students_mode=students_mode.lower(),
-        katex_mode=katex_mode.lower())
+        katex_mode=katex_mode.lower(),
+        assets_dir=Path(assets_dir).expanduser().resolve() if assets_dir else None)
     click.echo(str(fn))
     click.echo(f"学生 {n_stu} 人 · 页块 {n_pages} 个（浏览器打开后 Ctrl/Cmd+P 打印；"
                "KaTeX 走 CDN，离线时公式按源码降级显示）"
@@ -334,10 +337,12 @@ def sheet_html(obj, task_path, roster_path, out, no_watermark, no_solution, stud
 @click.option("--roster", "roster_path", default=None, help="点名册 xlsx（缺省找 classes/<class>/roster/）")
 @click.option("--out", "-o", default=None, help="输出目录（缺省 classes/<class>/sheets/out）")
 @click.option("--no-watermark", is_flag=True)
+@click.option("--assets-dir", "assets_dir", default=None,
+              help="显式素材目录（水印图/字体）；缺省 workspace 优先，回落 engine/assets（D87）")
 @click.option("--workspace", "-w", default=None)
 @click.option("--verbose", "-v", is_flag=True)
 @click.pass_obj
-def sheet_make(obj, task_path, roster_path, out, no_watermark, workspace, verbose):
+def sheet_make(obj, task_path, roster_path, out, no_watermark, assets_dir, workspace, verbose):
     """按任务包生成每生一份作业纸 PDF（xlsx 名单驱动）。"""
     from .paper import sheets_from_task
     from .workspace import load_workspace_settings
@@ -348,6 +353,7 @@ def sheet_make(obj, task_path, roster_path, out, no_watermark, workspace, verbos
         no_watermark=no_watermark,
         roster_path=str(roster_path) if roster_path else None,
         user_cfg=load_workspace_settings(ws),
+        assets_dir=assets_dir,
     )
     for f in files:
         click.echo(str(f))
@@ -451,10 +457,13 @@ def serve(obj, workspace, host, port, lan, verbose):
 @click.option("--default", "default_pad", default=None, help="未知 tag 的兜底任务包 id")
 @click.option("--class-dir", default=None, help="班级子目录（缺省 classes/，产物落在其 sheets/batch/<tag>/）")
 @click.option("--out", "-o", default=None, help="直接指定输出根目录")
+@click.option("--assets-dir", "assets_dir", default=None,
+              help="显式素材目录（水印图/字体）；缺省 workspace 优先，回落 engine/assets（D87）")
 @click.option("--workspace", "-w", default=None)
 @click.option("--verbose", "-v", is_flag=True)
 @click.pass_obj
-def sheet_batch(obj, roster_fn, task_files, map_specs, default_pad, class_dir, out, workspace, verbose):
+def sheet_batch(obj, roster_fn, task_files, map_specs, default_pad, class_dir, out,
+                assets_dir, workspace, verbose):
     """D23 变体编排：整班按 tag 自动选任务包生成作业纸（每生一份，tag 分组分目录）。
 
     任务包绑定 tag 规则：`target_tag` 字段优先，否则 items 中唯一 tag 即视为归属
@@ -475,7 +484,8 @@ def sheet_batch(obj, roster_fn, task_files, map_specs, default_pad, class_dir, o
         [Path(f).expanduser().resolve() for f in task_files],
         ws_path, class_dir=class_dir,
         out_root=Path(out).expanduser().resolve() if out else None,
-        mapping=mapping, default_pad=default_pad)
+        mapping=mapping, default_pad=default_pad,
+        assets_dir=assets_dir)
     for f in files:
         click.echo(str(f))
 

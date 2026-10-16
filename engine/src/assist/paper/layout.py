@@ -270,15 +270,24 @@ def make_pdf(students: list[dict], items_of_student, out_dir: Path,
              grid_rows: int | None = None, grid_cols: int | None = None,
              figure_scale: float = 1.0, figure_pos: str = "text-right",
              figure_max_w_mm: float = 45.0, figure_max_h_mm: float = 60.0,
-             figure_indent: str = "none") -> list[Path]:
+             figure_indent: str = "none",
+             assets_dir_explicit=None,
+             watermark_spec: "dict | None" = None,
+             workspace=None) -> list[Path]:
     """students: [{name, number, class}]；items_of_student(i) → [(content, img, tag, no)]。
 
     D61：per_page = 每页题数 N；grid_rows/grid_cols = 显式网格。
     无显式网格时兼容旧语义（竖1/横2 等）。返回最终 PDF 路径列表。
+
+    D87：素材目录解析 `explicit(assets_dir_explicit/--assets-dir) > <ws>/assets > engine/assets`；
+    字体注册优先用 `<ws>/assets/fonts/`（workspace=ws）。`assets_dir` 为旧签名，仍兼容
+    （等价 explicit，绝对/相对 ws 均可）。
     """
-    assets_dir = assets_dir or ASSETS_DIR
-    register_font("simsun", "simsun.ttc", "wqy-microhei.ttc", workspace=None, user_cfg=user_cfg)
-    register_font("simkai", "simkai.ttf", "LXGWWenKai-Regular.ttf", workspace=None, user_cfg=user_cfg)
+    from .assets import resolve_assets_dir
+    explicit = assets_dir_explicit if assets_dir_explicit is not None else assets_dir
+    assets_dir, _assets_src = resolve_assets_dir(ws=workspace, explicit=explicit)
+    register_font("simsun", "simsun.ttc", "wqy-microhei.ttc", workspace=workspace, user_cfg=user_cfg)
+    register_font("simkai", "simkai.ttf", "LXGWWenKai-Regular.ttf", workspace=workspace, user_cfg=user_cfg)
     now = datetime.now()
     out_dir.mkdir(parents=True, exist_ok=True)
     generated: list[Path] = []
@@ -302,15 +311,22 @@ def make_pdf(students: list[dict], items_of_student, out_dir: Path,
                                figure_max_w_mm, figure_max_h_mm, figure_indent)
         doc.build(flow)
 
-        if watermark:
+        spec = watermark_spec if isinstance(watermark_spec, dict) else {}
+        wm_on = watermark and bool(spec.get("enabled", True) if spec else True)
+        if wm_on:
             c_info = watermark_preset(assets_dir, pagesize=page_size)
             for page_i in range(n_pages):
                 # 逐页水印：页码与题号（迁移自 assignment2512 逻辑）
                 lo = page_i * n + 1
                 hi = min(lo + n - 1, len(items))
                 info = [f"{page_i + 1:02d}", f"{lo}-{hi}/{len(items)}"]
-                watermark_gen(c_info, info, assets_dir, preset="2603",
-                              overrides=(user_cfg or {}).get("watermark"))
+                ov = dict((user_cfg or {}).get("watermark") or {})
+                if spec:
+                    if spec.get("items"):
+                        ov["items"] = spec["items"]
+                    if spec.get("pageText") is False:
+                        ov["_noPageText"] = True
+                watermark_gen(c_info, info, assets_dir, preset="2603", overrides=ov)
             fn_wm = watermark_end(str(fn), c_info)
             final = merge_watermark(str(fn), fn_wm)
             generated.append(Path(final))

@@ -95,16 +95,26 @@ def sheets_from_task(task_path: Path, ws: Path, out_dir: Path | None = None,
     if not students:
         raise ValueError(f"点名册为空: {r_path}")
 
+    # D87：素材目录（explicit > <ws>/assets > engine/assets）+ 作业纸水印解析
+    # 优先级：pad.watermark.items > pad.watermark.style_ref > 默认样式 > 内置三槽
+    from .assets import resolve_assets_dir
+    from .watermark_styles import resolve_pad_watermark
+    resolved_assets, _src = resolve_assets_dir(ws=ws, explicit=assets_dir)
+    task_wm = task.get("watermark") if isinstance(task.get("watermark"), dict) else {}
+    wm_spec = resolve_pad_watermark(resolved_assets, task_wm)
+
     out = out_dir or (ws / task.get("class_dir", "classes") / "sheets" / "out")
     return make_pdf(
         students,
         lambda i: items, out,
         orientation=orientation,
-        assets_dir=assets_dir,
+        assets_dir=resolved_assets,
         title=title,
         notes_prefix=f"{task['id']}",
         watermark=not no_watermark,
         user_cfg=user_cfg,
+        watermark_spec=wm_spec,
+        workspace=ws,
         per_page=lay.get("per_page"),
         grid_rows=lay.get("grid_rows"),
         grid_cols=lay.get("grid_cols"),

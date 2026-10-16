@@ -16,6 +16,8 @@ from loguru import logger
 from ..files.roster import read_roster
 from .task import load_task, resolve_items
 from ..files.kb_io import read_kb
+from .assets import resolve_assets_dir
+from .watermark_styles import resolve_pad_watermark
 
 
 def pad_tag(task: dict) -> str | None:
@@ -34,7 +36,8 @@ def pad_tag(task: dict) -> str | None:
 def batch_sheets(roster_fn: Path, task_files: list[Path], ws: Path,
                  class_dir: str | None = None, out_root: Path | None = None,
                  mapping: dict[str, str] | None = None,
-                 default_pad: str | None = None) -> list[Path]:
+                 default_pad: str | None = None,
+                 assets_dir=None) -> list[Path]:
     """tag→任务包绑定后，按组生成整班作业纸。"""
     from .layout import make_pdf
 
@@ -82,13 +85,19 @@ def batch_sheets(roster_fn: Path, task_files: list[Path], ws: Path,
         stu = [{"name": r["name"], "number": r.get("number", ""),
                 "class": r.get("class", "")} for r in group]
         out_tag = out_dir / tag
+        # D87：素材目录 workspace 优先 + 该 tag 作业包的水印解析（items > style_ref > 默认）
+        resolved_assets, _src = resolve_assets_dir(ws=ws, explicit=assets_dir)
+        pad_wm = pad.get("watermark") if isinstance(pad.get("watermark"), dict) else {}
+        wm_spec = resolve_pad_watermark(resolved_assets, pad_wm)
         files = make_pdf(
             stu, lambda _i: items, out_tag,
             orientation=lay.get("orientation", "portrait"),
-            assets_dir=None,
+            assets_dir=resolved_assets,
             title=lay.get("header", {}).get("title", "大学物理-作业纸"),
             notes_prefix=f"{tag}:{pad.get('id', '')}",
             watermark=lay.get("watermark", {}).get("enabled", True) is not False,
+            watermark_spec=wm_spec,
+            workspace=ws,
             per_page=lay.get("per_page"),
             grid_rows=lay.get("grid_rows"),
             grid_cols=lay.get("grid_cols"),

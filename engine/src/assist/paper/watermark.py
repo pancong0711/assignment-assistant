@@ -70,9 +70,14 @@ def watermark_gen(canvas_info: dict, page_info, assets_dir: Path,
             img = it.get("image")
             if not img:
                 continue
-            p = Path(img)
+            p = Path(str(img))
             if not p.is_absolute():
                 p = assets_dir / str(p)
+                if not p.exists():      # D87 兼容：旧值 'assets/watermark/x' → 'watermark/x'
+                    from .watermark_styles import normalize_image_ref
+                    p2 = assets_dir / normalize_image_ref(str(img))
+                    if p2.exists():
+                        p = p2
             if not p.exists():
                 logger.warning(f"水印图不存在，跳过: {p}")
                 continue
