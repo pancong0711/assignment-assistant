@@ -75,6 +75,9 @@ export interface SheetHtmlOptions {
   /** D43-7 水印图层开关：false = 整层不画（含三槽占位框）；缺省 true。
    *  PWA ③段「显示水印图层」勾选传入（默认勾=现状）。与 pad.watermark.enabled（属性）是 AND 关系。 */
   includeWatermark?: boolean
+  /** D93-S5：整班预览连续页码（跨所有学生/页块递增；缺省 false = 每生从 1 起）。
+   *  页脚 "第 N/总页数" 的 N/total 同步为整班连续值。 */
+  continuousPage?: boolean
   /** D43-7 页码大字水印开关：false = 「第 N 页」大字不画（图层不受影响）；缺省 true。 */
   includePageText?: boolean
   /** KaTeX 资源模式（见文件头注释）：'cdn' 缺省 | 'relative' 同源 | 'raw' 内联 */
@@ -448,9 +451,10 @@ export async function buildSelfContainedHtml(
 
 function katexScript(): string {
   return `<script>
-/* KaTeX 自动渲染（仅题干/答案；CDN 不可达时跳过=源码降级，不报错） */
-document.addEventListener('DOMContentLoaded', function () {
-  if (typeof window.renderMathInElement !== 'function') return;
+/* KaTeX 自动渲染（仅题干/答案）。
+   D93-S5：不依赖 DOMContentLoaded 与 defer 的时序——轮询等待 renderMathInElement 就绪后再渲染，
+   最多等 ~5s；始终不可用则保留 $..$ 源码降级（不报错）。 */
+(function () {
   var opts = {
     delimiters: [
       { left: '$$', right: '$$', display: true },
@@ -458,10 +462,24 @@ document.addEventListener('DOMContentLoaded', function () {
     ],
     throwOnError: false
   };
-  document.querySelectorAll('.q-content, .q-solution').forEach(function (el) {
-    try { window.renderMathInElement(el, opts); } catch (e) { /* 降级：保留源码 */ }
-  });
-});
+  function render() {
+    document.querySelectorAll('.q-content, .q-solution').forEach(function (el) {
+      try { window.renderMathInElement(el, opts); } catch (e) { /* 降级 */ }
+    });
+  }
+  var tries = 0;
+  function waitReady() {
+    if (typeof window.renderMathInElement === 'function') { render(); return; }
+    if (++tries > 100) return;                 // ~5s（50ms × 100）
+    setTimeout(waitReady, 50);
+  }
+  if (document.readyState === 'loading') {
+    document.addEventListener('DOMContentLoaded', waitReady);
+  } else {
+    waitReady();
+  }
+  window.addEventListener('load', function () { if (typeof window.renderMathInElement === 'function') render(); });
+})();
 <\/script>`
 }
 
@@ -549,6 +567,21 @@ export function stringifySheetHtml(
   const docTitle = String(first.layout.header.title ?? '') || '作业纸'
 
   const pageSections: string[] = []
+  const continuous = !!opts.continuousPage
+  // D93-S5：连续页码需先算总页块数（= 各 pad 各学生各页之和）
+  const blocksByPad: number[][] = []   // blocksByPad[padIdx][si] = 该生页块数
+  let totalBlocks = 0
+  if (continuous) {
+    for (let padIdx = 0; padIdx < pads.length; padIdx++) {
+      const perPage = resolveGrid(pads[padIdx].pad.layout).perPage
+      const nChunks = Math.max(1, Math.ceil(pads[padIdx].items.length / perPage))
+      const stuList = (pads[padIdx].students?.length ? pads[padIdx].students : students) as SheetHtmlStudent[]
+      const arr: number[] = []
+      for (let si = 0; si < stuList.length; si++) { arr.push(nChunks); totalBlocks += nChunks }
+      blocksByPad.push(arr)
+    }
+  }
+  let runPage = 0
   for (let padIdx = 0; padIdx < pads.length; padIdx++) {
     const { pad, items } = pads[padIdx]
     const perPage = resolveGrid(pad.layout).perPage
@@ -567,7 +600,15 @@ export function stringifySheetHtml(
       chunks.forEach((chunk, pi) => {
         const veryLast = padIdx === pads.length - 1
           && si === stuList.length - 1 && pi === chunks.length - 1
-        pageSections.push(pageBlockHtml(pad, chunk, stu, chunks.length, pi + 1, veryLast, wm, date,
+        // D93-S5：连续页码（跨整班） vs 每生从 1 起
+        let pageN = pi + 1
+        let pagesTotal = chunks.length
+        if (continuous) {
+          runPage += 1
+          pageN = runPage
+          pagesTotal = totalBlocks
+        }
+        pageSections.push(pageBlockHtml(pad, chunk, stu, pagesTotal, pageN, veryLast, wm, date,
           groupName, includeSolution, includeWatermark, includePageText, opts.figAssets))
       })
     }

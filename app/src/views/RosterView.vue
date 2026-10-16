@@ -349,7 +349,16 @@ function buildClassInputs(): { inputs: SheetHtmlPadInput[]; unmatched: number; u
   const inputs: SheetHtmlPadInput[] = groups.map((g) => ({
     pad: g.pad,
     items: expandPadItems(g.pad, (kind) => kbStore.book(kind as KbKind)),
-    students: g.students.map((st) => ({ name: st.name, number: st.number, class: st.class, tag: st.tag })),
+    // D93-S5：组内按**学号**排序（空学号排末尾，保持稳定），便于整理 + 连续页码
+    students: [...g.students]
+      .sort((a, b) => {
+        const na = String(a.number || '').trim(); const nb = String(b.number || '').trim()
+        if (!na && !nb) return 0
+        if (!na) return 1
+        if (!nb) return -1
+        return na.localeCompare(nb, undefined, { numeric: true })
+      })
+      .map((st) => ({ name: st.name, number: st.number, class: st.class, tag: st.tag })),
   }))
   return { inputs, unmatched: unmatched.length,
            unmatchedNames: unmatched.map((s) => s.name), total: roster.students.length }
@@ -371,6 +380,7 @@ function buildClassPreviewHtml(): string {
     wmStyles: settingsStore.wmStyles,
     figAssets: settingsStore.figAssets,   // B3/D46-5：题图命中显示真图
     katex: 'relative',                    // 同源 ./katex/，公式离线渲染
+    continuousPage: true,                 // D93-S5：整班页码跨学生连续递增
   })
 }
 
