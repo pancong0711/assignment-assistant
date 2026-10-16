@@ -33,7 +33,10 @@ def expand_items(ws: Path, task: dict) -> list[dict]:
 
     展开逻辑迁移自 engine paper/task.resolve_items（同源：2603 kbtools._oneChap），
     在此增加 solution 字段（题库 solution 列）供评阅 prompt 绑定。
+
+    D89-N3：solution **实时从 kb/solutions/<qid>.json 取最新置顶版**（无版本库时回落 xlsx 列）。
     """
+    from ..files.solutions import effective_solution
     kb_dir = ws / "kb"
     kb_data = read_kb(kb_dir)
     out: list[dict] = []
@@ -53,8 +56,11 @@ def expand_items(ws: Path, task: dict) -> list[dict]:
             img = e.get("img_path")
             if img and not str(img).startswith("/"):
                 img = str(kb_dir / str(img))
+            qid = str(e.get("id") or "")
+            fallback = str(e.get("solution", "") or "")
+            eff = effective_solution(ws, qid, fallback) if qid else {"text": fallback}
             out.append({"序号": idx, "content": e.get("content", ""),
-                        "solution": e.get("solution", ""), "tag": tag, "img": img})
+                        "solution": eff.get("text", fallback), "tag": tag, "img": img})
     if not out:
         logger.warning("任务包未选中任何题目")
     return out

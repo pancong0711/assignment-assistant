@@ -50,15 +50,20 @@ def students_with_tags(ws, class_dir: str) -> list[dict]:
     return [s for s in out if s["name"]]
 
 
-def _questions_of(task: dict) -> list[dict]:
+def _questions_of(task: dict, ws=None) -> list[dict]:
     from ..paper.task import resolve_items
+    from ..files.solutions import effective_solution
     # 用 items（含 tag/id）直接取题目，避免依赖 kb 展开（无 kb 时也能出题面）
     out: list[dict] = []
     for it in (task.get("items") or []):
         if not isinstance(it, dict):
             continue
+        qid = str(it.get("no") or it.get("id") or "")
+        fallback = str(it.get("solution") or "")
+        # D89-N3：有 ws 且有 qid → 实时读最新置顶版
+        sol = effective_solution(ws, qid, fallback).get("text", fallback) if (ws and qid) else fallback
         out.append({"no": str(it.get("no") or ""), "content": str(it.get("content") or ""),
-                    "solution": str(it.get("solution") or ""),
+                    "solution": sol,
                     "tag": str(it.get("tag") or task.get("target_tag") or "")})
     return out
 
@@ -71,7 +76,7 @@ def pads_by_tag(ws, explicit: "dict[str, dict] | None" = None,
     if explicit:
         for tag, task in explicit.items():
             if isinstance(task, dict):
-                out[str(tag)] = {"padId": str(task.get("id") or ""), "questions": _questions_of(task)}
+                out[str(tag)] = {"padId": str(task.get("id") or ""), "questions": _questions_of(task, ws)}
     root = Path(tasks_dir) if tasks_dir else (Path(ws) / "tasks")
     if root.is_dir():
         for f in sorted(root.glob("*.taskpad.json")):
@@ -81,7 +86,7 @@ def pads_by_tag(ws, explicit: "dict[str, dict] | None" = None,
                 continue
             tag = pad_tag(task) or str(task.get("target_tag") or "")
             if tag and tag not in out:
-                out[tag] = {"padId": str(task.get("id") or f.stem), "questions": _questions_of(task)}
+                out[tag] = {"padId": str(task.get("id") or f.stem), "questions": _questions_of(task, ws)}
     return out
 
 

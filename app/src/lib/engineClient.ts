@@ -1433,3 +1433,42 @@ export async function savePack(
   if (!res.ok && !o?.error) throw new Error(`HTTP ${res.status}`)
   return o
 }
+
+/* ---------------- D89-N3/N4：题目 solution 多版本 ---------------- */
+
+export interface SolutionVersion {
+  id: string; text: string; source?: string; model?: string; at?: string; pinned?: boolean
+}
+export interface SolutionDoc {
+  qid: string; kb?: string; chap?: string; versions?: SolutionVersion[]
+  ok?: boolean; error?: string
+}
+
+/** GET /kb/solutions/<qid>：读某题全部答案版本。 */
+export async function fetchKbSolutions(
+  engineAddr: string, token: string | undefined, qid: string,
+): Promise<SolutionDoc> {
+  const base = normalizeEngineAddr(engineAddr)
+  try {
+    return (await getJson2(engineUrlWithToken(base, `/kb/solutions/${encodeURIComponent(qid)}`, token))) as SolutionDoc
+  } catch {
+    return { qid, versions: [] }
+  }
+}
+
+/** POST /kb/solution：追加/置顶/删除某题的某版本（action = add|pin|rm）。 */
+export async function mutateKbSolution(
+  engineAddr: string, token: string | undefined,
+  payload: { action?: 'add' | 'pin' | 'rm'; qid: string; text?: string; source?: string
+    model?: string; kb?: string; chap?: string; pin?: boolean; version?: string },
+): Promise<{ ok?: boolean; error?: string; solutions?: SolutionDoc; added?: SolutionVersion }> {
+  const base = normalizeEngineAddr(engineAddr)
+  const res = await fetch(engineUrlWithToken(base, '/kb/solution', token), {
+    method: 'POST', headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(payload),
+  })
+  const o = (await res.json().catch(() => ({}))) as
+    { ok?: boolean; error?: string; solutions?: SolutionDoc; added?: SolutionVersion }
+  if (!res.ok && !o?.error) throw new Error(`HTTP ${res.status}`)
+  return o
+}

@@ -94,8 +94,8 @@
 | N7 | 修复 SW 缓存：缓存名随构建版本走 | `app/public/sw.js` + 构建注入 | ✅ |
 | N1 | 作业包实体：engine `packs.py` + serve/CLI + PWA store + 设计页顶部「作业包」栏（选择/新建/保存/载入） | `engine/src/assist/packs.py` + `serve.py` + `cli.py` + `app` store/UI + 单测 | ✅ |
 | N2 | 包内清单：③段清单改为"所选包内作业纸"；作业纸操作下沉 | `SheetPreviewSection.vue` + 设计页结构 | ✅ |
-| N3 | solution 多版本：`kb/solutions/` 读写 + 置顶 + xlsx 兼容 + 实时读取 | `engine/src/assist/kb/solutions.py`（或 `files/solutions.py`）+ 单测 | ⏳ |
-| N4 | 题库编辑器：solution 预览键 → 弹窗（题+答案，多版本勾选/置顶） | `KbEditorView.vue` | ⏳ |
+| N3 | solution 多版本：`kb/solutions/` 读写 + 置顶 + xlsx 兼容 + 实时读取 | `engine/src/assist/files/solutions.py` + CLI `kb solution …` + serve `/kb/solution(s)` + `flow.expand_items`/`inputs._questions_of` 实时读 + 单测 | ✅ |
+| N4 | 题库编辑器：solution 预览键 → 弹窗（题+答案，多版本勾选/置顶） | `KbEditorView.vue` + `engineClient.ts` | ✅ |
 | N5 | 题库 AI 作答：入口在 AI 辅助批阅；`/kb/ai-solve` + CLI；不覆盖/多版本/标 ai+model+时间 | `grading/` 新增 + `AiGradingPanel.vue` | ⏳ |
 | N6 | 水印样式一关联多作业纸：样式侧多选应用（写各作业纸 style_ref） | 样式 UI + 端点 | ⏳ |
 | N9 | 文档（docs/04/13/15/39/40）+ 验证 + 去敏 push | 文档 + CI | ⏳ |

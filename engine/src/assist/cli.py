@@ -247,6 +247,83 @@ def kb_snapshot(obj, workspace, verbose):
     click.echo(f"快照 {len(made)} 个文件")
 
 
+# ---------------- D89 solution 多版本库 ----------------
+
+@kb.group("solution")
+def kb_solution():
+    pass
+
+
+@kb_solution.command("list")
+@click.option("--qid", default=None, help="指定题目 id；缺省列出全部")
+@click.option("--workspace", "-w", default=None)
+@click.option("--verbose", "-v", is_flag=True)
+@click.pass_obj
+def kb_solution_list(obj, qid, workspace, verbose):
+    """列出题目答案版本库（JSON）。"""
+    from .files import solutions as sol
+    ws = _setup(verbose or obj.get("verbose"), workspace)
+    data = sol.read_solutions(ws, qid) if qid else {"items": sol.list_solutions(ws)}
+    click.echo(json.dumps(data or {"ok": False, "error": f"无版本库：{qid}"},
+                          ensure_ascii=False, indent=2))
+
+
+@kb_solution.command("add")
+@click.option("--qid", required=True)
+@click.option("--text", default=None, help="答案文本（或 --file）")
+@click.option("--file", "file_", default=None, help="从文件读答案文本")
+@click.option("--source", default="human", type=click.Choice(["human", "ai"]))
+@click.option("--model", default="", help="AI 作答的模型名（source=ai 时建议填）")
+@click.option("--kb", default="", help="题库 kind（problems/copy…）")
+@click.option("--chap", default="")
+@click.option("--pin", is_flag=True, help="追加后立即置顶（设为生效答案）")
+@click.option("--workspace", "-w", default=None)
+@click.option("--verbose", "-v", is_flag=True)
+@click.pass_obj
+def kb_solution_add(obj, qid, text, file_, source, model, kb, chap, pin, workspace, verbose):
+    """追加一版答案（**不覆盖**已有版本）。"""
+    from .files import solutions as sol
+    ws = _setup(verbose or obj.get("verbose"), workspace)
+    body = text if text is not None else (
+        Path(file_).expanduser().read_text(encoding="utf-8") if file_ else "")
+    res = sol.add_version(ws, qid, body, source=source, model=model, kb=kb, chap=chap, pin=pin)
+    click.echo(json.dumps(res, ensure_ascii=False, indent=2))
+    if not res.get("ok"):
+        raise click.ClickException(res.get("error") or "追加失败")
+
+
+@kb_solution.command("pin")
+@click.option("--qid", required=True)
+@click.option("--version", "version_id", required=True)
+@click.option("--workspace", "-w", default=None)
+@click.option("--verbose", "-v", is_flag=True)
+@click.pass_obj
+def kb_solution_pin(obj, qid, version_id, workspace, verbose):
+    """把某版本置顶（设为生效答案，其余取消置顶）。"""
+    from .files import solutions as sol
+    ws = _setup(verbose or obj.get("verbose"), workspace)
+    res = sol.pin_version(ws, qid, version_id)
+    click.echo(json.dumps(res, ensure_ascii=False, indent=2))
+    if not res.get("ok"):
+        raise click.ClickException(res.get("error") or "置顶失败")
+
+
+@kb_solution.command("rm")
+@click.option("--qid", required=True)
+@click.option("--version", "version_id", required=True)
+@click.option("--workspace", "-w", default=None)
+@click.option("--verbose", "-v", is_flag=True)
+@click.pass_obj
+def kb_solution_rm(obj, qid, version_id, workspace, verbose):
+    """删除某版本。"""
+    from .files import solutions as sol
+    ws = _setup(verbose or obj.get("verbose"), workspace)
+    res = sol.remove_version(ws, qid, version_id)
+    click.echo(json.dumps(res, ensure_ascii=False, indent=2))
+    if not res.get("ok"):
+        raise click.ClickException(res.get("error") or "删除失败")
+
+
 @cli.group(help="作业纸生成（竖版/横版 A4）")
 def sheet():
     pass

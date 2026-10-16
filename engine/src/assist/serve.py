@@ -1054,6 +1054,36 @@ class Handler(BaseHTTPRequestHandler):
             rep["config"] = providers.public_config(ws)
             self._json(rep)
             return
+        if u.path == "/kb/solution":
+            payload: dict = {}
+            try:
+                length = int(self.headers.get("Content-Length") or 0)
+                if length:
+                    payload = json.loads(self.rfile.read(length).decode("utf-8")) or {}
+            except Exception as exc:  # noqa: BLE001
+                self._json({"ok": False, "error": f"bad json: {exc}"}, 400)
+                return
+            from .files import solutions as sol
+            ws = Path(self.ws).resolve()
+            action = str(payload.get("action") or "add")
+            if action == "pin":
+                rep = sol.pin_version(ws, str(payload.get("qid") or ""),
+                                      str(payload.get("version") or ""))
+            elif action == "rm":
+                rep = sol.remove_version(ws, str(payload.get("qid") or ""),
+                                         str(payload.get("version") or ""))
+            else:
+                rep = sol.add_version(ws, str(payload.get("qid") or ""),
+                                      str(payload.get("text") or ""),
+                                      source=str(payload.get("source") or "ai"),
+                                      model=str(payload.get("model") or ""),
+                                      kb=str(payload.get("kb") or ""),
+                                      chap=str(payload.get("chap") or ""),
+                                      pin=bool(payload.get("pin")))
+            if rep.get("ok") and payload.get("qid"):
+                rep["solutions"] = sol.read_solutions(ws, str(payload.get("qid")))
+            self._json(rep, 200 if rep.get("ok") else 400)
+            return
         if u.path == "/pack":
             payload: dict = {}
             try:
@@ -1762,6 +1792,14 @@ class Handler(BaseHTTPRequestHandler):
             # D86 §2：provider（掩码）+ 两段式
             from .grading import providers
             self._json({"ok": True, **providers.public_config(Path(self.ws).resolve())})
+        elif u.path.startswith("/kb/solutions/"):
+            from .files import solutions as sol
+            qid = urllib.parse.unquote(u.path[len("/kb/solutions/"):])
+            d = sol.read_solutions(Path(self.ws).resolve(), qid)
+            self._json(d or {"ok": False, "error": f"无版本库：{qid}"}, 200 if d else 404)
+        elif u.path == "/kb/solutions":
+            from .files import solutions as sol
+            self._json({"ok": True, "items": sol.list_solutions(Path(self.ws).resolve())})
         elif u.path == "/packs":
             from . import packs
             self._json({"ok": True, "packs": packs.list_packs(Path(self.ws).resolve())})

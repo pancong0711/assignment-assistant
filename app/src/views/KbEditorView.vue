@@ -4,11 +4,88 @@ import { KB_KINDS, KB_KIND_LABELS, type KbKind } from '../lib/kb'
 import { useKbStore, getKbDirHandle } from '../stores/kb'
 import { detectCapabilities, fsWriteHint, writeFileInDir } from '../lib/fsAccess'
 import { useSettingsStore } from '../stores/settings'
+import { fetchKbSolutions, mutateKbSolution, type SolutionVersion } from '../lib/engineClient'
 
 const kb = useKbStore()
 const settings = useSettingsStore()
 const caps = detectCapabilities()
 const writeHint = fsWriteHint()
+
+/* ---------- D89-N4：solution 多版本预览/管理（预览键 → 弹窗） ----------
+ * 表格 solution 单元格不再直接编辑，改为「预览键」：
+ * 弹窗上半显示题目（content + 题图），下半显示答案版本列表（勾选查看 + 置顶）；
+ * 版本库经引擎 /kb/solutions/<qid>；引擎离线时仅显示 xlsx 里的 solution 旧列。 */
+const solOpen = ref(false)
+const solQid = ref('')
+const solContent = ref('')
+const solKb = ref('')
+const solChap = ref('')
+const solFallback = ref('')          // xlsx solution 列（旧数据）
+const solVersions = ref<SolutionVersion[]>([])
+const solPick = ref('')              // 当前勾选查看的版本 id
+const solBusy = ref(false)
+const solMsg = ref('')
+const solOnline = ref(false)
+
+const solShown = computed<SolutionVersion | null>(() => {
+  if (solPick.value) return solVersions.value.find((v) => v.id === solPick.value) || null
+  return solVersions.value.find((v) => v.pinned) || solVersions.value[solVersions.value.length - 1] || null
+})
+
+async function openSolution(row: { id: string; content: string; solution: string }) {
+  solOpen.value = true
+  solQid.value = row.id
+  solContent.value = row.content
+  solFallback.value = row.solution || ''
+  solVersions.value = []
+  solPick.value = ''
+  solMsg.value = ''
+  solBusy.value = true
+  const doc = await fetchKbSolutions(settings.engineUrl, settings.engineToken, row.id)
+  solVersions.value = doc.versions ?? []
+  solOnline.value = !!doc.versions
+  solKb.value = doc.kb || ''
+  solChap.value = doc.chap || ''
+  solBusy.value = false
+}
+function closeSolution() { solOpen.value = false }
+
+async function solAdd(fromXlsx: boolean) {
+  if (!solQid.value) return
+  const text = fromXlsx ? solFallback.value : (solShown.value?.text ?? '')
+  if (!text.trim()) { solMsg.value = '无内容可追加'; return }
+  solBusy.value = true
+  const r = await mutateKbSolution(settings.engineUrl, settings.engineToken, {
+    action: 'add', qid: solQid.value, text, source: 'human',
+    kb: solKb.value, chap: solChap.value,
+  })
+  solBusy.value = false
+  if (r.ok && r.solutions) { solVersions.value = r.solutions.versions ?? []; solMsg.value = '已追加一版（未覆盖原答案）' }
+  else solMsg.value = r.error || '引擎离线：版本库仅在引擎在线时写入'
+}
+async function solPin(v: SolutionVersion) {
+  solBusy.value = true
+  const r = await mutateKbSolution(settings.engineUrl, settings.engineToken,
+    { action: 'pin', qid: solQid.value, version: v.id })
+  solBusy.value = false
+  if (r.ok && r.solutions) { solVersions.value = r.solutions.versions ?? []; solMsg.value = `已置顶 ${v.id}` }
+  else solMsg.value = r.error || '置顶失败（引擎离线）'
+}
+async function solRm(v: SolutionVersion) {
+  solBusy.value = true
+  const r = await mutateKbSolution(settings.engineUrl, settings.engineToken,
+    { action: 'rm', qid: solQid.value, version: v.id })
+  solBusy.value = false
+  if (r.ok && r.solutions) {
+    solVersions.value = r.solutions.versions ?? []
+    if (solPick.value === v.id) solPick.value = ''
+    solMsg.value = `已删除 ${v.id}`
+  } else solMsg.value = r.error || '删除失败（引擎离线）'
+}
+function solCellText(r: { id: string; solution: string }) {
+  const t = (r.solution || '').slice(0, 14)
+  return t ? `${t}${(r.solution || '').length > 14 ? '…' : ''}` : '（空）'
+}
 
 /* ---------- B3/D46-5：题图上传（kb/fig 素材库，水印 wmAssets 同模式） ----------
  * 行内 📷 按钮 → 选图片 → dataURL 存 settings.figAssets[basename]（预览即时显真图）；
@@ -214,6 +291,14 @@ function addChapter() {
                     @click="uploadFig(r)">📷</button>
                 </div>
               </template>
+              <template v-else-if="col === 'solution'">
+                <div style="display:flex; align-items:center; gap:4px">
+                  <span class="hint" style="margin:0; max-width:180px; overflow:hidden; text-overflow:ellipsis; white-space:nowrap"
+                        :title="r.solution">{{ solCellText(r) }}</span>
+                  <button class="btn small" title="预览题目与答案（多版本勾选/置顶，D89）"
+                          @click="openSolution(r)">🔍 预览</button>
+                </div>
+              </template>
               <input v-else
                 v-model="r[col]"
                 @change="kb.touch(); kb.persist()"
@@ -237,4 +322,44 @@ function addChapter() {
       <p class="hint">说明：纯浏览不需要引擎；以上操作都在浏览器内完成。</p>
     </div>
   </section>
+
+    <!-- D89-N4：solution 多版本预览/管理弹窗 -->
+    <div v-if="solOpen" class="backdrop" @click.self="closeSolution">
+      <div class="modal" style="max-width:640px; width:92vw; max-height:84vh; overflow:auto">
+        <h3 style="margin-top:0">题目与答案 · <code>{{ solQid }}</code></h3>
+        <p class="hint" style="margin:0 0 6px">题目内容：</p>
+        <div style="border:1px solid var(--c-border); border-radius:6px; padding:8px; white-space:pre-wrap; margin-bottom:10px">{{ solContent || '（无题干）' }}</div>
+
+        <p class="hint" style="margin:0 0 4px">
+          答案版本（勾选查看；★=生效/置顶）；
+          <span v-if="solVersions.length">{{ solVersions.length }} 版</span>
+          <span v-else-if="!solBusy">（引擎离线或暂无版本：下方为题库 solution 旧列）</span>
+        </p>
+        <ul style="list-style:none; padding:0; margin:0 0 8px">
+          <li v-for="v in solVersions" :key="v.id"
+              style="display:flex; align-items:center; gap:8px; padding:4px 0; border-bottom:1px dashed var(--c-border)">
+            <input type="radio" :value="v.id" v-model="solPick" />
+            <span style="min-width:42px"><b>{{ v.id }}</b></span>
+            <span class="hint" style="margin:0">{{ v.source === 'ai' ? 'AI' : '人工' }}<template v-if="v.model"> · {{ v.model }}</template><template v-if="v.at"> · {{ v.at }}</template></span>
+            <span style="flex:1"></span>
+            <span v-if="v.pinned" title="生效答案">★</span>
+            <button class="btn small" :disabled="v.pinned || solBusy" @click="solPin(v)">置顶</button>
+            <button class="btn small" :disabled="solBusy" @click="solRm(v)">删除</button>
+          </li>
+        </ul>
+        <div style="border:1px solid var(--c-border); border-radius:6px; padding:8px; white-space:pre-wrap; min-height:48px">
+          <span v-if="solShown">{{ solShown.text }}</span>
+          <span v-else-if="solFallback">{{ solFallback }}<br><span class="hint">（题库 solution 旧列；可「收编为 v1」纳入版本库）</span></span>
+          <span v-else class="hint">（暂无答案）</span>
+        </div>
+        <p style="margin:8px 0 0; display:flex; gap:8px; flex-wrap:wrap">
+          <button class="btn small" :disabled="solBusy || !solFallback.trim()" @click="solAdd(true)">＋ 把旧列收编为首版</button>
+          <button class="btn small" :disabled="solBusy || !solShown" @click="solAdd(false)">＋ 复制当前版为人工新版本</button>
+          <span style="flex:1"></span>
+          <button class="btn small" @click="closeSolution">关闭</button>
+        </p>
+        <p class="hint" v-if="solMsg">{{ solMsg }}</p>
+      </div>
+    </div>
+
 </template>
