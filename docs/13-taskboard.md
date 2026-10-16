@@ -1435,6 +1435,17 @@ applyManualTranslation/setTranslationRatio 中 setTranslationRatio 保留——�
 
 ---
 
+## D92 · 题库下拉/模型共享 + 逐生审核双栏弹窗 + 报告五模式（构成×修订）（2026-10-16）
+
+- 主需求单：`docs/45-D92-grading-report-modes.md`；
+- 报告=二维坐标（构成 ai|human+ai|human × 修订 bool）→ 5 种版式；去掉⑤手选「报告标注」；
+- 草稿升级**双套**（ai/human + humanMode none/replace/append/revise）；**AI 原文不被覆盖**；修订另存 + difflib **标红**（公式整块原子）；
+- 逐生审核 → **左右两栏弹窗**（左作答图；右上 AI 批语可另存修订；右下人工批阅）；**逐生决定版式**；
+- ⑦ kind/chap/ids/model 真下拉（空选项保留）+ 题目预览框；①/⑦/Playground 模型候选共享；③ tags 多选默认全选；新增 `GET /kb/catalog`；
+- 分期：R1 catalog → R2 草稿/报告五模式 → R3 下拉 → R4 审核弹窗 → R5 文档/验证/push。
+
+---
+
 ## D91 · 清单限定当前包 + 跨包移动/复制 + 水印「作业纸×样式」二维 + Playground 修复（2026-10-16）
 
 - 主需求单：`docs/44-D91-pack-scope-watermark-matrix-playground-fix.md`；
