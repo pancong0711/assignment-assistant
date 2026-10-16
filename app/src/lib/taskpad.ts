@@ -133,6 +133,8 @@ export interface Taskpad {
   target_tag?: string
   layout: TaskpadLayout
   items: TaskpadItem[]
+  /** D93：translation 合成题的随机种子（固定到作业纸；同 seed → 同题；缺省=0 稳定） */
+  random_seed?: number
   watermark: TaskpadWatermark
   /** 可留空 = 仅出作业纸 */
   grade: TaskpadGrade
@@ -145,6 +147,22 @@ function rand3(): string {
 }
 
 /** 章节名归一：`chap04` / `第4章` / `4.3` → 简洁可读片段（去空白/路径分隔/非法字符）。 */
+/** D93：可移植确定性索引（与引擎 paper/compose.seed_index 同算法；纯整数 LCG）。 */
+export function seedIndex(seed: number, n: number): number {
+  if (n <= 0) return 0
+  let s = (Number(seed) || 0) >>> 0
+  s = (Math.imul(1103515245, s) + 12345) & 0x7fffffff
+  return s % n
+}
+
+/** D93：summary / copy / translation 合成题常量与模板（与引擎 paper/compose.py 同口径）。 */
+export const SUMMARY_ID = 'summary'
+export const SUMMARY_CONTENT = '请总结课堂内容。（提示：列出主要概念、定律，包括定义、公式、示意图，指出概念之间的关系，如xx是xxx的前提条件、xx经求导积分可得到xxx等。）'
+export const TRANSLATION_ID = 'translation'
+export function copyContent(page: string, content: string, qid: string): string {
+  return `请抄写：${page}页 ${content}，并画出示意图。（${qid}）`
+}
+
 export function normalizeChapLabel(chap?: string): string {
   const raw = (chap ?? '').trim()
   if (!raw) return ''

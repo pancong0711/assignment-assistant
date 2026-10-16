@@ -22,7 +22,9 @@
  *  base64 内嵌真实图片。整班名单缺省用合成 学生A/B（informational）。
  */
 
-import { gridBodyStyle, gridLineStyles, resolveGrid, type Taskpad } from './taskpad'
+import { gridBodyStyle, gridLineStyles, resolveGrid,
+  seedIndex, copyContent, SUMMARY_ID, SUMMARY_CONTENT, TRANSLATION_ID,
+  type Taskpad } from './taskpad'
 import type { KbBook, KbKind } from './kb'
 
 export interface SheetHtmlStudent {
@@ -624,16 +626,42 @@ export function expandPadItems(
   const out: SheetHtmlItem[] = []
   let seq = 0
   const auto = (pad.layout.numbering ?? 'auto') !== 'id'
+  const seed = Number(pad.random_seed ?? 0)
+  const seen = new Set<string>()
+  // D93-translation：从 translation 题库确定性随机抽 1 道（同 seed → 同题）
+  const transRows = (bookOf('translation')?.chapters || []).flatMap((c) => c.rows)
   for (const item of pad.items) {
     const chap = bookOf(item.kb as KbKind)?.chapters.find((c) => c.name === item.chap)
-    if (!chap) continue
+    const tag = String(item.tag || '')
     for (const id of item.ids) {
-      const r = chap.rows.find((x) => x.id === id)
+      const r = chap?.rows.find((x) => x.id === id)
       if (!r) continue
       seq += 1
       const label = item.labels?.[id] || item.labels?.[String(id)] || ''
-      out.push({ id, no: label || (auto ? `${seq}.` : id), content: r.content,
-                 solution: r.solution, imgPath: r.img_path, tag: item.tag })
+      // D93-copy：抄写题有 page → 改写题干
+      const isCopy = item.kb === 'copy' || tag === 'copy'
+      const content = (isCopy && r.page) ? copyContent(r.page, r.content, id) : r.content
+      out.push({ id, no: label || (auto ? `${seq}.` : id), content, solution: r.solution,
+                 imgPath: r.img_path, tag })
+      seen.add(id)
+    }
+    // D93-summary：该 tag 命中 → 追加 1 道（除非已手工加过 id=summary）
+    if (tag === 'summary' && !seen.has(SUMMARY_ID)) {
+      seq += 1
+      out.push({ id: SUMMARY_ID, no: auto ? `${seq}.` : SUMMARY_ID, content: SUMMARY_CONTENT,
+                 solution: '', imgPath: '', tag: tag || 'summary' })
+      seen.add(SUMMARY_ID)
+    }
+    // D93-translation：tag/kb=translation → 确定性抽 1 道
+    if ((tag === 'translation' || item.kb === 'translation') && !seen.has(TRANSLATION_ID)) {
+      if (transRows.length) {
+        const picked = transRows[seedIndex(seed, transRows.length)]
+        seq += 1
+        out.push({ id: TRANSLATION_ID, no: auto ? `${seq}.` : TRANSLATION_ID,
+                   content: picked.content, solution: picked.solution, imgPath: picked.img_path,
+                   tag: tag || 'translation' })
+        seen.add(TRANSLATION_ID)
+      }
     }
   }
   return out
