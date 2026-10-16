@@ -103,6 +103,21 @@ export const useTaskpadStore = defineStore('taskpad', {
     savedJsons(): Array<{ id: string; json: string }> {
       return this.saved.map((s) => ({ id: s.id, json: s.json }))
     },
+    /** D91-M1：以某张已保存作业纸**另存为新作业纸**（新 id；用于"复制到其他包（深拷贝）"）。
+     *  返回新 id；失败返回 ''。 */
+    duplicateSavedAsNew(id: string): string {
+      const entry = this.saved.find((s) => s.id === id)
+      if (!entry) return ''
+      try {
+        const p = parseTaskpad(JSON.parse(entry.json))
+        p.id = makeTaskpadId(undefined, chapLabelOfItems(p.items))
+        this.saved.push({ id: p.id, json: serializeTaskpad(p) })
+        localStorage.setItem(LS_KEY, JSON.stringify(this.saved))
+        return p.id
+      } catch {
+        return ''
+      }
+    },
     addSavedRaw(id: string, json: string) {
       if (!this.saved.some((s) => s.id === id)) this.saved.push({ id, json })
       localStorage.setItem(LS_KEY, JSON.stringify(this.saved))

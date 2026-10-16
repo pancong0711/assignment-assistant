@@ -124,5 +124,30 @@ export const usePackStore = defineStore('packs', {
       const ref = p?.pads?.find((r) => r.padId === padId)
       if (ref) { ref.tag = tag; this.persistLocal() }
     },
+    /** D91-M1：把某作业纸从当前包**移动**到目标包（从当前包移除引用 + 目标包加入引用）。 */
+    async movePadToPack(padId: string, toPackId: string, tag = ''): Promise<{ ok: boolean; error?: string }> {
+      const from = this.currentId
+      if (!from || !toPackId || from === toPackId) return { ok: false, error: '目标包无效' }
+      const src = this.packs.find((x) => x.id === from)
+      const dst = this.packs.find((x) => x.id === toPackId)
+      if (!src || !dst) return { ok: false, error: '作业包不存在' }
+      src.pads = (src.pads ?? []).filter((r) => r.padId !== padId)
+      if (!dst.pads) dst.pads = []
+      if (!dst.pads.some((r) => r.padId === padId)) dst.pads.push({ padId, tag })
+      this.persistLocal()
+      const r1 = await this.mutate({ action: 'save', id: from, pack: src })
+      const r2 = await this.mutate({ action: 'save', id: toPackId, pack: dst })
+      return { ok: r1.ok && r2.ok, error: r1.error || r2.error }
+    },
+    /** D91-M1：**复制引用** —— 当前包保留，目标包加入同一 padId（改一处两包同步）。 */
+    async copyPadRefToPack(padId: string, toPackId: string, tag = ''): Promise<{ ok: boolean; error?: string }> {
+      const dst = this.packs.find((x) => x.id === toPackId)
+      if (!dst || !toPackId) return { ok: false, error: '目标包无效' }
+      if (!dst.pads) dst.pads = []
+      if (!dst.pads.some((r) => r.padId === padId)) dst.pads.push({ padId, tag })
+      this.persistLocal()
+      const r = await this.mutate({ action: 'save', id: toPackId, pack: dst })
+      return { ok: r.ok, error: r.error }
+    },
   },
 })

@@ -166,10 +166,10 @@ function previewAllPads() {
 /* ---------- 作业纸清单（D43-4：全页唯一一份） ---------- */
 interface PadMeta { id: string; term: string; cls: string; items: number; questions: number; orientation: string; perPage: number; grid: string; targetTag: string; inferredTag: string | null }
 const library = computed<PadMeta[]>(() => {
-  // D89-N2：选择了作业包 → 只显示包内作业纸；未选择包 → 显示全部（兼容旧行为）
-  const refs = packStore.currentPadRefs
-  const allow = packStore.currentId ? new Set(refs.map((r) => r.padId)) : null
-  const src = allow ? pad.saved.filter((s) => allow.has(s.id)) : pad.saved
+  // D91-M1：③段清单**只显示当前作业包内**作业纸；未选包 → 空（提示去上方选/建包）
+  if (!packStore.currentId) return []
+  const allow = new Set(packStore.currentPadRefs.map((r) => r.padId))
+  const src = pad.saved.filter((s) => allow.has(s.id))
   return src.map((s) => {
     try {
       const p = parseTaskpad(JSON.parse(s.json))
@@ -194,9 +194,31 @@ const library = computed<PadMeta[]>(() => {
   })
 })
 
+/* ---------- D91-M1：跨包移动 / 复制引用 / 另存为新作业纸到目标包 ---------- */
+const moveTarget = ref('')          // 目标包 id
+const otherPacks = computed(() => packStore.packs.filter((p) => p.id !== packStore.currentId))
+
 function loadFromLibrary(id: string) {
   if (pad.openFromLibrary(id)) notify(`已载入作业纸 ${id}（回到①段继续编辑；保存会覆盖清单中的同名条目）。`)
   else notify(`清单中未找到 ${id}。`)
+}
+
+async function movePadTo(id: string) {
+  if (!moveTarget.value) { notify('请先选择目标作业包'); return }
+  const r = await packStore.movePadToPack(id, moveTarget.value)
+  notify(r.ok ? `已把作业纸 ${id} 移动到作业包「${moveTarget.value}」` : `移动失败：${r.error ?? '引擎离线'}`)
+}
+async function copyPadRefTo(id: string) {
+  if (!moveTarget.value) { notify('请先选择目标作业包'); return }
+  const r = await packStore.copyPadRefToPack(id, moveTarget.value)
+  notify(r.ok ? `已把作业纸 ${id} 的引用复制到作业包「${moveTarget.value}」（改一处两包同步）` : `复制失败：${r.error ?? '引擎离线'}`)
+}
+async function saveNewPadTo(id: string) {
+  if (!moveTarget.value) { notify('请先选择目标作业包'); return }
+  const newId = pad.duplicateSavedAsNew(id)
+  if (!newId) { notify(`另存失败：未找到作业纸 ${id}`); return }
+  const r = await packStore.copyPadRefToPack(newId, moveTarget.value)
+  notify(r.ok ? `已另存为新作业纸 ${newId} 到作业包「${moveTarget.value}」（两包独立）` : `另存失败：${r.error ?? '引擎离线'}`)
 }
 
 function removeFromLibrary(id: string) {
@@ -238,7 +260,7 @@ function removeFromLibrary(id: string) {
     </p>
     <table class="grid" v-if="library.length" style="font-size:12px">
       <thead>
-        <tr><th>id</th><th>学期</th><th>班级</th><th>目标 tag</th><th>选题</th><th>题数</th><th>版式</th><th style="width:170px">操作</th></tr>
+        <tr><th>id</th><th>学期</th><th>班级</th><th>目标 tag</th><th>选题</th><th>题数</th><th>版式</th><th style="width:260px">操作</th></tr>
       </thead>
       <tbody>
         <tr v-for="m in library" :key="m.id">
@@ -255,11 +277,20 @@ function removeFromLibrary(id: string) {
             <button class="btn small" @click="loadFromLibrary(m.id)">载入</button>
             <button class="btn small" style="margin-left:4px" @click="previewPad(m.id)" title="该作业纸的模板态预览（同一 HTML 模板 overlay）">预览</button>
             <button class="btn small" style="margin-left:4px" @click="removeFromLibrary(m.id)">删除</button>
+            <div style="margin-top:4px; display:flex; gap:4px; align-items:center; flex-wrap:wrap">
+              <select v-model="moveTarget" style="max-width:130px" title="选择目标作业包">
+                <option value="">目标包…</option>
+                <option v-for="pk in otherPacks" :key="pk.id" :value="pk.id">{{ pk.id }}</option>
+              </select>
+              <button class="btn small" :disabled="!moveTarget" @click="movePadTo(m.id)" title="从本包移除并加入目标包">移动</button>
+              <button class="btn small" :disabled="!moveTarget" @click="copyPadRefTo(m.id)" title="本包保留 + 目标包加入同一作业纸引用（改一处两包同步）">复制引用</button>
+              <button class="btn small" :disabled="!moveTarget" @click="saveNewPadTo(m.id)" title="以本张另存为新 id 的作业纸加入目标包（两包独立）">另存新纸</button>
+            </div>
           </td>
         </tr>
       </tbody>
     </table>
-    <p class="hint" v-else>{{ packStore.currentId ? "本包内暂无作业纸：点「仅保存」把当前作业纸纳入本包，或在「作业包」栏调整包内引用。" : "清单为空：点「仅保存」或「导出作业纸 JSON」后出现在这里。" }}</p>
+    <p class="hint" v-else>{{ packStore.currentId ? "本包内暂无作业纸：点「仅保存」把当前作业纸纳入本包，或在「作业包」栏调整包内引用。" : "请先在上方「作业包」栏选择或新建一个作业包——清单只显示当前包内的作业纸。" }}</p>
     <p class="hint" v-if="status">{{ status }}</p>
 
     <SheetHtmlPreviewModal
