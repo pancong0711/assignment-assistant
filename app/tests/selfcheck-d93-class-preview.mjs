@@ -45,3 +45,30 @@ assert.ok(htmlC.includes('waitReady') && htmlC.includes('renderMathInElement'), 
 console.log('3) KaTeX 就绪等待脚本存在 … ok')
 
 console.log('\nD93-S5 整班预览（连续页码 + KaTeX 就绪）自检通过 ✔')
+
+/* ---------- D93-fix：整班学生按学号升序（教务处名单顺序） ---------- */
+{
+  // 镜像 buildClassInputs 的排序（含空学号排末尾 + 稳定）
+  function sortByNumber(students) {
+    return [...students].map((st, i) => ({ st, i })).sort((A, B) => {
+      const na = String(A.st.number || '').trim(), nb = String(B.st.number || '').trim()
+      const ha = na !== '', hb = nb !== ''
+      if (ha && hb) { const c = na.localeCompare(nb, undefined, { numeric: true }); return c !== 0 ? c : A.i - B.i }
+      if (ha !== hb) return ha ? -1 : 1
+      return A.i - B.i
+    }).map(({ st }) => st)
+  }
+  // 输入：分数降序（模拟成绩源顺序）
+  const input = [
+    { name: 'D', number: '2026004' }, { name: 'B', number: '2026002' },
+    { name: 'A', number: '2026001' }, { name: 'C', number: '2026003' },
+    { name: 'X', number: '' },
+  ]
+  const got = sortByNumber(input).map((s) => s.name)
+  assert.deepEqual(got, ['A', 'B', 'C', 'D', 'X'], `按学号升序（空号末尾），实得 ${got}`)
+  // 数值感知：2 < 10
+  const g2 = sortByNumber([{ name: 'y', number: '10' }, { name: 'x', number: '2' }]).map((s) => s.name)
+  assert.deepEqual(g2, ['x', 'y'], '学号数值感知排序')
+  console.log('4) 整班按学号升序（空号末尾、数值感知）… ok')
+}
+console.log('\nD93-fix 整班顺序自检通过 ✔')

@@ -349,9 +349,21 @@ function buildClassInputs(): { inputs: SheetHtmlPadInput[]; unmatched: number; u
   const inputs: SheetHtmlPadInput[] = groups.map((g) => ({
     pad: g.pad,
     items: expandPadItems(g.pad, (kind) => kbStore.book(kind as KbKind)),
-    // D93：保持**点名册原始顺序**（partitionStudentsByTag 已按 roster.students 顺序 push），
-    // 组内不再二次排序；连续页码按此顺序递增。
-    students: g.students.map((st) => ({ name: st.name, number: st.number, class: st.class, tag: st.tag })),
+    // D93-fix：按**学号升序**排序（= 教务处点名册顺序）；学号空缺者排末尾、保持稳定。
+    // 说明：成绩/雨课堂源常按分数降序，故必须显式按学号重排，才能得到教务处名单顺序。
+    students: [...g.students]
+      .map((st, i) => ({ st, i }))
+      .sort((A, B) => {
+        const na = String(A.st.number || '').trim(), nb = String(B.st.number || '').trim()
+        const ha = na !== '', hb = nb !== ''
+        if (ha && hb) {
+          const c = na.localeCompare(nb, undefined, { numeric: true })
+          return c !== 0 ? c : A.i - B.i
+        }
+        if (ha !== hb) return ha ? -1 : 1   // 有学号在前
+        return A.i - B.i                    // 都空 → 稳定原序
+      })
+      .map(({ st }) => ({ name: st.name, number: st.number, class: st.class, tag: st.tag })),
   }))
   return { inputs, unmatched: unmatched.length,
            unmatchedNames: unmatched.map((s) => s.name), total: roster.students.length }
