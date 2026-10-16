@@ -1,7 +1,7 @@
 # D90 任务需求单：LLM Playground（AI 辅助批阅选项卡内的大模型试验台）
 
 > 日期：2026-10-16
-> 状态：需求登记（按推荐默认执行；标注「待定」处可随时改）。
+> 状态：**P1–P5 全部完成**（2026-10-16）。验证：engine pytest 357 passed、PWA build+selfcheck、脱敏扫描全绿；真机实测待用户。
 > 关联：`docs/39-D86-...`（provider/两段式/key 安全）、`docs/42-D89-...`（AI 集中选项卡）、
 > `engine/src/assist/grading/llm.py`（chat / chat_with_images / batch_chat）、
 > `engine/src/assist/grading/llm_batch.py`（provider batch API）。
@@ -87,7 +87,7 @@
 | P2 | 引擎：记录/文件夹 CRUD + batch（并发）+ provider batch 可选 | 同上 + `batch` + 单测 | ✅ |
 | P3 | serve 端点（ask/batch/upload/records/folder）+ CLI `assist playground …` | `serve.py` + `cli.py` + 单测 | ✅ |
 | P4 | PWA：⑧ Playground 区（提问/附件/回复）+ 记录管理（文件夹/勾选/移动/删除） | `PlaygroundPanel.vue`（挂 AiGradingPanel） + `engineClient.ts` + **provider/模型选择** | ✅ |
-| P5 | 文档（docs/04/13/15/39/42）+ 验证 + 去敏 push | 文档 + CI | ⏳ |
+| P5 | 文档（docs/04/13/15/39/43）+ 验证 + 去敏 push | 文档 + CI | ✅ |
 
 ## 7. 待定项（可随时改）
 

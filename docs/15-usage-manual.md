@@ -301,3 +301,43 @@ assist sheet make --task t.taskpad.json --assets-dir <dir>   # 显式素材目�
 
 - 「版式」页 → 水印编辑器 → 命名样式库底部「把一个样式应用到多张作业纸」：
   选样式 + 勾作业纸 → 「应用到勾选的作业纸」（写入各作业纸 `style_ref`）。
+
+---
+
+# 2026-10-16 · LLM Playground（AI 辅助批阅 → ⑧）（D90）
+
+## 1. 用途
+
+试验大模型：把**问题**（可带**图片/文档**）发出去，看模型回复。**单次调用、无多轮对话**（每次独立）。
+适合试 prompt、试模型、试题目理解；结果**自动留档**便于回看。
+
+## 2. 提问
+
+「AI 辅助批阅」选项卡 → **⑧ Playground**：
+
+1. **provider / 模型**：下拉选已配置的 provider（D86 建的），或「（评阅段配置）」沿用默认；
+   模型名可填或从下拉选；temperature 可选。
+2. **问题**：文本框输入（支持 LaTeX，如 `$E=mc^2$`）。
+3. **附件**：「＋ 添加附件」→ 图片（png/jpg/webp/gif）、文档（pdf/docx/txt/md/csv）。
+   - pdf/docx 由引擎抽文本后随问题发送；旧版 `.doc` 不支持，请先转 docx/pdf。
+4. 点 **▶ 提问** → 右侧呈现回复（LaTeX 渲染，离线也渲染）。
+
+## 3. 批量
+
+勾「批量模式」→ 每行一个问题 → **▶ 批量发送**（逐条独立调用，受控并发，落同一批次）。
+
+## 4. 记录管理（本地留档）
+
+- 记录落 `<ws>/playground/records/`；下方按**文件夹**分组显示。
+- 建文件夹、勾选多条 → **移动到…** / **删除所选**；单条可「查看」（展开问答）/「删除」。
+
+## 5. CLI（脚本/AI agent）
+
+```bash
+assist playground ask -q "什么是熵？" --attach kb/fig/x.png --provider aliyun --model qwen-max
+assist playground batch --questions-file qs.txt --provider aliyun
+assist playground records [--folder 默认]
+assist playground move --ids r1,r2 --folder 实验
+assist playground rm --id r1
+assist playground folders new --name 实验
+```

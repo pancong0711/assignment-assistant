@@ -25,6 +25,10 @@
     _archived/                     # 毕业的班（不再使用但可查档）
   exports/                         # zip 导出包暂存
   packs/                           # D89：作业包 <id>.pack.json（一次分层作业全部作业纸的集合）
+  playground/                      # D90：LLM Playground 记录与文件夹
+    records/<id>.json              #   单次/批量调用的问题+答案+附件+provider/model+时间
+    folders.json                   #   文件夹列表（记录用 folder 字段归属）
+  .runtime/playground/uploads/     # D90：Playground 附件临时落盘（图片/pdf/docx/txt）
   assets/                          # D87：教师手工维护的静态素材（workspace 优先）
     watermark/                     #   水印图片（PWA 经引擎上传落盘；教师也可手工放）
       styles/<样式名>.json          #   命名水印样式（default 单选；与作业纸 style_ref 关联）
@@ -103,6 +107,19 @@
 - 题库编辑器 solution 单元格为**预览键** → 弹窗（题+答案，多版本勾选/置顶）；
 - AI 作答（AI 辅助批阅 ⑦区 / CLI `kb ai-solve` / `POST /kb/ai-solve`）：**不覆盖**、新增版本、标 source=ai + model + 时间戳；
 - CLI：`assist kb solution list|add|pin|rm`；serve：`GET /kb/solutions[/<qid>]`、`POST /kb/solution`。
+
+## D90：LLM Playground（数据模型与安全）
+
+- 定位：**单次调用**大模型做试验（**无多轮对话上下文**）——问题文本 + 图片 + 文档（pdf/docx/txt）→ 回复；
+  支持 batch（逐条独立调用，受控并发）；问题与答案**本地留档**。
+- 记录 `<ws>/playground/records/<id>.json`：
+  `{id, folder, at, provider, model, temperature, mode(single|batch), batchGroup, question, attachments[], answer, notes[], error}`；
+- 文件夹 `<ws>/playground/folders.json`（"默认"恒在）；记录用 `folder` 归属；支持新建/重命名/删除（删夹记录回默认）；
+- 附件 `<ws>/.runtime/playground/uploads/`：白名单（图片/pdf/docx/txt/md/csv/json）+ basename 清洗；旧版 `.doc` 不支持解析（提示转 docx/pdf）；
+- 文档抽取引擎侧完成：pdf→`pypdf`、docx→解压 `word/document.xml` 抽 `<w:t>`、文本直读（不新增依赖）；
+- 安全：复用 D86 provider/两段式（`get_provider` 内部取明文 key，**绝不下发/入日志**）；`POST /playground/*` 与 CLI 同口径；
+- 端点：`POST /playground/ask|batch|upload|record|folder`、`GET /playground/records|folders|record/<id>`；
+  CLI：`assist playground ask|batch|records|move|rm`、`assist playground folders list|new|rm`。
 
 ## 运行期目录（xxt 工件，D84–D86 新增）
 

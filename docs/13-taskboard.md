@@ -1443,6 +1443,8 @@ applyManualTranslation/setTranslationRatio 中 setTranslationRatio 保留——�
 - 复用：D86 provider/两段式/key 安全；`llm.py`（chat/chat_with_images/batch_chat）；`llm_batch.py`（provider batch）；
 - UI：AI 选项卡新增 **⑧ Playground**（AI 相关集中）；
 - 分期：P1 引擎模块（ask/extract/store）→ P2 记录/文件夹 + batch → P3 serve/CLI → P4 PWA → P5 文档/验证/push。
+- 状态：**P1–P5 全部完成**；验证 engine pytest 357 passed / PWA build+selfcheck / 脱敏扫描全绿。
+  **真机实测（配 key 跑一次 Playground 提问 + 附件）待用户**。
 
 ---
 
