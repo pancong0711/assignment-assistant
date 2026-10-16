@@ -1435,6 +1435,16 @@ applyManualTranslation/setTranslationRatio 中 setTranslationRatio 保留——�
 
 ---
 
+## D94 · 点名册顺序为准（保序 merge）+ 标签预览/总览按加权成绩排序（2026-10-16）
+
+- 主需求单：`docs/47-D94-roster-order-and-sort-views.md`；
+- 根因：`addScoreSource` 的 roster 分支用 `src.rows.map → this.students = merged` **重建数组**（成绩源常按分数降序）→ 打乱点名册顺序；旧代码 `pd.merge(namelist, score, how='left')` 是**保序**的；
+- 拍板：**点名册为准**（整班预览用 roster.students 顺序，去学号排序）；**现有点名册为准**（加成绩=保序 merge，新同学 append）；**导新点名册则以新名单为准**（载入名单=替换）；
+- 新增：**标签预览 / 加权成绩总览** 加「按加权成绩 降序/升序」按钮（仅视图排序）；
+- 分期：T1 保序 merge → T2 整班预览去学号排序 → T3 排序按钮 → T4 文档/验证/push。
+
+---
+
 ## D93 · summary/copy/translation 合成题 + 水印预览修复 + 清单列 + 整班预览页码/公式（2026-10-16）
 
 - 主需求单：`docs/46-D93-tag-compose-class-preview.md`；
