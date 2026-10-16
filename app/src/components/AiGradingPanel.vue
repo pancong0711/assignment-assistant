@@ -11,6 +11,7 @@ import {
   extractJobError, fetchLlmConfig, fetchXxtClassMap, fetchXxtGradeDrafts, fetchXxtLoginJob,
   fetchXxtReviewIndex, fetchXxtReviewStudents, postLlmProvider, postXxtClassMap,
   saveXxtGradeDraft, startXxtGradeAi, startXxtGradeRenderDrafts, startXxtGradeUpload,
+  startKbAiSolve,
 } from '../lib/engineClient'
 
 const props = defineProps<{ engineAddr: string; token?: string }>()
@@ -22,6 +23,37 @@ const msg = ref('')
 const busy = ref(false)
 const progress = ref('')
 let pollTimer: number | undefined
+
+/* ⑦ 题库 AI 作答（D89-N5）：对题库题目生成参考答案，不覆盖、可多版本 */
+const kbKind = ref('problems'); const kbChap = ref(''); const kbIds = ref(''); const kbModel = ref('')
+const kbPin = ref(false); const kbApply = ref(false)
+const kbSolveMsg = ref('')
+const kbSolving = ref(false)
+const kbKinds = ref<string[]>(['problems', 'copy', 'qa', 'distinguish', 'innovation'])
+async function solveByKb() {
+  kbSolving.value = true; kbSolveMsg.value = '正在启动题库 AI 作答……'
+  try {
+    const ids = kbIds.value.split(',').map((x) => x.trim()).filter(Boolean)
+    const jobId = await startKbAiSolve(props.engineAddr, props.token, {
+      kb: kbKind.value, chap: kbChap.value, ids, model: kbModel.value,
+      pin: kbPin.value, apply: kbApply.value,
+    })
+    const tick = async () => {
+      try {
+        const job = await fetchXxtLoginJob(props.engineAddr, props.token, jobId)
+        const lines = job.lines || []
+        kbSolveMsg.value = (lines.slice(-1)[0] || '进行中…').slice(-220)
+        if (job.status === 'running') { window.setTimeout(tick, 2000); return }
+        kbSolveMsg.value = `${kbApply.value ? '作答并写回' : 'dry-run 预览'}完成：' + (lines.slice(-2).join(' ') || '')`
+      } catch (e) { kbSolveMsg.value = extractJobError(String(e)) || String(e) }
+    }
+    tick()
+  } catch (e) {
+    kbSolveMsg.value = String((e as Error).message || e)
+  } finally {
+    kbSolving.value = false
+  }
+}
 
 /* ① LLM 设置 */
 const llmConfig = ref<{ providers?: any[]; stages?: Record<string, any>; default_base_url?: string }>({})
@@ -430,4 +462,26 @@ onMounted(async () => { await loadConfig(); await loadWorks() })
       完整逐生预览（作答图 + 两栏批语 + 旋转/上下位）仍在「作业预览-学习通 → 批阅图片 → 逐生预览」。
     </p>
   </div>
+
+    <h3 style="margin-top:14px">⑦ 题库 AI 作答（对题目生成参考答案；不覆盖、可多版本）</h3>
+    <div style="display:flex; gap:8px; align-items:center; flex-wrap:wrap">
+      <span class="hint" style="margin:0">题库：</span>
+      <select v-model="kbKind" style="min-width:120px">
+        <option v-for="k in kbKinds" :key="k" :value="k">{{ k }}</option>
+      </select>
+      <input v-model="kbChap" placeholder="章节（如 chap10；空=整库）" style="width:160px" />
+      <input v-model="kbIds" placeholder="题号（逗号分隔；空=整章）" style="width:200px" />
+      <input v-model="kbModel" placeholder="模型名（空=评阅段配置）" style="width:180px" />
+      <label class="field"><input type="checkbox" v-model="kbPin" /> 作答后置顶</label>
+      <label class="field" title="不勾=仅 dry-run 预览将作答哪些题；勾=真正调 LLM 并写回 kb/solutions/">
+        <input type="checkbox" v-model="kbApply" /> 真正作答并写回
+      </label>
+      <button class="btn" :disabled="kbSolving" @click="solveByKb">▶ {{ kbApply ? 'AI 作答并写回' : 'AI 作答（dry-run）' }}</button>
+    </div>
+    <p class="hint" style="margin:6px 0 0">
+      AI 作答**不覆盖**原答案：每次新增一版（含模型名 + 时间戳），可在「题库编辑器 → solution 🔍 预览」里勾选查看/置顶；
+      作业包与批阅会**实时读取置顶版**。
+    </p>
+    <p class="hint" v-if="kbSolveMsg">{{ kbSolveMsg }}</p>
+
 </template>

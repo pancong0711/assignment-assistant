@@ -1472,3 +1472,25 @@ export async function mutateKbSolution(
   if (!res.ok && !o?.error) throw new Error(`HTTP ${res.status}`)
   return o
 }
+
+/* ---------------- D89-N5：题库 AI 作答 ---------------- */
+
+/** POST /kb/ai-solve：题库题目 AI 作答（返回 job_id；dry-run 也走 job 流）。 */
+export async function startKbAiSolve(
+  engineAddr: string, token: string | undefined,
+  payload: { kb?: string; chap?: string; ids?: string[]; model?: string; pin?: boolean; apply?: boolean },
+): Promise<string> {
+  const base = normalizeEngineAddr(engineAddr)
+  const res = await fetch(engineUrlWithToken(base, '/kb/ai-solve', token), {
+    method: 'POST', headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(payload),
+  })
+  if (!res.ok) {
+    let detail = `HTTP ${res.status}`
+    try { const o = (await res.json()) as { error?: string }; if (o?.error) detail = o.error } catch { /* keep */ }
+    throw new Error(detail)
+  }
+  const o = (await res.json()) as { ok?: boolean; job_id?: string; error?: string }
+  if (!o?.ok || !o.job_id) throw new Error(o?.error || '未返回 job_id')
+  return o.job_id
+}

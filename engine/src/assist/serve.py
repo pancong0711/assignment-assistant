@@ -1054,6 +1054,42 @@ class Handler(BaseHTTPRequestHandler):
             rep["config"] = providers.public_config(ws)
             self._json(rep)
             return
+        if u.path == "/kb/ai-solve":
+            payload: dict = {}
+            try:
+                length = int(self.headers.get("Content-Length") or 0)
+                if length:
+                    payload = json.loads(self.rfile.read(length).decode("utf-8")) or {}
+            except Exception as exc:  # noqa: BLE001
+                self._json({"ok": False, "error": f"bad json: {exc}"}, 400)
+                return
+            # 默认 dry-run；apply=true 才真跑并写回 kb/solutions/
+            apply = bool(payload.get("apply"))
+            args = ["kb", "ai-solve", "--kb-kind", str(payload.get("kb") or "problems")]
+            if payload.get("chap"):
+                args += ["--chap", str(payload.get("chap"))]
+            ids = payload.get("ids")
+            if isinstance(ids, list) and ids:
+                args += ["--ids", ",".join(str(i) for i in ids)]
+            if payload.get("model"):
+                args += ["--model", str(payload.get("model"))]
+            if payload.get("pin"):
+                args += ["--pin"]
+            if apply:
+                args += ["--apply"]
+            home = _xxt_home(); env = _xxt_env(home); cwd = str(_ws())
+            ok, detail = _xxt_preflight(cwd, env)
+            if not ok:
+                self._json({"ok": False, "error": "engine 无法 import assist.cli", "detail": detail}, 500)
+                return
+            job_id = secrets.token_urlsafe(6)
+            self._start_stream_job(job_id, _xxt_cli_cmd(args), env, "kb_ai_solve", "kb-ai-solve", cwd,
+                                   journal_kind="kb_ai_solve",
+                                   journal_params={"kb": payload.get("kb") or "problems",
+                                                   "chap": payload.get("chap") or "",
+                                                   "apply": apply})
+            self._json({"ok": True, "job_id": job_id})
+            return
         if u.path == "/kb/solution":
             payload: dict = {}
             try:

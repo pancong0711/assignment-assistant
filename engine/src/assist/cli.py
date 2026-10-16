@@ -247,6 +247,34 @@ def kb_snapshot(obj, workspace, verbose):
     click.echo(f"快照 {len(made)} 个文件")
 
 
+@kb.command("ai-solve")
+@click.option("--kb-kind", "kb_kind", default="problems", help="题库 kind（problems/copy/qa…）")
+@click.option("--chap", default="", help="章节 sheet 名（如 chap10）；缺省=整库")
+@click.option("--ids", default="", help="题号（逗号分隔）；缺省=该章全部")
+@click.option("--model", default="", help="覆盖模型名（缺省取评阅段配置）")
+@click.option("--pin", is_flag=True, help="作答后置顶为新生效答案（默认不置顶，不抢原答案）")
+@click.option("--apply", is_flag=True, help="真正写回 kb/solutions/（缺省 dry-run 只预览）")
+@click.option("--workspace", "-w", default=None)
+@click.option("--verbose", "-v", is_flag=True)
+@click.pass_obj
+def kb_ai_solve(obj, kb_kind, chap, ids, model, pin, apply, workspace, verbose):
+    """D89-N5：对题库题目做 AI 作答（**不覆盖**原答案，新增版本；默认 dry-run）。"""
+    from .grading import solve as solve_mod
+    ws = _setup(verbose or obj.get("verbose"), workspace)
+    id_list = [x.strip() for x in str(ids).split(",") if x.strip()]
+    targets = solve_mod.list_targets(ws, kb_kind, chap, id_list)
+    if not targets:
+        raise click.ClickException("未选中任何题目（检查 --kb-kind/--chap/--ids）")
+    res = solve_mod.solve_targets(ws, targets, model=model, apply=apply, pin=pin, dry_run=True)
+    if res.get("dryRun"):
+        click.echo(json.dumps({"dryRun": True, "planned": res["planned"],
+                               "ids": [p["id"] for p in res.get("plans", [])]},
+                              ensure_ascii=False, indent=2))
+        click.echo("（dry-run：加 --apply 才真正作答并写回 kb/solutions/）")
+        return
+    click.echo(json.dumps(res, ensure_ascii=False, indent=2))
+
+
 # ---------------- D89 solution 多版本库 ----------------
 
 @kb.group("solution")
