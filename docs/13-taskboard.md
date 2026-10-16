@@ -1435,6 +1435,17 @@ applyManualTranslation/setTranslationRatio 中 setTranslationRatio 保留——�
 
 ---
 
+## D90 · LLM Playground（AI 辅助批阅选项卡内的模型试验台）（2026-10-16）
+
+- 主需求单：`docs/43-D90-llm-playground.md`；
+- 定位：单次调用（**无多轮上下文**）——问题 + 图片 + 文档（pdf/docx/doc/txt）→ 送 LLM → 呈现回复；
+  支持 batch 发送；问题与答案**本地留档** + 记录管理（建文件夹/移动/删除/勾选查看）；
+- 复用：D86 provider/两段式/key 安全；`llm.py`（chat/chat_with_images/batch_chat）；`llm_batch.py`（provider batch）；
+- UI：AI 选项卡新增 **⑧ Playground**（AI 相关集中）；
+- 分期：P1 引擎模块（ask/extract/store）→ P2 记录/文件夹 + batch → P3 serve/CLI → P4 PWA → P5 文档/验证/push。
+
+---
+
 ## D89 · 作业包（pack）+ solution 多版本/AI 作答 + 样式反查 + SW 修复（2026-10-16 讨论稿）
 
 - 主需求单：`docs/42-D89-pack-and-solution-versions.md`；
