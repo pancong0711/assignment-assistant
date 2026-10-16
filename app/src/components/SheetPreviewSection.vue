@@ -166,7 +166,7 @@ function previewAllPads() {
 }
 
 /* ---------- 作业纸清单（D43-4：全页唯一一份） ---------- */
-interface PadMeta { id: string; term: string; cls: string; items: number; questions: number; orientation: string; perPage: number; grid: string; targetTag: string; inferredTag: string | null }
+interface PadMeta { id: string; items: number; questions: number; orientation: string; perPage: number; grid: string; targetTag: string; inferredTag: string | null; selection: string }
 const library = computed<PadMeta[]>(() => {
   // D91-M1：③段清单**只显示当前作业包内**作业纸；未选包 → 空（提示去上方选/建包）
   if (!packStore.currentId) return []
@@ -177,8 +177,11 @@ const library = computed<PadMeta[]>(() => {
       const p = parseTaskpad(JSON.parse(s.json))
       return {
         id: p.id,
-        term: p.term || '—',
-        cls: p.class || p.class_dir.split('/').pop() || '—',
+        // D93-S4：选题章节/题号（kb: chap: id1、id2；多组用 " ; " 连接）
+        selection: (p.items || []).map((it) => {
+          const ids = (it.ids || []).join('、')
+          return `${it.kb}/${it.chap}${ids ? ': ' + ids : ''}`
+        }).join(' ; ') || '—',
         items: p.items.length,
         questions: p.items.reduce((n, i) => n + i.ids.length, 0),
         orientation: p.layout.orientation === 'landscape' ? '横版' : '竖版',
@@ -191,7 +194,7 @@ const library = computed<PadMeta[]>(() => {
         inferredTag: padInferredTag(p.items, p.target_tag),
       }
     } catch {
-      return { id: s.id, term: '?', cls: '?', items: 0, questions: 0, orientation: '?', perPage: 0, grid: '?×?', targetTag: '', inferredTag: null }
+      return { id: s.id, selection: '?', items: 0, questions: 0, orientation: '?', perPage: 0, grid: '?×?', targetTag: '', inferredTag: null }
     }
   })
 })
@@ -262,17 +265,15 @@ function removeFromLibrary(id: string) {
     </p>
     <table class="grid" v-if="library.length" style="font-size:12px">
       <thead>
-        <tr><th>id</th><th>学期</th><th>班级</th><th>目标 tag</th><th>选题</th><th>题数</th><th>版式</th><th style="width:260px">操作</th></tr>
+        <tr><th>id</th><th>目标 tag</th><th title="题库/章节: 题号">选题（章节/题号）</th><th>题数</th><th>版式</th><th style="width:260px">操作</th></tr>
       </thead>
       <tbody>
         <tr v-for="m in library" :key="m.id">
           <td style="max-width:120px; word-break:break-all">{{ m.id }}</td>
-          <td>{{ m.term }}</td>
-          <td>{{ m.cls }}</td>
           <td style="white-space:nowrap">
             {{ m.targetTag ? (STUDENT_TAG_LABELS[m.targetTag] ?? m.targetTag) : (m.inferredTag ? `自动推断：${m.inferredTag}` : '⚠ 混合 tag 未绑定') }}
           </td>
-          <td style="text-align:center">{{ m.items }}</td>
+          <td style="max-width:360px; overflow:hidden; text-overflow:ellipsis; white-space:nowrap" :title="m.selection">{{ m.selection }}</td>
           <td style="text-align:center">{{ m.questions }}</td>
           <td style="white-space:nowrap">{{ m.orientation }} / {{ m.perPage }}题页 · {{ m.grid }}</td>
           <td style="white-space:nowrap">
