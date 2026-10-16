@@ -108,6 +108,16 @@
 - AI 作答（AI 辅助批阅 ⑦区 / CLI `kb ai-solve` / `POST /kb/ai-solve`）：**不覆盖**、新增版本、标 source=ai + model + 时间戳；
 - CLI：`assist kb solution list|add|pin|rm`；serve：`GET /kb/solutions[/<qid>]`、`POST /kb/solution`。
 
+## D93：按 tag 合成题（summary / copy-page / translation）
+
+- **触发**：作业纸 `target_tag`（或 items 的 tag）= `summary`/`translation` 时，**展开阶段自动追加**合成题；
+  `kb=copy` 分组按行 `page` 改写题干。**派生题不写进 `items`**，故**切换 tag 即自动移除**（不残留）；
+- **summary**：固定模板（id=`summary`），每题纸 1 道；已在 items 手工加过同 id 则去重；
+- **copy**：行有 `page` → `请抄写：{page}页 {content}，并画出示意图。（{id}）`；
+- **translation**：从 `translation.xlsx` **确定性随机**抽 1 道（id=`translation`）；
+- **随机种子**：作业纸 JSON 增 `random_seed`（整型）；同 seed → 同题；一次分层作业多纸同题 = 共享同一 seed；
+  三端同源用**可移植确定性公式** `seed_index`（引擎 `paper/compose.py` 与 PWA `taskpad.seedIndex` 逐值一致，parity 哨兵护航）。
+
 ## D92：批阅草稿双套 + 报告五模式（数据模型）
 
 ### 草稿双套（`<xxt_home>/grade-drafts/<classId>/<workId>.json`）

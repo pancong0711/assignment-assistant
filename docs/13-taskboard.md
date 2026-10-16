@@ -1444,6 +1444,7 @@ applyManualTranslation/setTranslationRatio 中 setTranslationRatio 保留——�
 - 清单列：+章节/题号，−学期/班级；
 - 整班预览：按**学号排序** + 页码**跨班连续递增** + **公式正常渲染**（KaTeX 就绪等待）；
 - 分期：S1 引擎合成 → S2 PWA 同源+parity → S3 水印预览 → S4 清单列 → S5 整班预览 → S6 文档/验证/push。
+- 状态：**S1–S6 全部完成**；验证 engine pytest 383 passed / PWA build+selfcheck / 脱敏扫描全绿。
 
 ---
 
