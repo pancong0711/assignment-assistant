@@ -3,7 +3,7 @@
  *  提问（文本 + 图片/文档附件）+ provider/模型选择 → 一次调用 → 呈现回复；
  *  支持批量发送；问题/答案本地留档（<ws>/playground/records/）+ 文件夹管理/勾选查看/移动/删除。
  *  与 D86 provider/key 安全同口径（key 只在引擎侧，绝不下发/入日志）。 */
-import { computed, onMounted, ref } from 'vue'
+import { computed, onMounted, ref, watch } from 'vue'
 import {
   fetchLlmConfig, fetchPlaygroundRecords, mutatePlaygroundFolder, mutatePlaygroundRecord,
   playgroundAsk, playgroundBatch, postLlmProvider, uploadPlaygroundAttachment, type PlaygroundRecord,
@@ -205,7 +205,42 @@ const answerHtml = computed(() => {
   ].join('')
 })
 
-onMounted(() => { loadProviders(); loadRecords() })
+/* ---------- D91-M4：输入草稿自动保存（localStorage；刷新不丢，可清空） ---------- */
+const DRAFT_KEY = 'assignment-assistant.playground.draft.v1'
+function saveDraft() {
+  try {
+    localStorage.setItem(DRAFT_KEY, JSON.stringify({
+      provider: provider.value, model: model.value, customModel: customModel.value,
+      temperature: temperature.value, folder: folder.value, batchMode: batchMode.value,
+      question: question.value, batchText: batchText.value, attachments: attachments.value,
+    }))
+  } catch { /* 容量/隐私降级 */ }
+}
+function loadDraft() {
+  try {
+    const d = JSON.parse(localStorage.getItem(DRAFT_KEY) ?? 'null')
+    if (!d || typeof d !== 'object') return
+    provider.value = String(d.provider ?? '')
+    model.value = String(d.model ?? '')
+    customModel.value = !!d.customModel
+    temperature.value = d.temperature ?? null
+    folder.value = String(d.folder ?? '默认')
+    batchMode.value = !!d.batchMode
+    question.value = String(d.question ?? '')
+    batchText.value = String(d.batchText ?? '')
+    attachments.value = Array.isArray(d.attachments) ? d.attachments : []
+  } catch { /* ignore */ }
+}
+function clearDraft() {
+  question.value = ''; batchText.value = ''; attachments.value = []
+  try { localStorage.removeItem(DRAFT_KEY) } catch { /* ignore */ }
+  msg.value = '已清空草稿'
+}
+// 任一输入变化即存（自动保存）
+watch([provider, model, customModel, temperature, folder, batchMode, question, batchText, attachments],
+      saveDraft, { deep: true })
+
+onMounted(() => { loadProviders(); loadRecords(); loadDraft() })
 </script>
 
 <template>
@@ -213,7 +248,7 @@ onMounted(() => { loadProviders(); loadRecords() })
     <h3 style="margin-top:14px">⑧ Playground（单次调用大模型 · 无多轮上下文）</h3>
     <p class="hint" style="margin:0 0 6px">
       提问（文本 + 图片/文档附件）→ 一次调用 → 呈现回复；支持批量；问题与答案**本地留档**（<code>&lt;ws&gt;/playground/</code>）。
-      文档支持 pdf/docx/txt（旧版 .doc 请转 docx/pdf）。
+      文档支持 pdf/docx/txt（旧版 .doc 请转 docx/pdf）。输入内容**自动保存到本浏览器**（刷新不丢）。
     </p>
 
     <div style="display:flex; gap:8px; align-items:center; flex-wrap:wrap; margin-bottom:6px">
@@ -257,6 +292,7 @@ onMounted(() => { loadProviders(); loadRecords() })
           <input id="pg-file" type="file" multiple hidden @change="onPickFiles" />
           <button v-if="!batchMode" class="btn primary" :disabled="busy" @click="doAsk">▶ 提问</button>
           <button v-else class="btn primary" :disabled="busy" @click="doBatch">▶ 批量发送</button>
+          <button class="btn small" title="清空输入草稿（提问/批量/附件）" @click="clearDraft">清空草稿</button>
           <span class="hint" style="margin:0" v-if="lastModel">模型：{{ lastModel }}</span>
         </p>
         <p class="hint" style="margin:0" v-for="(a, i) in attachments" :key="i">
