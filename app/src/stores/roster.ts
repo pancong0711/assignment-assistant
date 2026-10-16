@@ -289,7 +289,12 @@ export const useRosterStore = defineStore('roster', {
         const byNumber = new Map(this.students.map((x) => [x.number, x] as const))
         const merged: RosterStudent[] = src.rows.map((r) => {
           const name = String(r[src.nameColumn] ?? '').trim()
-          const number = String(r['学号'] ?? r['number'] ?? '').trim()
+          // B2/D93：学号列优先用解析得到的 numberColumn（表头别名/空格容错），
+          // 回退常见列名——否则学号恒空 → 整班预览无法按学号排序（表现为分数降序）。
+          const numCol = src.numberColumn || ''
+          const number = String(
+            (numCol ? r[numCol] : '') ?? r['学号'] ?? r['number'] ?? r['id'] ?? r['学籍号'] ?? ''
+          ).trim()
           const cls = String(r['班级'] ?? r['class'] ?? '').trim()
           const existing = byNumber.get(number) ?? byNumber.get(name)
           if (existing) {

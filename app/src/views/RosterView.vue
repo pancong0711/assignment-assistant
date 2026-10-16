@@ -403,7 +403,12 @@ function previewWholeClass() {
     const unBrief = unNames.length
       ? `；未出页 ${unNames.length} 人（tag 未绑定或未选兜底变体）：${unNames.slice(0, 12).join('、')}${unNames.length > 12 ? ` 等 ${unNames.length} 人` : ''}`
       : ''
-    classPreviewMsg.value = `已按当前 tag→包绑定生成整班预览（同一打印模板：${total} 名学生 / ${pad.saved.length} 份作业纸映射${unBrief}；口径：${classIncludeAnswers.value ? '教师版（含答案）' : '学生版（不含答案）'}）：iframe 内可滚动查看，「🖨 打印」直接出整班文档。`
+    // D93：学号缺失告警（无学号则无法按教务处名单排序）
+    const noNum = roster.students.filter((x) => !String(x.number || '').trim()).length
+    const numWarn = noNum
+      ? `；⚠ ${noNum} 人无学号：整班顺序按学号排序将不完整，请在名单/成绩源补齐「学号」列`
+      : ''
+    classPreviewMsg.value = `已按当前 tag→包绑定生成整班预览（同一打印模板：${total} 名学生 / ${pad.saved.length} 份作业纸映射${unBrief}；口径：${classIncludeAnswers.value ? '教师版（含答案）' : '学生版（不含答案）'}${numWarn}）：iframe 内可滚动查看，「🖨 打印」直接出整班文档。`
     showClassPreview.value = true
   } catch (e) {
     classPreviewMsg.value = `整班预览生成失败：${(e as Error).message}`
