@@ -230,18 +230,30 @@ async function renameStyle() {
     notify(`已重命名为「${nw}」`)
   } else notify(`重命名失败：${r.error ?? '引擎离线'}`)
 }
-/** D89-N6：把一个样式「应用到多张作业纸」——写入它们的 watermark.style_ref（可多选）。 */
-const wmApplyTargets = ref<string[]>([])
-const wmApplyMsg = ref('')
-function allSavedPads(): { id: string }[] {
-  return (pad.saved || []).map((x) => ({ id: x.id }))
+/** D91-M2：水印「作业纸 × 样式」二维矩阵 —— 行=当前包内作业纸，列=命名样式 + 「不引用」。
+ *  每个交叉点单选；写入该作业纸的 watermark.style_ref（引擎 PDF/HTML 同口径，各纸可用不同样式）。 */
+const wmMatrixMsg = ref('')
+/** 矩阵行：当前包内、且已保存的作业纸 id。 */
+const wmMatrixRows = computed<string[]>(() => {
+  if (!packStore.currentId) return []
+  const allow = new Set(packStore.currentPadRefs.map((r) => r.padId))
+  return (pad.saved || []).filter((x) => allow.has(x.id)).map((x) => x.id)
+})
+/** 矩阵列：全部命名样式（含「不引用」用空串表示）。 */
+function setPadStyleRef(padId: string, styleRef: string) {
+  pad.applyWatermarkStyleRef([padId], styleRef)
+  wmMatrixMsg.value = `作业纸 ${padId} → ${styleRef || '（不引用，用默认样式）'}`
 }
-async function applyStyleToPads() {
-  const name = wmEditStyle.value
-  if (!name) { wmApplyMsg.value = '请先选择要应用的样式'; return }
-  if (!wmApplyTargets.value.length) { wmApplyMsg.value = '请勾选要应用的作业纸'; return }
-  const n = pad.applyWatermarkStyleRef([...wmApplyTargets.value], name)
-  wmApplyMsg.value = `已把样式「${name}」应用到 ${n} 张作业纸（写 style_ref；每张仍可在上方单独改）`
+/** 默认全部勾选当前包，批量把某样式应用到勾选的作业纸。 */
+const wmBatchTargets = ref<string[]>([])
+const wmBatchStyle = ref('')
+const wmBatchMsg = ref('')
+watch(wmMatrixRows, (rows) => { wmBatchTargets.value = [...rows] }, { immediate: true })
+function applyBatchStyle() {
+  if (!wmBatchTargets.value.length) { wmBatchMsg.value = '请勾选要应用的作业纸'; return }
+  if (!wmBatchStyle.value) { wmBatchMsg.value = '请先选择样式'; return }
+  const n = pad.applyWatermarkStyleRef([...wmBatchTargets.value], wmBatchStyle.value)
+  wmBatchMsg.value = `已把样式「${wmBatchStyle.value}」应用到 ${n} 张作业纸`
 }
 
 async function deleteStyle() {
@@ -437,18 +449,57 @@ function saveOnly() {
             <button class="btn small" :disabled="wmStylesBusy || !wmEditStyle" @click="setDefaultStyle">设为默认</button>
             <button class="btn small" :disabled="wmStylesBusy || !wmEditStyle" @click="deleteStyle">删除</button>
           </p>
-          <div class="hint" style="margin:6px 0 0; padding-top:6px; border-top:1px dashed var(--c-border)">
-            <b>把一个样式应用到多张作业纸</b>（写入各作业纸 style_ref）：
-            <select v-model="wmEditStyle" style="max-width:160px">
-              <option value="">— 先选样式 —</option>
-              <option v-for="st in settings.wmStyles" :key="st.name" :value="st.name">{{ st.name }}</option>
-            </select>
-            <span v-for="p in allSavedPads()" :key="p.id" style="margin-left:8px; white-space:nowrap">
-              <label><input type="checkbox" :value="p.id" v-model="wmApplyTargets" /> {{ p.id }}</label>
+          <div style="margin:6px 0 0; padding-top:6px; border-top:1px dashed var(--c-border)">
+            <b>水印「作业纸 × 样式」矩阵</b>
+            <span class="hint" style="margin:0">
+              （行=当前包内作业纸，列=命名样式；每格单选，各作业纸可用**不同**样式；优先级：items &gt; 引用样式 &gt; 默认样式 &gt; 内置三槽）
             </span>
-            <button class="btn small" style="margin-left:8px" :disabled="!wmEditStyle || !wmApplyTargets.length"
-                    @click="applyStyleToPads">应用到勾选的作业纸</button>
-            <span v-if="wmApplyMsg" style="display:block; margin-top:4px">{{ wmApplyMsg }}</span>
+            <p class="hint" style="margin:2px 0 4px" v-if="!packStore.currentId">
+              当前未选作业包：请在上方「作业包」栏选择/新建后，此处显示该包内作业纸的样式矩阵。
+            </p>
+            <table v-else-if="wmMatrixRows.length" class="grid" style="font-size:12px">
+              <thead>
+                <tr>
+                  <th style="text-align:left">作业纸 \ 样式</th>
+                  <th v-for="st in settings.wmStyles" :key="st.name" style="white-space:nowrap">
+                    {{ st.name }}<span v-if="st.default">（默认）</span>
+                  </th>
+                  <th style="white-space:nowrap">不引用</th>
+                </tr>
+              </thead>
+              <tbody>
+                <tr v-for="pid in wmMatrixRows" :key="pid">
+                  <td style="white-space:nowrap">{{ pid }}</td>
+                  <td v-for="st in settings.wmStyles" :key="st.name" style="text-align:center">
+                    <input type="radio" :name="'wm-' + pid" :checked="pad.styleRefOf(pid) === st.name"
+                           @change="setPadStyleRef(pid, st.name)" />
+                  </td>
+                  <td style="text-align:center">
+                    <input type="radio" :name="'wm-' + pid" :checked="!pad.styleRefOf(pid)"
+                           @change="setPadStyleRef(pid, '')" />
+                  </td>
+                </tr>
+              </tbody>
+            </table>
+            <p class="hint" style="margin:2px 0 4px" v-else-if="packStore.currentId">
+              本包内暂无已保存作业纸（先「仅保存」把作业纸纳入本包）。
+            </p>
+            <p class="hint" style="margin:0 0 4px" v-if="wmMatrixMsg">{{ wmMatrixMsg }}</p>
+
+            <div class="hint" style="margin-top:4px">
+              <b>批量应用</b>（默认已勾选当前包全部作业纸）：
+              <span v-for="pid in wmMatrixRows" :key="pid" style="margin-left:8px; white-space:nowrap">
+                <label><input type="checkbox" :value="pid" v-model="wmBatchTargets" /> {{ pid }}</label>
+              </span>
+              <select v-model="wmBatchStyle" style="max-width:160px; margin-left:8px">
+                <option value="">— 选样式 —</option>
+                <option v-for="st in settings.wmStyles" :key="st.name" :value="st.name">{{ st.name }}</option>
+              </select>
+              <button class="btn small" style="margin-left:6px" :disabled="!wmBatchStyle || !wmBatchTargets.length"
+                      @click="applyBatchStyle">应用到勾选的作业纸</button>
+              <button class="btn small" style="margin-left:4px" @click="wmBatchTargets = [...wmMatrixRows]">全选当前包</button>
+              <span v-if="wmBatchMsg" style="display:block; margin-top:2px">{{ wmBatchMsg }}</span>
+            </div>
           </div>
           <p class="hint" style="margin:4px 0 0" v-if="!settings.wmStyles.length">
             暂无命名样式：编辑下方图层后「另存为样式」即可新建；不引用样式则引擎用默认/内置三槽。

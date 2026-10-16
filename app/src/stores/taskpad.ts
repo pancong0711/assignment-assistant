@@ -159,6 +159,15 @@ export const useTaskpadStore = defineStore('taskpad', {
       localStorage.setItem(LS_KEY, JSON.stringify(this.saved))
       return true
     },
+    /** D91-M2：读某张已保存作业纸当前的 watermark.style_ref（矩阵用）。 */
+    styleRefOf(id: string): string {
+      if (this.current.id === id) return this.current.watermark.style_ref ?? ''
+      const entry = this.saved.find((s) => s.id === id)
+      if (!entry) return ''
+      try {
+        return parseTaskpad(JSON.parse(entry.json)).watermark.style_ref ?? ''
+      } catch { return '' }
+    },
     /** D89-N6：把某命名样式应用到选中的多张作业纸（写 watermark.style_ref）。返回成功数。 */
     applyWatermarkStyleRef(ids: string[], styleRef: string): number {
       let n = 0

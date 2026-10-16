@@ -195,4 +195,20 @@ assert.ok(watermarkForExport(parseWatermark({ enabled: true })).enabled === true
   console.log('2f) D89 一样式多作业纸（style_ref 批量往返）… ok')
 }
 
-console.log('\n全部水印/向导自检通过 ✔（阶段4a：onboarding.v1 + items + D87 style_ref + D89 多作业纸）')
+/* ---------- 2g) D91-M2：作业纸×样式 矩阵——各纸可用不同 style_ref ---------- */
+{
+  // 镜像 store.styleRefOf / applyWatermarkStyleRef：每张独立 style_ref，互不影响
+  const pads = ['padA', 'padB', 'padC'].map((id) => parseTaskpad({ id, watermark: { enabled: true } }))
+  const setRef = (id, ref) => {
+    const p = pads.find((x) => x.id === id)
+    p.watermark = { ...p.watermark, style_ref: ref || undefined }
+  }
+  setRef('padA', '期末版'); setRef('padB', '普通版'); setRef('padC', '')   // 三种不同
+  const back = pads.map((p) => parseTaskpad(JSON.parse(serializeTaskpad(p))))
+  assert.equal(back[0].watermark.style_ref, '期末版')
+  assert.equal(back[1].watermark.style_ref, '普通版')
+  assert.equal(back[2].watermark.style_ref, undefined, '第三张不引用（回落默认样式）')
+  console.log('2g) D91 作业纸×样式矩阵（各纸独立 style_ref）… ok')
+}
+
+console.log('\n全部水印/向导自检通过 ✔（阶段4a：onboarding.v1 + items + D87 style_ref + D89 多作业纸 + D91 矩阵）')
