@@ -23,7 +23,7 @@ const TABS = [
   { key: 'roster', label: '班级与标签', component: RosterView },
   { key: 'xxetong', label: '作业预览-学习通', component: XxetongView },
   { key: 'publish', label: '发布-学习通', component: PublishView },
-  { key: 'grading', label: '批阅', component: GradingView },
+  { key: 'grading', label: 'AI 辅助批阅', component: GradingView },
   { key: 'transfer', label: '导入导出', component: TransferView },
   { key: 'help', label: '使用说明', component: HelpView },
   { key: 'journal', label: '操作记录', component: JournalView },

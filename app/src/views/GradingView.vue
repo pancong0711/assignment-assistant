@@ -3,6 +3,7 @@ import { computed, onMounted, ref } from 'vue'
 import { useSettingsStore } from '../stores/settings'
 import { fetchXxtRun, fetchXxtStatus, fetchXxtRuns } from '../lib/engineClient'
 import ProcessStreamView from '../components/ProcessStreamView.vue'
+import AiGradingPanel from '../components/AiGradingPanel.vue'
 import { demoReport, stringifyReviewReportHtml, type ReviewReport } from '../lib/reports'
 import { parseTaskpad, type Taskpad } from '../lib/taskpad'
 
@@ -150,6 +151,10 @@ onMounted(() => { void settings.pingEngine(); void refreshXxtBridge() })
 
 <template>
   <section>
+    <AiGradingPanel :engine-addr="settings.engineUrl" :token="settings.engineToken" />
+
+    <details style="margin-top:14px">
+      <summary class="hint" style="cursor:pointer">高级 / 离线（CLI 指引：选作业纸 + 选本地图片 → 复制命令自行跑）</summary>
     <div class="card">
       <h2>批阅工作台 <small style="font-weight:400;color:var(--c-muted)">作业纸 + 学生图片 → 转录 / 评阅 / 报告（阶段4a 静态版）</small></h2>
 
@@ -284,5 +289,6 @@ onMounted(() => { void settings.pingEngine(); void refreshXxtBridge() })
       </p>
       <p class="hint" v-if="status">{{ status }}</p>
     </div>
+    </details>
   </section>
 </template>

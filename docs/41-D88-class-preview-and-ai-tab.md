@@ -46,7 +46,7 @@
 | §1 | 整班预览 a（syntheticFallback 开关 + 空包跳过） | `sheetHtml.ts` + `RosterView.vue` + selfcheck | ✅ |
 | §2 | 整班预览 b（未匹配学生列名） | `RosterView.vue`（`buildClassInputs` 返回 unmatchedNames；提示列名前 12 + 总数）| ✅ |
 | §3 | 整班预览 c（班级字段解析 + 三端同步 + parity 哨兵） | `sheetHtml.ts`（`stu.class → groupName → 空`）/ `htmlfile.py`（去 classA）/ 模板沿用 class_display + 回归测试 | ✅ |
-| §4 | AI 选项卡重构（迁移面板 + tab 改名 + 保留离线块） | `GradingView.vue` + `App.vue` + 删除 XxetongView 面板 | ⏳ 待做 |
+| §4 | AI 选项卡重构（迁移面板 + tab 改名 + 保留离线块） | 新组件 `components/AiGradingPanel.vue`（六区） + `App.vue` tab 改名「AI 辅助批阅」 + `GradingView.vue` 挂载、原「选包/选图/CLI」收进「高级 / 离线」折叠块 + 删除 XxetongView 临时面板 | ✅ |
 | §5 | 文档（docs/13/39/41、docs/15 手册入口指向）+ 验证 | 文档 + build/selfcheck/CI | ⏳ |
 
 ## 5. 验收
