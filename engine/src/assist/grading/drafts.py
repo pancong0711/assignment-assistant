@@ -78,12 +78,68 @@ def save_drafts_from_grading(ws, *, class_id: str, work_id: str, task_id: str,
                                        "data_b64": base64.b64encode(Path(png).read_bytes()).decode()})
                 except Exception as exc:  # noqa: BLE001
                     logger.warning(f"报告 PNG 生成失败（{student}）：{str(exc)[:120]}")
-        rep = grade_store.save_draft(
-            home, class_id, work_id, key, score=score, comment=comment,
-            images=images or None,
-            extra={"source": f"ai:{task_id}" if kind == "ai" else f"human:{task_id}",
-                   "student": student, "tag": ev.get("tag") or ""})
+        # D92-R2：写入**双套**结构；AI 产物落 ai 套（人工审核另写 human/修订，不覆盖此基线）
+        ai_set = {"score": score, "comment": comment, "reportImages": images or []}
+        if str(kind) == "human":
+            rep = grade_store.save_draft_sets(
+                home, class_id, work_id, key, human={**ai_set, "used": True},
+                human_mode="replace", student=student, tag=ev.get("tag") or "")
+        else:
+            rep = grade_store.save_draft_sets(
+                home, class_id, work_id, key, ai=ai_set,
+                student=student, tag=ev.get("tag") or "")
         written.append({"student": student, "key": key, "ok": rep.get("ok"),
                         "score": score, "images": len(images)})
     return {"ok": bool(written), "count": len(written), "drafts": written,
             "file": str((grade_store.draft_file(home, class_id, work_id) or ""))}
+
+def render_reports_from_drafts(ws, *, class_id: str, work_id: str, task_id: str = "",
+                               class_dir: str = "", home=None, katex_dir=None,
+                               with_report_png: bool = True) -> dict:
+    """D92-R2：按**已保存的双套草稿**逐生生成报告 PNG（人工在前 + 【附件】AI + 修订标红）。
+
+    - 读 <xxt_home>/grade-drafts/<classId>/<workId>.json → normalize_draft；
+    - 按 {构成 × 修订} 生成 md/html/png；写回草稿 human.reportImages（覆盖旧报告图）。
+    """
+    import base64
+    from pathlib import Path
+    from ..xxt import grade_store
+    from .report import (_mode_report_md, report_html_from_md, html_to_png)
+
+    ws = Path(ws)
+    if home is None:
+        from ..xxt.session import xxt_home
+        home = xxt_home()
+    data = grade_store.read_drafts(home, class_id, work_id)
+    if not data:
+        return {"ok": False, "error": "无本地批阅草稿（先跑一次 AI 批阅或保存人工批阅）"}
+    out_root = ws / (class_dir or f"classes/{class_id}") / "grading" / (task_id or "task") / "reports"
+    out_root.mkdir(parents=True, exist_ok=True)
+    done = []
+    for key, raw in data.items():
+        d = grade_store.normalize_draft(raw if isinstance(raw, dict) else {})
+        student = str(d.get("student") or key)
+        md, kind = _mode_report_md(student=student, ai=d.get("ai") or {},
+                                   human=d.get("human") or {},
+                                   human_mode=d.get("humanMode") or "none",
+                                   revision=d.get("revision") or {},
+                                   revised=bool(d.get("revised")))
+        title = f"{student} 批阅报告"
+        base = out_root / f"{student}"
+        md_file = base.with_suffix(".md"); md_file.write_text(md, encoding="utf-8")
+        html_file = base.with_suffix(".html")
+        html_file.write_text(report_html_from_md(md, kind=kind, title=title,
+                                                 katex_dir=katex_dir), encoding="utf-8")
+        imgs = []
+        if with_report_png:
+            png = html_to_png(report_html_from_md(md, kind=kind, title=title, katex_dir=katex_dir),
+                              base.with_suffix(".png"))
+            if png and Path(png).is_file():
+                imgs.append({"name": f"{student}-report.png",
+                             "data_b64": base64.b64encode(Path(png).read_bytes()).decode()})
+        # 报告图回写人工套（供上传）；不动 ai 基线
+        grade_store.save_draft_sets(home, class_id, work_id, key,
+                                    human={"reportImages": imgs} if imgs else None)
+        done.append({"key": key, "student": student, "kind": kind,
+                     "revised": bool(d.get("revised")), "png": bool(imgs)})
+    return {"ok": True, "count": len(done), "reports": done, "dir": str(out_root)}

@@ -37,10 +37,13 @@ th { background: #f0f0f0; }
 .report-tag { text-align: center; font-size: 10pt; color: #666; margin: 4px 0 18px; }
 .report-tag.human { color: #7a4b00; font-weight: 600; }
 .report-tag.ai { color: #14532d; font-weight: 600; }
+.revised { color: #c00000; font-weight: 600; }
+.attach-head { text-align: center; font-size: 12pt; color: #333; margin: 18px 0 4px; }
 .quality { color: #444; font-size: 10pt; }
 """
 
-KIND_LABEL = {"ai": "AI 批阅报告", "human": "人工批阅报告"}
+KIND_LABEL = {"ai": "AI 批阅报告", "human": "人工批阅报告",
+              "ai-revised": "AI 批阅报告（人工修订）"}
 
 
 def _md_to_html(md_text: str) -> str:
@@ -311,6 +314,98 @@ def md_to_html(md_text: str) -> str:
 
 # TODO(阶段4)：_html_to_png —— Playwright 截图（迁移自 report_generator._html_to_png），
 # 依赖 Playwright 内核安装（D14 PLAYWRIGHT_BROWSERS_PATH），阶段4 一并实现 A4 PNG。
+
+def diff_mark(ai_text: str, revised_text: str) -> str:
+    """D92-R2：把 revised_text 相对 ai_text 的**新增/改动行**包成 `[[R]]…[[/R]]` 标记。
+
+    按行 diff（difflib）；公式块（含 $$ 或 $ 的行）整行为原子，不拆内部。
+    返回带标记的纯文本（后续 _inline/md 渲染时把 [[R]]… 转 <span class="revised">）。
+    """
+    import difflib
+    a = str(ai_text or "").splitlines()
+    b = str(revised_text or "").splitlines()
+    sm = difflib.SequenceMatcher(a=a, b=b)
+    out: list[str] = []
+    for tag, i1, i2, j1, j2 in sm.get_opcodes():
+        if tag == "equal":
+            out.extend(b[j1:j2])
+        else:  # replace / insert / delete → 标记为修订片段
+            for ln in b[j1:j2]:
+                out.append(f"[[R]]{ln}[[/R]]")
+    return "\n".join(out)
+
+
+def _mode_report_md(*, student: str, ai: dict, human: dict, human_mode: str,
+                    revision: dict, revised: bool) -> "tuple[str, str]":
+    """按 {构成 × 修订} 生成报告 markdown 与 kind（用于标注）。
+
+    返回 (md, kind)；kind ∈ ai | ai-revised | human（human+ai 用分段自带标注）。
+    """
+    hm = str(human_mode or "none")
+    ai_comment = str((ai or {}).get("comment") or "")
+    rev_text = str((revision or {}).get("text") or "")
+    # 只要存在"人工修订版"且与 AI 原文不同 → 用修订版并按行标红（适用于 ai / human+ai 构成）
+    has_rev = bool(rev_text) and bool(revised)
+    ai_body = rev_text if has_rev else ai_comment
+    if has_rev:
+        ai_body = diff_mark(ai_comment, rev_text)     # 标红标记
+    ai_kind = "ai-revised" if has_rev else "ai"
+    ai_score = (ai or {}).get("score")
+
+    def _ai_section() -> "list[str]":
+        head = ["# AI 批阅报告" + ("（人工修订）" if ai_kind == "ai-revised" else ""), ""]
+        if ai_score is not None:
+            head.append(f"**AI 评分：** {ai_score} / 100")
+        head += ["", ai_body]
+        return head
+
+    def _human_section() -> "list[str]":
+        head = ["# 人工批阅报告", ""]
+        if (human or {}).get("score") is not None:
+            head.append(f"**人工评分：** {human.get('score')} / 100")
+        head += ["", str((human or {}).get("comment") or "")]
+        return head
+
+    lines: list[str] = []
+    if hm == "human":
+        lines += _human_section()
+        return "\n".join(lines), "human"
+    if hm in ("append", "replace") and (human or {}).get("used"):
+        # 人工在前 + 【附件】AI 在后
+        lines += _human_section()
+        lines += ["", "---", "", "## 【附件】", ""]
+        lines += _ai_section()
+        return "\n".join(lines), "human"
+    # 仅 AI（none / revise）
+    lines += _ai_section()
+    return "\n".join(lines), ai_kind
+
+
+def report_html_from_md(md_text: str, *, kind: str = "ai", title: str = "",
+                        subtitle: str = "", katex_dir=None) -> str:
+    """同 report_html，但支持 [[R]]…[[/R]] 修订标红标记（D92）。"""
+    body = _md_to_html(md_text)
+    body = (body.replace("[[R]]", '<span class="revised">')
+                .replace("[[/R]]", "</span>"))
+    label = KIND_LABEL.get(str(kind or "ai").lower(), KIND_LABEL["ai"])
+    h1 = f"<h1>{_html.escape(title)}</h1>" if title else ""
+    sub = f'<div class="report-tag">{_html.escape(subtitle)}</div>' if subtitle else ""
+    tag = f'<div class="report-tag {kind}">{label}</div>'
+    return f"""<!DOCTYPE html><html><head><meta charset="utf-8">
+<style>{REPORT_CSS}</style>{_katex_head(katex_dir or find_katex_dir())}
+</head><body>{h1}{tag}{sub}{body}
+<script>
+(function() {{
+  function done() {{ window.__ASSIST_KATEX_DONE__ = true; }}
+  if (window.renderMathInElement) {{
+    try {{ renderMathInElement(document.body, {{delimiters: [
+      {{left: '$$', right: '$$', display: true}},
+      {{left: '$', right: '$', display: false}}]}}); }} catch (e) {{}}
+    done();
+  }} else {{ done(); }}
+}})();
+</script></body></html>"""
+
 
 def generate_report(transcript_path: Path, eval_path: Path, out_dir: Path,
                     *, kind: str = "ai", subtitle: str = "", render_png: bool = True,

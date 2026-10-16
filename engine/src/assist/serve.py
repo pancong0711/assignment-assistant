@@ -1411,11 +1411,40 @@ class Handler(BaseHTTPRequestHandler):
             from .xxt import grade_store
             key = str(payload.get("key") or payload.get("workAnswerId")
                       or payload.get("name") or "")
-            rep = grade_store.save_draft(
-                _xxt_home(), str(payload.get("classId") or ""), str(payload.get("workId") or ""),
-                key, score=payload.get("score"), comment=str(payload.get("comment") or ""),
-                comment_text=str(payload.get("commentText") or ""),
-                images=payload.get("images"))
+            cid_, wid_ = str(payload.get("classId") or ""), str(payload.get("workId") or "")
+            # D92：支持双套结构（ai/human/human_mode/revision）；旧字段（score/comment/images）走兼容
+            if any(k in payload for k in ("ai", "human", "human_mode", "revision")):
+                rep = grade_store.save_draft_sets(
+                    _xxt_home(), cid_, wid_, key,
+                    ai=payload.get("ai"), human=payload.get("human"),
+                    human_mode=payload.get("human_mode"),
+                    revision=payload.get("revision"),
+                    student=str(payload.get("student") or ""), tag=str(payload.get("tag") or ""))
+            else:
+                rep = grade_store.save_draft(
+                    _xxt_home(), cid_, wid_, key,
+                    score=payload.get("score"), comment=str(payload.get("comment") or ""),
+                    comment_text=str(payload.get("commentText") or ""),
+                    images=payload.get("images"))
+            self._json(rep, 200 if rep.get("ok") else 400)
+            return
+        if u.path == "/xxt/grade/render-from-drafts":
+            payload: dict = {}
+            try:
+                length = int(self.headers.get("Content-Length") or 0)
+                if length:
+                    payload = json.loads(self.rfile.read(length).decode("utf-8")) or {}
+            except Exception as exc:  # noqa: BLE001
+                self._json({"ok": False, "error": f"bad json: {exc}"}, 400)
+                return
+            from .grading.drafts import render_reports_from_drafts
+            ws = Path(self.ws).resolve()
+            rep = render_reports_from_drafts(
+                ws, class_id=str(payload.get("classId") or ""),
+                work_id=str(payload.get("workId") or ""),
+                task_id=str(payload.get("taskId") or ""),
+                class_dir=str(payload.get("classDir") or ""),
+                with_report_png=bool(payload.get("withReportPng", True)))
             self._json(rep, 200 if rep.get("ok") else 400)
             return
         if u.path == "/xxt/grade/delete-draft":

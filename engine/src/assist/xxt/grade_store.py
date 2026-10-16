@@ -76,6 +76,81 @@ def save_draft(home, class_id: str, work_id: str, key: str, *,
     return {"ok": True, "key": k, "draft": cur, "file": str(p)}
 
 
+def normalize_draft(d: dict) -> dict:
+    """D92-R2：把草稿归一为**双套**结构 {ai, human, humanMode, revision, revised}。
+
+    兼容旧单套 {score, comment, comment_text, images, source}：
+    source 以 'human' 开头 → 视作人工套，humanMode='replace'；否则视作 ai 套。
+    """
+    d = d if isinstance(d, dict) else {}
+    if isinstance(d.get("ai"), dict) or isinstance(d.get("human"), dict):
+        out = dict(d)
+        out.setdefault("ai", d.get("ai") if isinstance(d.get("ai"), dict) else {})
+        out.setdefault("human", d.get("human") if isinstance(d.get("human"), dict) else {})
+        out.setdefault("humanMode", d.get("humanMode") or "none")
+        out.setdefault("revision", d.get("revision") if isinstance(d.get("revision"), dict) else {})
+        out["revised"] = _is_revised(out)
+        return out
+    # 旧单套
+    src = str(d.get("source") or "")
+    payload = {"score": d.get("score"), "comment": d.get("comment") or "",
+               "comment_text": d.get("comment_text") or "", "images": d.get("images") or []}
+    out = {"ai": {}, "human": {}, "humanMode": "none", "revision": {},
+           "student": d.get("student") or "", "tag": d.get("tag") or "",
+           "updatedAt": d.get("updatedAt") or ""}
+    if src.startswith("human"):
+        out["human"] = {**payload, "used": True}
+        out["ai"] = {}
+        out["humanMode"] = "replace"
+    else:
+        out["ai"] = payload
+    out["source"] = src
+    out["revised"] = _is_revised(out)
+    return out
+
+
+def _is_revised(out: dict) -> bool:
+    rev = out.get("revision") or {}
+    text = str(rev.get("text") or "").strip()
+    ai_comment = str((out.get("ai") or {}).get("comment") or "").strip()
+    return bool(text) and text != ai_comment
+
+
+def save_draft_sets(home, class_id: str, work_id: str, key: str, *,
+                    ai: "dict | None" = None, human: "dict | None" = None,
+                    human_mode: "str | None" = None, revision: "dict | None" = None,
+                    student: str = "", tag: str = "") -> dict:
+    """D92-R2：写双套草稿（ai/human 各自合并；human_mode 可选；revision 可选）。"""
+    p = draft_file(home, class_id, work_id)
+    if p is None:
+        return {"ok": False, "error": "非法 classId/workId"}
+    k = str(key or "").strip()
+    if not k:
+        return {"ok": False, "error": "缺少学生 key"}
+    data = read_drafts(home, class_id, work_id)
+    cur = normalize_draft(data.get(k) if isinstance(data.get(k), dict) else {})
+    if ai is not None:
+        cur["ai"] = {**(cur.get("ai") or {}), **{kk: vv for kk, vv in ai.items() if vv is not None}}
+    if human is not None:
+        cur["human"] = {**(cur.get("human") or {}), **{kk: vv for kk, vv in human.items() if vv is not None}}
+        if human:
+            cur["human"]["used"] = True
+    if human_mode is not None:
+        cur["humanMode"] = str(human_mode or "none")
+    if revision is not None:
+        cur["revision"] = {**(cur.get("revision") or {}), **revision}
+        cur["revision"].setdefault("at", time.strftime("%Y-%m-%d %H:%M:%S"))
+    if student:
+        cur["student"] = student
+    if tag:
+        cur["tag"] = tag
+    cur["revised"] = _is_revised(cur)
+    cur["updatedAt"] = time.strftime("%Y-%m-%d %H:%M:%S")
+    data[k] = cur
+    p.write_text(json.dumps(data, ensure_ascii=False, indent=1), encoding="utf-8")
+    return {"ok": True, "key": k, "draft": cur, "file": str(p)}
+
+
 def delete_draft(home, class_id: str, work_id: str, key: str) -> dict:
     p = draft_file(home, class_id, work_id)
     if p is None or not p.is_file():

@@ -35,9 +35,10 @@ def test_save_drafts_from_grading_maps_wa_and_cuts_markdown(tmp_path: Path):
                                      home=tmp_path)
     assert rep["ok"] and rep["drafts"][0]["key"] == "wa-1"
     d = grade_store.read_drafts(tmp_path, "C1", "W1")["wa-1"]
-    assert d["score"] == 88.0
-    assert "**" not in d["comment"] and "· 优点" in d["comment"]      # Markdown 格式收敛
-    assert d["source"].startswith("ai:")
+    # D92：AI 产物落 ai 套
+    assert d["ai"]["score"] == 88.0
+    assert "**" not in d["ai"]["comment"] and "· 优点" in d["ai"]["comment"]   # Markdown 格式收敛
+    assert d.get("humanMode") == "none"
 
 
 def test_save_drafts_writes_report_png_base64(tmp_path: Path, monkeypatch):
@@ -56,5 +57,6 @@ def test_save_drafts_writes_report_png_base64(tmp_path: Path, monkeypatch):
                                      home=tmp_path)
     assert rep["drafts"][0]["images"] == 1
     d = grade_store.read_drafts(tmp_path, "C1", "W2")["学生B"]     # 无 plan → 键=姓名
-    assert d["source"].startswith("human:")
-    assert base64.b64decode(d["images"][0]["data_b64"]).startswith(b"\x89PNG")
+    # D92：kind=human → human 套 + replace
+    assert d["human"]["used"] is True and d.get("humanMode") == "replace"
+    assert base64.b64decode(d["human"]["reportImages"][0]["data_b64"]).startswith(b"\x89PNG")

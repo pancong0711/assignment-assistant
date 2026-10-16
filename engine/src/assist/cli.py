@@ -956,6 +956,26 @@ def grade_drafts(task_path, class_id, work_id, class_dir, kind, no_report, works
     raise SystemExit(0 if rep.get("ok") else 2)
 
 
+@cli.command("grade-render")
+@click.option("--class", "class_id", required=True, help="学习通班级 ID")
+@click.option("--work", "work_id", required=True, help="学习通 workId")
+@click.option("--task-id", "task_id", default="", help="任务 id（报告产物目录用）")
+@click.option("--class-dir", "class_dir", default="")
+@click.option("--no-png", is_flag=True, default=False, help="不生成报告 PNG（仅 md/html）")
+@click.option("--workspace", "-w", default=None)
+def grade_render(class_id, work_id, task_id, class_dir, no_png, workspace):
+    """D92：按**已保存的双套草稿**逐生生成报告（人工在前+【附件】AI+修订标红）。"""
+    from .workspace import find_workspace
+    from .grading.drafts import render_reports_from_drafts
+    ws = find_workspace(workspace)
+    rep = render_reports_from_drafts(ws, class_id=class_id, work_id=work_id,
+                                     task_id=task_id, class_dir=class_dir,
+                                     with_report_png=not no_png)
+    click.echo(json.dumps(rep, ensure_ascii=False, indent=1))
+    if not rep.get("ok"):
+        raise click.ClickException(rep.get("error") or "生成失败")
+
+
 @cli.command("render")
 @click.option("--md", "md_file", default="", help="Markdown 报告文件（正式报告）")
 @click.option("--text", "text", default="", help="批语纯文本（轻量批语图）")
