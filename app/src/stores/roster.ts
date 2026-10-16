@@ -283,29 +283,47 @@ export const useRosterStore = defineStore('roster', {
     async addScoreSource(file: File, family: ScoreFamily = 'custom'): Promise<{ message: string; preview: PreviewTable }> {
       const preview = await buildScoreSourcePreview(file, family)
       const src = await readScoreSourceXlsx(file, file.name, family)
-      // D49-F1 单写路径：roster 源同时写回 students[]（双入口语义合一——教师无论从哪个入口导入点名册，
-      // 名单都会进来；已存在 students 时按学号 merge 补齐姓名/班级，无 students 时全量填充）。
+      // D49-F1 / D94 单写路径：roster 源同时写回 students[]。
+      // D94 保序语义（对齐旧代码 `pd.merge(namelist_df, score_df, how="left")`）：
+      //   - 首次（students 为空）：以**本次点名册行序**初始化（= 点名册顺序）；
+      //   - 已有 students：**以现有点名册顺序为基准**，只按 学号→姓名 补齐 number/class，
+      //     未命中且为新姓名 → **追加到末尾**；**绝不重建/重排**（成绩源行序常按分数降序，不可采信）。
       if (family === 'roster') {
-        const byNumber = new Map(this.students.map((x) => [x.number, x] as const))
-        const merged: RosterStudent[] = src.rows.map((r) => {
-          const name = String(r[src.nameColumn] ?? '').trim()
-          // B2/D93：学号列优先用解析得到的 numberColumn（表头别名/空格容错），
-          // 回退常见列名——否则学号恒空 → 整班预览无法按学号排序（表现为分数降序）。
-          const numCol = src.numberColumn || ''
-          const number = String(
-            (numCol ? r[numCol] : '') ?? r['学号'] ?? r['number'] ?? r['id'] ?? r['学籍号'] ?? ''
-          ).trim()
-          const cls = String(r['班级'] ?? r['class'] ?? '').trim()
-          const existing = byNumber.get(number) ?? byNumber.get(name)
-          if (existing) {
-            if (!existing.number && number) existing.number = number
-            if (!existing.class && cls) existing.class = cls
-            return existing
+        const numCol = src.numberColumn || ''
+        const pickNumber = (r: Record<string, string>) => String(
+          (numCol ? r[numCol] : '') ?? r['学号'] ?? r['number'] ?? r['id'] ?? r['学籍号'] ?? ''
+        ).trim()
+        const pickClass = (r: Record<string, string>) => String(r['班级'] ?? r['class'] ?? '').trim()
+        if (!this.students.length) {
+          // 首次导入：以点名册行序为准
+          const init: RosterStudent[] = src.rows.map((r) => ({
+            name: String(r[src.nameColumn] ?? '').trim(),
+            number: pickNumber(r), class: pickClass(r),
+            tag: '', score: null, manualTag: false, punish: false,
+          })).filter((x) => x.name)
+          if (init.length) { this.students = init; this.dirty = true }
+        } else {
+          // 保序 merge：现有名单不动，仅补数据 / 追加新学生
+          const byNumber = new Map(this.students.filter((x) => x.number).map((x) => [x.number, x] as const))
+          const byName = new Map(this.students.map((x) => [x.name, x] as const))
+          const added: RosterStudent[] = []
+          for (const r of src.rows) {
+            const name = String(r[src.nameColumn] ?? '').trim()
+            if (!name) continue
+            const number = pickNumber(r)
+            const existing = (number && byNumber.get(number)) || byName.get(name)
+            if (existing) {
+              if (!existing.number && number) existing.number = number
+              if (!existing.class) { const cls = pickClass(r); if (cls) existing.class = cls }
+              continue
+            }
+            const fresh: RosterStudent = { name, number, class: pickClass(r),
+              tag: '', score: null, manualTag: false, punish: false }
+            added.push(fresh)
+            byName.set(name, fresh)
+            if (number) byNumber.set(number, fresh)
           }
-          return { name, number, class: cls, tag: '', score: null, manualTag: false, punish: false }
-        }).filter((x) => x.name)
-        if (merged.length) {
-          this.students = merged
+          if (added.length) this.students = [...this.students, ...added]   // 新同学追加末尾
           this.dirty = true
         }
       }
