@@ -93,6 +93,30 @@ const sh = await import('./sheetHtml.bundle.mjs')
   }
 }
 
+/* ---------- D88：整班预览（syntheticFallback 关闭 / 班级解析） ---------- */
+{
+  const padBase = { id: 't', class_dir: '', course: '', class: '', term: '',
+    layout: { orientation: 'portrait', per_page: 1, header: { title: 'T' }, footer: {} },
+    items: [{ no: '1.', content: '题', solution: '', imgPath: '' }],
+    watermark: { enabled: false, style: 'default', pageText: false, items: [] }, grade: {} }
+  // ① syntheticFallback=false：空学生的包必须被跳过（不得出现 学生A/classA）
+  const emptyStudentPad = { pad: padBase, items: padBase.items, students: [] }
+  const h1 = sh.stringifySheetHtml([emptyStudentPad], { syntheticFallback: false })
+  assert.ok(!h1.includes('学生A') && !h1.includes('classA'),
+    'D88-a: 整班模式（syntheticFallback=false）空学生包不得回落示例学生')
+  // ② 缺省（模板态）仍回落合成学生
+  const h2 = sh.stringifySheetHtml([{ pad: padBase, items: padBase.items }], {})
+  assert.ok(h2.includes('学生A'), 'D88-a: 模板态缺省仍用合成学生（informational）')
+  // ③ 班级解析：学生 class 优先；为空则用 groupName；都不给 → 空（不得回落 classA/pad.class）
+  const stu = { name: '张三', number: '1', class: '', tag: '' }
+  const h3 = sh.stringifySheetHtml([{ pad: { ...padBase, class: 'classA' }, items: padBase.items, students: [stu] }],
+    { groupName: '化工25C2' })
+  assert.ok(h3.includes('化工25C2'), 'D88-c: 学生 class 为空 → 用 groupName')
+  assert.ok(!h3.includes('班级：classA'), 'D88-c: 不得回落 pad.class / classA')
+  const h4 = sh.stringifySheetHtml([{ pad: padBase, items: padBase.items, students: [stu] }], {})
+  assert.ok(!h4.includes('classA'), 'D88-c: 无 groupName 时班级应为空')
+}
+
 /* ---------- D) D47 真实形态回归（legacy fixtures，文件缺失时 skip-safe） ---------- */
 {
   // legacy 目录不在 CI 检出：逐个 case 独立 skip-safe，避免一个文件缺失吞掉全部断言。
@@ -238,4 +262,4 @@ const sh = await import('./sheetHtml.bundle.mjs')
   console.log('   D57 output switches (solution/watermark/pagetext): PASS')
 }
 
-console.log('selfcheck-roster-fig: ALL PASS (A×4 · B×4 · C×3+D83四态 · D47-legacy* · D57-switches · B2-number)')
+console.log('selfcheck-roster-fig: ALL PASS (A×4 · B×4 · C×3+D83四态+D88整班 · D47-legacy* · D57-switches · B2-number)')

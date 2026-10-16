@@ -246,7 +246,9 @@ def build_context(task: dict, students: list[dict], kb_dir: Path, ws: Path,
         "id": str(task.get("id") or "assignment"),
         "title": str((lay.get("header") or {}).get("title") or "作业纸"),
         "course": str(task.get("course") or ""),
-        "class_name": str(task.get("class") or (students[0].get("class") if students else "") or "classA"),
+        # D88-c：班级显示 = 学生自身 class → task.class（调用方给的班级名）→ 空
+        # （不再回落硬编码 "classA"）
+        "class_name": str(task.get("class") or ""),
         "date": date or f"{datetime.now():%Y-%m-%d}",
         "orientation": orientation,
         "per_page": per_page,

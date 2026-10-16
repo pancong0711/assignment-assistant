@@ -337,11 +337,13 @@ const classIncludePageText = ref(true)
 
 /** 兜底包（--default 语义，预览用）：名单里有 tag 但无包绑定的学生指定兼任变体 */
 const classPreviewFallbackId = ref('')
+/** D88-b：未出页学生（tag 未绑定任何作业纸且未选兜底变体） */
+const classPreviewUnmatched = ref<string[]>([])
 
 /** D43-3/D43-6 收口：整班预览改用 stringifySheetHtml（与 CLI assignment.html.j2 同一模板）。
  *  数组分段 = lib/classOverlay.partitionStudentsByTag（tag→包，--default 兜底同口径）；
  *  每包段内学生 → expandPadItems 取题帧；KaTeX 相对路径（同源 ./katex/，离线也渲染）。 */
-function buildClassInputs(): { inputs: SheetHtmlPadInput[]; unmatched: number; total: number } {
+function buildClassInputs(): { inputs: SheetHtmlPadInput[]; unmatched: number; unmatchedNames: string[]; total: number } {
   const { groups, unmatched } = partitionStudentsByTag(
     roster.students, pad.savedJsons(), classPreviewFallbackId.value)
   const inputs: SheetHtmlPadInput[] = groups.map((g) => ({
@@ -349,7 +351,8 @@ function buildClassInputs(): { inputs: SheetHtmlPadInput[]; unmatched: number; t
     items: expandPadItems(g.pad, (kind) => kbStore.book(kind as KbKind)),
     students: g.students.map((st) => ({ name: st.name, number: st.number, class: st.class, tag: st.tag })),
   }))
-  return { inputs, unmatched: unmatched.length, total: roster.students.length }
+  return { inputs, unmatched: unmatched.length,
+           unmatchedNames: unmatched.map((s) => s.name), total: roster.students.length }
 }
 
 /** 预览整班：同一打印模板多页 HTML；同时生成 batch manifest 文本（README/绑定核对）。 */
@@ -357,6 +360,10 @@ function buildClassInputs(): { inputs: SheetHtmlPadInput[]; unmatched: number; t
 function buildClassPreviewHtml(): string {
   const { inputs } = buildClassInputs()
   return stringifySheetHtml(inputs, {
+    // D88-a：整班预览禁用"合成示例学生"回落（空学生的包由 sheetHtml 跳过）
+    syntheticFallback: false,
+    // D88-c：学生自身 class 优先；RosterView 侧无"学习通班级名"，故回退名留空（不再回落 classA）
+    groupName: '',
     includeSolution: classIncludeAnswers.value,
     includeWatermark: classIncludeWatermark.value,
     includePageText: classIncludePageText.value,
@@ -372,10 +379,15 @@ function previewWholeClass() {
   previewingClass.value = true
   try {
     const padJsons = pad.savedJsons()
-    const { unmatched, total } = buildClassInputs()
+    const { unmatchedNames, total } = buildClassInputs()
     classPreviewHtml.value = buildClassPreviewHtml()
     classPreviewManifest.value = buildBatchManifest(roster.students, padJsons)
-    classPreviewMsg.value = `已按当前 tag→包绑定生成整班预览（同一打印模板：${total} 名学生 / ${pad.saved.length} 份作业纸映射${unmatched ? `；${unmatched} 人 tag 未绑定未出页` : ''}；口径：${classIncludeAnswers.value ? '教师版（含答案）' : '学生版（不含答案）'}）：iframe 内可滚动查看，「🖨 打印」直接出整班文档。`
+    classPreviewUnmatched.value = unmatchedNames
+    const unNames = unmatchedNames
+    const unBrief = unNames.length
+      ? `；未出页 ${unNames.length} 人（tag 未绑定或未选兜底变体）：${unNames.slice(0, 12).join('、')}${unNames.length > 12 ? ` 等 ${unNames.length} 人` : ''}`
+      : ''
+    classPreviewMsg.value = `已按当前 tag→包绑定生成整班预览（同一打印模板：${total} 名学生 / ${pad.saved.length} 份作业纸映射${unBrief}；口径：${classIncludeAnswers.value ? '教师版（含答案）' : '学生版（不含答案）'}）：iframe 内可滚动查看，「🖨 打印」直接出整班文档。`
     showClassPreview.value = true
   } catch (e) {
     classPreviewMsg.value = `整班预览生成失败：${(e as Error).message}`

@@ -333,3 +333,28 @@ def test_figure_css_no_auto_margin_in_sources():
             hit = [sel for sel, decl in rules
                    if f".sheet-frame.pos-{want} .q-body" in sel and "flex: none" in decl]
             assert hit, f"缺少 .pos-{want} .q-body {{flex:none}} 规则"
+
+
+def test_sheet_html_no_classa_fallback(tmp_path: Path):
+    """D88-c：页眉班级 = 学生自身 class → task.class → 空；不得回落硬编码 'classA'。"""
+    _write_kb(tmp_path)
+    _write_wm_asset(tmp_path)
+    # 名单：班级列留空（学生自身无班级）
+    wb = Workbook()
+    r = wb.active
+    r.append(["姓名", "学号", "班级", "tag"])
+    r.append(["学生甲", "2026xxxx01", "", "distinguish"])
+    roster = tmp_path / "roster-nocls.xlsx"
+    wb.save(roster)
+    task = _write_task(tmp_path, "portrait", 1, {"enabled": False, "items": []})
+    obj = json.loads(task.read_text(encoding="utf-8"))
+    obj["class"] = "化工25C2"          # 调用方给的班级名（task.class 回退）
+    task.write_text(json.dumps(obj, ensure_ascii=False, indent=1), encoding="utf-8")
+    runner = CliRunner()
+    out = tmp_path / "tmp" / "noclassA.html"
+    res = runner.invoke(cli, ["sheet", "html", "--task", str(task), "--roster", str(roster),
+                              "--workspace", str(tmp_path), "-o", str(out)])
+    assert res.exit_code == 0, res.output
+    html = out.read_text(encoding="utf-8")
+    assert "classA" not in html, "页眉不得再回落硬编码 classA"
+    assert "化工25C2" in html, "学生自身 class 为空时应回退到 task.class"

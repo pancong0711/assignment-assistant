@@ -43,10 +43,10 @@
 
 | # | 阶段 | 交付物 | 状态 |
 |---|---|---|---|
-| §1 | 整班预览 a（syntheticFallback 开关 + 空包跳过） | `sheetHtml.ts` + `RosterView.vue` + selfcheck 用例 | ⏳ |
-| §2 | 整班预览 b（未匹配学生列名） | `RosterView.vue` + `classOverlay.ts`（manifest）| ⏳ |
-| §3 | 整班预览 c（班级字段解析 + 三端同步 + parity 哨兵） | `sheetHtml.ts` / `assignment.html.j2` / `htmlfile.py` + 测试 | ⏳ |
-| §4 | AI 选项卡重构（迁移面板 + tab 改名 + 保留离线块） | `GradingView.vue` + `App.vue` + 删除 XxetongView 面板 | ⏳ |
+| §1 | 整班预览 a（syntheticFallback 开关 + 空包跳过） | `sheetHtml.ts` + `RosterView.vue` + selfcheck | ✅ |
+| §2 | 整班预览 b（未匹配学生列名） | `RosterView.vue`（`buildClassInputs` 返回 unmatchedNames；提示列名前 12 + 总数）| ✅ |
+| §3 | 整班预览 c（班级字段解析 + 三端同步 + parity 哨兵） | `sheetHtml.ts`（`stu.class → groupName → 空`）/ `htmlfile.py`（去 classA）/ 模板沿用 class_display + 回归测试 | ✅ |
+| §4 | AI 选项卡重构（迁移面板 + tab 改名 + 保留离线块） | `GradingView.vue` + `App.vue` + 删除 XxetongView 面板 | ⏳ 待做 |
 | §5 | 文档（docs/13/39/41、docs/15 手册入口指向）+ 验证 | 文档 + build/selfcheck/CI | ⏳ |
 
 ## 5. 验收

@@ -53,6 +53,10 @@ export interface SheetHtmlPadInput {
 export interface SheetHtmlOptions {
   /** 名单（缺省 = 合成 学生A/B，informational，不含真实学生数据） */
   students?: SheetHtmlStudent[]
+  /** D88：名单缺省时是否回落"合成示例学生"（模板态 true；整班预览 false → 空学生的包跳过） */
+  syntheticFallback?: boolean
+  /** D88：页眉班级的回退名（学生 class 为空时使用；缺省 = 空，不再回落 'classA'） */
+  groupName?: string
   /** 本浏览器水印素材库（basename → dataURL；来自 settings.wmAssets） */
   wmAssets?: Record<string, string>
   /** B3/D46-5：题图素材库（basename → dataURL；来自 settings.figAssets）。
@@ -439,7 +443,7 @@ document.addEventListener('DOMContentLoaded', function () {
 
 function pageBlockHtml(pad: Taskpad, items: SheetHtmlItem[], stu: SheetHtmlStudent,
                        pagesTotal: number, pageN: number, isVeryLast: boolean,
-                       wm: WmResolved[], date: string,
+                       wm: WmResolved[], date: string, groupName = '',
                        includeSolution = true,
                        includeWatermark = true,
                        includePageText = true,
@@ -451,7 +455,9 @@ function pageBlockHtml(pad: Taskpad, items: SheetHtmlItem[], stu: SheetHtmlStude
   const title = String(layout.header.title ?? '') || '作业纸'
   const footerText = String(layout.footer.text ?? '')
   const course = String(pad.course ?? '')
-  const cls = stu.class || String(pad.class ?? '') || 'classA'
+  // D88-c：班级显示顺序 = 学生自身 class → 调用方给的班级名（学习通班级名/class_dir 派生）→ 空
+  // （不再回落 pad.class / 硬编码 'classA'）
+  const cls = String(stu.class || groupName || '')
   // D43-6 学生示例未勾选 → BLANK_STUDENT（页眉学籍三空位 = 手写空位线；作业/日期照常）
   const blank = !stu.name && !stu.number && !stu.class
   const rosterSpan = blank
@@ -502,7 +508,9 @@ export function stringifySheetHtml(
   const pads = Array.isArray(inputs) ? inputs : [inputs]
   if (!pads.length) throw new Error('stringifySheetHtml：至少需要一份作业纸')
   // 缺省名单（单包/全部预览模板态时由视图显式传 SYNTHETIC 或 [BLANK_STUDENT]）
-  const students = opts.students?.length ? opts.students : SYNTHETIC_STUDENTS
+  const synthetic = opts.syntheticFallback !== false
+  const students = opts.students?.length ? opts.students : (synthetic ? SYNTHETIC_STUDENTS : [])
+  const groupName = String(opts.groupName ?? '')
   const date = opts.date ?? todayStr()
   const mode = opts.katex ?? 'cdn'
   // D43-6：参考答案开关（缺省 true = CLI/zip 现状口径；PWA 模板态默认 false）
@@ -526,13 +534,15 @@ export function stringifySheetHtml(
     const stuList: SheetHtmlStudent[] = (pads[padIdx].students?.length
       ? pads[padIdx].students
       : students) as SheetHtmlStudent[]
+    // D88-a：整班模式（syntheticFallback=false）下，没有学生的包直接跳过，不出"示例学生"页
+    if (!stuList.length) continue
     for (let si = 0; si < stuList.length; si++) {
       const stu = stuList[si]
       chunks.forEach((chunk, pi) => {
         const veryLast = padIdx === pads.length - 1
           && si === stuList.length - 1 && pi === chunks.length - 1
         pageSections.push(pageBlockHtml(pad, chunk, stu, chunks.length, pi + 1, veryLast, wm, date,
-          includeSolution, includeWatermark, includePageText, opts.figAssets))
+          groupName, includeSolution, includeWatermark, includePageText, opts.figAssets))
       })
     }
   }
