@@ -97,7 +97,7 @@
 | N3 | solution 多版本：`kb/solutions/` 读写 + 置顶 + xlsx 兼容 + 实时读取 | `engine/src/assist/files/solutions.py` + CLI `kb solution …` + serve `/kb/solution(s)` + `flow.expand_items`/`inputs._questions_of` 实时读 + 单测 | ✅ |
 | N4 | 题库编辑器：solution 预览键 → 弹窗（题+答案，多版本勾选/置顶） | `KbEditorView.vue` + `engineClient.ts` | ✅ |
 | N5 | 题库 AI 作答：入口在 AI 辅助批阅；`/kb/ai-solve` + CLI；不覆盖/多版本/标 ai+model+时间 | `grading/solve.py` + CLI `kb ai-solve` + serve `/kb/ai-solve` + `AiGradingPanel.vue` ⑦区 + 单测 | ✅ |
-| N6 | 水印样式一关联多作业纸：样式侧多选应用（写各作业纸 style_ref） | 样式 UI + 端点 | ⏳ |
+| N6 | 水印样式一关联多作业纸：样式侧多选应用（写各作业纸 style_ref） | 样式 UI + store action + selfcheck | ✅ |
 | N9 | 文档（docs/04/13/15/39/40）+ 验证 + 去敏 push | 文档 + CI | ⏳ |
 
 ## 7. 验收

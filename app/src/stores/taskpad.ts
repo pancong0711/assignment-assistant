@@ -144,6 +144,23 @@ export const useTaskpadStore = defineStore('taskpad', {
       localStorage.setItem(LS_KEY, JSON.stringify(this.saved))
       return true
     },
+    /** D89-N6：把某命名样式应用到选中的多张作业纸（写 watermark.style_ref）。返回成功数。 */
+    applyWatermarkStyleRef(ids: string[], styleRef: string): number {
+      let n = 0
+      for (const id of ids) {
+        const entry = this.saved.find((s) => s.id === id)
+        if (!entry) continue
+        try {
+          const p = parseTaskpad(JSON.parse(entry.json))
+          p.watermark = { ...p.watermark, style_ref: styleRef || undefined }
+          entry.json = serializeTaskpad(p)
+          n++
+        } catch { /* 跳过损坏条目 */ }
+        if (this.current.id === id) this.current.watermark.style_ref = styleRef || undefined
+      }
+      localStorage.setItem(LS_KEY, JSON.stringify(this.saved))
+      return n
+    },
     importJson(text: string): Taskpad {
       const pad = parseTaskpad(JSON.parse(text))
       this.current = pad

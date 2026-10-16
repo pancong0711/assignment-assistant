@@ -173,4 +173,26 @@ assert.ok(watermarkForExport(parseWatermark({ enabled: true })).enabled === true
   console.log('2e) D87 style_ref 解析/导出（命名样式关联）… ok')
 }
 
-console.log('\n全部水印/向导自检通过 ✔（阶段4a：onboarding.v1 + items 序列化兼容 + D87 style_ref）')
+/* ---------- 2f) D89-N6：一个样式应用到多张作业纸（写 style_ref 往返） ---------- */
+{
+  // 模拟 store.applyWatermarkStyleRef：对多张 pad 设置同一 style_ref，重序列化后仍可读回
+  const ids = ['padA', 'padB', 'padC']
+  const store = ids.map((id) => parseTaskpad({ id, watermark: { enabled: true } }))
+  const styleRef = '期末版'
+  let n = 0
+  for (const p of store) {
+    p.watermark = { ...p.watermark, style_ref: styleRef }
+    n++
+  }
+  const back = store.map((p) => parseTaskpad(JSON.parse(serializeTaskpad(p))))
+  assert.equal(n, 3)
+  assert.ok(back.every((p) => p.watermark.style_ref === styleRef), '多张作业纸应都引用同一样式')
+  // 单独清空其一不影响其它（可逐张覆盖）
+  back[0].watermark = { ...back[0].watermark, style_ref: undefined }
+  const re = back.map((p) => parseTaskpad(JSON.parse(serializeTaskpad(p))))
+  assert.equal(re[0].watermark.style_ref, undefined)
+  assert.equal(re[1].watermark.style_ref, styleRef)
+  console.log('2f) D89 一样式多作业纸（style_ref 批量往返）… ok')
+}
+
+console.log('\n全部水印/向导自检通过 ✔（阶段4a：onboarding.v1 + items + D87 style_ref + D89 多作业纸）')

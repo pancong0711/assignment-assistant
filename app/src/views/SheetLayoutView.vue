@@ -230,6 +230,20 @@ async function renameStyle() {
     notify(`已重命名为「${nw}」`)
   } else notify(`重命名失败：${r.error ?? '引擎离线'}`)
 }
+/** D89-N6：把一个样式「应用到多张作业纸」——写入它们的 watermark.style_ref（可多选）。 */
+const wmApplyTargets = ref<string[]>([])
+const wmApplyMsg = ref('')
+function allSavedPads(): { id: string }[] {
+  return (pad.saved || []).map((x) => ({ id: x.id }))
+}
+async function applyStyleToPads() {
+  const name = wmEditStyle.value
+  if (!name) { wmApplyMsg.value = '请先选择要应用的样式'; return }
+  if (!wmApplyTargets.value.length) { wmApplyMsg.value = '请勾选要应用的作业纸'; return }
+  const n = pad.applyWatermarkStyleRef([...wmApplyTargets.value], name)
+  wmApplyMsg.value = `已把样式「${name}」应用到 ${n} 张作业纸（写 style_ref；每张仍可在上方单独改）`
+}
+
 async function deleteStyle() {
   const name = wmEditStyle.value
   if (!name) { notify('请先选择要删除的样式'); return }
@@ -423,6 +437,19 @@ function saveOnly() {
             <button class="btn small" :disabled="wmStylesBusy || !wmEditStyle" @click="setDefaultStyle">设为默认</button>
             <button class="btn small" :disabled="wmStylesBusy || !wmEditStyle" @click="deleteStyle">删除</button>
           </p>
+          <div class="hint" style="margin:6px 0 0; padding-top:6px; border-top:1px dashed var(--c-border)">
+            <b>把一个样式应用到多张作业纸</b>（写入各作业纸 style_ref）：
+            <select v-model="wmEditStyle" style="max-width:160px">
+              <option value="">— 先选样式 —</option>
+              <option v-for="st in settings.wmStyles" :key="st.name" :value="st.name">{{ st.name }}</option>
+            </select>
+            <span v-for="p in allSavedPads()" :key="p.id" style="margin-left:8px; white-space:nowrap">
+              <label><input type="checkbox" :value="p.id" v-model="wmApplyTargets" /> {{ p.id }}</label>
+            </span>
+            <button class="btn small" style="margin-left:8px" :disabled="!wmEditStyle || !wmApplyTargets.length"
+                    @click="applyStyleToPads">应用到勾选的作业纸</button>
+            <span v-if="wmApplyMsg" style="display:block; margin-top:4px">{{ wmApplyMsg }}</span>
+          </div>
           <p class="hint" style="margin:4px 0 0" v-if="!settings.wmStyles.length">
             暂无命名样式：编辑下方图层后「另存为样式」即可新建；不引用样式则引擎用默认/内置三槽。
           </p>
