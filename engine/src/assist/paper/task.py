@@ -19,7 +19,8 @@ def load_task(task_path: Path) -> dict:
 
 
 def resolve_items(kb_data: dict, task_items: list[dict], kb_dir: Path,
-                  numbering: str = "auto", seed: int | None = None) -> list[tuple]:
+                  numbering: str = "auto", seed: int | None = None,
+                  target_tag: str = "") -> list[tuple]:
     """按任务包 items 展开 → [(content, img_abspath, tag, no)]。
 
     迁移自 _legacy/2603paperDesign/src/paperdesign/kbtools.py 的按 id 抽题逻辑
@@ -87,6 +88,24 @@ def resolve_items(kb_data: dict, task_items: list[dict], kb_dir: Path,
                 no = TRANSLATION_ID if numbering == "id" else f"{seq}."
                 _append(picked.get("content"), None, tag or "translation", no, TRANSLATION_ID)
 
+    # D93：合成题统一收口（覆盖"仅设 target_tag、items 为空/无对应 tag 分组"的情况）——
+    # 触发 tag = target_tag 优先，否则 items 里出现过的 tag。
+    tags_present = {str(s.get("tag", s.get("kb", "")) or "") for s in task_items}
+    tgt = str(target_tag or "")
+    eff = tgt if tgt in ("summary", "translation") else ""
+    want_summary = eff == "summary" or "summary" in tags_present
+    want_translation = eff == "translation" or "translation" in tags_present
+    if want_summary and SUMMARY_ID not in seen_ids:
+        seq += 1
+        no = SUMMARY_ID if numbering == "id" else f"{seq}."
+        _append(SUMMARY_CONTENT, None, "summary", no, SUMMARY_ID)
+    if want_translation and TRANSLATION_ID not in seen_ids:
+        picked = pick_translation(translation_entries, int(seed or 0))
+        if picked is not None:
+            seq += 1
+            no = TRANSLATION_ID if numbering == "id" else f"{seq}."
+            _append(picked.get("content"), None, "translation", no, TRANSLATION_ID)
+
     if not out:
         logger.warning("任务包未选中任何题目")
     return out
@@ -103,7 +122,8 @@ def sheets_from_task(task_path: Path, ws: Path, out_dir: Path | None = None,
     kb_data = read_kb(kb_dir)
     lay = task.get("layout", {})
     items = resolve_items(kb_data, task.get("items", []), kb_dir,
-                          str(lay.get("numbering") or "auto"), seed=task.get("random_seed"))
+                          str(lay.get("numbering") or "auto"), seed=task.get("random_seed"),
+                          target_tag=str(task.get("target_tag") or ""))
     orientation = lay.get("orientation", "portrait")
     title = lay.get("header", {}).get("title", title_default)
     fig = lay.get("figure") or {}

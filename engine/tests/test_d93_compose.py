@@ -92,3 +92,15 @@ def test_copy_content_template():
 
 def test_pick_translation_none_when_empty():
     assert pick_translation([], 1) is None
+
+
+def test_summary_by_target_tag_only_empty_items(tmp_path):
+    """实机反馈回归：仅设 target_tag=summary、items 为空 → 仍追加总结题。"""
+    items = resolve_items(_kb(), [], tmp_path, "auto", seed=1, target_tag="summary")
+    assert any(c == SUMMARY_CONTENT for c, *_ in items)
+
+
+def test_translation_by_target_tag_only_empty_items(tmp_path):
+    entries = [{"id": "translation", "content": "翻译X", "img_path": None}]
+    items = resolve_items(_kb(entries), [], tmp_path, "auto", seed=1, target_tag="translation")
+    assert any(c == "翻译X" for c, *_ in items)

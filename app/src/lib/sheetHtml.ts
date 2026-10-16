@@ -717,17 +717,27 @@ export function expandPadItems(
                  solution: '', imgPath: '', tag: tag || 'summary' })
       seen.add(SUMMARY_ID)
     }
-    // D93-translation：tag/kb=translation → 确定性抽 1 道
-    if ((tag === 'translation' || item.kb === 'translation') && !seen.has(TRANSLATION_ID)) {
-      if (transRows.length) {
-        const picked = transRows[seedIndex(seed, transRows.length)]
-        seq += 1
-        out.push({ id: TRANSLATION_ID, no: auto ? `${seq}.` : TRANSLATION_ID,
-                   content: picked.content, solution: picked.solution, imgPath: picked.img_path,
-                   tag: tag || 'translation' })
-        seen.add(TRANSLATION_ID)
-      }
-    }
+  }
+  // D93：合成题统一收口（覆盖"仅设 target_tag、items 为空/无对应 tag 分组"）——
+  // 触发 tag = pad.target_tag 优先，否则 items 里出现过的 tag。
+  const tagsPresent = new Set(pad.items.map((it) => String(it.tag || it.kb || '')))
+  const tgt = String(pad.target_tag || '')
+  const eff = (tgt === 'summary' || tgt === 'translation') ? tgt : ''
+  const wantSummary = eff === 'summary' || tagsPresent.has('summary')
+  const wantTranslation = eff === 'translation' || tagsPresent.has('translation')
+  if (wantSummary && !seen.has(SUMMARY_ID)) {
+    seq += 1
+    out.push({ id: SUMMARY_ID, no: auto ? `${seq}.` : SUMMARY_ID, content: SUMMARY_CONTENT,
+               solution: '', imgPath: '', tag: 'summary' })
+    seen.add(SUMMARY_ID)
+  }
+  if (wantTranslation && !seen.has(TRANSLATION_ID) && transRows.length) {
+    const picked = transRows[seedIndex(seed, transRows.length)]
+    seq += 1
+    out.push({ id: TRANSLATION_ID, no: auto ? `${seq}.` : TRANSLATION_ID,
+               content: picked.content, solution: picked.solution, imgPath: picked.img_path,
+               tag: 'translation' })
+    seen.add(TRANSLATION_ID)
   }
   return out
 }

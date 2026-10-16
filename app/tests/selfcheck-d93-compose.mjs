@@ -94,4 +94,15 @@ const outQ = expandPadItems(padQa, bookOf)
 assert.ok(!outQ.some((x) => x.id === 'summary' || x.id === 'translation'), '切 tag 后不残留合成题')
 console.log('6) 切 tag 合成题不残留 … ok')
 
+// 7) 仅设 target_tag（items 为空）也应触发合成题（实机反馈的 bug 回归）
+const padSummaryTag = { id: 'p5', random_seed: 1, target_tag: 'summary',
+  layout: { orientation: 'portrait', per_page: 1, numbering: 'auto' }, items: [] }
+assert.ok(expandPadItems(padSummaryTag, bookOf).some((x) => x.id === 'summary'),
+  '仅 target_tag=summary、items 为空 → 应追加 summary')
+const padTransTag = { id: 'p6', random_seed: 123, target_tag: 'translation',
+  layout: { orientation: 'portrait', per_page: 1, numbering: 'auto' }, items: [] }
+assert.ok(expandPadItems(padTransTag, bookOf).some((x) => x.id === 'translation'),
+  '仅 target_tag=translation、items 为空 → 应追加 translation')
+console.log('7) 仅 target_tag 触发合成题（items 为空）… ok')
+
 console.log('\nD93-S2 合成题（PWA 同源）自检通过 ✔')

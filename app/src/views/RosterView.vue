@@ -349,16 +349,9 @@ function buildClassInputs(): { inputs: SheetHtmlPadInput[]; unmatched: number; u
   const inputs: SheetHtmlPadInput[] = groups.map((g) => ({
     pad: g.pad,
     items: expandPadItems(g.pad, (kind) => kbStore.book(kind as KbKind)),
-    // D93-S5：组内按**学号**排序（空学号排末尾，保持稳定），便于整理 + 连续页码
-    students: [...g.students]
-      .sort((a, b) => {
-        const na = String(a.number || '').trim(); const nb = String(b.number || '').trim()
-        if (!na && !nb) return 0
-        if (!na) return 1
-        if (!nb) return -1
-        return na.localeCompare(nb, undefined, { numeric: true })
-      })
-      .map((st) => ({ name: st.name, number: st.number, class: st.class, tag: st.tag })),
+    // D93：保持**点名册原始顺序**（partitionStudentsByTag 已按 roster.students 顺序 push），
+    // 组内不再二次排序；连续页码按此顺序递增。
+    students: g.students.map((st) => ({ name: st.name, number: st.number, class: st.class, tag: st.tag })),
   }))
   return { inputs, unmatched: unmatched.length,
            unmatchedNames: unmatched.map((s) => s.name), total: roster.students.length }
@@ -981,7 +974,7 @@ const nonTranslationRatios = computed(() => roster.ratios.filter((g) => g.tag !=
         aria-label="整班作业纸预览：Tab 聚焦后可用方向键滚动"
         tabindex="0"
         title="整班作业纸预览"
-        sandbox="allow-same-origin"
+        sandbox="allow-same-origin allow-scripts"
       ></iframe>
     </div>
 
