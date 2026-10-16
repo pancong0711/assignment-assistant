@@ -108,6 +108,38 @@
 - AI 作答（AI 辅助批阅 ⑦区 / CLI `kb ai-solve` / `POST /kb/ai-solve`）：**不覆盖**、新增版本、标 source=ai + model + 时间戳；
 - CLI：`assist kb solution list|add|pin|rm`；serve：`GET /kb/solutions[/<qid>]`、`POST /kb/solution`。
 
+## D92：批阅草稿双套 + 报告五模式（数据模型）
+
+### 草稿双套（`<xxt_home>/grade-drafts/<classId>/<workId>.json`）
+
+```jsonc
+{
+  "key": "<workAnswerId|姓名>",
+  "ai":    { "score": 88, "comment": "AI 批语原文", "reportImages": ["base64:..."] },
+  "human": { "score": 90, "comment": "人工批语", "images": [...], "reportImages": [...], "used": true },
+  "humanMode": "none" | "replace" | "append" | "revise",
+  "revision": { "text": "AI 批语的人工修订版（另存）", "at": "..." },
+  "revised": false
+}
+```
+
+- **AI 原文永不被覆盖**；人工修订另存 `revision.text`（用于 diff 标红）；
+- 读旧单套草稿兼容：`source` 以 `human` 开头 → 视作人工套 `humanMode='replace'`，否则视作 AI 套。
+
+### 报告 = 二维坐标（构成 × 修订）→ 5 种
+
+| 构成 | 修订 | 报告 |
+|---|---|---|
+| 仅 AI | 否 | AI 批阅报告 |
+| 仅 AI | 是 | AI 批阅报告（人工修订，改动**标红**） |
+| 人工在前+【附件】AI | 否 | 人工批阅报告 + 附件：AI 批阅报告 |
+| 人工在前+【附件】AI | 是 | 人工批阅报告 + 附件：AI 批阅报告（人工修订） |
+| 仅人工 | — | 人工批阅报告 |
+
+- diff 用标准库 `difflib` 按行比对，**公式块整行为原子**（不拆公式内部）；
+- 端点：`POST /xxt/grade/render-from-drafts`（按草稿逐生生成）；CLI `assist grade-render`；
+- 题库目录端点 `GET /kb/catalog`（⑦ 下拉数据源）；CLI `assist kb catalog`。
+
 ## D90：LLM Playground（数据模型与安全）
 
 - 定位：**单次调用**大模型做试验（**无多轮对话上下文**）——问题文本 + 图片 + 文档（pdf/docx/txt）→ 回复；

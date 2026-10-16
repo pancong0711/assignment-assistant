@@ -1443,6 +1443,8 @@ applyManualTranslation/setTranslationRatio 中 setTranslationRatio 保留——�
 - 逐生审核 → **左右两栏弹窗**（左作答图；右上 AI 批语可另存修订；右下人工批阅）；**逐生决定版式**；
 - ⑦ kind/chap/ids/model 真下拉（空选项保留）+ 题目预览框；①/⑦/Playground 模型候选共享；③ tags 多选默认全选；新增 `GET /kb/catalog`；
 - 分期：R1 catalog → R2 草稿/报告五模式 → R3 下拉 → R4 审核弹窗 → R5 文档/验证/push。
+- 状态：**R1–R5 全部完成**；验证 engine pytest 373 passed / PWA build+selfcheck / 脱敏扫描全绿。
+  **真机实测（配 key 跑一次 AI 批阅→逐生审核→一键生成 5 种报告之一）待用户**。
 
 ---
 
