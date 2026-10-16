@@ -1435,6 +1435,17 @@ applyManualTranslation/setTranslationRatio 中 setTranslationRatio 保留——�
 
 ---
 
+## D91 · 清单限定当前包 + 跨包移动/复制 + 水印「作业纸×样式」二维 + Playground 修复（2026-10-16）
+
+- 主需求单：`docs/44-D91-pack-scope-watermark-matrix-playground-fix.md`；
+- Q1 清单：③段只显示**当前包**作业纸（未选包→提示）；新增「移动/复制到其他包」（引用）；
+- Q2 水印：**不同作业纸用不同样式**（引擎已支持 style_ref）；新增「作业纸×样式」**二维矩阵**；批量应用**默认全选当前包**；
+- Q3 Playground 模型：`<datalist>` → **真下拉**（当前 provider 候选 + 自定义；候选可记录）；
+- Q4 Playground 自动保存：提问/批量/附件/参数**输入即存** localStorage，刷新不丢，可清空；
+- 分期：M1 清单/跨包 → M2 水印矩阵 → M3 模型下拉 → M4 草稿自动保存 → M5 文档/验证/push。
+
+---
+
 ## D90 · LLM Playground（AI 辅助批阅选项卡内的模型试验台）（2026-10-16）
 
 - 主需求单：`docs/43-D90-llm-playground.md`；
