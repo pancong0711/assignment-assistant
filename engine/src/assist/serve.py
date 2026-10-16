@@ -1956,6 +1956,12 @@ class Handler(BaseHTTPRequestHandler):
         elif u.path == "/kb/solutions":
             from .files import solutions as sol
             self._json({"ok": True, "items": sol.list_solutions(Path(self.ws).resolve())})
+        elif u.path == "/kb/catalog":
+            from .files.kb_io import catalog as _catalog
+            q = urllib.parse.parse_qs(u.query)
+            with_content = (q.get("content", ["1"])[0] != "0")
+            self._json({"ok": True, **_catalog(Path(self.ws).resolve() / "kb",
+                                               with_content=with_content)})
         elif u.path == "/packs":
             from . import packs
             self._json({"ok": True, "packs": packs.list_packs(Path(self.ws).resolve())})

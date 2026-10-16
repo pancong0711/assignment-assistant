@@ -277,6 +277,19 @@ def kb_ai_solve(obj, kb_kind, chap, ids, model, pin, apply, workspace, verbose):
 
 # ---------------- D89 solution 多版本库 ----------------
 
+@kb.command("catalog")
+@click.option("--no-content", is_flag=True, help="不返回题目内容（仅 id）")
+@click.option("--workspace", "-w", default=None)
+@click.option("--verbose", "-v", is_flag=True)
+@click.pass_obj
+def kb_catalog(obj, no_content, workspace, verbose):
+    """D92：只读列出题库目录（kind/章节/题号[+内容]，供下拉）。"""
+    from .files.kb_io import catalog as _catalog
+    ws = _setup(verbose or obj.get("verbose"), workspace)
+    click.echo(json.dumps(_catalog(ws / "kb", with_content=not no_content),
+                          ensure_ascii=False, indent=2))
+
+
 @kb.group("solution")
 def kb_solution():
     pass

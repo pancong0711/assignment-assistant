@@ -224,3 +224,27 @@ def write_json(kb_dir: Path, kb: dict[str, dict[str, list[dict]]]) -> Path:
         fn = out_dir / f"{kind}.json"
         fn.write_text(json.dumps(chapters, ensure_ascii=False, indent=1), encoding="utf-8")
     return out_dir
+
+def catalog(kb_dir: Path, *, with_content: bool = True, content_max: int = 400) -> dict:
+    """D92-R1：题库目录（下拉数据源）—— kinds → chapters → 题号(+内容预览)。
+
+    返回 {"kinds": [{"kind", "chapters": [{"chap", "count", "ids":[{"id","content"}]}]}]}。
+    content 截断到 content_max（题目预览框用，单行可滚动）。
+    """
+    data = read_kb(Path(kb_dir))
+    kinds = []
+    for kind in sorted(data):
+        chapters = []
+        for chap in sorted(data[kind]):
+            ids = []
+            for e in data[kind][chap]:
+                qid = str(e.get("id") or "")
+                if not qid:
+                    continue
+                item = {"id": qid}
+                if with_content:
+                    item["content"] = str(e.get("content") or "")[:content_max]
+                ids.append(item)
+            chapters.append({"chap": chap, "count": len(ids), "ids": ids})
+        kinds.append({"kind": kind, "chapters": chapters})
+    return {"kinds": kinds}
