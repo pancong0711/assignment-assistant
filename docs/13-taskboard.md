@@ -1443,6 +1443,7 @@ applyManualTranslation/setTranslationRatio 中 setTranslationRatio 保留——�
 - Q3 Playground 模型：`<datalist>` → **真下拉**（当前 provider 候选 + 自定义；候选可记录）；
 - Q4 Playground 自动保存：提问/批量/附件/参数**输入即存** localStorage，刷新不丢，可清空；
 - 分期：M1 清单/跨包 → M2 水印矩阵 → M3 模型下拉 → M4 草稿自动保存 → M5 文档/验证/push。
+- 状态：**M1–M5 全部完成**；验证 engine pytest 358 passed / PWA build+selfcheck / 脱敏扫描全绿。
 
 ---
 

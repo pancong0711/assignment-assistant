@@ -1,7 +1,7 @@
 # D91 任务需求单：清单限定当前包 + 作业纸跨包移动/复制 + 水印「作业纸×样式」二维 + Playground 模型下拉/自动保存
 
 > 日期：2026-10-16
-> 状态：**已拍板**（2026-10-16）。跨包复制 = 引用 + 另存新作业纸（默认引用）；水印矩阵放水印编辑器内、行=当前包；模型候选在 ⑧ 区就地管理。按 M1–M5 执行。
+> 状态：**M1–M5 全部完成**（2026-10-16）。验证 engine pytest 358 passed / PWA build+selfcheck / 脱敏扫描全绿。跨包复制 = 引用 + 另存新作业纸（默认引用）；水印矩阵放水印编辑器内、行=当前包；模型候选在 ⑧ 区就地管理。按 M1–M5 执行。
 > 关联：`docs/42-D89-...`（作业包 / style_ref）、`docs/43-D90-...`（Playground）、
 > `docs/40-D87-...`（水印样式库）、`docs/04`（数据模型）。
 
@@ -67,7 +67,7 @@
 | M2 | 水印二维矩阵（作业纸×样式）+ 默认全选当前包 | `SheetLayoutView.vue` + `taskpad.ts` + selfcheck | ✅ |
 | M3 | Playground 模型真下拉 + 模型候选记录/删除 | `PlaygroundPanel.vue` + `engineClient.ts` + `providers.py`/`serve.py`（forget_model） + 单测 | ✅ |
 | M4 | Playground 输入草稿自动保存 | `PlaygroundPanel.vue` + selfcheck | ✅ |
-| M5 | 文档（docs/04/13/15/40/42）+ 验证 + 去敏 push | 文档 + CI | ⏳ |
+| M5 | 文档（docs/04/13/15/40/44）+ 验证 + 去敏 push | 文档 + CI | ✅ |
 
 ## 5. 验收
 
