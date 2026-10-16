@@ -81,7 +81,8 @@ def batch_sheets(roster_fn: Path, task_files: list[Path], ws: Path,
             continue
         lay = pad.get("layout", {})
         items = resolve_items(kb_data, pad.get("items", []), kb_dir,
-                              str(lay.get("numbering") or "auto"))
+                              str(lay.get("numbering") or "auto"),
+                              seed=pad.get("random_seed"))
         stu = [{"name": r["name"], "number": r.get("number", ""),
                 "class": r.get("class", "")} for r in group]
         out_tag = out_dir / tag

@@ -85,7 +85,7 @@
 
 | # | 阶段 | 交付物 | 状态 |
 |---|---|---|---|
-| S1 | 引擎：summary/copy-page/translation 合成 + `resolve_items` 注入 seed + 单测 | `paper/task.py` | ⏳ |
+| S1 | 引擎：summary/copy-page/translation 合成 + `resolve_items` 注入 seed + 单测 | `paper/compose.py` + `paper/task.py`（含 batch/htmlfile 调用）+ 单测 | ✅ |
 | S2 | PWA：`expandPadItems` 同源合成 + `random_seed` 字段 + selfcheck（含 parity） | `lib/taskpad.ts` | ⏳ |
 | S3 | 水印预览修复：`resolveWmItems` 解析 `style_ref` + 矩阵"全选并应用"提示 | `lib/sheetHtml.ts` + `SheetLayoutView.vue` | ⏳ |
 | S4 | 清单列：+章节/题号，−学期/班级 | `SheetPreviewSection.vue` | ⏳ |

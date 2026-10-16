@@ -219,7 +219,8 @@ def expand_items_html(task: dict, kb_dir: Path, numbering: str = "auto") -> list
     out: list[dict] = []
     # 用带序号的展开（auto/id/labels 与 PDF/PWA 同口径）
     qid_seq = _resolved_ids(kb_data, task)
-    resolved = resolve_items(kb_data, task.get("items", []), kb_dir, numbering)
+    resolved = resolve_items(kb_data, task.get("items", []), kb_dir, numbering,
+                             seed=task.get("random_seed"))
     for (content, img, tag, no), qid in zip(resolved, qid_seq):
         img_hint = str(img) if img else ""
         b64 = mime = None
