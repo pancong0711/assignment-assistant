@@ -1445,6 +1445,22 @@ applyManualTranslation/setTranslationRatio 中 setTranslationRatio 保留——�
   命名样式 JSON（default 单选）+ 解析优先级 items > style_ref > 默认样式 > 内置三槽；
   serve `GET /watermark/styles`、`POST /watermark/style|upload`；CLI `assist watermark …`。
 
+## D87 · 素材目录（workspace 优先）+ 水印样式库（2026-10-15）
+
+- 主需求单：`docs/40-D87-assets-watermark-styles.md`；
+- §1 素材目录：`<ws>/assets` 优先 + `--assets-dir` + workspace 字体（`paper/assets.py`）；
+- §2 样式库：命名样式 CRUD/默认/`style_ref` 解析 + 旧 `assets/watermark/x` 路径兼容
+  （`paper/watermark_styles.py`，PDF/HTML 两通道同口径）；
+- §3 CLI：`assist watermark styles|save|rename|delete|set-default`；
+- §4 serve：`GET /watermark/styles`、`POST /watermark/style|upload`（写入默认落 `<ws>/assets`）；
+- §5 PWA：设计页水印编辑器命名样式下拉 + CRUD + 设为默认 + `style_ref` 关联 +
+  在线经引擎上传落盘 / 离线仅本地预览提示；
+- §6 文档：docs/04 素材与样式契约、docs/15 教师手册章节；
+- 验证：engine pytest（D87 25 例）/ PWA build+selfcheck / 本机端到端冒烟全绿；
+  **教师机视觉验收待用户**。
+
+---
+
 ## D88 · 整班预览混合示例修复 + 「AI 辅助批阅」选项卡（2026-10-15）
 
 - 主需求单：`docs/41-D88-class-preview-and-ai-tab.md`；

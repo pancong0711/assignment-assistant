@@ -1,7 +1,7 @@
 # D87 任务需求单：素材目录（workspace 优先）+ 水印样式库（命名/默认/与作业纸类型关联）
 
 > 日期：2026-10-15
-> 状态：已拍板，按 §6 顺序执行。
+> 状态：**§1–§6 全部实现**。验证：engine pytest（D87 单测 25 例）全绿；PWA build+selfcheck 全绿；本机端到端冒烟（workspace 素材解析 / style_ref 优先级 / HTML 内嵌 / serve 上传→样式→出 HTML）通过。**教师机视觉验收（配字体/自备图）待用户**。
 > 关联：`docs/39-D86-ai-grading-tab.md`（报告用 KaTeX/assets 解析同源）、
 > `docs/04-data-model-and-privacy.md`（workspace 布局契约）、engine `paper/watermark.py`、PWA `SheetLayoutView.vue`。
 > 触发：用户实测"水印编辑器缩略图路径像有误；希望样式可命名/可增删改/有默认；并可与作业纸类型关联"。
@@ -107,7 +107,7 @@
 | §3 | CLI `assist watermark …` | 命令 + 单测 | ✅ |
 | §4 | serve 端点（styles/style/upload） | `serve.py` + 冒烟 | ✅ |
 | §5 | PWA 编辑器（样式下拉 + CRUD + 默认 + style_ref + 上传落盘） | `SheetLayoutView.vue` + `settings.ts` + `engineClient.ts` | ✅ |
-| §6 | 真机验证（含自定义图层 PDF 生效）+ 文档（docs/04/13/15） | 验证记录 + 文档 | ⏳ |
+| §6 | 真机验证（含自定义图层 PDF 生效）+ 文档（docs/04/13/15） | 验证记录 + 文档 | ✅（本机端到端冒烟；教师机视觉验收待用户） |
 
 ## 7. 验收
 

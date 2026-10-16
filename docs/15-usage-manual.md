@@ -197,3 +197,65 @@
 | 上传报「已批阅」 | 属幂等保护；确认后可用「强制覆盖上传」 |
 | AI 无结果 | 先确认已「⬇ 下载」；再确认两段 provider/模型已保存、key 可用 |
 | 简答题加不上（新建作业） | 已支持「更多」兜底；若仍失败把报错（含步骤名+截图路径）发回 |
+
+---
+
+# 2026-10-15 · 水印样式库 / 素材目录（D87）
+
+## 1. 素材目录（workspace 优先）
+
+教师手工维护的静态素材统一放 **`<workspace>/assets/`**：
+
+```
+<workspace>/assets/
+  watermark/                 # 水印图片 + styles/<样式名>.json
+  fonts/                     # 可选：用户字体覆盖（simsun.ttc / simkai.ttf / wqy-*.ttc）
+  report/                    # 预留：报告模板/封面/落款
+```
+
+- 解析顺序：`--assets-dir` 显式 > `<ws>/assets`（存在 `watermark/` 或 `fonts/` 时）> 引擎内置 `engine/assets`；
+  字体注册优先用 `<ws>/assets/fonts/` 覆盖内置字体。
+- CLI `sheet make|html|batch` 均支持 `--assets-dir <dir>` 显式指定。
+- 题图仍在 `kb/fig/`（随题库走）；运行期上传（通知/作业附件、临时文件）不放 `assets/`。
+
+## 2. 水印样式库（设计页「水印编辑器」）
+
+**「版式」页 → ① 版式与头部 → 水印编辑器** 顶部新增「D87 命名样式库」区：
+
+1. **作业纸引用样式**：下拉选一个命名样式（`style_ref`），随作业纸（类型/tag）保存；
+   「（不引用，用默认样式）」= 走默认样式 → 内置三槽。
+2. **编辑/管理**：下方图层编辑（上传图片 / 九宫格摆位 / 大小 / 透明度 / 排序）后：
+   - **另存为样式**：把当前图层存成命名样式，并让本作业纸引用它；
+   - **复制到本作业纸**：把所选样式的图层拷进作业纸内联 items（脱离 `style_ref`）；
+   - **重命名 / 设为默认 / 删除**：样式管理（默认样式至多一个）。
+3. **图片上传**：引擎在线时经 `POST /watermark/upload` 落到 `<ws>/assets/watermark/`，
+   图层 `image` 写相对素材目录的 `watermark/<文件名>`；**离线**时 dataURL 仅本浏览器预览有效
+   （界面明确提示，需把图片手工放到 `<ws>/assets/watermark/` 引擎才会读）。
+
+**生效优先级**（引擎与 PWA 同口径）：
+
+```
+作业纸 watermark.items（内联图层，最高）
+  > watermark.style_ref（引用命名样式，随类型/tag 走）
+    > 默认样式（default=true / _default）
+      > 引擎内置三槽 + 页码文字
+```
+
+## 3. CLI（只读/批量脚本）
+
+```bash
+assist watermark styles -w <ws>                      # 列出样式（JSON）+ 素材文件清单
+assist watermark save --name 期末版 --file s.json     # 新建/覆盖样式（可 --set-default）
+assist watermark rename --old A --new B
+assist watermark set-default --name 期末版
+assist watermark delete --name A
+assist sheet make --task t.taskpad.json --assets-dir <dir>   # 显式素材目录
+```
+
+## 4. 常见问题
+
+| 现象 | 处理 |
+|---|---|
+| 出 PDF/HTML 水印不显示自定义图 | 确认图片在 `<ws>/assets/watermark/`（或 `--assets-dir` 指向处）；旧路径 `assets/watermark/x` 引擎已兼容 |
+| 作业纸引用的样式不存在 | 引擎回落默认样式并告警；到「水印编辑器」确认样式已保存/名字一致 |
+| 离线上传的图刷新后消失 | 属预期（仅 dataURL 本地预览）；引擎在线重传即落盘 |

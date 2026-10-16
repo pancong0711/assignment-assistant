@@ -23,6 +23,11 @@
       roster/  sheets/  grading/
     _archived/                     # 毕业的班（不再使用但可查档）
   exports/                         # zip 导出包暂存
+  assets/                          # D87：教师手工维护的静态素材（workspace 优先）
+    watermark/                     #   水印图片（PWA 经引擎上传落盘；教师也可手工放）
+      styles/<样式名>.json          #   命名水印样式（default 单选；与作业纸 style_ref 关联）
+    fonts/                         #   可选：用户字体覆盖（simsun.ttc / simkai.ttf / wqy-*.ttc）
+    report/                        #   预留：报告模板/封面/落款 logo
   settings.local.json              # 教师私有（不入库）：xxt 白名单/附件名单/class_map、watermark、LLM 非敏感项
   settings.local.secrets.json      # 教师私有（不入库，0600）：LLM providers 的 api_key（每 provider 一份）
   .runtime/                        # 引擎环境（不入库，绝不打包）——05-D14
@@ -43,6 +48,16 @@
   `settings.local.json` 或 `--workspace` 指定任意路径，便于云盘同步方案。
   **密钥拆分（D86）**：api_key 只写 `settings.local.secrets.json`（0600），PWA 仅掩码回显，
   日志/journal 只记 provider 名与 base_url host，绝不记 key。
+- **素材目录解析（D87）**：`--assets-dir` 显式 > `<ws>/assets`（存在 `watermark/` 或 `fonts/` 时）
+  > 引擎内置 `engine/assets`；字体注册优先 `<ws>/assets/fonts/`。语义 = 教师手工维护的静态素材；
+  运行期上传（通知/作业附件、临时文件）**不放这里**（仍在 `<xxt_home>/notice-uploads`、`<ws>/tmp/`）；
+  题图继续留 `kb/fig/`（随题库走）。
+- **水印样式与关联（D87）**：命名样式存 `<ws>/assets/watermark/styles/<样式名>.json`
+  （schema：`{name,enabled,pageText,default,items:[{image,pos,ratio,alpha}],updatedAt}`）；
+  `items[].image` 用**相对 assets_dir** 的 `watermark/<文件名>`（引擎兼容旧值 `assets/watermark/x`）。
+  解析优先级：`作业纸 watermark.items` > `watermark.style_ref`（随类型/tag 走）> 默认样式
+  （`default=true` 或名为 `_default`）> 引擎内置三槽。PWA 上传经 `POST /watermark/upload` 落
+  `<ws>/assets/watermark/`；离线时 dataURL 仅本浏览器预览有效（界面明确提示）。
 
 ## 运行期目录（xxt 工件，D84–D86 新增）
 
