@@ -1447,6 +1447,8 @@ applyManualTranslation/setTranslationRatio 中 setTranslationRatio 保留——�
 - N5 题库 AI 作答：入口集中在「AI 辅助批阅」；**不覆盖**、新增版本、标 ai+model+时间戳；
 - N6 样式一关联多作业纸；
 - 执行顺序：N8 → N7 → N1/N2 → N3/N4 → N5 → N6 → N9。
+- 状态：**N1–N9 全部完成**（引擎 + CLI + serve + PWA 全套）；验证 engine pytest 342 passed /
+  PWA build+selfcheck / 脱敏扫描全绿。**教师机实测（配 key 跑题库 AI 作答 + 真机批阅）待用户**。
 
 ---
 

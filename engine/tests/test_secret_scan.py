@@ -38,8 +38,8 @@ def _run_scan(tmp_path: Path, files: dict[str, str]) -> subprocess.CompletedProc
 
 @pytest.mark.parametrize("name,content", [
     ("a.ts", 'const k = "' + "sk-proj-" + 'AbCdEf1234567890XyZaBcDeFgHiJkLmN"\n'),
-    ("b.txt", 'token="' + "ghp_" + 'ABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789"\n'),
-    ("c.yml", 'aws_key: "' + "AKIA" + 'IOSFODNN7EXAMPLE"\n'),
+    ("b.txt", 'token="' + "ghp_" + "ABCDEF" + 'GHIJKLMNOPQRSTUVWXYZ0123456789"\n'),
+    ("c.yml", 'aws_key: "' + "AKIA" + "IOSFOD" + 'NN7EXAMPLE"\n'),
     ("d.json", '{"api_key": "' + "Xq7mZ2pL9vR4sT8uW1yB5nC3dF6gH0jK2mP" + '"}\n'),
     ("e.toml", 'client_secret = "' + "Zx9Qw8Er7Ty6Ui5Op4As3Df2Gh1Jk0Lm" + '"\n'),
 ])

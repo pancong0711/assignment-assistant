@@ -14,6 +14,7 @@
     fig/                           # 题图（xlsx 中 img_path 为相对路径引用）
     export/                        # 引擎导出的 JSON 副本（交换/AI阅读/diff 基准）
     examples/                      # 合成示例（唯一允许入库的部分）
+    solutions/                     # D89：题目答案多版本 <qid>.json（AI 作答/多模型/置顶，追加不覆盖）
   classes/                         # 所有 班级×学期 目录并列放这里（05-D6）
     2025S2-大学物理-化工25/
       roster/                      # 点名册/成绩/分组结果
@@ -23,6 +24,7 @@
       roster/  sheets/  grading/
     _archived/                     # 毕业的班（不再使用但可查档）
   exports/                         # zip 导出包暂存
+  packs/                           # D89：作业包 <id>.pack.json（一次分层作业全部作业纸的集合）
   assets/                          # D87：教师手工维护的静态素材（workspace 优先）
     watermark/                     #   水印图片（PWA 经引擎上传落盘；教师也可手工放）
       styles/<样式名>.json          #   命名水印样式（default 单选；与作业纸 style_ref 关联）
@@ -58,6 +60,49 @@
   解析优先级：`作业纸 watermark.items` > `watermark.style_ref`（随类型/tag 走）> 默认样式
   （`default=true` 或名为 `_default`）> 引擎内置三槽。PWA 上传经 `POST /watermark/upload` 落
   `<ws>/assets/watermark/`；离线时 dataURL 仅本浏览器预览有效（界面明确提示）。
+
+## D89：作业包与答案多版本（数据模型）
+
+### 作业包 `<ws>/packs/<id>.pack.json`
+
+作业包 = **一次分层作业全部作业纸的集合**（每张对应一个 tag/类型），**引用** padId
+（作业纸是唯一真源，包只做组织），纯设计态（不含发布信息）。
+
+```jsonc
+{
+  "schema": 1,
+  "id": "2026S1-化工25-chap10",
+  "name": "第10章分层作业",
+  "term": "2026S1",
+  "class_dir": "classes/2026S1-大学物理-化工25",
+  "pads": [ { "padId": "202610-chap10-321", "tag": "distinguish" },
+            { "padId": "202610-chap10-322", "tag": "copy" } ],
+  "updatedAt": "2026-10-16 10:00:00"
+}
+```
+
+- PWA 设计页最上方「作业包」栏：选择/新建/保存/删除；③段「作业纸清单」**只显示所选包内**作业纸；
+- 「仅保存」保存**当前这一张**作业纸，并自动纳入当前包；
+- AI 辅助批阅 ③区可选**作业包**（多作业纸按 tag 自动匹配学生）；
+- CLI：`assist pack list|show|save|delete`；serve：`GET /packs`、`GET /pack/<id>`、`POST /pack`。
+
+### 答案多版本 `<ws>/kb/solutions/<qid>.json`
+
+```jsonc
+{
+  "qid": "chap04-1", "kb": "problems", "chap": "chap04",
+  "versions": [
+    { "id": "v1", "text": "...", "source": "human", "model": "", "at": "...", "pinned": false },
+    { "id": "v2", "text": "...", "source": "ai", "model": "qwen-max", "at": "...", "pinned": true }
+  ]
+}
+```
+
+- **追加不覆盖**；`pinned` 至多一个 = 生效答案（"最新置顶版"）；无版本文件回落 xlsx `solution` 列（兼容旧数据）；
+- 作业包/批阅**实时读最新置顶版**（`flow.expand_items` / `inputs._questions_of` 经 `effective_solution`）；
+- 题库编辑器 solution 单元格为**预览键** → 弹窗（题+答案，多版本勾选/置顶）；
+- AI 作答（AI 辅助批阅 ⑦区 / CLI `kb ai-solve` / `POST /kb/ai-solve`）：**不覆盖**、新增版本、标 source=ai + model + 时间戳；
+- CLI：`assist kb solution list|add|pin|rm`；serve：`GET /kb/solutions[/<qid>]`、`POST /kb/solution`。
 
 ## 运行期目录（xxt 工件，D84–D86 新增）
 

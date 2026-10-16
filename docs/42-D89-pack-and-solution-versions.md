@@ -1,7 +1,7 @@
 # D89 任务需求单：作业包（pack）实体 + 题库 solution 多版本/AI 作答 + 样式反查 + SW 修复
 
 > 日期：2026-10-16
-> 状态：已拍板（讨论定调），按 §6 分期执行。
+> 状态：**N1–N9 全部完成**（2026-10-16）。验证：engine pytest 342 passed、PWA build+selfcheck、脱敏扫描全绿；教师机实测待用户。
 > 关联：`docs/40-D87-...`（水印样式库；本单在其上加"样式↔多作业纸"反查）、
 > `docs/39-D86-...`（AI 批阅引擎/端点）、`docs/04`（数据模型）、`docs/41-D88`（AI 选项卡六区）。
 
@@ -98,7 +98,7 @@
 | N4 | 题库编辑器：solution 预览键 → 弹窗（题+答案，多版本勾选/置顶） | `KbEditorView.vue` + `engineClient.ts` | ✅ |
 | N5 | 题库 AI 作答：入口在 AI 辅助批阅；`/kb/ai-solve` + CLI；不覆盖/多版本/标 ai+model+时间 | `grading/solve.py` + CLI `kb ai-solve` + serve `/kb/ai-solve` + `AiGradingPanel.vue` ⑦区 + 单测 | ✅ |
 | N6 | 水印样式一关联多作业纸：样式侧多选应用（写各作业纸 style_ref） | 样式 UI + store action + selfcheck | ✅ |
-| N9 | 文档（docs/04/13/15/39/40）+ 验证 + 去敏 push | 文档 + CI | ⏳ |
+| N9 | 文档（docs/04/13/15/39/40）+ 验证 + 去敏 push | 文档 + CI | ✅ |
 
 ## 7. 验收
 

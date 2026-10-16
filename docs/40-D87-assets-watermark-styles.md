@@ -109,6 +109,12 @@
 | §5 | PWA 编辑器（样式下拉 + CRUD + 默认 + style_ref + 上传落盘） | `SheetLayoutView.vue` + `settings.ts` + `engineClient.ts` | ✅ |
 | §6 | 真机验证（含自定义图层 PDF 生效）+ 文档（docs/04/13/15） | 验证记录 + 文档 | ✅（本机端到端冒烟；教师机视觉验收待用户） |
 
+## 7bis. D89 补口（2026-10-16）
+
+- **一个样式关联多个作业纸**：水印编辑器样式库底部「把一个样式应用到多张作业纸」——
+  选样式 + 勾作业纸 → 写入各作业纸 `style_ref`（每张仍可单独改，最后写入者为准）；
+  store 动作 `applyWatermarkStyleRef(ids, styleRef)`。
+
 ## 7. 验收
 
 - PWA 上传的水印图片落到 `<ws>/assets/watermark/`，PDF 中**真实出现**该图层（不再被跳过）；
