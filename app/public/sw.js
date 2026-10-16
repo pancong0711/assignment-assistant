@@ -1,7 +1,7 @@
 /* 简单 service worker：离线缓存静态资源（阶段2 骨架版）。
    策略：安装时预缓存构建产物清单（由构建注入 __WB_MANIFEST__，
    未注入则退化为仅缓存应用外壳）；运行时缓存优先（cache-first）。 */
-const CACHE = 'assignment-assistant-v1'
+const CACHE = 'assignment-assistant-__APP_VERSION__'
 const BASE = new URL(self.registration.scope)
 
 self.addEventListener('install', (event) => {

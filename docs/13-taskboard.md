@@ -1435,6 +1435,21 @@ applyManualTranslation/setTranslationRatio 中 setTranslationRatio 保留——�
 
 ---
 
+## D89 · 作业包（pack）+ solution 多版本/AI 作答 + 样式反查 + SW 修复（2026-10-16 讨论稿）
+
+- 主需求单：`docs/42-D89-pack-and-solution-versions.md`；
+- 概念拍板：**作业包** = 一次分层作业全部作业纸的集合；层级「①作业包 → ②包内清单 → ③单张作业纸 → ④输出」；
+- N8 部署：push 本地 6 提交（线上出现 D87 水印样式库）✅；
+- N7 SW：缓存名随构建版本走（防升级滞留旧包）；
+- N1/N2 作业包：engine `packs.py` + serve/CLI + PWA 顶部「作业包」栏（选择/新建/保存/载入）+ 清单只显示包内；
+- N3/N4 solution：`kb/solutions/<qid>.json` 多版本（source/model/at/pinned），作业包与批阅**实时读置顶版**；
+  题库编辑器 solution 改预览键 → 弹窗（多版本勾选/置顶）；
+- N5 题库 AI 作答：入口集中在「AI 辅助批阅」；**不覆盖**、新增版本、标 ai+model+时间戳；
+- N6 样式一关联多作业纸；
+- 执行顺序：N8 → N7 → N1/N2 → N3/N4 → N5 → N6 → N9。
+
+---
+
 ## D87+ · 密钥/隐私安全加固（2026-10-16）
 
 - 触发：用户关切「填 API key 是否会被泄漏」；审计结论：存储 0600 / 回显掩码 / 日志脱敏 /
