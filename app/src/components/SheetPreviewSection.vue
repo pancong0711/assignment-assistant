@@ -15,6 +15,7 @@ import { STUDENT_TAG_LABELS, type KbKind } from '../lib/kb'
 import { useKbStore } from '../stores/kb'
 import { useSettingsStore } from '../stores/settings'
 import { useTaskpadStore } from '../stores/taskpad'
+import { usePackStore } from '../stores/packs'
 import { parseTaskpad, padInferredTag, resolveGrid, type Taskpad } from '../lib/taskpad'
 import { downloadData } from '../lib/fsAccess'
 import {
@@ -36,6 +37,7 @@ const emit = defineEmits<{
 const kb = useKbStore()
 const pad = useTaskpadStore()
 const settings = useSettingsStore()
+const packStore = usePackStore()
 const status = ref('')
 
 const includeAnswers = computed(() => props.includeAnswers)
@@ -163,8 +165,12 @@ function previewAllPads() {
 
 /* ---------- 作业纸清单（D43-4：全页唯一一份） ---------- */
 interface PadMeta { id: string; term: string; cls: string; items: number; questions: number; orientation: string; perPage: number; grid: string; targetTag: string; inferredTag: string | null }
-const library = computed<PadMeta[]>(() =>
-  pad.saved.map((s) => {
+const library = computed<PadMeta[]>(() => {
+  // D89-N2：选择了作业包 → 只显示包内作业纸；未选择包 → 显示全部（兼容旧行为）
+  const refs = packStore.currentPadRefs
+  const allow = packStore.currentId ? new Set(refs.map((r) => r.padId)) : null
+  const src = allow ? pad.saved.filter((s) => allow.has(s.id)) : pad.saved
+  return src.map((s) => {
     try {
       const p = parseTaskpad(JSON.parse(s.json))
       return {
@@ -185,7 +191,8 @@ const library = computed<PadMeta[]>(() =>
     } catch {
       return { id: s.id, term: '?', cls: '?', items: 0, questions: 0, orientation: '?', perPage: 0, grid: '?×?', targetTag: '', inferredTag: null }
     }
-  }))
+  })
+})
 
 function loadFromLibrary(id: string) {
   if (pad.openFromLibrary(id)) notify(`已载入作业纸 ${id}（回到①段继续编辑；保存会覆盖清单中的同名条目）。`)
@@ -225,7 +232,7 @@ function removeFromLibrary(id: string) {
     <iframe v-if="liveHtml" class="live-frame" :srcdoc="liveHtml" title="作业纸模板实时预览（同一 HTML 打印模板）" aria-label="作业纸模板实时预览：Tab 聚焦后可用方向键滚动预览文档" tabindex="0"></iframe>
     <p class="hint" v-if="!sheetHtmlItems.length">尚未选题（items 为空）：预览只有页眉/页脚/水印骨架；到②段选题后回来看版式效果。版式/水印/页眉页脚改动实时生效。</p>
 
-    <h3>作业纸清单（多份作业纸管理 · 全页唯一一份）</h3>
+    <h3>作业纸清单（{{ packStore.currentId ? `作业包「${packStore.currentId}」内` : "全部已保存作业纸" }} · 全页唯一一份）</h3>
     <p>
       <button class="btn" title="每个保存的作业纸各出一连段（模板态，受上方开关约束）" @click="previewAllPads">👁 预览全部作业纸（连排 · 模板态）</button>
     </p>
@@ -252,7 +259,7 @@ function removeFromLibrary(id: string) {
         </tr>
       </tbody>
     </table>
-    <p class="hint" v-else>清单为空：点「仅保存」或「导出作业纸 JSON」后出现在这里。</p>
+    <p class="hint" v-else>{{ packStore.currentId ? "本包内暂无作业纸：点「仅保存」把当前作业纸纳入本包，或在「作业包」栏调整包内引用。" : "清单为空：点「仅保存」或「导出作业纸 JSON」后出现在这里。" }}</p>
     <p class="hint" v-if="status">{{ status }}</p>
 
     <SheetHtmlPreviewModal

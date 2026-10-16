@@ -1054,6 +1054,28 @@ class Handler(BaseHTTPRequestHandler):
             rep["config"] = providers.public_config(ws)
             self._json(rep)
             return
+        if u.path == "/pack":
+            payload: dict = {}
+            try:
+                length = int(self.headers.get("Content-Length") or 0)
+                if length:
+                    payload = json.loads(self.rfile.read(length).decode("utf-8")) or {}
+            except Exception as exc:  # noqa: BLE001
+                self._json({"ok": False, "error": f"bad json: {exc}"}, 400)
+                return
+            from . import packs
+            ws = Path(self.ws).resolve()
+            action = str(payload.get("action") or "save")
+            if action == "delete":
+                rep = packs.delete_pack(ws, str(payload.get("id") or ""))
+            elif action == "rename":
+                rep = packs.rename_pack(ws, str(payload.get("id") or ""),
+                                        str(payload.get("new_id") or ""))
+            else:
+                rep = packs.save_pack(ws, str(payload.get("id") or ""), payload.get("pack") or {})
+            rep["packs"] = packs.list_packs(ws)
+            self._json(rep, 200 if rep.get("ok", True) else 400)
+            return
         if u.path == "/watermark/style":
             payload: dict = {}
             try:
@@ -1113,8 +1135,11 @@ class Handler(BaseHTTPRequestHandler):
             cpi = str(payload.get("cpi") or "0")
             work = str(payload.get("workId") or "")
             pad = payload.get("taskpad")
+            pads = payload.get("pads")  # D89：作业包内多张作业纸（按 tag 匹配不同学生）
+            if isinstance(pads, list) and pads:
+                pad = pads[0] if not isinstance(pad, dict) else pad
             if not (cid and kid and work and isinstance(pad, dict)):
-                self._json({"ok": False, "error": "courseId/classId/workId/taskpad 必填"}, 400)
+                self._json({"ok": False, "error": "courseId/classId/workId/taskpad(s) 必填"}, 400)
                 return
             from .xxt.work import validate_work_target
             err = validate_work_target(cid, kid, Path(self.ws).resolve())
@@ -1129,6 +1154,17 @@ class Handler(BaseHTTPRequestHandler):
             pad_path.write_text(json.dumps(pad, ensure_ascii=False, indent=1), encoding="utf-8")
             args = ["grade", "--task", str(pad_path), "--xxt-class", f"{cid}:{kid}",
                     "--work", work]
+            # D89：作业包多作业纸 → 落同一临时目录，--pads-dir 让 build_plan 按 tag 全量匹配
+            if isinstance(pads, list) and len(pads) > 1:
+                pool = pad_dir / f"{task_id}-pads"
+                pool.mkdir(parents=True, exist_ok=True)
+                for p_ in pads:
+                    if not isinstance(p_, dict):
+                        continue
+                    pid = str(p_.get("id") or "pad").strip() or "pad"
+                    (pool / f"{pid}.taskpad.json").write_text(
+                        json.dumps(p_, ensure_ascii=False, indent=1), encoding="utf-8")
+                args += ["--pads-dir", str(pool)]
             if payload.get("mode"):
                 args += ["--mode", str(payload.get("mode"))]
             if payload.get("tags"):
@@ -1726,6 +1762,15 @@ class Handler(BaseHTTPRequestHandler):
             # D86 §2：provider（掩码）+ 两段式
             from .grading import providers
             self._json({"ok": True, **providers.public_config(Path(self.ws).resolve())})
+        elif u.path == "/packs":
+            from . import packs
+            self._json({"ok": True, "packs": packs.list_packs(Path(self.ws).resolve())})
+        elif u.path.startswith("/pack/"):
+            from . import packs
+            pid = urllib.parse.unquote(u.path[len("/pack/"):])
+            d = packs.read_pack(Path(self.ws).resolve(), pid)
+            self._json(d or {"ok": False, "error": f"作业包不存在：{pid}"},
+                       200 if d else 404)
         elif u.path == "/watermark/styles":
             # D87 §4：命名样式列表（含 default 标记）+ 素材文件清单
             from .paper.watermark_styles import list_styles

@@ -359,6 +359,72 @@ def sheet_make(obj, task_path, roster_path, out, no_watermark, assets_dir, works
         click.echo(str(f))
 
 
+# ---------------- D89 作业包（pack） ----------------
+
+@cli.group("pack", help="D89：作业包（一次分层作业全部作业纸的集合）")
+def pack_grp():
+    pass
+
+
+@pack_grp.command("list")
+@click.option("--workspace", "-w", default=None)
+@click.option("--verbose", "-v", is_flag=True)
+@click.pass_obj
+def pack_list(obj, workspace, verbose):
+    """列出 workspace 下的作业包（JSON）。"""
+    from .packs import list_packs
+    ws = _setup(verbose or obj.get("verbose"), workspace)
+    click.echo(json.dumps({"ok": True, "packs": list_packs(ws)}, ensure_ascii=False, indent=2))
+
+
+@pack_grp.command("show")
+@click.option("--id", "pid", required=True)
+@click.option("--workspace", "-w", default=None)
+@click.option("--verbose", "-v", is_flag=True)
+@click.pass_obj
+def pack_show(obj, pid, workspace, verbose):
+    """读取单个作业包。"""
+    from .packs import read_pack
+    ws = _setup(verbose or obj.get("verbose"), workspace)
+    d = read_pack(ws, pid)
+    click.echo(json.dumps(d or {"ok": False, "error": f"作业包不存在：{pid}"},
+                          ensure_ascii=False, indent=2))
+    if not d:
+        raise click.ClickException(f"作业包不存在：{pid}")
+
+
+@pack_grp.command("save")
+@click.option("--id", "pid", required=True, help="作业包 id")
+@click.option("--file", "file_", required=True, help="作业包 JSON 文件（含 name/term/class_dir/pads）")
+@click.option("--workspace", "-w", default=None)
+@click.option("--verbose", "-v", is_flag=True)
+@click.pass_obj
+def pack_save(obj, pid, file_, workspace, verbose):
+    """新建/覆盖作业包。"""
+    from .packs import save_pack
+    ws = _setup(verbose or obj.get("verbose"), workspace)
+    data = json.loads(Path(file_).expanduser().read_text(encoding="utf-8"))
+    res = save_pack(ws, pid, data)
+    click.echo(json.dumps(res, ensure_ascii=False, indent=2))
+    if not res.get("ok"):
+        raise click.ClickException(res.get("error") or "保存失败")
+
+
+@pack_grp.command("delete")
+@click.option("--id", "pid", required=True)
+@click.option("--workspace", "-w", default=None)
+@click.option("--verbose", "-v", is_flag=True)
+@click.pass_obj
+def pack_delete(obj, pid, workspace, verbose):
+    """删除作业包（不影响作业纸本身）。"""
+    from .packs import delete_pack
+    ws = _setup(verbose or obj.get("verbose"), workspace)
+    res = delete_pack(ws, pid)
+    click.echo(json.dumps(res, ensure_ascii=False, indent=2))
+    if not res.get("ok"):
+        raise click.ClickException(res.get("error") or "删除失败")
+
+
 # ---------------- D87 水印样式库（命名样式/默认/style_ref） ----------------
 
 @cli.group("watermark", help="D87：水印样式库（命名样式 CRUD / 默认 / 素材目录）")
@@ -768,6 +834,8 @@ def llm_batch(task_path, jsonl_path, provider_name, limit, submit, poll_id, down
 
 @cli.command()
 @click.option("--task", "task_path", required=True, help="任务包 JSON 路径（grade 节驱动）")
+@click.option("--pads-dir", "pads_dir", default=None,
+              help="D89：作业包目录（*.taskpad.json，按 tag 自动匹配多名学生；缺省=用 <ws>/tasks/）")
 @click.option("--images", "images_dir", default=None, help="学生作业图片目录（文件名=学生名或学号-题号）")
 @click.option("--rerun", "rerun", default=None,
               type=click.Choice(["download", "transcribe", "evaluate", "report", "upload"]),
@@ -784,7 +852,7 @@ def llm_batch(task_path, jsonl_path, provider_name, limit, submit, poll_id, down
 @click.option("--workspace", "-w", default=None)
 @click.option("--verbose", "-v", is_flag=True)
 @click.pass_obj
-def grade(obj, task_path, images_dir, rerun, xxt_class, work_id, plan_path, mode, tags,
+def grade(obj, task_path, pads_dir, images_dir, rerun, xxt_class, work_id, plan_path, mode, tags,
           limit, dry_plan, workspace, verbose):
     """AI 批阅：transcribe → evaluate → report（阶段3；download/upload 属阶段4）。
 
@@ -816,7 +884,8 @@ def grade(obj, task_path, images_dir, rerun, xxt_class, work_id, plan_path, mode
         tag_list = [t.strip() for t in str(tags).split(",") if t.strip()]
         plan = _inputs.build_plan(ws, task_id=task_id, class_dir=class_dir,
                                   class_id=kid, work_id=work_id, mode=(mode or "optimized"),
-                                  tags=tag_list)
+                                  tags=tag_list,
+                                  tasks_dir=Path(pads_dir).expanduser().resolve() if pads_dir else None)
         if limit and plan.get("students"):
             plan["students"] = plan["students"][:limit]
         _inputs.save_plan(ws, class_dir, plan)

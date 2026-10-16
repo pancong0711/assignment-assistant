@@ -12,12 +12,14 @@ import { computed, ref, watch } from 'vue'
 import { useKbStore } from '../stores/kb'
 import { useTaskpadStore } from '../stores/taskpad'
 import { useSettingsStore } from '../stores/settings'
+import { usePackStore } from '../stores/packs'
 import { pickReadFile } from '../lib/fsAccess'
 import { WATERMARK_POS_LABELS, MAX_PER_PAGE, MAX_GRID_DIM, autoSquareGrid, defaultGrid, resolveGrid, type PerPage } from '../lib/taskpad'
 
 const kb = useKbStore()
 const pad = useTaskpadStore()
 const settings = useSettingsStore()
+const packStore = usePackStore()
 
 const status = ref('')
 
@@ -272,7 +274,16 @@ const pageTextOn = computed({
 /** 导出 JSON（D45：从④段触发 → 委托 SheetOutputSection；此处保留「仅保存」） */
 function saveOnly() {
   pad.saveToLibrary()
-  notify('已保存到作业纸清单（③段清单可见；继续编辑会覆盖同名条目）。')
+  // D89-N1/N2：若已选作业包，自动把本张作业纸纳入包（tag 取 target_tag/推断）
+  const pk = packStore.currentId
+  if (pk) {
+    const tag = pad.current.target_tag ?? ''
+    packStore.addPad(pad.current.id, tag)
+    packStore.mutate({ action: 'save', id: pk, pack: packStore.current ?? {} })
+    notify(`已保存作业纸「${pad.current.id}」并纳入作业包「${pk}」（继续编辑会覆盖同名条目）。`)
+  } else {
+    notify('已保存到作业纸清单（③段清单可见；继续编辑会覆盖同名条目）。提示：可在顶部「作业包」栏新建包以按次作业组织。')
+  }
 }
 </script>
 

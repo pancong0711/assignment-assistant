@@ -935,7 +935,8 @@ export async function postXxtClassMap(
 export async function startXxtGradeAi(
   engineAddr: string, token: string | undefined,
   payload: { courseId: string; classId: string; cpi: string; workId: string
-    taskpad: Record<string, unknown>; mode?: string; tags?: string[]; limit?: number },
+    taskpad: Record<string, unknown>; pads?: Record<string, unknown>[]
+    mode?: string; tags?: string[]; limit?: number },
 ): Promise<string> {
   const base = normalizeEngineAddr(engineAddr)
   const res = await fetch(engineUrlWithToken(base, '/xxt/grade/ai-run', token), {
@@ -1388,6 +1389,47 @@ export async function uploadWatermarkImage(
   })
   const o = (await res.json().catch(() => ({}))) as
     { ok?: boolean; error?: string; name?: string; path?: string; bytes?: number }
+  if (!res.ok && !o?.error) throw new Error(`HTTP ${res.status}`)
+  return o
+}
+
+/* ---------------- D89-N1：作业包（pack） ---------------- */
+
+export interface PackPadRef { padId: string; tag?: string }
+export interface Pack {
+  id: string; name?: string; term?: string; class_dir?: string
+  pads?: PackPadRef[]; note?: string; updatedAt?: string; schema?: number
+}
+
+/** GET /packs：列出 workspace 下的作业包。 */
+export async function fetchPacks(
+  engineAddr: string, token?: string,
+): Promise<{ ok?: boolean; packs?: Pack[] }> {
+  const base = normalizeEngineAddr(engineAddr)
+  return (await getJson2(engineUrlWithToken(base, '/packs', token))) as { ok?: boolean; packs?: Pack[] }
+}
+
+/** GET /pack/<id>：读取单个作业包。 */
+export async function fetchPack(
+  engineAddr: string, token: string | undefined, id: string,
+): Promise<Pack & { ok?: boolean; error?: string }> {
+  const base = normalizeEngineAddr(engineAddr)
+  return (await getJson2(engineUrlWithToken(base, `/pack/${encodeURIComponent(id)}`, token))) as
+    Pack & { ok?: boolean; error?: string }
+}
+
+/** POST /pack：保存/删除/重命名作业包（action）。 */
+export async function savePack(
+  engineAddr: string, token: string | undefined,
+  payload: { action?: 'save' | 'delete' | 'rename'; id: string; new_id?: string; pack?: Partial<Pack> },
+): Promise<{ ok?: boolean; error?: string; pack?: Pack; packs?: Pack[] }> {
+  const base = normalizeEngineAddr(engineAddr)
+  const res = await fetch(engineUrlWithToken(base, '/pack', token), {
+    method: 'POST', headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(payload),
+  })
+  const o = (await res.json().catch(() => ({}))) as
+    { ok?: boolean; error?: string; pack?: Pack; packs?: Pack[] }
   if (!res.ok && !o?.error) throw new Error(`HTTP ${res.status}`)
   return o
 }

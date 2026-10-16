@@ -17,12 +17,40 @@ import SheetOutputSection from '../components/SheetOutputSection.vue'
 import { useKbStore } from '../stores/kb'
 import { useTaskpadStore } from '../stores/taskpad'
 import { useSettingsStore } from '../stores/settings'
+import { usePackStore } from '../stores/packs'
 import { expandPadItems, type SheetHtmlPadInput } from '../lib/sheetHtml'
 import type { KbKind } from '../lib/kb'
 
 const kb = useKbStore()
 const pad = useTaskpadStore()
 const settings = useSettingsStore()
+const packStore = usePackStore()
+
+/* D89-N1：作业包（最上层：一次分层作业的全部作业纸集合） */
+const newPackId = ref('')
+const packMsg = ref('')
+function createPack() {
+  const id = newPackId.value.trim()
+  if (!id) { packMsg.value = '请填作业包名称/id'; return }
+  packStore.newPack(id)
+  newPackId.value = ''
+  packStore.mutate({ action: 'save', id, pack: { id, name: id, pads: [] } })
+  packMsg.value = `已新建作业包「${id}」`
+}
+async function saveCurrentPack() {
+  const cur = packStore.current
+  if (!cur) { packMsg.value = '请先新建/选择作业包'; return }
+  const r = await packStore.mutate({ action: 'save', id: cur.id, pack: cur })
+  packMsg.value = r.ok ? `已保存作业包「${cur.id}」（${(cur.pads ?? []).length} 张作业纸）`
+    : `保存失败：${r.error ?? '引擎离线（已存本地）'}`
+}
+function deletePack() {
+  const cur = packStore.current
+  if (!cur) { packMsg.value = '请先选择作业包'; return }
+  packStore.mutate({ action: 'delete', id: cur.id })
+  packMsg.value = `已删除作业包「${cur.id}」`
+}
+onMounted(() => { packStore.refresh() })
 
 /** D43-6 内容开关（默认不勾；③/④段共享） */
 const includeAnswers = ref(false)
@@ -57,6 +85,29 @@ onMounted(() => { /* 通知中心占位（各段经 notify 上抛 pageStatus） 
 
 <template>
   <section class="design-view">
+    <!-- D89-N1：作业包（最上层；从大到小：作业包 → 作业纸 → 版式/内容） -->
+    <div class="card" id="pack" style="margin:8px 12px 0; border-left:4px solid var(--c-primary, #3b82f6)">
+      <h2 style="margin:0 0 6px">作业包 <small style="font-weight:400;color:var(--c-muted)">一次分层作业的全部作业纸（每类型/tag 一张）</small></h2>
+      <p style="display:flex; gap:8px; align-items:center; flex-wrap:wrap; margin:0 0 4px">
+        <span class="hint" style="margin:0">当前作业包：</span>
+        <select v-model="packStore.currentId">
+          <option value="">（未选择）</option>
+          <option v-for="pk in packStore.packs" :key="pk.id" :value="pk.id">
+            {{ pk.id }}（{{ (pk.pads ?? []).length }} 张）
+          </option>
+        </select>
+        <input v-model="newPackId" placeholder="新建作业包 id/名称" style="width:180px" />
+        <button class="btn small" @click="createPack">＋ 新建作业包</button>
+        <button class="btn small primary" :disabled="!packStore.current" @click="saveCurrentPack">💾 保存作业包</button>
+        <button class="btn small" :disabled="!packStore.current" @click="deletePack">删除作业包</button>
+        <span class="hint" style="margin:0" v-if="!packStore.online">（引擎离线：作业包仅存本浏览器）</span>
+      </p>
+      <p class="hint" style="margin:0" v-if="packMsg">{{ packMsg }}</p>
+      <p class="hint" style="margin:0" v-if="packStore.current">
+        包内作业纸清单见下方③段；「仅保存」保存的是**当前这一张**作业纸并自动纳入本包。
+      </p>
+    </div>
+
     <p class="design-anchors">
       <a href="#form">① 版式</a>
       · <a href="#items">② 内容/变体绑定</a>

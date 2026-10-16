@@ -15,6 +15,8 @@ import {
 
 const props = defineProps<{ engineAddr: string; token?: string }>()
 const taskpadStore = useTaskpadStore()
+import { usePackStore } from '../stores/packs'
+const packStore = usePackStore()
 
 const msg = ref('')
 const busy = ref(false)
@@ -34,7 +36,7 @@ const classDir = ref<Record<string, string>>({})
 
 /* ③ 任务 */
 const works = ref<Array<{ key: string; courseId: string; classId: string; cpi: string; workId: string; label: string }>>([])
-const workKey = ref(''); const padId = ref(''); const mode = ref<'optimized' | 'brute'>('optimized')
+const workKey = ref(''); const padId = ref(''); const packId = ref(''); const mode = ref<'optimized' | 'brute'>('optimized')
 const tags = ref(''); const limit = ref(0); const reportKind = ref<'ai' | 'human'>('ai')
 
 /* ④ 逐生审核 */
@@ -42,6 +44,18 @@ const students = ref<Array<{ name: string; key: string; tag?: string }>>([])
 const drafts = ref<Record<string, any>>({})
 const curKey = ref(''); const score = ref('100'); const comment = ref('')
 
+// D89：优先按"作业包"选择（一次分层作业的全部作业纸）；包内每张按 tag 自动匹配学生
+const packPads = computed(() => {
+  const cur = packStore.packs.find((p) => p.id === packId.value)
+  const ids = new Set((cur?.pads ?? []).map((r: any) => r.padId))
+  return (taskpadStore.saved || [])
+    .filter((x: any) => ids.has(String(x.id)))
+    .map((x: any) => {
+      let tp: any = null
+      try { tp = JSON.parse(x.json) } catch { tp = null }
+      return { id: String(x.id), tag: String(tp?.target_tag || ''), json: x.json || '' }
+    })
+})
 const pads = computed(() => (taskpadStore.saved || []).map((x: any) => ({
   id: String(x.id || ''), tag: String(x.target_tag || ''), json: x.json || '',
 })))
@@ -138,14 +152,24 @@ function stopPoll() { if (pollTimer !== undefined) { window.clearTimeout(pollTim
 async function startAi() {
   const w = curWork.value
   if (!w) { msg.value = '请选择作业（需先在「作业预览-学习通」下载作答/批语）'; return }
-  const raw = pads.value.find(p => p.id === padId.value)?.json || ''
+  // D89：优先用作业包（多张作业纸，按 tag 匹配）；否则退回单张作业纸
+  const packPadList = packPads.value.map((p) => { try { return JSON.parse(p.json) } catch { return null } })
+    .filter(Boolean)
   let taskpad: any = null
-  try { taskpad = raw ? JSON.parse(raw) : null } catch { taskpad = null }
-  if (!taskpad) { msg.value = '请选择作业包（taskpad）'; return }
+  let padsPayload: any[] | undefined
+  if (packId.value && packPadList.length) {
+    padsPayload = packPadList
+    taskpad = packPadList[0]
+  } else {
+    const raw = pads.value.find(p => p.id === padId.value)?.json || ''
+    try { taskpad = raw ? JSON.parse(raw) : null } catch { taskpad = null }
+  }
+  if (!taskpad) { msg.value = '请选择作业包（或单张作业纸）'; return }
   busy.value = true; progress.value = '正在装配任务清单并启动 AI 批阅……'
   try {
     const jobId = await startXxtGradeAi(props.engineAddr, props.token, {
       courseId: w.courseId, classId: w.classId, cpi: w.cpi, workId: w.workId, taskpad,
+      ...(padsPayload && padsPayload.length > 1 ? { pads: padsPayload } : {}),
       mode: mode.value, tags: tags.value.split(',').map(x => x.trim()).filter(Boolean),
       limit: Number(limit.value) || 0,
     })
@@ -340,8 +364,15 @@ onMounted(async () => { await loadConfig(); await loadWorks() })
         <option value="">（选择已下载的作业）</option>
         <option v-for="w in works" :key="w.key" :value="w.key">{{ w.label }}</option>
       </select>
-      <select v-model="padId" style="min-width:200px">
-        <option value="">（选择作业包 taskpad）</option>
+      <select v-model="packId" style="min-width:220px" @change="padId = ''">
+        <option value="">（选择作业包：含多张按 tag 的作业纸）</option>
+        <option v-for="pk in packStore.packs" :key="pk.id" :value="pk.id">
+          {{ pk.id }}（{{ (pk.pads ?? []).length }} 张）
+        </option>
+      </select>
+      <span class="hint" style="margin:0">或单张作业纸：</span>
+      <select v-model="padId" style="min-width:200px" @change="packId = ''">
+        <option value="">（单张作业纸）</option>
         <option v-for="p in pads" :key="p.id" :value="p.id">{{ p.id }}{{ p.tag ? ' · tag ' + p.tag : '' }}</option>
       </select>
       <label class="field">模式
