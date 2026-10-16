@@ -87,7 +87,7 @@
 |---|---|---|---|
 | S1 | 引擎：summary/copy-page/translation 合成 + `resolve_items` 注入 seed + 单测 | `paper/compose.py` + `paper/task.py`（含 batch/htmlfile 调用）+ 单测 | ✅ |
 | S2 | PWA：`expandPadItems` 同源合成 + `random_seed` 字段 + selfcheck（含跨语言 parity） | `lib/taskpad.ts` + `lib/sheetHtml.ts` + selfcheck | ✅ |
-| S3 | 水印预览修复：`resolveWmItems` 解析 `style_ref` + 矩阵"全选并应用"提示 | `lib/sheetHtml.ts` + `SheetLayoutView.vue` | ⏳ |
+| S3 | 水印预览修复：`resolveWmItems` 解析 `style_ref` + 矩阵"全选并应用" | `lib/sheetHtml.ts` + 各视图传 `wmStyles` + `SheetLayoutView.vue` + selfcheck | ✅ |
 | S4 | 清单列：+章节/题号，−学期/班级 | `SheetPreviewSection.vue` | ⏳ |
 | S5 | 整班预览：学号排序 + 连续页码 + KaTeX 就绪等待 | `lib/sheetHtml.ts` + `RosterView.vue` | ⏳ |
 | S6 | 文档 + 验证 + 去敏 push | 文档 + CI | ⏳ |

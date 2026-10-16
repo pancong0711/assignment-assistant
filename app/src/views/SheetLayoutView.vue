@@ -246,9 +246,15 @@ function setPadStyleRef(padId: string, styleRef: string) {
 }
 /** 默认全部勾选当前包，批量把某样式应用到勾选的作业纸。 */
 const wmBatchTargets = ref<string[]>([])
+const previewTick = ref(0)
 const wmBatchStyle = ref('')
 const wmBatchMsg = ref('')
 watch(wmMatrixRows, (rows) => { wmBatchTargets.value = [...rows] }, { immediate: true })
+function selectAllAndApply() {
+  wmBatchTargets.value = [...wmMatrixRows.value]
+  if (!wmBatchStyle.value) { wmBatchMsg.value = '已全选当前包；请选择样式后点「应用到勾选的作业纸」'; return }
+  applyBatchStyle()
+}
 function applyBatchStyle() {
   if (!wmBatchTargets.value.length) { wmBatchMsg.value = '请勾选要应用的作业纸'; return }
   if (!wmBatchStyle.value) { wmBatchMsg.value = '请先选择样式'; return }
@@ -498,6 +504,8 @@ function saveOnly() {
               <button class="btn small" style="margin-left:6px" :disabled="!wmBatchStyle || !wmBatchTargets.length"
                       @click="applyBatchStyle">应用到勾选的作业纸</button>
               <button class="btn small" style="margin-left:4px" @click="wmBatchTargets = [...wmMatrixRows]">全选当前包</button>
+              <button class="btn small" style="margin-left:4px" :disabled="!wmBatchStyle" @click="selectAllAndApply">全选并应用</button>
+              <button class="btn small" style="margin-left:4px" title="刷新预览：样式已写入作业纸，③段/预览会自动更新（若未变，请切到③段再回）" @click="() => { previewTick = (previewTick + 1) }">刷新预览</button>
               <span v-if="wmBatchMsg" style="display:block; margin-top:2px">{{ wmBatchMsg }}</span>
             </div>
           </div>

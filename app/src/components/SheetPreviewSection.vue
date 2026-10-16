@@ -81,6 +81,7 @@ function templateHtml(inputs: SheetHtmlPadInput[] | SheetHtmlPadInput): string {
     includeWatermark: props.includeWatermark,
     includePageText: props.includePageText,
     wmAssets: settings.wmAssets,
+    wmStyles: settings.wmStyles,
     figAssets: settings.figAssets,
     katex: 'relative',
   })
@@ -123,6 +124,7 @@ async function downloadOverlayHtml() {
       includeWatermark: props.includeWatermark,
       includePageText: props.includePageText,
       wmAssets: settings.wmAssets,
+    wmStyles: settings.wmStyles,
       figAssets: settings.figAssets,
     })
     downloadData(html, `sheet-preview-${new Date().toISOString().slice(0, 10)}.html`, 'text/html')

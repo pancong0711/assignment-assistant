@@ -79,6 +79,7 @@ async function downloadBrowserVersion() {
       includeWatermark: props.includeWatermark,
       includePageText: props.includePageText,
       wmAssets: settings.wmAssets,
+      wmStyles: settings.wmStyles,
       figAssets: settings.figAssets,
     })
     downloadData(html, `${pad.current.id}.html`, 'text/html')

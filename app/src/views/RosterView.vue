@@ -368,6 +368,7 @@ function buildClassPreviewHtml(): string {
     includeWatermark: classIncludeWatermark.value,
     includePageText: classIncludePageText.value,
     wmAssets: settingsStore.wmAssets,
+    wmStyles: settingsStore.wmStyles,
     figAssets: settingsStore.figAssets,   // B3/D46-5：题图命中显示真图
     katex: 'relative',                    // 同源 ./katex/，公式离线渲染
   })
@@ -420,6 +421,7 @@ async function downloadClassPreviewHtml() {
       includeWatermark: classIncludeWatermark.value,
       includePageText: classIncludePageText.value,
       wmAssets: settingsStore.wmAssets,
+      wmStyles: settingsStore.wmStyles,
       figAssets: settingsStore.figAssets,
     })
     downloadData(html, `class-sheet-preview-${new Date().toISOString().slice(0, 10)}.html`, 'text/html')

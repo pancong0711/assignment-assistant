@@ -61,6 +61,9 @@ export interface SheetHtmlOptions {
   groupName?: string
   /** 本浏览器水印素材库（basename → dataURL；来自 settings.wmAssets） */
   wmAssets?: Record<string, string>
+  /** D93-S3：命名水印样式库（name → {items,pageText,enabled}；来自 settings.wmStyles）。
+   *  用于解析 pad.watermark.style_ref（内联 items 优先；否则命中样式；否则默认三槽）。 */
+  wmStyles?: WmStyleLike[]
   /** B3/D46-5：题图素材库（basename → dataURL；来自 settings.figAssets）。
    *  命中 → <img class="q-img" src=dataURL>（与引擎 base64 内嵌同视觉）；未命中 → 原占位框。 */
   figAssets?: Record<string, string>
@@ -211,12 +214,33 @@ function dataUrlParts(url: string): { mime: string; b64: string } | null {
   return m ? { mime: m[1], b64: m[2] } : null
 }
 
+export interface WmStyleLike { name: string; enabled?: boolean; pageText?: boolean; default?: boolean
+  items?: { image?: string; pos?: string; ratio?: number; alpha?: number }[] }
+
+/** D93-S3：解析作业纸生效水印图层。优先级：内联 items > style_ref（命名样式）> 默认样式 > 内置三槽。
+ *  与引擎 htmlfile._watermark_items / watermark_styles.resolve_pad_watermark 同口径。 */
 function resolveWmItems(pad: Taskpad, wmAssets: Record<string, string> | undefined,
-                        orientation: string): WmResolved[] {
+                        orientation: string, wmStyles?: WmStyleLike[]): WmResolved[] {
   const pageW = PAGE_W_MM[orientation] ?? 210
-  const raw = (pad.watermark.items ?? []).filter((it) => it && it.image)
+  const inline = (pad.watermark.items ?? []).filter((it) => it && it.image)
+  let effective: { image: string; pos: string; ratio: number; alpha: number }[] | null = null
+  if (inline.length) {
+    effective = inline.map((it) => ({ image: it.image, pos: it.pos, ratio: it.ratio, alpha: it.alpha }))
+  } else {
+    const styles = wmStyles || []
+    const ref = String(pad.watermark.style_ref || '').trim()
+    let st = ref ? styles.find((x) => x.name === ref) : undefined
+    if (ref && !st) st = styles.find((x) => x.default) || styles.find((x) => x.name === '_default')
+    if (!st && !ref) st = styles.find((x) => x.default) || styles.find((x) => x.name === '_default')
+    const items = (st?.items || []).filter((it) => it && it.image)
+    if (items.length) {
+      effective = items.map((it) => ({ image: String(it.image), pos: String(it.pos || 'rb'),
+                                       ratio: Number(it.ratio ?? 0.25), alpha: Number(it.alpha ?? 0.5) }))
+    }
+  }
+  const raw = effective || []
   const list = raw.length
-    ? raw.map((it) => ({ image: it.image, pos: it.pos, ratio: it.ratio, alpha: it.alpha }))
+    ? raw
     : [
         // 空 items = 默认三槽占位（engine watermark preset 2603 缺省；PWA 无文件 → 占位标记）
         { image: 'university', pos: 'rt', ratio: 0.125, alpha: 0.5, defaultLogo: 'logo-university.png' },
@@ -531,7 +555,7 @@ export function stringifySheetHtml(
     const chunks: SheetHtmlItem[][] = []
     for (let i = 0; i < items.length; i += perPage) chunks.push(items.slice(i, i + perPage))
     if (!chunks.length) chunks.push([])
-    const wm = resolveWmItems(pad, opts.wmAssets, pad.layout.orientation === 'landscape' ? 'landscape' : 'portrait')
+    const wm = resolveWmItems(pad, opts.wmAssets, pad.layout.orientation === 'landscape' ? 'landscape' : 'portrait', opts.wmStyles)
     // D43-6 整班分段：每包可带自己的 students 子集（班级与标签页 VC-3 用）
     const stuList: SheetHtmlStudent[] = (pads[padIdx].students?.length
       ? pads[padIdx].students
