@@ -1452,3 +1452,4 @@ applyManualTranslation/setTranslationRatio 中 setTranslationRatio 保留——�
 - 修：a) `syntheticFallback` 开关（整班关闭、空包跳过）；b) 未匹配学生列名 + manifest；
   c) 页眉班级解析 `stu.class → 学习通班级名/class_dir → 空`（三端同步 + parity 哨兵）；
 - AI 入口（方案 A）：`GradingView` 重构为「AI 辅助批阅」（六区），迁移并删除 XxetongView 的临时面板，保留离线 CLI 块。
+- 状态：**§1–§5 全部完成**（含 docs/13/15/39 文档入口指向 + HelpView 卡片）；验证 engine pytest 271 passed / PWA build 通过。

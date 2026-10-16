@@ -1,7 +1,7 @@
 # D88 任务需求单：整班预览"混合示例"修复 + PWA「AI 辅助批阅」选项卡（方案 A）
 
 > 日期：2026-10-15
-> 状态：已拍板（用户：整班预览三条全做；AI 入口按方案 A），按 §4 顺序执行。
+> 状态：**§1–§5 全部完成**（整班预览三条 + AI 选项卡重构 + 文档/验证）。验证：engine `pytest` 271 passed；PWA `npm run build` 通过。
 > 关联：`docs/39-D86-ai-grading-tab.md`（AI 批阅引擎/端点已就绪）、`docs/40-D87-...`（水印样式库）。
 
 ## 1. 整班预览"混合示例"根因（2026-10-15 查证）
@@ -47,7 +47,7 @@
 | §2 | 整班预览 b（未匹配学生列名） | `RosterView.vue`（`buildClassInputs` 返回 unmatchedNames；提示列名前 12 + 总数）| ✅ |
 | §3 | 整班预览 c（班级字段解析 + 三端同步 + parity 哨兵） | `sheetHtml.ts`（`stu.class → groupName → 空`）/ `htmlfile.py`（去 classA）/ 模板沿用 class_display + 回归测试 | ✅ |
 | §4 | AI 选项卡重构（迁移面板 + tab 改名 + 保留离线块） | 新组件 `components/AiGradingPanel.vue`（六区） + `App.vue` tab 改名「AI 辅助批阅」 + `GradingView.vue` 挂载、原「选包/选图/CLI」收进「高级 / 离线」折叠块 + 删除 XxetongView 临时面板 | ✅ |
-| §5 | 文档（docs/13/39/41、docs/15 手册入口指向）+ 验证 | 文档 + build/selfcheck/CI | ⏳ |
+| §5 | 文档（docs/13/39/41、docs/15 手册入口指向）+ 验证 | 文档 + build/selfcheck/CI | ✅ |
 
 ## 5. 验收
 
