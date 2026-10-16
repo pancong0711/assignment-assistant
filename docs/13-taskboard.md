@@ -1435,6 +1435,18 @@ applyManualTranslation/setTranslationRatio 中 setTranslationRatio 保留——�
 
 ---
 
+## D93 · summary/copy/translation 合成题 + 水印预览修复 + 清单列 + 整班预览页码/公式（2026-10-16）
+
+- 主需求单：`docs/46-D93-tag-compose-class-preview.md`；
+- 合成题（按 tag 触发、切换 tag 智能移除、派生不写入 items）：
+  summary 固定模板；copy 题干拼 `{page}页…画出示意图`；translation 从 `translation.xlsx` 随机（seed 固定到作业纸 JSON，一次作业同题）；
+- 水印预览修复：`sheetHtml.resolveWmItems` 解析 `style_ref`（此前只读内联 items）；
+- 清单列：+章节/题号，−学期/班级；
+- 整班预览：按**学号排序** + 页码**跨班连续递增** + **公式正常渲染**（KaTeX 就绪等待）；
+- 分期：S1 引擎合成 → S2 PWA 同源+parity → S3 水印预览 → S4 清单列 → S5 整班预览 → S6 文档/验证/push。
+
+---
+
 ## D92 · 题库下拉/模型共享 + 逐生审核双栏弹窗 + 报告五模式（构成×修订）（2026-10-16）
 
 - 主需求单：`docs/45-D92-grading-report-modes.md`；
