@@ -125,30 +125,128 @@ watch(() => pad.current.id, () => syncFromPad())
 /* ---------- 水印编辑器（阶段4a：watermark items 列表，兼容 legacy 三槽） ---------- */
 const wmPosGrid = ['lt', 'mt', 'rt', 'lm', 'mm', 'rm', 'lb', 'mb', 'rb'] as const
 
-/** 本地上传图片 → dataURL 存 settings.wmAssets（仅浏览器 localStorage，不进作业纸）；
- *  作业纸 items[].image 只写 file 相对路径 hint（如 assets/watermark/<文件名>），
- *  教师把图片放进该路径后引擎即可读取。 */
-function addWatermarkImage(e: Event) {
+/** 上传图片 → 新增图层。
+ *  D87：引擎在线时经 `POST /watermark/upload` 落到 `<ws>/assets/watermark/`，
+ *  items[].image 写**相对 assets_dir** 的 `watermark/<文件名>`（引擎各通道可直接命中）；
+ *  离线时退回 dataURL 存 settings.wmAssets，仅本浏览器预览有效（明确提示）。 */
+async function addWatermarkImage(e: Event) {
   const input = e.target as HTMLInputElement
   const files = Array.from(input.files ?? [])
   if (!files.length) return
   for (const f of files) {
-    const reader = new FileReader()
-    reader.onload = () => {
-      const dataUrl = String(reader.result ?? '')
-      settings.persistWmAsset(f.name, dataUrl)
-      const item = {
-        image: `assets/watermark/${f.name}`, // file 相对路径 hint（engine assets/watermark/）
-        pos: 'rb' as const,
-        ratio: 0.25,
-        alpha: 0.5,
-      }
-      pad.current.watermark.items = [...(pad.current.watermark.items ?? []), item]
-      notify(`已添加水印图层 ${f.name}（图片已存本浏览器；作业纸导出仅含文件路径 hint ${item.image}，教师需把图片放到 workspace 对应路径或 assets/watermark/）。`)
-    }
-    reader.readAsDataURL(f)
+    const dataUrl = await readAsDataURL(f)
+    // 先存本地预览（离线/在线都保留，用于九宫格缩略图）
+    settings.persistWmAsset(f.name, dataUrl)
+    const rel = await settings.uploadWmImage(f.name, dataUrl)
+    const image = rel || `watermark/${f.name}`  // 相对 assets_dir 口径（D87 §3.1）
+    const item = { image, pos: 'rb' as const, ratio: 0.25, alpha: 0.5 }
+    pad.current.watermark.items = [...(pad.current.watermark.items ?? []), item]
+    notify(rel
+      ? `已上传 ${f.name} → <ws>/assets/${rel}（引擎各通道可直接命中）`
+      : `已添加水印图层 ${f.name}：引擎离线，图片仅存本浏览器预览；请把图片放到 <ws>/assets/watermark/ 后引擎才会读。`)
   }
   input.value = ''
+}
+
+function readAsDataURL(f: File): Promise<string> {
+  return new Promise((resolve) => {
+    const reader = new FileReader()
+    reader.onload = () => resolve(String(reader.result ?? ''))
+    reader.onerror = () => resolve('')
+    reader.readAsDataURL(f)
+  })
+}
+
+/* ---------- D87 §3.3：命名样式下拉 + 新建/重命名/复制/删除/设为默认 + style_ref ---------- */
+const wmStyleRef = computed({
+  get: () => pad.current.watermark.style_ref ?? '',
+  set: (v: string) => { pad.current.watermark.style_ref = v || undefined },
+})
+const wmStyleName = ref('')
+const wmStylesBusy = ref(false)
+/** 当前编辑图层所属的命名样式（空 = 直接编辑作业纸内联 items）。 */
+const wmEditStyle = ref('')
+
+let wmStylesLoadedOnce = false
+watch(() => settings.engineOnline, async (on: boolean) => {
+  if (on && !wmStylesLoadedOnce) { wmStylesLoadedOnce = true; await settings.refreshWmStyles() }
+}, { immediate: true })
+
+function styleByName(name: string) {
+  return settings.wmStyles.find((x) => x.name === name)
+}
+/** 载入某命名样式的图层到编辑器（写入 style_ref；items 为只读预览→“副本到作业纸”）。 */
+function loadStyle(name: string) {
+  wmEditStyle.value = name
+  wmStyleName.value = name
+}
+/** 把当前图层“另存为”命名样式（新建/覆盖），并让作业纸引用它。 */
+async function saveAsStyle() {
+  const name = (wmStyleName.value || '').trim()
+  if (!name) { notify('请先填样式名'); return }
+  wmStylesBusy.value = true
+  const r = await settings.saveWmStyle({
+    action: 'save', name,
+    style: {
+      enabled: pad.current.watermark.enabled !== false,
+      pageText: pad.current.watermark.pageText !== false,
+      items: (pad.current.watermark.items ?? []).map((it) => ({ ...it })),
+    },
+  })
+  wmStylesBusy.value = false
+  if (r.ok) {
+    wmStyleRef.value = name
+    wmEditStyle.value = name
+    notify(`已另存为样式「${name}」并让本作业纸引用它`)
+  } else {
+    notify(`保存样式失败：${r.error ?? '引擎离线或未就绪'}（离线时样式仅可本地预览，不落盘）`)
+  }
+}
+/** 把某命名样式的图层复制到当前作业纸内联 items（脱离 style_ref）。 */
+function copyStyleToPad(name: string) {
+  const st = styleByName(name)
+  if (!st) { notify('样式不存在或尚未拉取'); return }
+  pad.current.watermark.items = (st.items ?? []).map((it) => ({
+    image: String(it.image ?? ''),
+    pos: (it.pos ?? 'rb') as never,
+    ratio: Number(it.ratio ?? 0.25),
+    alpha: Number(it.alpha ?? 0.5),
+  }))
+  wmStyleRef.value = ''
+  notify(`已把样式「${name}」的图层复制到本作业纸（不再引用样式）`)
+}
+async function renameStyle() {
+  const old = wmEditStyle.value
+  const nw = (wmStyleName.value || '').trim()
+  if (!old || !nw || nw === old) { notify('请选择样式并填入新名字'); return }
+  wmStylesBusy.value = true
+  const r = await settings.saveWmStyle({ action: 'rename', name: old, new_name: nw })
+  wmStylesBusy.value = false
+  if (r.ok) {
+    if (wmStyleRef.value === old) wmStyleRef.value = nw
+    wmEditStyle.value = nw
+    notify(`已重命名为「${nw}」`)
+  } else notify(`重命名失败：${r.error ?? '引擎离线'}`)
+}
+async function deleteStyle() {
+  const name = wmEditStyle.value
+  if (!name) { notify('请先选择要删除的样式'); return }
+  wmStylesBusy.value = true
+  const r = await settings.saveWmStyle({ action: 'delete', name })
+  wmStylesBusy.value = false
+  if (r.ok) {
+    if (wmStyleRef.value === name) wmStyleRef.value = ''
+    wmEditStyle.value = ''
+    notify(`已删除样式「${name}」`)
+  } else notify(`删除失败：${r.error ?? '引擎离线'}`)
+}
+async function setDefaultStyle() {
+  const name = wmEditStyle.value
+  if (!name) { notify('请先选择要设为默认的样式'); return }
+  wmStylesBusy.value = true
+  const r = await settings.saveWmStyle({ action: 'set_default', name })
+  wmStylesBusy.value = false
+  notify(r.ok ? `已把「${name}」设为默认样式` : `设为默认失败：${r.error ?? '引擎离线'}`)
 }
 
 function wmMove(idx: number, dir: -1 | 1) {
@@ -278,20 +376,51 @@ function saveOnly() {
 
       <!-- ============ 水印编辑器（不变） ============ -->
       <div class="card" style="flex:0 0 380px; min-width:320px">
-        <h2>水印编辑器（items 列表，0..N 图层）</h2>
+        <h2>水印编辑器（命名样式库 / items 列表，0..N 图层）</h2>
         <p>
           <label class="field"><input type="checkbox" v-model="pad.current.watermark.enabled" /> 启用水印（每生唯一标识由 engine 打印时注入）</label>
-          <label class="field">样式：</label>
-          <select v-model="pad.current.watermark.style"><option value="default">default</option><option value="none">none</option></select>
           <label class="field" title="页角大字页码（engine text_draw 第 n 页）">
             <input type="checkbox" v-model="pageTextOn" /> 页码文字水印
           </label>
         </p>
+        <div class="card" style="padding:8px; background:var(--c-bg-soft, #f7f8fa); margin:0 0 8px">
+          <div class="hint" style="margin:0 0 4px">
+            <b>D87 命名样式库</b>：
+            引擎在线时样式与图片落 <code>&lt;ws&gt;/assets/watermark/</code>；离线仅本浏览器预览。
+          </div>
+          <p style="display:flex; gap:6px; align-items:center; flex-wrap:wrap; margin:0 0 4px">
+            <span class="hint" style="margin:0">作业纸引用样式：</span>
+            <select v-model="wmStyleRef" title="优先级：作业纸内联 items > 引用样式 > 默认样式 > 引擎内置三槽">
+              <option value="">（不引用，用默认样式）</option>
+              <option v-for="st in settings.wmStyles" :key="st.name" :value="st.name">
+                {{ st.name }}{{ st.default ? '（默认）' : '' }}
+              </option>
+            </select>
+            <span class="hint" style="margin:0" v-if="wmStyleRef">当前引用：{{ wmStyleRef }}</span>
+          </p>
+          <p style="display:flex; gap:6px; align-items:center; flex-wrap:wrap; margin:0">
+            <select v-model="wmEditStyle" @change="wmEditStyle && loadStyle(wmEditStyle)">
+              <option value="">— 选择样式编辑 —</option>
+              <option v-for="st in settings.wmStyles" :key="st.name" :value="st.name">
+                {{ st.name }}{{ st.default ? '（默认）' : '' }}
+              </option>
+            </select>
+            <input v-model="wmStyleName" placeholder="样式名（新建/另存为）" style="width:150px" />
+            <button class="btn small" :disabled="wmStylesBusy" @click="saveAsStyle">另存为样式</button>
+            <button class="btn small" :disabled="wmStylesBusy || !wmEditStyle" @click="() => copyStyleToPad(wmEditStyle)">复制到本作业纸</button>
+            <button class="btn small" :disabled="wmStylesBusy || !wmEditStyle" @click="renameStyle">重命名</button>
+            <button class="btn small" :disabled="wmStylesBusy || !wmEditStyle" @click="setDefaultStyle">设为默认</button>
+            <button class="btn small" :disabled="wmStylesBusy || !wmEditStyle" @click="deleteStyle">删除</button>
+          </p>
+          <p class="hint" style="margin:4px 0 0" v-if="!settings.wmStyles.length">
+            暂无命名样式：编辑下方图层后「另存为样式」即可新建；不引用样式则引擎用默认/内置三槽。
+          </p>
+        </div>
         <p class="hint">
-          每个图层：本地上传图片 + 九宫格摆位（3x3 点选）+ 大小/透明度滑条 +
-          上下移动/删除。dataURL 只存本浏览器；作业纸导出仅含
-          <code>items[].image</code> 文件相对路径 hint（教师把图片放到 workspace/assets/watermark/），
-          并双写 legacy 三槽 university/text/boat（engine 现行 schema 兼容）。
+          每个图层：上传图片 + 九宫格摆位（3x3 点选）+ 大小/透明度滑条 +
+          上下移动/删除。引擎在线时图片落 <code>&lt;ws&gt;/assets/watermark/</code>，
+          <code>items[].image</code> 写相对素材目录的 <code>watermark/&lt;文件名&gt;</code>；
+          离线时 dataURL 仅存本浏览器预览。作业纸导出同时双写 legacy 三槽。
         </p>
         <div v-for="(it, wi) in pad.current.watermark.items" :key="wi" class="wm-item">
           <div class="wm-head">

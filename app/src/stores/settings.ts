@@ -3,6 +3,7 @@ import {
   DEFAULT_ENGINE_ADDR, fetchDoctor, fetchEngineStatus, fetchEngineUpdate, fetchPwPkgs,
   normalizeEngineAddr, restartEngine, startInstall, streamInstall,
   statusClass, type DoctorCheck, type EngineUpdateInfo, type PwPkgItem,
+  fetchWatermarkStyles, saveWatermarkStyle, uploadWatermarkImage, type WmStyle,
 } from '../lib/engineClient'
 
 /** 设置中心状态（docs/05-D13：设置中心 + 首次运行向导 + 条件式置灰）。
@@ -30,6 +31,12 @@ const LS_ONBOARDING_KEY = 'assignment-assistant.onboarding.v1'
 const LS_WM_ASSETS_KEY = 'assignment-assistant.watermark.assets.v1'
 /** B3/D46-5：题图素材库（kb/fig 相对路径 → dataURL），与水印素材同模式独立键 */
 const LS_FIG_ASSETS_KEY = 'assignment-assistant.fig.assets.v1'
+/** D87 §3.3：水印命名样式缓存（离线预览用；在线时以引擎 /watermark/styles 为准） */
+const LS_WM_STYLES_KEY = 'assignment-assistant.watermark.styles.v1'
+
+function loadWmStyles(): WmStyle[] {
+  try { return JSON.parse(localStorage.getItem(LS_WM_STYLES_KEY) ?? '[]') as WmStyle[] } catch { return [] }
+}
 
 function loadFigAssets(): Record<string, string> {
   try { return JSON.parse(localStorage.getItem(LS_FIG_ASSETS_KEY) ?? '{}') as Record<string, string> } catch { return {} }
@@ -165,6 +172,12 @@ export const useSettingsStore = defineStore('settings', {
     wmAssets: loadWmAssets() as Record<string, string>,
     /** B3/D46-5：题图库（basename → dataURL；仅本浏览器，导出 JSON 只写 img_path hint） */
     figAssets: loadFigAssets() as Record<string, string>,
+    /** D87：水印命名样式缓存（离线可用；在线时由引擎覆盖刷新） */
+    wmStyles: loadWmStyles() as WmStyle[],
+    wmStylesLoaded: false as boolean,
+    wmStylesError: '' as string,
+    /** D87：素材/样式落盘状态说明（在线=落 <ws>/assets；离线=仅本浏览器预览） */
+    wmAssetsOnline: false as boolean,
   }),
   getters: {
     /** 向导未完成或跳过 → 引擎类按钮灰 + 黄色横幅（D13：不整体置灰） */
@@ -396,6 +409,59 @@ export const useSettingsStore = defineStore('settings', {
     },
     persistWmAssets() {
       try { localStorage.setItem(LS_WM_ASSETS_KEY, JSON.stringify(this.wmAssets)) } catch { /* 容量/隐私降级 */ }
+    },
+    persistWmStyles() {
+      try { localStorage.setItem(LS_WM_STYLES_KEY, JSON.stringify(this.wmStyles)) } catch { /* 容量/隐私降级 */ }
+    },
+    /** D87：拉取命名样式（在线落 <ws>/assets；失败回落本地缓存，不阻塞离线编辑）。 */
+    async refreshWmStyles(): Promise<WmStyle[]> {
+      this.wmStylesError = ''
+      try {
+        const r = await fetchWatermarkStyles(this.engineUrl, this.engineToken, undefined)
+        if (r && Array.isArray(r.styles)) {
+          this.wmStyles = r.styles
+          this.wmStylesLoaded = true
+          this.wmAssetsOnline = true
+          this.persistWmStyles()
+        }
+        return this.wmStyles
+      } catch (e) {
+        this.wmStylesLoaded = true
+        this.wmAssetsOnline = false
+        this.wmStylesError = String((e as Error)?.message ?? e)
+        return this.wmStyles
+      }
+    },
+    /** D87：保存/重命名/删除/设默认样式（在线写引擎；同时更新本地缓存）。 */
+    async saveWmStyle(payload: {
+      action?: 'save' | 'rename' | 'delete' | 'set_default'; name: string
+      new_name?: string; default?: boolean; style?: Partial<WmStyle>
+    }): Promise<{ ok: boolean; error?: string }> {
+      try {
+        const r = await saveWatermarkStyle(this.engineUrl, this.engineToken, payload)
+        if (r && Array.isArray(r.styles)) {
+          this.wmStyles = r.styles
+          this.wmStylesLoaded = true
+          this.wmAssetsOnline = true
+          this.persistWmStyles()
+        }
+        return { ok: !!r?.ok, error: r?.error }
+      } catch (e) {
+        return { ok: false, error: String((e as Error)?.message ?? e) }
+      }
+    },
+    /** D87：上传水印图片（在线落 <ws>/assets/watermark；离线仅存本地预览并返回 null）。 */
+    async uploadWmImage(name: string, dataUrl: string): Promise<string | null> {
+      try {
+        const r = await uploadWatermarkImage(this.engineUrl, this.engineToken, { name, data: dataUrl })
+        if (r?.ok && r.path) {
+          this.wmAssetsOnline = true
+          return r.path
+        }
+        return null
+      } catch {
+        return null
+      }
     },
     /** B3/D46-5：题图入库（name=basename；预览按 kb 行 img_path 的 basename 命中显示真图）。 */
     persistFigAsset(name: string, dataUrl: string) {

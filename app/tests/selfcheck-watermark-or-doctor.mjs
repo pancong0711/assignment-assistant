@@ -159,4 +159,18 @@ const { parseTaskpad, serializeTaskpad, parseWatermark, watermarkForExport } = m
 
 assert.ok(watermarkForExport(parseWatermark({ enabled: true })).enabled === true)
 
-console.log('\n全部水印/向导自检通过 ✔（阶段4a：onboarding.v1 + items 序列化兼容）')
+/* ---------- 2e) D87：style_ref 解析 + 导出保留（命名样式关联） ---------- */
+{
+  const wm = parseWatermark({ enabled: true, style_ref: '期末版', items: [] })
+  assert.equal(wm.style_ref, '期末版', 'style_ref 应被解析保留')
+  const out = JSON.parse(serializeTaskpad(parseTaskpad({ id: 'd87', watermark: wm })))
+  assert.equal(out.watermark.style_ref, '期末版', 'style_ref 应随作业纸导出（随类型/tag 走）')
+  // 未声明 style_ref → 不写字段（保持旧包最小）
+  const out2 = JSON.parse(serializeTaskpad(parseTaskpad({ id: 'd87b', watermark: { enabled: true } })))
+  assert.ok(!('style_ref' in out2.watermark), '无 style_ref 不应写空字段')
+  // 空白 style_ref 容错
+  assert.equal(parseWatermark({ style_ref: '   ' }).style_ref, undefined, '空白 style_ref 视为未设置')
+  console.log('2e) D87 style_ref 解析/导出（命名样式关联）… ok')
+}
+
+console.log('\n全部水印/向导自检通过 ✔（阶段4a：onboarding.v1 + items 序列化兼容 + D87 style_ref）')

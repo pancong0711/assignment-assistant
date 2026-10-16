@@ -102,6 +102,8 @@ export interface TaskpadWatermark {
   pageText?: boolean
   /** 阶段4a：水印图层列表（0..N 项；为空 = 无自定义图层，引擎走默认三槽） */
   items?: WatermarkItem[]
+  /** D87：引用命名样式（随作业纸类型/tag 走；优先级 items > style_ref > 默认样式 > 内置三槽） */
+  style_ref?: string
 }
 
 export interface TaskpadGrade {
@@ -349,7 +351,10 @@ export function parseWatermark(raw: unknown): TaskpadWatermark {
     }
   }
   const pt = w.pageText
-  return { enabled, style, pageText: pt === undefined ? true : Boolean(pt), items }
+  const styleRef = String(w.style_ref ?? '').trim()
+  const out: TaskpadWatermark = { enabled, style, pageText: pt === undefined ? true : Boolean(pt), items }
+  if (styleRef) out.style_ref = styleRef
+  return out
 }
 
 /** 从任意 JSON 解析作业纸，做最小校验（容错：grade/journal 可缺省；
@@ -438,6 +443,7 @@ export function watermarkForExport(wm: TaskpadWatermark): Record<string, unknown
     pageText: wm.pageText === undefined ? true : wm.pageText,
     items: wm.items ?? [],
   }
+  if (wm.style_ref) out.style_ref = wm.style_ref
   const slots = ['university', 'text', 'boat'] as const
   const posToSlot: Record<WatermarkPos, string> = {
     rt: 'university', mt: 'university', lt: 'university',

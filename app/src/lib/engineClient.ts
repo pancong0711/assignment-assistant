@@ -1340,3 +1340,54 @@ export async function purgeXxtReviewWork(
   if (!res.ok) throw new Error(`HTTP ${res.status}`)
   return (await res.json()) as { purged?: boolean }
 }
+
+/* ---------------- D87 §5：水印样式库（serve 端点） ---------------- */
+
+export interface WmStyleItem { image: string; pos?: string; ratio?: number; alpha?: number }
+export interface WmStyle {
+  name: string; enabled?: boolean; pageText?: boolean; default?: boolean
+  items?: WmStyleItem[]; updatedAt?: string
+}
+
+/** GET /watermark/styles：命名样式列表（含 default 标记）+ 素材文件清单。 */
+export async function fetchWatermarkStyles(
+  engineAddr: string, token?: string, assetsDir?: string,
+): Promise<{ ok?: boolean; assets_dir?: string; source?: string; styles?: WmStyle[]; files?: string[] }> {
+  const base = normalizeEngineAddr(engineAddr)
+  const q = assetsDir ? `?assets_dir=${encodeURIComponent(assetsDir)}` : ''
+  return (await getJson2(engineUrlWithToken(base, `/watermark/styles${q}`, token))) as
+    { ok?: boolean; assets_dir?: string; source?: string; styles?: WmStyle[]; files?: string[] }
+}
+
+/** POST /watermark/style：样式 CRUD（action = save|rename|delete|set_default）。 */
+export async function saveWatermarkStyle(
+  engineAddr: string, token: string | undefined,
+  payload: { action?: 'save' | 'rename' | 'delete' | 'set_default'; name: string
+    new_name?: string; default?: boolean; style?: Partial<WmStyle>; assets_dir?: string },
+): Promise<{ ok?: boolean; error?: string; assets_dir?: string; styles?: WmStyle[]; style?: WmStyle }> {
+  const base = normalizeEngineAddr(engineAddr)
+  const res = await fetch(engineUrlWithToken(base, '/watermark/style', token), {
+    method: 'POST', headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(payload),
+  })
+  const o = (await res.json().catch(() => ({}))) as
+    { ok?: boolean; error?: string; assets_dir?: string; styles?: WmStyle[]; style?: WmStyle }
+  if (!res.ok && !o?.error) throw new Error(`HTTP ${res.status}`)
+  return o
+}
+
+/** POST /watermark/upload：水印图片 base64 → 落 <ws>/assets/watermark/，返回相对路径。 */
+export async function uploadWatermarkImage(
+  engineAddr: string, token: string | undefined,
+  payload: { name: string; data: string; assets_dir?: string },
+): Promise<{ ok?: boolean; error?: string; name?: string; path?: string; bytes?: number }> {
+  const base = normalizeEngineAddr(engineAddr)
+  const res = await fetch(engineUrlWithToken(base, '/watermark/upload', token), {
+    method: 'POST', headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(payload),
+  })
+  const o = (await res.json().catch(() => ({}))) as
+    { ok?: boolean; error?: string; name?: string; path?: string; bytes?: number }
+  if (!res.ok && !o?.error) throw new Error(`HTTP ${res.status}`)
+  return o
+}
