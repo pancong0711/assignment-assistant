@@ -5,13 +5,13 @@
  *  说明：完整"逐生预览（作答图+批语两栏）"仍在「作业预览-学习通 → 批阅图片 → 逐生预览」，
  *  与本面板的"报告风格审核"并存（用户拍板的两种风格）。
  */
-import { computed, onMounted, ref } from 'vue'
+import { computed, onMounted, ref, watch } from 'vue'
 import { useTaskpadStore } from '../stores/taskpad'
 import {
   extractJobError, fetchLlmConfig, fetchXxtClassMap, fetchXxtGradeDrafts, fetchXxtLoginJob,
   fetchXxtReviewIndex, fetchXxtReviewStudents, postLlmProvider, postXxtClassMap,
   saveXxtGradeDraft, startXxtGradeAi, startXxtGradeRenderDrafts, startXxtGradeUpload,
-  startKbAiSolve,
+  startKbAiSolve, fetchKbCatalog,
 } from '../lib/engineClient'
 
 const props = defineProps<{ engineAddr: string; token?: string }>()
@@ -25,16 +25,41 @@ const busy = ref(false)
 const progress = ref('')
 let pollTimer: number | undefined
 
-/* ⑦ 题库 AI 作答（D89-N5）：对题库题目生成参考答案，不覆盖、可多版本 */
-const kbKind = ref('problems'); const kbChap = ref(''); const kbIds = ref(''); const kbModel = ref('')
+/* ⑦ 题库 AI 作答（D89-N5/D92-R3）：对题库题目生成参考答案，不覆盖、可多版本 */
+const kbCatalog = ref<{ kinds?: any[] }>({ kinds: [] })
+const kbKind = ref(''); const kbChap = ref(''); const kbIdsSel = ref<string[]>([]); const kbModel = ref('')
+const kbCustomModel = ref(false)
+const kbKinds = computed<string[]>(() => (kbCatalog.value.kinds || []).map((k: any) => k.kind))
+const kbChapters = computed<string[]>(() => {
+  const k = (kbCatalog.value.kinds || []).find((x: any) => x.kind === kbKind.value)
+  return (k?.chapters || []).map((c: any) => c.chap)
+})
+const kbIdList = computed<{ id: string; content?: string }[]>(() => {
+  const k = (kbCatalog.value.kinds || []).find((x: any) => x.kind === kbKind.value)
+  const c = (k?.chapters || []).find((x: any) => x.chap === kbChap.value)
+  return c?.ids || []
+})
+/** 所选题号的内容预览（单行拼接，可横向滚动）。 */
+const kbPreview = computed(() => {
+  const want = new Set(kbIdsSel.value)
+  const picked = kbIdList.value.filter((i) => !want.size || want.has(i.id))
+  return picked.map((i) => `${i.id}: ${i.content ?? ''}`).join('   ｜   ')
+})
+async function loadKbCatalog() {
+  const r = await fetchKbCatalog(props.engineAddr, props.token)
+  kbCatalog.value = { kinds: r.kinds || [] }
+  if (!kbKind.value && kbKinds.value.length) kbKind.value = kbKinds.value.includes('problems') ? 'problems' : kbKinds.value[0]
+}
+// 切换题库/章节时清空已选题号
+watch(kbKind, () => { kbChap.value = ''; kbIdsSel.value = [] })
+watch(kbChap, () => { kbIdsSel.value = [] })
 const kbPin = ref(false); const kbApply = ref(false)
 const kbSolveMsg = ref('')
 const kbSolving = ref(false)
-const kbKinds = ref<string[]>(['problems', 'copy', 'qa', 'distinguish', 'innovation'])
 async function solveByKb() {
   kbSolving.value = true; kbSolveMsg.value = '正在启动题库 AI 作答……'
   try {
-    const ids = kbIds.value.split(',').map((x) => x.trim()).filter(Boolean)
+    const ids = [...kbIdsSel.value]
     const jobId = await startKbAiSolve(props.engineAddr, props.token, {
       kb: kbKind.value, chap: kbChap.value, ids, model: kbModel.value,
       pin: kbPin.value, apply: kbApply.value,
@@ -62,6 +87,12 @@ const pName = ref(''); const pBase = ref(''); const pKey = ref(''); const pBatch
 const stProvider = ref<Record<string, string>>({ transcription: '', evaluation: '' })
 const stModel = ref<Record<string, string>>({ transcription: '', evaluation: '' })
 const stBatch = ref(false)
+const stCustom = ref<Record<string, boolean>>({ transcription: false, evaluation: false })
+/** 该段所选 provider 的候选模型（与 Playground 共享同一份 providers[].models[]）。 */
+function modelsForStage(s: string): string[] {
+  const p = (llmConfig.value.providers || []).find((x: any) => x.name === stProvider.value[s])
+  return (p?.models || []) as string[]
+}
 
 /* ② 班级映射 */
 const classMap = ref<Record<string, string>>({})
@@ -327,7 +358,7 @@ async function uploadAll(force: boolean) {
   } catch (e) { busy.value = false; msg.value = `启动失败：${String(e)}` }
 }
 
-onMounted(async () => { await loadConfig(); await loadWorks() })
+onMounted(async () => { await loadConfig(); await loadWorks(); loadKbCatalog() })
 </script>
 
 <template>
@@ -371,15 +402,17 @@ onMounted(async () => { await loadConfig(); await loadWorks() })
           <option value="">（选择 provider）</option>
           <option v-for="p in (llmConfig.providers || [])" :key="p.name" :value="p.name">{{ p.name }}</option>
         </select>
-        <input v-model="stModel[s]" list="ai-models" placeholder="模型名（填写即记录）" style="width:220px" />
+        <template v-if="modelsForStage(s).length && !stCustom[s]">
+          <select v-model="stModel[s]" style="min-width:180px">
+            <option value="">（默认）</option>
+            <option v-for="m in modelsForStage(s)" :key="m" :value="m">{{ m }}</option>
+          </select>
+        </template>
+        <input v-else v-model="stModel[s]" placeholder="模型名（填写即记录）" style="width:200px" />
+        <button class="btn small" @click="stCustom[s] = !stCustom[s]" :title="modelsForStage(s).length ? '切换自定义/下拉' : '该 provider 暂无候选'">{{ stCustom[s] ? '用下拉' : '自定义' }}</button>
         <label v-if="s === 'evaluation'" class="field"><input type="checkbox" v-model="stBatch" /> 走 batch</label>
         <button class="btn" @click="saveStage(s as 'transcription' | 'evaluation')">保存</button>
       </div>
-      <datalist id="ai-models">
-        <template v-for="p in (llmConfig.providers || [])" :key="p.name">
-          <option v-for="m in (p.models || [])" :key="m" :value="m"></option>
-        </template>
-      </datalist>
     </div>
 
     <h3 style="margin-top:14px">② 班级 ↔ 作业纸目录（class_map，按文件名建议）</h3>
@@ -468,16 +501,39 @@ onMounted(async () => { await loadConfig(); await loadWorks() })
     <div style="display:flex; gap:8px; align-items:center; flex-wrap:wrap">
       <span class="hint" style="margin:0">题库：</span>
       <select v-model="kbKind" style="min-width:120px">
+        <option value="">（选择题库）</option>
         <option v-for="k in kbKinds" :key="k" :value="k">{{ k }}</option>
       </select>
-      <input v-model="kbChap" placeholder="章节（如 chap10；空=整库）" style="width:160px" />
-      <input v-model="kbIds" placeholder="题号（逗号分隔；空=整章）" style="width:200px" />
-      <input v-model="kbModel" placeholder="模型名（空=评阅段配置）" style="width:180px" />
+      <span class="hint" style="margin:0">章节：</span>
+      <select v-model="kbChap" style="min-width:130px">
+        <option value="">（整库）</option>
+        <option v-for="c in kbChapters" :key="c" :value="c">{{ c }}</option>
+      </select>
+      <span class="hint" style="margin:0">题号：</span>
+      <select v-model="kbIdsSel" multiple style="min-width:200px; min-height:64px" title="多选；不选=整章">
+        <option v-for="i in kbIdList" :key="i.id" :value="i.id">{{ i.id }}</option>
+      </select>
+      <span class="hint" style="margin:0">模型：</span>
+      <template v-if="modelsForStage('evaluation').length && !kbCustomModel">
+        <select v-model="kbModel" style="min-width:160px">
+          <option value="">（评阅段配置）</option>
+          <option v-for="m in modelsForStage('evaluation')" :key="m" :value="m">{{ m }}</option>
+        </select>
+        <button class="btn small" @click="kbCustomModel = true">自定义</button>
+      </template>
+      <template v-else>
+        <input v-model="kbModel" placeholder="模型名（空=评阅段配置）" style="width:180px" />
+        <button class="btn small" @click="kbCustomModel = false">用下拉</button>
+      </template>
       <label class="field"><input type="checkbox" v-model="kbPin" /> 作答后置顶</label>
       <label class="field" title="不勾=仅 dry-run 预览将作答哪些题；勾=真正调 LLM 并写回 kb/solutions/">
         <input type="checkbox" v-model="kbApply" /> 真正作答并写回
       </label>
       <button class="btn" :disabled="kbSolving" @click="solveByKb">▶ {{ kbApply ? 'AI 作答并写回' : 'AI 作答（dry-run）' }}</button>
+    </div>
+    <div class="hint" style="margin:4px 0 0">题目预览：
+      <code v-if="kbPreview" style="display:inline-block; max-width:100%; overflow-x:auto; white-space:nowrap; vertical-align:bottom">{{ kbPreview }}</code>
+      <span v-else>（未选题号：将按整章/整库作答）</span>
     </div>
     <p class="hint" style="margin:6px 0 0">
       AI 作答**不覆盖**原答案：每次新增一版（含模型名 + 时间戳），可在「题库编辑器 → solution 🔍 预览」里勾选查看/置顶；

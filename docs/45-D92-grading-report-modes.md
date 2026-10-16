@@ -116,7 +116,7 @@
 |---|---|---|---|
 | R1 | 引擎：`GET /kb/catalog` + `assist kb catalog` + 单测 | `serve.py`/`cli.py`/`kb_io.catalog` | ✅ |
 | R2 | 引擎：草稿双套结构 + 兼容 + 五模式报告拼装（含 difflib 标红）+ 单测 | `drafts.py`/`report.py`/`grade_store.py` + CLI `grade-render` + serve `/xxt/grade/render-from-drafts` | ✅ |
-| R3 | PWA：⑦ kind/chap/ids/model 下拉 + 题目预览框；①/⑦/Playground 模型共享真下拉 | `AiGradingPanel.vue`/`engineClient.ts` | ⏳ |
+| R3 | PWA：⑦ kind/chap/ids/model 下拉 + 题目预览框；①/⑦/Playground 模型共享真下拉 | `AiGradingPanel.vue`/`engineClient.ts` | ✅ |
 | R4 | PWA：③ tags 多选默认全选；④ 逐生审核左右两栏弹窗（AI/人工分开 + 另存修订 + 模式）；⑤ 去手选标注 | `StudentReviewModal.vue` 等 | ⏳ |
 | R5 | 文档（docs/04/13/15/39/45）+ 验证 + 去敏 push | 文档 + CI | ⏳ |
 

@@ -1591,3 +1591,22 @@ export async function mutatePlaygroundFolder(
   if (!res.ok && !o?.error) throw new Error(`HTTP ${res.status}`)
   return o
 }
+
+/* ---------------- D92-R3：题库目录（下拉数据源） ---------------- */
+
+export interface KbCatalogId { id: string; content?: string }
+export interface KbCatalogChapter { chap: string; count: number; ids: KbCatalogId[] }
+export interface KbCatalogKind { kind: string; chapters: KbCatalogChapter[] }
+
+/** GET /kb/catalog：题库 kind/章节/题号[+内容]。 */
+export async function fetchKbCatalog(
+  engineAddr: string, token?: string,
+): Promise<{ ok?: boolean; kinds?: KbCatalogKind[] }> {
+  const base = normalizeEngineAddr(engineAddr)
+  try {
+    return (await getJson2(engineUrlWithToken(base, '/kb/catalog', token))) as
+      { ok?: boolean; kinds?: KbCatalogKind[] }
+  } catch {
+    return { ok: false, kinds: [] }
+  }
+}
