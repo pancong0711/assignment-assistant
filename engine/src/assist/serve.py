@@ -433,6 +433,54 @@ _STARTED_AT = ""       # 人类可读启动时间
 _SERVER_PORT = 0       # 当前监听端口（/status 回显，便于验收固定端口）
 
 
+_WM_UPLOAD_EXTS = {".png", ".jpg", ".jpeg", ".webp", ".gif", ".bmp"}
+
+
+def _wm_serve_assets(ws: Path, explicit=None) -> tuple[Path, str]:
+    """serve 水印端点素材目录：explicit > <ws>/assets（写入型默认，即使目录尚不存在）。
+
+    与 CLI/引擎出 PDF 的 resolve_assets_dir 不同：后者在 ws 尚无 assets/ 时回落 engine；
+    但 PWA 上传/管理样式必须写进 workspace，故这里默认即 <ws>/assets。
+    """
+    if explicit:
+        from .paper.assets import resolve_assets_dir
+        return resolve_assets_dir(ws=ws, explicit=explicit)
+    from .paper.assets import workspace_assets
+    return workspace_assets(ws), "workspace"
+
+
+def _save_watermark_upload(assets_dir: Path, payload: dict) -> dict:
+    """水印图片 base64 → <assets_dir>/watermark/<文件名>（D87 §4 POST /watermark/upload）。
+
+    安全：只接受白名单图片扩展名；文件名走 basename 清洗，杜绝路径穿越；
+    返回相对 assets_dir 的引用（`watermark/<文件名>`，与样式 items[].image 口径一致）。
+    """
+    import base64
+    import re as _re
+    name = Path(str(payload.get("name") or "watermark.png")).name
+    name = _re.sub(r"[^\w.\-\u4e00-\u9fff]", "_", name) or "watermark.png"
+    ext = Path(name).suffix.lower()
+    if ext not in _WM_UPLOAD_EXTS:
+        return {"ok": False, "error": f"不支持的图片类型：{ext or '(无扩展名)'}（限 png/jpg/webp/gif/bmp）"}
+    raw = payload.get("data")
+    if isinstance(raw, str) and raw.startswith("data:") and "," in raw:
+        raw = raw.split(",", 1)[1]
+    if not raw or not isinstance(raw, str):
+        return {"ok": False, "error": "缺少 data（base64 图片内容）"}
+    try:
+        blob = base64.b64decode(raw, validate=True)
+    except Exception as exc:  # noqa: BLE001
+        return {"ok": False, "error": f"base64 解码失败：{exc}"}
+    if not blob:
+        return {"ok": False, "error": "图片内容为空"}
+    d = Path(assets_dir) / "watermark"
+    d.mkdir(parents=True, exist_ok=True)
+    p = d / name
+    p.write_bytes(blob)
+    return {"ok": True, "name": name, "path": f"watermark/{name}",
+            "bytes": len(blob), "file": str(p)}
+
+
 def restart_plan(platform_name: str, supervised: bool) -> str:
     """D67：返回重启执行模式。
 
@@ -1005,6 +1053,51 @@ class Handler(BaseHTTPRequestHandler):
             rep = providers.migrate_legacy(ws)
             rep["config"] = providers.public_config(ws)
             self._json(rep)
+            return
+        if u.path == "/watermark/style":
+            payload: dict = {}
+            try:
+                length = int(self.headers.get("Content-Length") or 0)
+                if length:
+                    payload = json.loads(self.rfile.read(length).decode("utf-8")) or {}
+            except Exception as exc:  # noqa: BLE001
+                self._json({"ok": False, "error": f"bad json: {exc}"}, 400)
+                return
+            from .paper import watermark_styles as wsx
+            ws = Path(self.ws).resolve()
+            ad, _src = _wm_serve_assets(ws, payload.get("assets_dir"))
+            action = str(payload.get("action") or "save")
+            if action == "delete":
+                rep = wsx.delete_style(ad, str(payload.get("name") or ""))
+            elif action == "rename":
+                rep = wsx.rename_style(ad, str(payload.get("name") or ""),
+                                       str(payload.get("new_name") or ""))
+            elif action == "set_default":
+                rep = wsx.set_default(ad, str(payload.get("name") or ""))
+            else:
+                rep = wsx.save_style(ad, str(payload.get("name") or ""),
+                                     payload.get("style") or {},
+                                     make_default=bool(payload.get("default")))
+            rep["assets_dir"] = str(ad)
+            rep["styles"] = wsx.list_styles(ad)
+            self._json(rep, 200 if rep.get("ok", True) else 400)
+            return
+        if u.path == "/watermark/upload":
+            payload: dict = {}
+            try:
+                length = int(self.headers.get("Content-Length") or 0)
+                if length:
+                    if length > 30 * 1024 * 1024:
+                        self._json({"ok": False, "error": "payload too large"}, 413)
+                        return
+                    payload = json.loads(self.rfile.read(length).decode("utf-8")) or {}
+            except Exception as exc:  # noqa: BLE001
+                self._json({"ok": False, "error": f"bad json: {exc}"}, 400)
+                return
+            ws = Path(self.ws).resolve()
+            ad, _src = _wm_serve_assets(ws, payload.get("assets_dir"))
+            rep = _save_watermark_upload(ad, payload)
+            self._json(rep, 200 if rep.get("ok") else 400)
             return
         if u.path == "/xxt/grade/ai-run":
             payload: dict = {}
@@ -1633,6 +1726,16 @@ class Handler(BaseHTTPRequestHandler):
             # D86 §2：provider（掩码）+ 两段式
             from .grading import providers
             self._json({"ok": True, **providers.public_config(Path(self.ws).resolve())})
+        elif u.path == "/watermark/styles":
+            # D87 §4：命名样式列表（含 default 标记）+ 素材文件清单
+            from .paper.watermark_styles import list_styles
+            q = urllib.parse.parse_qs(u.query)
+            explicit = (q.get("assets_dir") or [None])[0]
+            ad, src = _wm_serve_assets(Path(self.ws).resolve(), explicit)
+            wm_dir = ad / "watermark"
+            files = sorted(p.name for p in wm_dir.glob("*") if p.is_file()) if wm_dir.is_dir() else []
+            self._json({"ok": True, "assets_dir": str(ad), "source": src,
+                        "styles": list_styles(ad), "files": files})
         elif u.path.startswith("/xxt/grade/drafts/"):
             # D85 §3：读本地人工批阅草稿 <xxt_home>/grade-drafts/<class>/<work>.json
             m = re.fullmatch(r"/xxt/grade/drafts/([0-9A-Za-z\-_]{1,40})/([0-9A-Za-z\-_]{1,40})", u.path)

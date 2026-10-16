@@ -236,3 +236,82 @@ def test_html_missing_style_ref_falls_back(tmp_path):
     from assist.paper.htmlfile import _watermark_items
     items = _watermark_items({"watermark": {"style_ref": "不存在"}}, ws, ad, "portrait")
     assert items and items[0]["b64"]
+
+
+# ---------------- §3 CLI：assist watermark ...  ----------------
+
+def _runner_ws(tmp_path):
+    ws = tmp_path / "ws"
+    (ws / "assets" / "watermark").mkdir(parents=True)
+    return ws
+
+
+def test_cli_watermark_styles_empty(tmp_path):
+    import json as _json
+    from click.testing import CliRunner
+    from assist.cli import cli
+    ws = _runner_ws(tmp_path)
+    r = CliRunner().invoke(cli, ["watermark", "styles", "-w", str(ws)])
+    assert r.exit_code == 0, r.output
+    data = _json.loads(r.output)
+    assert data["source"] == "workspace"
+    assert data["styles"] == []
+    assert Path(data["assets_dir"]) == (ws / "assets").resolve()
+
+
+def test_cli_watermark_save_list_default_delete(tmp_path):
+    import json as _json
+    from click.testing import CliRunner
+    from assist.cli import cli
+    ws = _runner_ws(tmp_path)
+    run = lambda *a: CliRunner().invoke(cli, [*a, "-w", str(ws)])
+
+    r = run("watermark", "save", "--name", "期末版", "--set-default")
+    assert r.exit_code == 0, r.output
+    st = _json.loads(r.output)["style"]
+    assert st["name"] == "期末版" and st["default"] is True
+
+    r = run("watermark", "styles")
+    names = [s["name"] for s in _json.loads(r.output)["styles"]]
+    assert names == ["期末版"]
+
+    r = run("watermark", "rename", "--old", "期末版", "--new", "期末A")
+    assert r.exit_code == 0, r.output
+    r = run("watermark", "styles")
+    assert [s["name"] for s in _json.loads(r.output)["styles"]] == ["期末A"]
+
+    r = run("watermark", "delete", "--name", "期末A")
+    assert r.exit_code == 0, r.output
+    r = run("watermark", "styles")
+    assert _json.loads(r.output)["styles"] == []
+
+
+def test_cli_watermark_save_from_file(tmp_path):
+    import json as _json
+    from click.testing import CliRunner
+    from assist.cli import cli
+    ws = _runner_ws(tmp_path)
+    f = tmp_path / "style.json"
+    f.write_text(_json.dumps({"enabled": True, "pageText": False,
+                              "items": [{"image": "watermark/x.png"}]}), encoding="utf-8")
+    r = CliRunner().invoke(cli, ["watermark", "save", "--name", "A",
+                                 "--file", str(f), "-w", str(ws)])
+    assert r.exit_code == 0, r.output
+    r = CliRunner().invoke(cli, ["watermark", "styles", "-w", str(ws)])
+    st = _json.loads(r.output)["styles"][0]
+    assert st["pageText"] is False and st["items"][0]["image"] == "watermark/x.png"
+
+
+def test_cli_watermark_set_default(tmp_path):
+    import json as _json
+    from click.testing import CliRunner
+    from assist.cli import cli
+    ws = _runner_ws(tmp_path)
+    run = lambda *a: CliRunner().invoke(cli, [*a, "-w", str(ws)])
+    run("watermark", "save", "--name", "A")
+    run("watermark", "save", "--name", "B")
+    r = run("watermark", "set-default", "--name", "B")
+    assert r.exit_code == 0, r.output
+    r = run("watermark", "styles")
+    sts = {s["name"]: s["default"] for s in _json.loads(r.output)["styles"]}
+    assert sts == {"A": False, "B": True}

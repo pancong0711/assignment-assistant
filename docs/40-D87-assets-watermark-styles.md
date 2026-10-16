@@ -104,8 +104,8 @@
 |---|---|---|---|
 | §1 | 素材目录解析 + `--assets-dir` + workspace 字体 | `paper/assets.py`(resolve) + CLI 选项 + 单测 | ✅ |
 | §2 | 样式库读写 + 默认 + `style_ref` 解析（含旧 `assets/` 路径兼容） | `paper/watermark_styles.py` + `watermark.py`/`layout.py` 接入 + 单测 | ✅ |
-| §3 | CLI `assist watermark …` | 命令 + 单测 | ⏳ |
-| §4 | serve 端点（styles/style/upload） | `serve.py` + 冒烟 | ⏳ |
+| §3 | CLI `assist watermark …` | 命令 + 单测 | ✅ |
+| §4 | serve 端点（styles/style/upload） | `serve.py` + 冒烟 | ✅ |
 | §5 | PWA 编辑器（样式下拉 + CRUD + 默认 + style_ref + 上传落盘） | `SheetLayoutView.vue` + `settings.ts` + `engineClient.ts` | ⏳ |
 | §6 | 真机验证（含自定义图层 PDF 生效）+ 文档（docs/04/13/15） | 验证记录 + 文档 | ⏳ |
 

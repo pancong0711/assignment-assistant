@@ -359,6 +359,109 @@ def sheet_make(obj, task_path, roster_path, out, no_watermark, assets_dir, works
         click.echo(str(f))
 
 
+# ---------------- D87 水印样式库（命名样式/默认/style_ref） ----------------
+
+@cli.group("watermark", help="D87：水印样式库（命名样式 CRUD / 默认 / 素材目录）")
+def watermark_grp():
+    pass
+
+
+def _wm_assets_dir(ws, explicit):
+    """CLI 水印命令统一解析素材目录（explicit > <ws>/assets > engine/assets）。"""
+    from .paper.assets import resolve_assets_dir
+    d, src = resolve_assets_dir(ws=ws, explicit=explicit)
+    return d, src
+
+
+@watermark_grp.command("styles")
+@click.option("--assets-dir", "assets_dir", default=None, help="显式素材目录（缺省 workspace 优先）")
+@click.option("--workspace", "-w", default=None)
+@click.option("--verbose", "-v", is_flag=True)
+@click.pass_obj
+def watermark_styles(obj, assets_dir, workspace, verbose):
+    """只读列出命名样式（含 default 标记）与素材文件清单（JSON 输出）。"""
+    from .paper.watermark_styles import list_styles
+    ws = _setup(verbose or obj.get("verbose"), workspace)
+    ad, src = _wm_assets_dir(ws, assets_dir)
+    wm_dir = ad / "watermark"
+    files = sorted(p.name for p in wm_dir.glob("*") if p.is_file()) if wm_dir.is_dir() else []
+    click.echo(json.dumps({
+        "assets_dir": str(ad), "source": src,
+        "styles": list_styles(ad), "files": files,
+    }, ensure_ascii=False, indent=2))
+
+
+@watermark_grp.command("save")
+@click.option("--name", required=True, help="样式名（1..40 字符，不含路径分隔符）")
+@click.option("--file", "file_", default=None, help="样式 JSON 文件（含 items/enabled/pageText）；缺省空样式")
+@click.option("--set-default", "make_default", is_flag=True, help="同时设为默认样式（单选）")
+@click.option("--assets-dir", "assets_dir", default=None)
+@click.option("--workspace", "-w", default=None)
+@click.option("--verbose", "-v", is_flag=True)
+@click.pass_obj
+def watermark_save(obj, name, file_, make_default, assets_dir, workspace, verbose):
+    """新建/覆盖命名样式（可 --set-default 设为默认）。"""
+    from .paper.watermark_styles import save_style
+    ws = _setup(verbose or obj.get("verbose"), workspace)
+    ad, _src = _wm_assets_dir(ws, assets_dir)
+    data = {}
+    if file_:
+        data = json.loads(Path(file_).expanduser().read_text(encoding="utf-8"))
+    res = save_style(ad, name, data, make_default=make_default)
+    click.echo(json.dumps(res, ensure_ascii=False, indent=2))
+    if not res.get("ok"):
+        raise click.ClickException(res.get("error") or "保存失败")
+
+
+@watermark_grp.command("delete")
+@click.option("--name", required=True)
+@click.option("--assets-dir", "assets_dir", default=None)
+@click.option("--workspace", "-w", default=None)
+@click.option("--verbose", "-v", is_flag=True)
+@click.pass_obj
+def watermark_delete(obj, name, assets_dir, workspace, verbose):
+    """删除命名样式。"""
+    from .paper.watermark_styles import delete_style
+    ws = _setup(verbose or obj.get("verbose"), workspace)
+    ad, _src = _wm_assets_dir(ws, assets_dir)
+    res = delete_style(ad, name)
+    click.echo(json.dumps(res, ensure_ascii=False, indent=2))
+    if not res.get("ok"):
+        raise click.ClickException(res.get("error") or "删除失败")
+
+
+@watermark_grp.command("rename")
+@click.option("--old", "old", required=True)
+@click.option("--new", "new", required=True)
+@click.option("--assets-dir", "assets_dir", default=None)
+@click.option("--workspace", "-w", default=None)
+@click.option("--verbose", "-v", is_flag=True)
+@click.pass_obj
+def watermark_rename(obj, old, new, assets_dir, workspace, verbose):
+    """重命名命名样式（默认标记跟随）。"""
+    from .paper.watermark_styles import rename_style
+    ws = _setup(verbose or obj.get("verbose"), workspace)
+    ad, _src = _wm_assets_dir(ws, assets_dir)
+    res = rename_style(ad, old, new)
+    click.echo(json.dumps(res, ensure_ascii=False, indent=2))
+    if not res.get("ok"):
+        raise click.ClickException(res.get("error") or "重命名失败")
+
+
+@watermark_grp.command("set-default")
+@click.option("--name", required=True)
+@click.option("--assets-dir", "assets_dir", default=None)
+@click.option("--workspace", "-w", default=None)
+@click.option("--verbose", "-v", is_flag=True)
+@click.pass_obj
+def watermark_set_default(obj, name, assets_dir, workspace, verbose):
+    """把某样式设为默认（其余取消 default）。"""
+    from .paper.watermark_styles import set_default
+    ws = _setup(verbose or obj.get("verbose"), workspace)
+    ad, _src = _wm_assets_dir(ws, assets_dir)
+    click.echo(json.dumps(set_default(ad, name), ensure_ascii=False, indent=2))
+
+
 # ---------------- M5 成绩管理（docs/05-D17/D18） ----------------
 
 @cli.group(help="M5 成绩管理：点名册/多源成绩导入 → 打分层 tag → 导出带 tag 名单")
