@@ -892,7 +892,7 @@ export async function postLlmProvider(
   engineAddr: string, token: string | undefined,
   payload: { action?: 'set' | 'delete' | 'stage'
     name?: string; base_url?: string; api_key?: string | null; batch_support?: boolean
-    model?: string; stage?: string; provider?: string; batch?: boolean },
+    model?: string; stage?: string; provider?: string; batch?: boolean; forget_model?: string },
 ): Promise<LlmConfig & { ok?: boolean; error?: string }> {
   const base = normalizeEngineAddr(engineAddr)
   const res = await fetch(engineUrlWithToken(base, '/llm/provider', token), {

@@ -129,3 +129,20 @@ def test_exact_filename_match_autowrite(tmp_path: Path):
     r = classmap.resolve_class_dir(tmp_path, "1", "2", "化工25", auto_write=True)
     assert r["source"] == "auto"
     assert classmap.class_dir_for(tmp_path, "1", "2") == "classes/chem25"
+
+
+def test_d91_forget_model(tmp_path):
+    """D91-M3：可从 provider 的 models[] 删除指定候选。"""
+    from assist.grading import providers
+    ws = tmp_path / "ws"; ws.mkdir()
+    providers.save_provider(ws, "aliyun", base_url="https://x/v1", api_key="sk-a")
+    providers.save_provider(ws, "aliyun", model="qwen-max")
+    providers.save_provider(ws, "aliyun", model="qwen-plus")
+    pub = providers.public_config(ws)
+    models = next(p["models"] for p in pub["providers"] if p["name"] == "aliyun")
+    assert models[:2] == ["qwen-plus", "qwen-max"]
+    # 删除 qwen-max
+    providers.save_provider(ws, "aliyun", forget_model="qwen-max")
+    models2 = next(p["models"] for p in providers.public_config(ws)["providers"]
+                   if p["name"] == "aliyun")
+    assert "qwen-max" not in models2 and "qwen-plus" in models2

@@ -124,7 +124,8 @@ def migrate_legacy(ws=None) -> dict:
 
 
 def save_provider(ws, name: str, *, base_url: str = "", api_key: "str | None" = None,
-                  batch_support: "bool | None" = None, model: str = "") -> dict:
+                  batch_support: "bool | None" = None, model: str = "",
+                  forget_model: str = "") -> dict:
     """新增/更新一个 provider。api_key=None 表示不改；'' 表示清除。"""
     from ..settings_store import update_secrets, update_settings
     name = str(name or "").strip()
@@ -143,6 +144,9 @@ def save_provider(ws, name: str, *, base_url: str = "", api_key: "str | None" = 
             cur["base_url"] = str(base_url)
         if batch_support is not None:
             cur["batch_support"] = bool(batch_support)
+        if forget_model:
+            models = [str(m) for m in (cur.get("models") or []) if str(m) != str(forget_model)]
+            cur["models"] = models
         if model:
             models = [str(m) for m in (cur.get("models") or [])]
             if model in models:

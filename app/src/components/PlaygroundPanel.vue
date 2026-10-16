@@ -6,7 +6,7 @@
 import { computed, onMounted, ref } from 'vue'
 import {
   fetchLlmConfig, fetchPlaygroundRecords, mutatePlaygroundFolder, mutatePlaygroundRecord,
-  playgroundAsk, playgroundBatch, uploadPlaygroundAttachment, type PlaygroundRecord,
+  playgroundAsk, playgroundBatch, postLlmProvider, uploadPlaygroundAttachment, type PlaygroundRecord,
 } from '../lib/engineClient'
 
 const props = defineProps<{ engineAddr: string; token?: string }>()
@@ -14,7 +14,8 @@ const props = defineProps<{ engineAddr: string; token?: string }>()
 /* ---------- provider / 模型选择（D90 明确要求） ---------- */
 const providers = ref<Array<{ name: string; models?: string[]; has_key?: boolean }>>([])
 const provider = ref('')          // '' = 用 D86 评阅段配置
-const model = ref('')
+const model = ref('')             // 选中的模型名（或自定义输入）
+const customModel = ref(false)    // 是否切到"自定义输入"
 const temperature = ref<number | null>(null)
 const modelsOfProvider = computed(() =>
   (providers.value.find((p) => p.name === provider.value)?.models || []))
@@ -24,6 +25,29 @@ async function loadProviders() {
     const cfg = await fetchLlmConfig(props.engineAddr, props.token)
     providers.value = (cfg?.providers || []) as any[]
   } catch { providers.value = [] }
+}
+/** 有候选模型才用下拉；否则提示去 ① 记录，或直接自定义输入。 */
+const hasModelChoices = computed(() => modelsOfProvider.value.length > 0)
+
+/** D91-M3：把当前模型名记录为 provider 的候选（写 models[]，与 ① 区"填写即记录"同源）。 */
+async function rememberModel() {
+  const name = model.value.trim()
+  if (!provider.value) { msg.value = '请先选 provider（评阅段配置无法记录候选）'; return }
+  if (!name) { msg.value = '请先填/选一个模型名'; return }
+  const r = await postLlmProvider(props.engineAddr, props.token,
+    { action: 'set', name: provider.value, model: name })
+  if (r?.ok) { await loadProviders(); msg.value = `已记录候选模型「${name}」到 provider「${provider.value}」` }
+  else msg.value = r?.error || '记录失败'
+}
+async function forgetModel(name: string) {
+  if (!provider.value || !name) return
+  const r = await postLlmProvider(props.engineAddr, props.token,
+    { action: 'set', name: provider.value, forget_model: name })
+  if (r?.ok) {
+    if (model.value === name) model.value = ''
+    await loadProviders()
+    msg.value = `已从 provider「${provider.value}」删除候选「${name}」`
+  } else msg.value = r?.error || '删除失败'
 }
 
 /* ---------- 提问 ---------- */
@@ -201,10 +225,19 @@ onMounted(() => { loadProviders(); loadRecords() })
         </option>
       </select>
       <span class="hint" style="margin:0">模型：</span>
-      <input v-model="model" list="pg-models" placeholder="模型名（空=默认）" style="width:180px" />
-      <datalist id="pg-models">
-        <option v-for="m in modelsOfProvider" :key="m" :value="m"></option>
-      </datalist>
+      <template v-if="hasModelChoices && !customModel">
+        <select v-model="model" style="min-width:160px">
+          <option value="">（默认）</option>
+          <option v-for="m in modelsOfProvider" :key="m" :value="m">{{ m }}</option>
+        </select>
+        <button class="btn small" title="删除该候选模型" v-if="model" @click="forgetModel(model)">✕</button>
+      </template>
+      <input v-else v-model="model" placeholder="模型名（空=默认）" style="width:180px" />
+      <button class="btn small" @click="customModel = !customModel"
+              :title="hasModelChoices ? '切换到自定义输入/下拉' : '该 provider 暂无候选：填模型名后可记录'">
+        {{ customModel ? '用下拉' : '自定义' }}
+      </button>
+      <button class="btn small" title="把当前模型名记录为候选（下次可下拉选）" @click="rememberModel">＋记录候选</button>
       <label class="field">temperature：<input type="number" step="0.1" min="0" max="2" v-model.number="temperature" style="width:64px" /></label>
       <span class="hint" style="margin:0">归入文件夹：</span>
       <select v-model="folder" style="min-width:120px">

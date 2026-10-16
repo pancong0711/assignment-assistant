@@ -65,7 +65,7 @@
 |---|---|---|---|
 | M1 | 清单限定当前包 + 移动/复制引用/另存新作业纸到其他包 | `SheetPreviewSection.vue` + `packs.ts` + `taskpad.ts` + selfcheck | ✅ |
 | M2 | 水印二维矩阵（作业纸×样式）+ 默认全选当前包 | `SheetLayoutView.vue` + `taskpad.ts` + selfcheck | ✅ |
-| M3 | Playground 模型真下拉 + 模型候选记录 | `PlaygroundPanel.vue` + `engineClient.ts` | ⏳ |
+| M3 | Playground 模型真下拉 + 模型候选记录/删除 | `PlaygroundPanel.vue` + `engineClient.ts` + `providers.py`/`serve.py`（forget_model） + 单测 | ✅ |
 | M4 | Playground 输入草稿自动保存 | `PlaygroundPanel.vue` | ⏳ |
 | M5 | 文档（docs/04/13/15/40/42）+ 验证 + 去敏 push | 文档 + CI | ⏳ |
 

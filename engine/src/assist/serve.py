@@ -1043,7 +1043,8 @@ class Handler(BaseHTTPRequestHandler):
                     base_url=str(payload.get("base_url") or ""),
                     api_key=(None if key is None else str(key)),
                     batch_support=payload.get("batch_support"),
-                    model=str(payload.get("model") or ""))
+                    model=str(payload.get("model") or ""),
+                    forget_model=str(payload.get("forget_model") or ""))
             rep["config"] = providers.public_config(ws)
             self._json(rep, 200 if rep.get("ok") else 400)
             return
