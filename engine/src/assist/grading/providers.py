@@ -71,6 +71,18 @@ def list_providers(ws=None, *, mask: bool = True) -> list[dict]:
     return out
 
 
+def get_provider(ws, name: str) -> "dict | None":
+    """取单个 provider 的**内部**完整配置（含明文 key）——仅供引擎内部 LLM 调用；
+    **绝不可**回传 PWA/写入日志。找不到返回 None。"""
+    target = str(name or "").strip()
+    if not target:
+        return None
+    for p in list_providers(ws, mask=False):
+        if str(p.get("name")) == target:
+            return p
+    return None
+
+
 def stages(ws=None) -> dict:
     from ..settings_store import read_settings
     data = read_settings(ws)

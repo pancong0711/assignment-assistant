@@ -83,9 +83,9 @@
 
 | # | 阶段 | 交付物 | 状态 |
 |---|---|---|---|
-| P1 | 引擎：`playground/` 模块（单次调用 + 附件抽文本 pdf/docx/txt + 落档） | `engine/src/assist/playground/`（ask/extract/store）+ 单测 | ⏳ |
-| P2 | 引擎：记录/文件夹 CRUD + batch（并发）+ provider batch 可选 | 同上 + `batch` + 单测 | ⏳ |
-| P3 | serve 端点（ask/batch/upload/records/folder）+ CLI `assist playground …` | `serve.py` + `cli.py` + 单测 | ⏳ |
+| P1 | 引擎：`playground/` 模块（单次调用 + 附件抽文本 pdf/docx/txt + 落档） | `engine/src/assist/playground/`（ask/extract/store）+ 单测 | ✅ |
+| P2 | 引擎：记录/文件夹 CRUD + batch（并发）+ provider batch 可选 | 同上 + `batch` + 单测 | ✅ |
+| P3 | serve 端点（ask/batch/upload/records/folder）+ CLI `assist playground …` | `serve.py` + `cli.py` + 单测 | ✅ |
 | P4 | PWA：⑧ Playground 区（提问/附件/回复）+ 记录管理（文件夹/勾选/移动/删除） | `PlaygroundPanel.vue`（挂 AiGradingPanel） + `engineClient.ts` | ⏳ |
 | P5 | 文档（docs/04/13/15/39/42）+ 验证 + 去敏 push | 文档 + CI | ⏳ |
 

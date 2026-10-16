@@ -464,6 +464,142 @@ def sheet_make(obj, task_path, roster_path, out, no_watermark, assets_dir, works
         click.echo(str(f))
 
 
+# ---------------- D90 LLM Playground ----------------
+
+@cli.group("playground", help="D90：LLM Playground（单次调用 + 附件 + 记录管理）")
+def playground_grp():
+    pass
+
+
+@playground_grp.command("ask")
+@click.option("--question", "-q", required=True, help="提问文本")
+@click.option("--attach", "attachments", multiple=True, help="附件路径（图片/pdf/docx/txt，可多次）")
+@click.option("--provider", default="", help="provider 名（缺省=评阅段配置）")
+@click.option("--model", default="", help="模型名（缺省=provider/评阅段配置）")
+@click.option("--folder", default="默认", help="归入的记录文件夹")
+@click.option("--no-save", is_flag=True, help="不写入记录")
+@click.option("--workspace", "-w", default=None)
+@click.option("--verbose", "-v", is_flag=True)
+@click.pass_obj
+def playground_ask(obj, question, attachments, provider, model, folder, no_save, workspace, verbose):
+    """单次调用大模型（无多轮上下文）；结果落 <ws>/playground/records/。"""
+    from .playground import ask as pga
+    ws = _setup(verbose or obj.get("verbose"), workspace)
+    res = pga.ask(ws, question=question, provider=provider, model=model,
+                  attachments=list(attachments), folder=folder, save=not no_save)
+    click.echo(json.dumps(res, ensure_ascii=False, indent=2))
+    if not res.get("ok"):
+        raise click.ClickException(res.get("error") or "调用失败")
+
+
+@playground_grp.command("batch")
+@click.option("--questions-file", required=True, help="每行一个问题的文本文件")
+@click.option("--attach", "attachments", multiple=True)
+@click.option("--provider", default="")
+@click.option("--model", default="")
+@click.option("--folder", default="默认")
+@click.option("--workspace", "-w", default=None)
+@click.option("--verbose", "-v", is_flag=True)
+@click.pass_obj
+def playground_batch(obj, questions_file, attachments, provider, model, folder, workspace, verbose):
+    """批量发送（逐条独立调用，受控并发）。"""
+    from .playground import ask as pga
+    ws = _setup(verbose or obj.get("verbose"), workspace)
+    qs = [ln.strip() for ln in Path(questions_file).expanduser().read_text(encoding="utf-8").splitlines()
+          if ln.strip()]
+    res = pga.batch(ws, questions=qs, provider=provider, model=model,
+                    attachments=list(attachments), folder=folder)
+    click.echo(json.dumps(res, ensure_ascii=False, indent=2))
+    if not res.get("ok"):
+        raise click.ClickException(res.get("error") or "批量失败")
+
+
+@playground_grp.command("records")
+@click.option("--folder", default="", help="只列该文件夹")
+@click.option("--workspace", "-w", default=None)
+@click.option("--verbose", "-v", is_flag=True)
+@click.pass_obj
+def playground_records(obj, folder, workspace, verbose):
+    """列出记录（含文件夹）。"""
+    from .playground import store as pgs
+    ws = _setup(verbose or obj.get("verbose"), workspace)
+    recs = pgs.list_records(ws)
+    if folder:
+        recs = [r for r in recs if str(r.get("folder")) == folder]
+    click.echo(json.dumps({"ok": True, "folders": pgs.list_folders(ws), "records": recs},
+                          ensure_ascii=False, indent=2))
+
+
+@playground_grp.command("move")
+@click.option("--ids", required=True, help="记录 id（逗号分隔）")
+@click.option("--folder", required=True)
+@click.option("--workspace", "-w", default=None)
+@click.option("--verbose", "-v", is_flag=True)
+@click.pass_obj
+def playground_move(obj, ids, folder, workspace, verbose):
+    """把记录移动到文件夹。"""
+    from .playground import store as pgs
+    ws = _setup(verbose or obj.get("verbose"), workspace)
+    res = pgs.move_records(ws, [x.strip() for x in ids.split(",") if x.strip()], folder)
+    click.echo(json.dumps(res, ensure_ascii=False, indent=2))
+
+
+@playground_grp.command("rm")
+@click.option("--id", "rid", required=True)
+@click.option("--workspace", "-w", default=None)
+@click.option("--verbose", "-v", is_flag=True)
+@click.pass_obj
+def playground_rm(obj, rid, workspace, verbose):
+    """删除一条记录。"""
+    from .playground import store as pgs
+    ws = _setup(verbose or obj.get("verbose"), workspace)
+    res = pgs.delete_record(ws, rid)
+    click.echo(json.dumps(res, ensure_ascii=False, indent=2))
+    if not res.get("ok"):
+        raise click.ClickException(res.get("error") or "删除失败")
+
+
+@playground_grp.group("folders")
+def playground_folders():
+    pass
+
+
+@playground_folders.command("list")
+@click.option("--workspace", "-w", default=None)
+@click.option("--verbose", "-v", is_flag=True)
+@click.pass_obj
+def playground_folders_list(obj, workspace, verbose):
+    from .playground import store as pgs
+    ws = _setup(verbose or obj.get("verbose"), workspace)
+    click.echo(json.dumps({"ok": True, "folders": pgs.list_folders(ws)}, ensure_ascii=False, indent=2))
+
+
+@playground_folders.command("new")
+@click.option("--name", required=True)
+@click.option("--workspace", "-w", default=None)
+@click.option("--verbose", "-v", is_flag=True)
+@click.pass_obj
+def playground_folders_new(obj, name, workspace, verbose):
+    from .playground import store as pgs
+    ws = _setup(verbose or obj.get("verbose"), workspace)
+    res = pgs.add_folder(ws, name)
+    click.echo(json.dumps(res, ensure_ascii=False, indent=2))
+
+
+@playground_folders.command("rm")
+@click.option("--name", required=True)
+@click.option("--workspace", "-w", default=None)
+@click.option("--verbose", "-v", is_flag=True)
+@click.pass_obj
+def playground_folders_rm(obj, name, workspace, verbose):
+    from .playground import store as pgs
+    ws = _setup(verbose or obj.get("verbose"), workspace)
+    res = pgs.delete_folder(ws, name)
+    click.echo(json.dumps(res, ensure_ascii=False, indent=2))
+    if not res.get("ok"):
+        raise click.ClickException(res.get("error") or "删除失败")
+
+
 # ---------------- D89 作业包（pack） ----------------
 
 @cli.group("pack", help="D89：作业包（一次分层作业全部作业纸的集合）")

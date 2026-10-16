@@ -1054,6 +1054,113 @@ class Handler(BaseHTTPRequestHandler):
             rep["config"] = providers.public_config(ws)
             self._json(rep)
             return
+        if u.path == "/playground/upload":
+            payload: dict = {}
+            try:
+                length = int(self.headers.get("Content-Length") or 0)
+                if length:
+                    if length > 30 * 1024 * 1024:
+                        self._json({"ok": False, "error": "payload too large"}, 413)
+                        return
+                    payload = json.loads(self.rfile.read(length).decode("utf-8")) or {}
+            except Exception as exc:  # noqa: BLE001
+                self._json({"ok": False, "error": f"bad json: {exc}"}, 400)
+                return
+            from .playground import extract as pgeo
+            ws = Path(self.ws).resolve()
+            rep = pgeo.save_upload(ws, str(payload.get("name") or ""),
+                                   str(payload.get("data") or ""),
+                                   subdir=str(payload.get("group") or ""))
+            self._json(rep, 200 if rep.get("ok") else 400)
+            return
+        if u.path == "/playground/record":
+            payload: dict = {}
+            try:
+                length = int(self.headers.get("Content-Length") or 0)
+                if length:
+                    payload = json.loads(self.rfile.read(length).decode("utf-8")) or {}
+            except Exception as exc:  # noqa: BLE001
+                self._json({"ok": False, "error": f"bad json: {exc}"}, 400)
+                return
+            from .playground import store as pgs
+            ws = Path(self.ws).resolve()
+            action = str(payload.get("action") or "save")
+            if action == "delete":
+                rep = pgs.delete_record(ws, str(payload.get("id") or ""))
+            elif action == "move":
+                rep = pgs.move_records(ws, payload.get("ids") or [], str(payload.get("folder") or ""))
+            else:
+                rep = pgs.save_record(ws, payload.get("record") or {})
+            rep["records"] = pgs.list_records(ws)
+            self._json(rep, 200 if rep.get("ok", True) else 400)
+            return
+        if u.path == "/playground/folder":
+            payload: dict = {}
+            try:
+                length = int(self.headers.get("Content-Length") or 0)
+                if length:
+                    payload = json.loads(self.rfile.read(length).decode("utf-8")) or {}
+            except Exception as exc:  # noqa: BLE001
+                self._json({"ok": False, "error": f"bad json: {exc}"}, 400)
+                return
+            from .playground import store as pgs
+            ws = Path(self.ws).resolve()
+            action = str(payload.get("action") or "new")
+            if action == "delete":
+                rep = pgs.delete_folder(ws, str(payload.get("name") or ""))
+            elif action == "rename":
+                rep = pgs.rename_folder(ws, str(payload.get("name") or ""),
+                                        str(payload.get("new_name") or ""))
+            else:
+                rep = pgs.add_folder(ws, str(payload.get("name") or ""))
+            rep["folders"] = pgs.list_folders(ws)
+            self._json(rep, 200 if rep.get("ok", True) else 400)
+            return
+        if u.path == "/playground/ask":
+            payload: dict = {}
+            try:
+                length = int(self.headers.get("Content-Length") or 0)
+                if length:
+                    payload = json.loads(self.rfile.read(length).decode("utf-8")) or {}
+            except Exception as exc:  # noqa: BLE001
+                self._json({"ok": False, "error": f"bad json: {exc}"}, 400)
+                return
+            from .playground import ask as pga
+            ws = Path(self.ws).resolve()
+            rep = pga.ask(ws, question=str(payload.get("question") or ""),
+                          provider=str(payload.get("provider") or ""),
+                          model=str(payload.get("model") or ""),
+                          system=str(payload.get("system") or ""),
+                          attachments=payload.get("attachments") or [],
+                          temperature=payload.get("temperature"),
+                          max_tokens=int(payload.get("max_tokens") or 8192),
+                          folder=str(payload.get("folder") or ""),
+                          save=bool(payload.get("save", True)))
+            self._json(rep, 200 if rep.get("ok") else 400)
+            return
+        if u.path == "/playground/batch":
+            payload: dict = {}
+            try:
+                length = int(self.headers.get("Content-Length") or 0)
+                if length:
+                    payload = json.loads(self.rfile.read(length).decode("utf-8")) or {}
+            except Exception as exc:  # noqa: BLE001
+                self._json({"ok": False, "error": f"bad json: {exc}"}, 400)
+                return
+            from .playground import ask as pga
+            ws = Path(self.ws).resolve()
+            rep = pga.batch(ws, questions=payload.get("questions") or [],
+                            provider=str(payload.get("provider") or ""),
+                            model=str(payload.get("model") or ""),
+                            system=str(payload.get("system") or ""),
+                            attachments=payload.get("attachments") or [],
+                            temperature=payload.get("temperature"),
+                            max_tokens=int(payload.get("max_tokens") or 8192),
+                            folder=str(payload.get("folder") or ""),
+                            workers=int(payload.get("workers") or 3),
+                            save=bool(payload.get("save", True)))
+            self._json(rep, 200 if rep.get("ok") else 400)
+            return
         if u.path == "/kb/ai-solve":
             payload: dict = {}
             try:
@@ -1828,6 +1935,18 @@ class Handler(BaseHTTPRequestHandler):
             # D86 §2：provider（掩码）+ 两段式
             from .grading import providers
             self._json({"ok": True, **providers.public_config(Path(self.ws).resolve())})
+        elif u.path == "/playground/records":
+            from .playground import store as pgs
+            ws = Path(self.ws).resolve()
+            self._json({"ok": True, "records": pgs.list_records(ws), "folders": pgs.list_folders(ws)})
+        elif u.path == "/playground/folders":
+            from .playground import store as pgs
+            self._json({"ok": True, "folders": pgs.list_folders(Path(self.ws).resolve())})
+        elif u.path.startswith("/playground/record/"):
+            from .playground import store as pgs
+            rid = urllib.parse.unquote(u.path[len("/playground/record/"):])
+            d = pgs.read_record(Path(self.ws).resolve(), rid)
+            self._json(d or {"ok": False, "error": f"记录不存在：{rid}"}, 200 if d else 404)
         elif u.path.startswith("/kb/solutions/"):
             from .files import solutions as sol
             qid = urllib.parse.unquote(u.path[len("/kb/solutions/"):])
