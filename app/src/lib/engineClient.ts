@@ -1494,3 +1494,100 @@ export async function startKbAiSolve(
   if (!o?.ok || !o.job_id) throw new Error(o?.error || '未返回 job_id')
   return o.job_id
 }
+
+/* ---------------- D90：LLM Playground ---------------- */
+
+export interface PlaygroundRecord {
+  id: string; folder?: string; at?: string; provider?: string; model?: string
+  temperature?: number | null; mode?: string; batchGroup?: string
+  question?: string; attachments?: string[]; answer?: string; notes?: string[]; error?: string
+}
+
+/** POST /playground/upload：附件 base64 → workspace 运行目录，返回落盘路径。 */
+export async function uploadPlaygroundAttachment(
+  engineAddr: string, token: string | undefined,
+  payload: { name: string; data: string; group?: string },
+): Promise<{ ok?: boolean; error?: string; name?: string; kind?: string; path?: string; bytes?: number }> {
+  const base = normalizeEngineAddr(engineAddr)
+  const res = await fetch(engineUrlWithToken(base, '/playground/upload', token), {
+    method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(payload),
+  })
+  const o = (await res.json().catch(() => ({}))) as any
+  if (!res.ok && !o?.error) throw new Error(`HTTP ${res.status}`)
+  return o
+}
+
+/** POST /playground/ask：单次调用（无多轮上下文）；返回 {ok, answer, recordId}。 */
+export async function playgroundAsk(
+  engineAddr: string, token: string | undefined,
+  payload: { question: string; attachments?: string[]; provider?: string; model?: string
+    system?: string; temperature?: number | null; maxTokens?: number; folder?: string; save?: boolean },
+): Promise<{ ok?: boolean; answer?: string; model?: string; recordId?: string; error?: string; notes?: string[] }> {
+  const base = normalizeEngineAddr(engineAddr)
+  const res = await fetch(engineUrlWithToken(base, '/playground/ask', token), {
+    method: 'POST', headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({
+      question: payload.question, attachments: payload.attachments,
+      provider: payload.provider, model: payload.model, system: payload.system,
+      temperature: payload.temperature, max_tokens: payload.maxTokens, folder: payload.folder,
+      save: payload.save !== false,
+    }),
+  })
+  const o = (await res.json().catch(() => ({}))) as any
+  if (!res.ok && !o?.error) throw new Error(`HTTP ${res.status}`)
+  return o
+}
+
+/** POST /playground/batch：批量发送（逐条独立调用）。 */
+export async function playgroundBatch(
+  engineAddr: string, token: string | undefined,
+  payload: { questions: string[]; attachments?: string[]; provider?: string; model?: string
+    folder?: string; workers?: number; save?: boolean },
+): Promise<{ ok?: boolean; groupId?: string; total?: number; succeeded?: number
+    results?: { ok?: boolean; question?: string; answer?: string; error?: string; recordId?: string }[]
+    error?: string }> {
+  const base = normalizeEngineAddr(engineAddr)
+  const res = await fetch(engineUrlWithToken(base, '/playground/batch', token), {
+    method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(payload),
+  })
+  const o = (await res.json().catch(() => ({}))) as any
+  if (!res.ok && !o?.error) throw new Error(`HTTP ${res.status}`)
+  return o
+}
+
+/** GET /playground/records：记录 + 文件夹。 */
+export async function fetchPlaygroundRecords(
+  engineAddr: string, token?: string,
+): Promise<{ ok?: boolean; records?: PlaygroundRecord[]; folders?: string[] }> {
+  const base = normalizeEngineAddr(engineAddr)
+  return (await getJson2(engineUrlWithToken(base, '/playground/records', token))) as any
+}
+
+/** POST /playground/record：删除/移动/保存记录。 */
+export async function mutatePlaygroundRecord(
+  engineAddr: string, token: string | undefined,
+  payload: { action?: 'save' | 'delete' | 'move'; id?: string; ids?: string[]; folder?: string
+    record?: Partial<PlaygroundRecord> },
+): Promise<{ ok?: boolean; error?: string; records?: PlaygroundRecord[] }> {
+  const base = normalizeEngineAddr(engineAddr)
+  const res = await fetch(engineUrlWithToken(base, '/playground/record', token), {
+    method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(payload),
+  })
+  const o = (await res.json().catch(() => ({}))) as any
+  if (!res.ok && !o?.error) throw new Error(`HTTP ${res.status}`)
+  return o
+}
+
+/** POST /playground/folder：新建/删除/重命名文件夹。 */
+export async function mutatePlaygroundFolder(
+  engineAddr: string, token: string | undefined,
+  payload: { action?: 'new' | 'delete' | 'rename'; name: string; new_name?: string },
+): Promise<{ ok?: boolean; error?: string; folders?: string[] }> {
+  const base = normalizeEngineAddr(engineAddr)
+  const res = await fetch(engineUrlWithToken(base, '/playground/folder', token), {
+    method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(payload),
+  })
+  const o = (await res.json().catch(() => ({}))) as any
+  if (!res.ok && !o?.error) throw new Error(`HTTP ${res.status}`)
+  return o
+}

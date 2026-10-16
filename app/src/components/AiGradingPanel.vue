@@ -17,6 +17,7 @@ import {
 const props = defineProps<{ engineAddr: string; token?: string }>()
 const taskpadStore = useTaskpadStore()
 import { usePackStore } from '../stores/packs'
+import PlaygroundPanel from './PlaygroundPanel.vue'
 const packStore = usePackStore()
 
 const msg = ref('')
@@ -483,5 +484,8 @@ onMounted(async () => { await loadConfig(); await loadWorks() })
       作业包与批阅会**实时读取置顶版**。
     </p>
     <p class="hint" v-if="kbSolveMsg">{{ kbSolveMsg }}</p>
+
+
+    <PlaygroundPanel :engine-addr="props.engineAddr" :token="props.token" />
 
 </template>
