@@ -816,7 +816,10 @@ export async function fetchXxtGradeDrafts(
 export async function saveXxtGradeDraft(
   engineAddr: string, token: string | undefined,
   payload: { classId: string; workId: string; key: string; score?: number | null
-    comment?: string; commentText?: string; images?: { name: string; data_b64: string }[] },
+    comment?: string; commentText?: string; images?: { name: string; data_b64: string }[]
+    student?: string; tag?: string
+    ai?: Record<string, unknown>; human?: Record<string, unknown> | null
+    human_mode?: string; revision?: Record<string, unknown> | null },
 ): Promise<{ ok?: boolean; key?: string; error?: string }> {
   const base = normalizeEngineAddr(engineAddr)
   const res = await fetch(engineUrlWithToken(base, '/xxt/grade/draft', token), {
@@ -1609,4 +1612,21 @@ export async function fetchKbCatalog(
   } catch {
     return { ok: false, kinds: [] }
   }
+}
+
+/* ---------------- D92-R4：按草稿（双套+模式）逐生生成报告 ---------------- */
+
+/** POST /xxt/grade/render-from-drafts：按本地双套草稿逐生生成报告（人工在前+附件AI+修订标红）。 */
+export async function renderReportsFromDrafts(
+  engineAddr: string, token: string | undefined,
+  payload: { classId: string; workId: string; taskId?: string; classDir?: string; withReportPng?: boolean },
+): Promise<{ ok?: boolean; error?: string; count?: number; dir?: string
+  reports?: { key?: string; student?: string; kind?: string; revised?: boolean; png?: boolean }[] }> {
+  const base = normalizeEngineAddr(engineAddr)
+  const res = await fetch(engineUrlWithToken(base, '/xxt/grade/render-from-drafts', token), {
+    method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(payload),
+  })
+  const o = (await res.json().catch(() => ({}))) as any
+  if (!res.ok && !o?.error) throw new Error(`HTTP ${res.status}`)
+  return o
 }

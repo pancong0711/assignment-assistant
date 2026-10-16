@@ -10,14 +10,15 @@ import { useTaskpadStore } from '../stores/taskpad'
 import {
   extractJobError, fetchLlmConfig, fetchXxtClassMap, fetchXxtGradeDrafts, fetchXxtLoginJob,
   fetchXxtReviewIndex, fetchXxtReviewStudents, postLlmProvider, postXxtClassMap,
-  saveXxtGradeDraft, startXxtGradeAi, startXxtGradeRenderDrafts, startXxtGradeUpload,
-  startKbAiSolve, fetchKbCatalog,
+  startXxtGradeAi, startXxtGradeUpload,
+  startKbAiSolve, fetchKbCatalog, renderReportsFromDrafts,
 } from '../lib/engineClient'
 
 const props = defineProps<{ engineAddr: string; token?: string }>()
 const taskpadStore = useTaskpadStore()
 import { usePackStore } from '../stores/packs'
 import PlaygroundPanel from './PlaygroundPanel.vue'
+import StudentReviewModal from './StudentReviewModal.vue'
 const packStore = usePackStore()
 
 const msg = ref('')
@@ -101,12 +102,19 @@ const classDir = ref<Record<string, string>>({})
 /* ③ 任务 */
 const works = ref<Array<{ key: string; courseId: string; classId: string; cpi: string; workId: string; label: string }>>([])
 const workKey = ref(''); const padId = ref(''); const packId = ref(''); const mode = ref<'optimized' | 'brute'>('optimized')
-const tags = ref(''); const limit = ref(0); const reportKind = ref<'ai' | 'human'>('ai')
+const tagsSel = ref<string[]>([]); const limit = ref(0)
+const reviewOpen = ref(false); const reviewIndex = ref(0)
+function openReview(i: number) { reviewIndex.value = i; reviewOpen.value = true }
+/** D92-R4：当前作业学生 tag 集合（去重，按出现顺序）。 */
+const tagOptions = computed<string[]>(() => {
+  const seen: string[] = []
+  for (const s of students.value) { const t = (s.tag || '').trim(); if (t && !seen.includes(t)) seen.push(t) }
+  return seen
+})
 
 /* ④ 逐生审核 */
 const students = ref<Array<{ name: string; key: string; tag?: string }>>([])
 const drafts = ref<Record<string, any>>({})
-const curKey = ref(''); const score = ref('100'); const comment = ref('')
 
 // D89：优先按"作业包"选择（一次分层作业的全部作业纸）；包内每张按 tag 自动匹配学生
 const packPads = computed(() => {
@@ -164,13 +172,9 @@ async function loadStudents() {
       name: String(s.name || ''), key: String(s.workAnswerId || s.name || ''),
       tag: String(s.tag || ''),
     }))
+    // 默认全选当前作业的 tag 集合（新作业加载时重置）
+    tagsSel.value = [...tagOptions.value]
   } catch (e) { msg.value = `读取学生/草稿失败：${String(e)}` }
-}
-function pickStudent(k: string) {
-  curKey.value = k
-  const d = drafts.value[k] || {}
-  score.value = d.score !== undefined && d.score !== null ? String(d.score) : '100'
-  comment.value = String(d.comment || '')
 }
 function classDirFor(w: { courseId: string; classId: string }): string {
   return classMap.value[`${w.courseId}:${w.classId}`] || classDir.value[`${w.courseId}:${w.classId}`] || ''
@@ -234,7 +238,7 @@ async function startAi() {
     const jobId = await startXxtGradeAi(props.engineAddr, props.token, {
       courseId: w.courseId, classId: w.classId, cpi: w.cpi, workId: w.workId, taskpad,
       ...(padsPayload && padsPayload.length > 1 ? { pads: padsPayload } : {}),
-      mode: mode.value, tags: tags.value.split(',').map(x => x.trim()).filter(Boolean),
+      mode: mode.value, tags: [...tagsSel.value],
       limit: Number(limit.value) || 0,
     })
     stopPoll()
@@ -258,73 +262,23 @@ async function startAi() {
 }
 async function renderReports() {
   const w = curWork.value
-  if (!w || !padId.value) { msg.value = '请选择作业与作业包'; return }
+  if (!w) { msg.value = '请选择作业'; return }
   busy.value = true
+  progress.value = '正在按草稿逐生生成报告（人工在前 + 【附件】AI + 修订标红）……'
   try {
-    const jobId = await startXxtGradeRenderDrafts(props.engineAddr, props.token, {
-      courseId: w.courseId, classId: w.classId, workId: w.workId, taskId: padId.value,
-      kind: reportKind.value,
+    const r = await renderReportsFromDrafts(props.engineAddr, props.token, {
+      classId: w.classId, workId: w.workId, taskId: padId.value || packId.value,
     })
-    stopPoll()
-    const tick = async () => {
-      try {
-        const job = await fetchXxtLoginJob(props.engineAddr, props.token, jobId)
-        const lines = job.lines || []
-        if (job.status === 'running') {
-          progress.value = `生成报告中：${(lines.slice(-1)[0] || '').slice(-140)}`
-          pollTimer = window.setTimeout(tick, 2000); return
-        }
-        busy.value = false
-        progress.value = (job.returncode ?? 0) === 0
-          ? `✅ 已生成「${reportKind.value === 'human' ? '人工' : 'AI'}批阅报告」并写入本地草稿（含报告图）`
-          : `❌ 生成失败：${extractJobError(lines.join('\n'))}`
-        await loadStudents()
-      } catch (e) { busy.value = false; progress.value = `状态查询失败：${String(e)}` }
+    busy.value = false
+    if (r?.ok) {
+      const n = r.count ?? (r.reports || []).length
+      const types = Array.from(new Set((r.reports || []).map((x) => x.kind))).join('/')
+      progress.value = `✅ 已生成 ${n} 份报告（类型：${types || '自动'}）；写入本地草稿（含报告图）`
+      await loadStudents()
+    } else {
+      progress.value = `❌ 生成失败：${r?.error || '未知错误'}`
     }
-    void tick()
-  } catch (e) { busy.value = false; msg.value = `启动失败：${String(e)}` }
-}
-async function saveDraft() {
-  const w = curWork.value
-  if (!w || !curKey.value) return
-  const n = score.value.trim() === '' ? null : Number(score.value)
-  const rep = await saveXxtGradeDraft(props.engineAddr, props.token, {
-    classId: w.classId, workId: w.workId, key: curKey.value,
-    score: Number.isFinite(n as number) ? (n as number) : null, comment: comment.value,
-  })
-  if (rep?.ok) {
-    drafts.value = { ...drafts.value, [curKey.value]: { ...(drafts.value[curKey.value] || {}), score: n, comment: comment.value } }
-    msg.value = `已保存到本地 ${new Date().toLocaleTimeString()}`
-  } else { msg.value = `保存失败：${rep?.error || ''}` }
-}
-async function uploadOne(send: boolean) {
-  const w = curWork.value
-  if (!w || !curKey.value) return
-  await saveDraft()
-  try {
-    const jobId = await startXxtGradeUpload(props.engineAddr, props.token, {
-      courseId: w.courseId, classId: w.classId, cpi: w.cpi, workId: w.workId,
-      student: curKey.value, send,
-    })
-    busy.value = true; progress.value = send ? '正在上传并提交……' : '正在演练（dry-run，不提交）……'
-    stopPoll()
-    const tick = async () => {
-      try {
-        const job = await fetchXxtLoginJob(props.engineAddr, props.token, jobId)
-        const lines = job.lines || []
-        if (job.status === 'running') {
-          progress.value = (send ? '上传中：' : '演练中：') + (lines.slice(-1)[0] || '').slice(-140)
-          pollTimer = window.setTimeout(tick, 1500); return
-        }
-        busy.value = false
-        progress.value = (job.returncode ?? 0) === 0
-          ? (send ? '✅ 已上传并提交' : '✅ 演练完成（未提交）')
-          : `❌ ${send ? '上传' : '演练'}失败：${extractJobError(lines.join('\n'))}`
-        await loadStudents()
-      } catch (e) { busy.value = false; progress.value = `状态查询失败：${String(e)}` }
-    }
-    void tick()
-  } catch (e) { busy.value = false; msg.value = `启动失败：${String(e)}` }
+  } catch (e) { busy.value = false; progress.value = `启动失败：${String(e)}` }
 }
 async function uploadAll(force: boolean) {
   const w = curWork.value
@@ -447,46 +401,43 @@ onMounted(async () => { await loadConfig(); await loadWorks(); loadKbCatalog() }
           <option value="brute">brute-force（先自己作答再比对）</option>
         </select>
       </label>
-      <label class="field">tags <input v-model="tags" placeholder="留空=全部" style="width:140px" /></label>
+      <label class="field" title="按当前作业学生 tag 集合多选；默认全选">
+        tags
+        <select v-model="tagsSel" multiple style="min-width:150px; min-height:56px">
+          <option v-for="t in tagOptions" :key="t" :value="t">{{ t }}</option>
+        </select>
+        <button class="btn small" type="button" @click="tagsSel = [...tagOptions]">全选</button>
+      </label>
       <label class="field">限前 <input v-model.number="limit" type="number" min="0" style="width:70px" /> 名</label>
       <button class="btn" :disabled="busy" @click="startAi">▶ 开始 AI 批阅</button>
     </div>
     <p v-if="progress" class="hint" style="margin-top:6px">{{ progress }}</p>
 
-    <h3 style="margin-top:14px">④ 逐生审核（本地草稿）</h3>
+    <h3 style="margin-top:14px">④ 逐生审核（左右两栏弹窗）</h3>
+    <p class="hint" style="margin:0 0 6px">
+      点「审核」打开弹窗：左=作答图；右上=AI 批语（可另存修订版）；右下=人工批阅（可选，AI 原文不被覆盖）。
+      保存后到 ⑤ 一键生成报告（按每生模式自动出 5 种版式之一）。
+    </p>
     <table v-if="students.length" style="width:100%; border-collapse:collapse">
-      <thead><tr><th style="text-align:left">学生</th><th>tag</th><th>本地草稿</th><th>分数</th><th></th></tr></thead>
+      <thead><tr><th style="text-align:left">学生</th><th>tag</th><th>AI</th><th>人工</th><th>模式</th><th></th></tr></thead>
       <tbody>
-        <tr v-for="s in students" :key="s.key">
+        <tr v-for="(s, i) in students" :key="s.key">
           <td>{{ s.name }}</td>
           <td style="text-align:center">{{ s.tag || '—' }}</td>
-          <td style="text-align:center">{{ drafts[s.key] ? '✓ ' + (drafts[s.key].source || '') : '—' }}</td>
-          <td style="text-align:center">{{ drafts[s.key]?.score ?? '—' }}</td>
-          <td style="text-align:center"><button class="btn" @click="pickStudent(s.key)">审核</button></td>
+          <td style="text-align:center">{{ drafts[s.key]?.ai ? (drafts[s.key].ai.score ?? '✓') : (drafts[s.key]?.score ?? '—') }}</td>
+          <td style="text-align:center">{{ drafts[s.key]?.human?.used ? (drafts[s.key].human.score ?? '✓') : '—' }}</td>
+          <td style="text-align:center">{{ drafts[s.key]?.humanMode || drafts[s.key]?.source || '—' }}</td>
+          <td style="text-align:center"><button class="btn" @click="openReview(i)">审核</button></td>
         </tr>
       </tbody>
     </table>
     <p v-else class="hint">（未选作业或该作业无学生清单）</p>
-    <div v-if="curKey" style="margin-top:8px; border:1px solid var(--c-border); border-radius:8px; padding:10px">
-      <div style="display:flex; gap:8px; align-items:center; flex-wrap:wrap">
-        <b>{{ curKey }}</b>
-        <label class="field">分数 <input v-model="score" type="number" min="0" max="100" style="width:80px" /></label>
-        <button class="btn" @click="saveDraft">💾 保存到本地</button>
-        <button class="btn" :disabled="busy" @click="uploadOne(false)">👀 演练上传</button>
-        <button class="btn" :disabled="busy" @click="uploadOne(true)">⬆ 上传并提交</button>
-      </div>
-      <textarea v-model="comment" rows="4" placeholder="作业批语（支持 LaTeX $...$；上传时会渲染成图片）"
-                style="width:100%; margin-top:8px; font-family:inherit; padding:6px"></textarea>
-    </div>
 
     <h3 style="margin-top:14px">⑤ 报告 / ⑥ 上传全部</h3>
     <div style="display:flex; gap:8px; align-items:center; flex-wrap:wrap">
-      <label class="field">报告标注
-        <select v-model="reportKind">
-          <option value="ai">AI 批阅报告</option>
-          <option value="human">人工批阅报告</option>
-        </select>
-      </label>
+      <span class="hint" style="margin:0">
+        报告类型**自动**由逐生审核决定（AI批阅报告 / 人工批阅报告 / 人工在前+【附件】AI / …（人工修订））
+      </span>
       <button class="btn" :disabled="busy" @click="renderReports">📄 一键生成批阅报告</button>
       <span style="flex:1"></span>
       <button class="btn" :disabled="busy" @click="uploadAll(false)">⬆⬆ 上传全部批阅（含打分）</button>
@@ -541,6 +492,16 @@ onMounted(async () => { await loadConfig(); await loadWorks(); loadKbCatalog() }
     </p>
     <p class="hint" v-if="kbSolveMsg">{{ kbSolveMsg }}</p>
 
+
+    <StudentReviewModal
+      v-if="reviewOpen"
+      :engine-addr="props.engineAddr" :token="props.token"
+      :class-id="curWork?.classId || ''" :work-id="curWork?.workId || ''"
+      :students="students" :drafts="drafts" :start-index="reviewIndex"
+      @close="reviewOpen = false"
+      @saved="loadStudents"
+      @notify="(m) => { progress = String(m) }"
+    />
 
     <PlaygroundPanel :engine-addr="props.engineAddr" :token="props.token" />
 
