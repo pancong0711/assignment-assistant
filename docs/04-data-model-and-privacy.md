@@ -81,6 +81,26 @@ classes/<class_dir>/grading/<taskId>/
   diagnostics.jsonl  # D86：LLM 调用失败/异常诊断（provider/模型/错误原文）
 ```
 
+## 密钥与隐私安全（D86 拆分 + D87 加固）
+
+**数据流**：PWA（浏览器）→ 本机引擎 `http://127.0.0.1:8601`（JSON）→ `settings.local.secrets.json`（0600）。
+引擎调用 LLM 时才读 key，经 `Authorization: Bearer` 发给服务商。
+
+**已落实的防护**：
+- 存储隔离：key 只写 `settings.local.secrets.json`（0600），非敏感配置写 `settings.local.json`；
+- 回显掩码：PWA/CLI 只见 `sk-****1234`（`providers.public_config`，`save_provider` 返回值剔除 `api_key`）；
+- 日志脱敏：LLM 报错只回 `status + body[:400]`，绝不带 Authorization 头；`BATCH-README.txt` 用 `$KEY` 占位；
+- 仓库隔离：`.gitignore` 拦 `settings.local*.json`/`*.key`/`*apikey*`/`.env`；CI 跑 `tools/check-secrets.sh`
+  （路径红线 + 已知厂商前缀 + 异形高熵 key 启发式 + 真实姓名），本地可随时手跑。
+
+**需教师注意的边界风险**（代码挡不住，靠环境自律）：
+1. **`--lan` 模式是明文 HTTP**：绑定 `0.0.0.0`（带一次性 `?token=` 鉴权），同网段可抓包。
+   **不要在不可信网络用 `--lan` 输入/使用 API key**；本机模式（默认 `127.0.0.1`）风险最低。
+2. **云盘同步 workspace**：`settings.local.secrets.json` 会被一起同步上云。若 workspace 放在网盘，
+   请在同步规则中**排除 `settings.local.secrets.json`**（或用不进入云盘的本机目录作 workspace）。
+3. **浏览器输入瞬间**：key 在 DevTools → Network 可见；请在可信设备上操作，勿在公共/共享电脑填写。
+4. 扫描器是**兜底**而非唯一防线：非标准格式的 key 尽量靠"永不入库"的纪律保障。
+
 **作业任务任务包（05-D2 的固化产物）**：
 
 ```jsonc

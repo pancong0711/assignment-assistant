@@ -138,7 +138,7 @@
 
 1. 填 **provider 名称 / base_url / api_key**（如阿里云百炼兼容模式
    `https://dashscope.aliyuncs.com/compatible-mode/v1`）→ 点「保存 provider」；
-   - key **只在本地加密保存**（`workspace/settings.local.secrets.json`，权限 0600），
+   - key **只在本地保存**（`workspace/settings.local.secrets.json`，权限 0600），
      页面只显示 `sk-****1234`；**日志与操作记录绝不记 key**；
    - 若要评阅走 batch，勾选「支持 batch」。
 2. **转写段** 勾选 provider + 填**多模态模型名**；**评阅段** 勾选 provider + 填**文本模型名**；
@@ -197,6 +197,15 @@
 | 上传报「已批阅」 | 属幂等保护；确认后可用「强制覆盖上传」 |
 | AI 无结果 | 先确认已「⬇ 下载」；再确认两段 provider/模型已保存、key 可用 |
 | 简答题加不上（新建作业） | 已支持「更多」兜底；若仍失败把报错（含步骤名+截图路径）发回 |
+
+### 密钥安全须知（D87）
+
+- **本机使用最安全**：默认引擎只监听 `127.0.0.1`，key 不出本机。
+- **不要用 `--lan` 在不可信网络操作**：LAN 模式是明文 HTTP（仅一次性 token 鉴权），同网段可抓包，
+  此时不要输入/使用 API key。
+- **workspace 放云盘时**：请在同步规则里**排除 `settings.local.secrets.json`**，否则 key 会随之上云。
+- **不要在公共/共享电脑填 key**：输入瞬间浏览器 DevTools→Network 可见。
+- 提交代码前可手跑 `bash tools/check-secrets.sh`（CI 也会跑）：拦已知厂商前缀 + 异形高熵 key + 真实姓名。
 
 ---
 

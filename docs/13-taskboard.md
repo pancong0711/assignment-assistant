@@ -1435,6 +1435,20 @@ applyManualTranslation/setTranslationRatio 中 setTranslationRatio 保留——�
 
 ---
 
+## D87+ · 密钥/隐私安全加固（2026-10-16）
+
+- 触发：用户关切「填 API key 是否会被泄漏」；审计结论：存储 0600 / 回显掩码 / 日志脱敏 /
+  仓库双层拦截（.gitignore + CI check-secrets）均已到位，历史零泄漏；
+- 加固 1：`tools/check-secrets.sh` §2 —— 已知厂商前缀扩到 sk/ghp/gho/github_pat/AKIA/AIza/hf_/xox，
+  新增「敏感键名 + ≥32 位高熵值」异形 key 启发式（含 JSON 形态），且排除占位/测试 fixture 不误报；
+- 加固 2：`docs/04` 新增「密钥与隐私安全」节 + `docs/15` 新增「密钥安全须知」，写明
+  `--lan` 明文 HTTP / 云盘同步 / 公共电脑 / 浏览器 Network 四个边界风险；
+- 加固 3：`engine/tests/test_secret_scan.py`（15 例）—— 驱动脚本拦真 key、放行占位、
+  拦截红线路径 + 源码红线（public_config 不明文回显、logger 不插值 key）；
+- 验证：engine pytest 319 passed；check-secrets.sh 对真实树通过。
+
+---
+
 ## D87 · 素材目录（workspace 优先）+ 水印样式库（2026-10-15）
 
 - 主需求单：`docs/40-D87-assets-watermark-styles.md`；
