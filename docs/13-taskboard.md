@@ -1435,6 +1435,16 @@ applyManualTranslation/setTranslationRatio 中 setTranslationRatio 保留——�
 
 ---
 
+## D97 · 发布作业——默认时间(now+5min/now+5days) + 题干本地缓存 + 逐班「已发布」判定（2026-10-17）
+
+- 主需求单：`docs/50-D97-publish-time-cache-published-check.md`；
+- Q1 默认时间：`start=now+5min`、`end=now+5days`（PWA/CLI 统一），避免"开始<当前"被平台拒；
+- Q2 题干：`work_detail` 慢（开编辑器），PWA **本地缓存题干 + 先显缓存后刷新**；
+- Q3 已发布：`publishedClasses` 仅填查询班 + PWA 只看基准班 → **误报**；改为**逐目标班判定**，发布**跳过已发班**；
+- 分期：W1 默认时间 → W2 题干缓存 → W3 逐班已发布聚合 → W4 PWA 逐班标注/跳过 → W5 文档/验证/push。
+
+---
+
 ## D96 · 发布作业「作业来源课程」+ 跨课程复制 + 发布反馈修复（2026-10-17）
 
 - 主需求单：`docs/49-D96-work-library-course-and-cross-course-copy.md`；
