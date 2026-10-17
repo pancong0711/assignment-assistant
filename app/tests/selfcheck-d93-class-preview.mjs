@@ -72,3 +72,22 @@ console.log('\nD93-S5 整班预览（连续页码 + KaTeX 就绪）自检通过 
   console.log('4) 整班按学号升序（空号末尾、数值感知）… ok')
 }
 console.log('\nD93-fix 整班顺序自检通过 ✔')
+
+/* ---------- D94-T2：stringifyClassHtml 按点名册顺序逐人（不按 pack 分组） ---------- */
+{
+  const { stringifyClassHtml } = await import(pathToFileURL(bundle).href)
+  function mkPad(id) { const p = emptyTaskpad(); p.id = id; p.layout.orientation = 'portrait'; p.layout.per_page = 1; p.items = []; return p }
+  const padA = mkPad('padA'), padB = mkPad('padB')   // 两个 tag 两张纸
+  const map = { qa: padA, copy: padB }
+  // 点名册顺序：A(qa), B(copy), C(qa), D(copy) —— 交错 tag
+  const students = [
+    { name: 'A', number: '1', tag: 'qa' }, { name: 'B', number: '2', tag: 'copy' },
+    { name: 'C', number: '3', tag: 'qa' }, { name: 'D', number: '4', tag: 'copy' },
+  ]
+  const resolve = (stu) => map[stu.tag] ? { pad: map[stu.tag], items: [] } : null
+  const { html } = stringifyClassHtml(students, resolve, { katex: 'cdn' })
+  const order = [...html.matchAll(/data-student="([^"]+)"/g)].map((m) => m[1])
+  assert.deepEqual(order, ['A', 'B', 'C', 'D'], `应按点名册逐人交错输出，实得 ${order}`)
+  console.log('5) 整班按点名册逐人输出（不按 pack 分组）… ok')
+}
+console.log('\nD94-T2 整班点名册顺序自检通过 ✔')

@@ -16,8 +16,8 @@ import { parseTaskpad, padInferredTag } from '../lib/taskpad'
 import { downloadData, detectCapabilities, fsWriteHint, pickReadFileFsa } from '../lib/fsAccess'
 import { useKbStore } from '../stores/kb'
 import { useSettingsStore } from '../stores/settings'
-import { stringifySheetHtml, printSheetHtml, buildSelfContainedHtml, expandPadItems,
-  type SheetHtmlPadInput } from '../lib/sheetHtml'
+import { stringifyClassHtml, printSheetHtml, expandPadItems,
+  type SheetHtmlPadInput, type SheetHtmlStudent } from '../lib/sheetHtml'
 import type { KbKind } from '../lib/kb'
 import PreviewTableCard from '../components/PreviewTableCard.vue'
 
@@ -371,22 +371,40 @@ function buildClassInputs(): { inputs: SheetHtmlPadInput[]; unmatched: number; u
 
 /** 预览整班：同一打印模板多页 HTML；同时生成 batch manifest 文本（README/绑定核对）。 */
 /** D57-1：按当前开关构建整班 HTML（含答案/水印/页码三开关；与设计页同语义）。 */
+/** D94-T2：整班渲染输入 —— 学生→作业纸映射（由 tag 决定），顺序用 roster.students（点名册顺序）。 */
+function classOrderResolver(): (stu: SheetHtmlStudent) => { pad: any; items: any[] } | null {
+  const { groups } = partitionStudentsByTag(roster.students, pad.savedJsons(), classPreviewFallbackId.value)
+  const padByTag = new Map<string, { pad: any; items: any[] }>()
+  const itemsOf = (p: any) => expandPadItems(p, (k) => kbStore.book(k as KbKind))
+  for (const g of groups) {
+    const tag = padInferredTag(g.pad.items, g.pad.target_tag) || ''
+    if (tag) padByTag.set(tag, { pad: g.pad, items: itemsOf(g.pad) })
+  }
+  const fallbackPadId = classPreviewFallbackId.value
+  return (stu: SheetHtmlStudent) => {
+    const tag = String((stu as any).tag || '')
+    let hit = padByTag.get(tag)
+    if (!hit && fallbackPadId) {
+      const fp = groups.find((g) => g.pad.id === fallbackPadId)
+      if (fp) hit = { pad: fp.pad, items: itemsOf(fp.pad) }
+    }
+    return hit || null
+  }
+}
+
+/** D94-T2：整班预览**按点名册顺序逐人**输出。 */
 function buildClassPreviewHtml(): string {
-  const { inputs } = buildClassInputs()
-  return stringifySheetHtml(inputs, {
-    // D88-a：整班预览禁用"合成示例学生"回落（空学生的包由 sheetHtml 跳过）
-    syntheticFallback: false,
-    // D88-c：学生自身 class 优先；RosterView 侧无"学习通班级名"，故回退名留空（不再回落 classA）
+  const { html } = stringifyClassHtml(roster.students as SheetHtmlStudent[], classOrderResolver(), {
     groupName: '',
     includeSolution: classIncludeAnswers.value,
     includeWatermark: classIncludeWatermark.value,
     includePageText: classIncludePageText.value,
     wmAssets: settingsStore.wmAssets,
     wmStyles: settingsStore.wmStyles,
-    figAssets: settingsStore.figAssets,   // B3/D46-5：题图命中显示真图
-    katex: 'relative',                    // 同源 ./katex/，公式离线渲染
-    continuousPage: true,                 // D93-S5：整班页码跨学生连续递增
+    figAssets: settingsStore.figAssets,
+    katex: 'relative',
   })
+  return html
 }
 
 function previewWholeClass() {
@@ -435,14 +453,17 @@ watch([classIncludeAnswers, classIncludeWatermark, classIncludePageText], () => 
 async function downloadClassPreviewHtml() {
   if (!classPreviewHtml.value) return
   try {
-    const { inputs } = buildClassInputs()
-    const html = await buildSelfContainedHtml(inputs, {
+    // D94-T2：下载同样按点名册顺序；自包含 KaTeX 内联（file:// 离线可开）
+    const { fetchSelfContainedKatex } = await import('../lib/sheetHtml')
+    const raw = await fetchSelfContainedKatex()
+    const { html } = stringifyClassHtml(roster.students as SheetHtmlStudent[], classOrderResolver(), {
       includeSolution: classIncludeAnswers.value,
       includeWatermark: classIncludeWatermark.value,
       includePageText: classIncludePageText.value,
       wmAssets: settingsStore.wmAssets,
       wmStyles: settingsStore.wmStyles,
       figAssets: settingsStore.figAssets,
+      katex: 'raw', katexRaw: raw,
     })
     downloadData(html, `class-sheet-preview-${new Date().toISOString().slice(0, 10)}.html`, 'text/html')
   } catch {

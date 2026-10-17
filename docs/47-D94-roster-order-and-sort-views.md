@@ -66,7 +66,7 @@ D93 里我曾用"按学号排序"绕过 → 但**空学号时失效**，且引�
 | # | 阶段 | 交付物 | 状态 |
 |---|---|---|---|
 | T1 | 保序 merge：`addScoreSource` roster 分支（现有名单为准；新名单替换）+ selfcheck | `stores/roster.ts` + selfcheck | ✅ |
-| T2 | 整班预览**按点名册全局顺序逐人输出**（不按 pack 分组）+ 连续页码 + selfcheck | `sheetHtml.ts` + `RosterView.vue` | ⏳ |
+| T2 | 整班预览**按点名册全局顺序逐人输出**（不按 pack 分组）+ 连续页码 + selfcheck | `sheetHtml.ts`（`stringifyClassHtml`） + `RosterView.vue` | ✅ |
 | T3 | 总览 + 标签预览：按加权成绩 降序/升序 按钮（视图层） | `RosterView.vue` | ⏳ |
 | T4 | 文档（docs/04/13/15）+ 验证 + 去敏 push | 文档 + CI | ⏳ |
 

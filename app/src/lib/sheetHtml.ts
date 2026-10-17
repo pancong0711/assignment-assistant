@@ -636,6 +636,76 @@ ${katexScript()}
 </html>`
 }
 
+/** D94-T2：整班 HTML —— **按点名册顺序逐人输出**（不按 pack/tag 分组）。
+ *  @param students 已按点名册顺序的学生列表
+ *  @param resolve  某生 → { pad, items } | null（null = 无匹配作业纸 → 跳过，计入未出页）
+ *  连续页码跨整班递增；其余（KaTeX/水印/开关）与 stringifySheetHtml 同口径。 */
+export function stringifyClassHtml(
+  students: SheetHtmlStudent[],
+  resolve: (stu: SheetHtmlStudent) => { pad: Taskpad; items: SheetHtmlItem[] } | null,
+  opts: SheetHtmlOptions = {},
+): { html: string; skipped: string[] } {
+  if (!students.length) throw new Error('stringifyClassHtml：学生名单为空')
+  const groupName = String(opts.groupName ?? '')
+  const date = opts.date ?? todayStr()
+  const mode = opts.katex ?? 'cdn'
+  const includeSolution = opts.includeSolution !== false
+  const includeWatermark = opts.includeWatermark !== false
+  const includePageText = opts.includePageText !== false
+  // 预解析每生 → {pad, items, chunks, wm}
+  type Row = { stu: SheetHtmlStudent; pad: Taskpad; chunks: SheetHtmlItem[][]; wm: WmResolved[] }
+  const rows: Row[] = []
+  const skipped: string[] = []
+  for (const stu of students) {
+    const r = resolve(stu)
+    if (!r) { skipped.push(stu.name); continue }
+    const { pad, items } = r
+    const perPage = resolveGrid(pad.layout).perPage
+    const chunks: SheetHtmlItem[][] = []
+    for (let i = 0; i < items.length; i += perPage) chunks.push(items.slice(i, i + perPage))
+    if (!chunks.length) chunks.push([])
+    const wm = resolveWmItems(pad, opts.wmAssets,
+      pad.layout.orientation === 'landscape' ? 'landscape' : 'portrait', opts.wmStyles)
+    rows.push({ stu, pad, chunks, wm })
+  }
+  if (!rows.length) return { html: '', skipped }
+  const first = rows[0].pad
+  const orientation = first.layout.orientation === 'landscape' ? 'landscape' : 'portrait'
+  const docTitle = String(first.layout.header.title ?? '') || '作业纸'
+  const totalBlocks = rows.reduce((n, r) => n + r.chunks.length, 0)
+  const pageSections: string[] = []
+  let runPage = 0
+  rows.forEach((r, ri) => {
+    r.chunks.forEach((chunk, pi) => {
+      runPage += 1
+      const veryLast = ri === rows.length - 1 && pi === r.chunks.length - 1
+      pageSections.push(pageBlockHtml(r.pad, chunk, r.stu, totalBlocks, runPage, veryLast,
+        r.wm, date, groupName, includeSolution, includeWatermark, includePageText, opts.figAssets))
+    })
+  })
+  const html = `<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>${escapeHtml(docTitle)} · 整班</title>
+${katexIncludeHtml(mode, opts.katexRaw)}
+<style>
+${printCss(orientation)}
+</style>
+</head>
+<body>
+<div class="doc-hint">
+  整班作业纸（**按点名册顺序逐人**）：打印（Ctrl/Cmd+P）纸张=A4 · 边距=无 · 页眉页脚=关 · 背景图形=开。
+  公式由 KaTeX 渲染（同源自托管 ./katex/，离线可渲染）。
+</div>
+${pageSections.join('\n')}
+${katexScript()}
+</body>
+</html>`
+  return { html, skipped }
+}
+
 /* ---------- 交付动作：下载（保存 PDF 用） / 隐藏 iframe 打印 ---------- */
 
 /** 生成 HTML Blob 下载（浏览器打开后 Ctrl/Cmd+P → 另存为 PDF） */
