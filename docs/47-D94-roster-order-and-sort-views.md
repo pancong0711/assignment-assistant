@@ -1,7 +1,7 @@
 # D94 任务需求单：点名册顺序为准（保序 merge）+ 标签预览/总览按加权成绩排序
 
 > 日期：2026-10-16
-> 状态：**已拍板**（讨论定调），按 §5 执行。
+> 状态：**T1–T4 全部完成**（2026-10-16）。验证 engine pytest / PWA build+selfcheck / 脱敏扫描 全绿。
 > 关联：`docs/46-D93`（整班预览顺序问题）、`docs/04`、
 > 旧代码 `_legacy/2603paperDesign/src/paperdesign/student/student.py`（`pd.merge(namelist_df, score_df, how="left")`）。
 
@@ -68,7 +68,7 @@ D93 里我曾用"按学号排序"绕过 → 但**空学号时失效**，且引�
 | T1 | 保序 merge：`addScoreSource` roster 分支（现有名单为准；新名单替换）+ selfcheck | `stores/roster.ts` + selfcheck | ✅ |
 | T2 | 整班预览**按点名册全局顺序逐人输出**（不按 pack 分组）+ 连续页码 + selfcheck | `sheetHtml.ts`（`stringifyClassHtml`） + `RosterView.vue` | ✅ |
 | T3 | 总览 + 标签预览：按加权成绩 降序/升序 按钮（视图层） | `RosterView.vue` + selfcheck | ✅ |
-| T4 | 文档（docs/04/13/15）+ 验证 + 去敏 push | 文档 + CI | ⏳ |
+| T4 | 文档（docs/04/13/15）+ 验证 + 去敏 push | 文档 + CI | ✅ |
 
 ## 6. 验收
 

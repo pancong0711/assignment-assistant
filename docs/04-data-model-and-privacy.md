@@ -108,6 +108,15 @@
 - AI 作答（AI 辅助批阅 ⑦区 / CLI `kb ai-solve` / `POST /kb/ai-solve`）：**不覆盖**、新增版本、标 source=ai + model + 时间戳；
 - CLI：`assist kb solution list|add|pin|rm`；serve：`GET /kb/solutions[/<qid>]`、`POST /kb/solution`。
 
+## D94：点名册顺序契约（保序 merge） + 视图排序
+
+- **点名册为准**：`roster.students` 顺序 = 点名册导入（首次）顺序；
+- **保序 merge**（对齐旧代码 `pd.merge(namelist_df, score_df, how="left")`）：后续加成绩源/名单时，
+  **以现有点名册为基准**只补数据、新同学 append 末尾，**绝不重排**（成绩源行序常按分数降序，不可采信）；
+- **载入新点名册 = 替换**（以新名单顺序为准）；
+- **整班预览按点名册全局顺序逐人输出**（不按 pack/tag 分组；`stringifyClassHtml`），连续页码；
+- **视图排序**：全部成绩总览 / 标签预览可切「点名册顺序 / 加权成绩↓ / 加权成绩↑」（仅显示层，无成绩者末尾）。
+
 ## D93：按 tag 合成题（summary / copy-page / translation）
 
 - **触发**：作业纸 `target_tag`（或 items 的 tag）= `summary`/`translation` 时，**展开阶段自动追加**合成题；

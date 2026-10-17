@@ -1442,7 +1442,8 @@ applyManualTranslation/setTranslationRatio 中 setTranslationRatio 保留——�
 - 拍板：**点名册为准**（整班预览用 roster.students 顺序，去学号排序）；**现有点名册为准**（加成绩=保序 merge，新同学 append）；**导新点名册则以新名单为准**（载入名单=替换）；
 - 新增：**标签预览 / 加权成绩总览** 加「按加权成绩 降序/升序」按钮（仅视图排序）；
 - **整班预览按点名册全局顺序逐人输出**（不按 pack/tag 分组），便于按顺序收齐；
-- 分期：T1 保序 merge → T2 整班预览去学号排序 → T3 排序按钮 → T4 文档/验证/push。
+- 分期：T1 保序 merge → T2 整班预览按点名册逐人 → T3 排序按钮 → T4 文档/验证/push。
+- 状态：**T1–T4 全部完成**；验证 engine pytest / PWA build+selfcheck / 脱敏扫描 全绿。
 
 ---
 
