@@ -1443,7 +1443,9 @@ applyManualTranslation/setTranslationRatio 中 setTranslationRatio 保留——�
 - 先做真机验证（目标课程「大学物理知识点拾遗（by pc）」的默认班级 + 新建班级2：多班发通知/多班发作业），用户核验后再改 PWA；
 - 分期：U1 发现班级 → U2 多班通知 → U3 多班作业 → U4/U5 PWA 多选 → U6 文档/验证/push。
 - **真机验证（2026-10-17）**：多班**通知** ✅、多班**作业** ✅（平台返回 workRelationArray 两班各 workId）；
-  引擎 `publish_work(class_ids=[...])` 已支持多班（`--class` 可多次）；PWA 多选改造待用户批准。
+  引擎 `publish_work(class_ids=[...])` 多班（`--class` 可多次）；serve `/xxt/work/publish` 支持 `classIds`；
+  **PWA 通知卡/作业卡改多选勾选**（只列白名单班、按课程分组、全选/清空；作业限同课程）。
+- 状态：**U1–U6 全部完成**；验证 engine pytest 388 passed / PWA build+selfcheck / 脱敏扫描 全绿。
 
 ---
 

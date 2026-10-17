@@ -65,11 +65,11 @@
 | U1 | 真机发现目标课程班级（确认"默认班级 / 新建班级2"） | 发现快照（29 课/218 班；目标 2 班） | ✅ |
 | U2 | **多班发通知**真机验证（两班各收到） | receipt + 截图（两班均含） | ✅ |
 | U3 | **多班发作业**真机验证 | 平台回 `workRelationArray` 两班各 workId + status:true | ✅ |
-| U4 | PWA 通知卡多选（只列白名单班）+ `sendNotice` 多 target | `PublishView.vue` | ⏳ |
-| U5 | 引擎 `publish_work` 多班（**已完成**）+ PWA 作业卡多选（待用户批准） | `xxt/work.py` ✅ + `PublishView.vue` ⏳ | 🚧 |
-| U6 | 文档 + 验证 + 去敏 push | 文档 + CI | ⏳ |
+| U4 | PWA 通知卡多选（只列白名单班）+ `sendNotice` 多 target | `PublishView.vue`（复选列表按课程分组，全选/清空） | ✅ |
+| U5 | 引擎 `publish_work` 多班 + PWA 作业卡多选 | `xxt/work.py` + `serve.py` + `PublishView.vue` + `engineClient.ts` | ✅ |
+| U6 | 文档 + 验证 + 去敏 push | 文档 + CI | ✅ |
 
-> **U1–U3 已完成**（真机验证通过，含引擎多班改造）；**U4–U6（PWA 多选改造）待用户核验批准后**再执行。
+> **U1–U6 全部完成**（用户已核验真机多班发布成功）。PWA 通知/作业卡均为**多选勾选**（只列白名单班，按课程分组，全选/清空）；作业发布限**同课程**多班。
 
 ## 6. 验收
 

@@ -1516,16 +1516,23 @@ class Handler(BaseHTTPRequestHandler):
                 self._json({"ok": False, "error": f"bad json: {exc}"}, 400)
                 return
             ids = {k: str(payload.get(k) or "").strip() for k in ("courseId", "classId", "workLibraryId", "cpi")}
-            if not all(ids.values()):
-                self._json({"ok": False, "error": "courseId/classId/workLibraryId/cpi 必填"}, 400)
+            # D95：多班（classIds 优先；单 classId 兼容）
+            class_ids = [str(x).strip() for x in (payload.get("classIds") or []) if str(x).strip()]
+            if not class_ids and ids["classId"]:
+                class_ids = [ids["classId"]]
+            if not (ids["courseId"] and class_ids and ids["workLibraryId"] and ids["cpi"]):
+                self._json({"ok": False, "error": "courseId/classIds/workLibraryId/cpi 必填"}, 400)
                 return
             from .xxt.work import validate_work_target
-            err = validate_work_target(ids["courseId"], ids["classId"], Path(self.ws).resolve())
-            if err:
-                self._json({"ok": False, "error": err}, 400)
+            errs = [e for e in (validate_work_target(ids["courseId"], c, Path(self.ws).resolve())
+                                for c in class_ids) if e]
+            if errs:
+                self._json({"ok": False, "error": "；".join(errs)}, 400)
                 return
-            args = ["xxt", "work-publish", "--course", ids["courseId"], "--class", ids["classId"],
-                    "--work-library-id", ids["workLibraryId"], "--cpi", ids["cpi"]]
+            args = ["xxt", "work-publish", "--course", ids["courseId"]]
+            for c in class_ids:
+                args += ["--class", c]
+            args += ["--work-library-id", ids["workLibraryId"], "--cpi", ids["cpi"]]
             if payload.get("startTime"):
                 args += ["--start", str(payload["startTime"])[:30]]
             if payload.get("endTime"):
@@ -1548,7 +1555,7 @@ class Handler(BaseHTTPRequestHandler):
             job_id = secrets.token_urlsafe(6)
             self._start_stream_job(job_id, _xxt_cli_cmd(args), env, "xxt_work_publish", "xxt-work", cwd,
                                    journal_kind="xxt_work_publish",
-                                   journal_params=ids)
+                                   journal_params={**ids, "classIds": class_ids})
             self._json({"ok": True, "job_id": job_id, "mode": "send" if payload.get("send") else "dry-run"})
             return
         if u.path == "/workspace/bootstrap":

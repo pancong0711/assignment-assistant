@@ -109,6 +109,45 @@ function allowGroups() {
   return [...map.values()]
 }
 function allowCount(g: { classes: PubClass[] }): number { return g.classes.filter(c => allowed(c)).length }
+
+/* ---------- D95：多班勾选（只列白名单班；按课程分组） ---------- */
+const noticeTargets = ref<Record<string, boolean>>({})
+const workTargets = ref<Record<string, boolean>>({})
+/** 只列白名单内的班（方案 A）；按课程分组。 */
+const whitelistedClasses = computed<PubClass[]>(() => classes.value.filter(allowed))
+const classGroups = computed(() => {
+  const g: Record<string, { courseId: string; courseName: string; classes: PubClass[] }> = {}
+  for (const c of whitelistedClasses.value) {
+    const k = c.courseId
+    g[k] = g[k] || { courseId: c.courseId, courseName: c.courseName, classes: [] }
+    g[k].classes.push(c)
+  }
+  return Object.values(g)
+})
+function pickedKeys(sel: Record<string, boolean>): string[] { return Object.keys(sel).filter(k => sel[k]) }
+function pickedClasses(sel: Record<string, boolean>): PubClass[] {
+  const set = new Set(pickedKeys(sel))
+  return whitelistedClasses.value.filter(c => set.has(key(c)))
+}
+function togglePickAll(sel: 'notice' | 'work', on: boolean) {
+  const next: Record<string, boolean> = {}
+  if (on) for (const c of whitelistedClasses.value) next[key(c)] = true
+  if (sel === 'notice') noticeTargets.value = next; else workTargets.value = next
+}
+function toggleCoursePick(sel: 'notice' | 'work', g: { classes: PubClass[] }, on: boolean) {
+  const cur = sel === 'notice' ? noticeTargets.value : workTargets.value
+  const next = { ...cur }
+  for (const c of g.classes) { if (on) next[key(c)] = true; else delete next[key(c)] }
+  if (sel === 'notice') noticeTargets.value = next; else workTargets.value = next
+}
+/** 作业发布：以「第一个勾选班」为基准读取作业库/文件夹（同课程）。 */
+const workBaseKey = computed(() => pickedKeys(workTargets.value)[0] || '')
+const workBaseClass = computed<PubClass | undefined>(() =>
+  whitelistedClasses.value.find(c => key(c) === workBaseKey.value))
+function syncWorkBase() {
+  workTarget.value = workBaseKey.value
+  void loadWorks()
+}
 function allowExpandedState(cid: string): boolean { return allowExpanded.value[cid] !== false }
 function toggleAllowExpanded(cid: string, ev: Event) { allowExpanded.value = { ...allowExpanded.value, [cid]: (ev.target as HTMLDetailsElement).open } }
 function expandAllAllow(on: boolean) { const next: Record<string, boolean> = {}; for (const g of allowGroups()) next[g.courseId] = on; allowExpanded.value = next }
@@ -136,7 +175,7 @@ function cacheSet(key: string, data: unknown) {
   try { localStorage.setItem(key, JSON.stringify({ at: Date.now(), data })) } catch { /* noop */ }
 }
 async function loadFolders(force = false) {
-  const c = classes.value.find(x => key(x) === workTarget.value)
+  const c = workBaseClass.value
   if (!c) { folderList.value = []; return }
   const ck = `xxt-work-folders-cache-v3:${folderKeyOf(c)}`
   if (!force) {
@@ -158,7 +197,6 @@ async function loadFolders(force = false) {
 /* 通知 */
 const noticeTitle = ref('作业通知-大学物理')
 const noticeBody = ref('作业纸见附件，请各位同学打印自己的那一张并手写完成、拍照上传到学习通作业里面。')
-const noticeTarget = ref('')
 const noticeAtt = ref<XxtNoticeAttachment[]>([])
 const attExts = ref<string[]>([])
 const attExtOptions = ['pdf', 'doc', 'docx', 'jpg', 'jpeg', 'png', 'webp', 'gif', 'xls', 'xlsx', 'ppt', 'pptx', 'zip', 'txt']
@@ -211,11 +249,11 @@ function showPreview(title: string, lines: string[]) {
   previewOpen.value = true
 }
 function previewNotice() {
-  const c = classes.value.find(x => key(x) === noticeTarget.value)
-  if (!c || !allowed(c)) { msg.value = '该班未加入写操作白名单：请在页面上方「写操作白名单」勾选后再试'; return }
+  const picks = pickedClasses(noticeTargets.value)
+  if (!picks.length) { msg.value = '请勾选要发布的白名单班级'; return }
   const names = attNames()
   showPreview('通知发布预览', [
-    `发布班级：${c.courseName} / ${c.name}`,
+    `发布班级（${picks.length}）：${picks.map(c => `${c.courseName}/${c.name}`).join('；')}`,
     `标题：${noticeTitle.value}`,
     '正文：',
     noticeBody.value,
@@ -223,12 +261,14 @@ function previewNotice() {
   ])
 }
 function previewWork() {
-  const c = classes.value.find(x => key(x) === workTarget.value && allowed(x))
+  const picks = pickedClasses(workTargets.value)
+  const c = workBaseClass.value
   const w = works.value.find(x => x.workLibraryId === workPick.value)
-  if (!c || !w) { msg.value = '请选择白名单班级与作业'; return }
+  if (!picks.length || !c || !w) { msg.value = '请勾选白名单班级并选择作业'; return }
+  if (new Set(picks.map(x => x.courseId)).size > 1) { msg.value = '作业发布仅支持同课程多班。'; return }
   if (workUsed.value) { msg.value = '该作业已发布，禁止重复发布。'; return }
   showPreview('作业发布预览', [
-    `发布班级：${c.courseName} / ${c.name}`,
+    `发布班级（${picks.length}）：${picks.map(x => `${x.courseName}/${x.name}`).join('；')}`,
     `作业库文件夹：${folderCur.value.name}`,
     `作业：${workTitle.value || w.text || w.workLibraryId}`,
     `workLibraryId：${w.workLibraryId}`,
@@ -244,14 +284,20 @@ function previewWork() {
 }
 
 async function sendNotice(send: boolean) {
-  const c = classes.value.find(x => key(x) === noticeTarget.value)
-  if (!c || !allowed(c)) { msg.value = '请选择白名单内班级'; return }
-  if (send && !confirm(`确认发布通知到 ${c.courseName}/${c.name}？`)) return
+  const picks = pickedClasses(noticeTargets.value)
+  if (!picks.length) { msg.value = '请勾选要发布的白名单班级'; return }
+  if (send && !confirm(`确认把同一通知发布到 ${picks.length} 个班？\n${picks.map(c => `${c.courseName}/${c.name}`).join('\n')}`)) return
+  // 按课程分组：courses[].classes[]
+  const byCourse: Record<string, { courseId: string; classes: { classId: string; name: string }[] }> = {}
+  for (const c of picks) {
+    byCourse[c.courseId] = byCourse[c.courseId] || { courseId: c.courseId, classes: [] }
+    byCourse[c.courseId].classes.push({ classId: c.classId, name: c.name })
+  }
   busy.value = true
   startLog('发布通知')
   try {
     const r = await startXxtNoticeSend(engUrl.value, tok.value, {
-      targets: [{ courseId: c.courseId, classes: [{ classId: c.classId, name: c.name }] }],
+      targets: Object.values(byCourse),
       title: noticeTitle.value, bodyHtml: noticeBody.value,
       attachments: Object.keys(noticePick.value).filter(k => noticePick.value[k]), send,
     })
@@ -316,7 +362,7 @@ function refreshStale() {
   }
 }
 async function loadWorks(force = false) {
-  const c = classes.value.find(x => key(x) === workTarget.value)
+  const c = workBaseClass.value
   if (!c) { works.value = []; return }
   const dir = folderMap.value[folderKeyOf(c)]?.directoryId || '0'
   const ck = `xxt-work-list-cache-v3:${folderKeyOf(c)}:${dir}`
@@ -336,11 +382,11 @@ async function loadWorks(force = false) {
   await loadFolders()
 }
 function workPublished(w: XxtWorkLibraryItem): boolean {
-  const c = classes.value.find(x => key(x) === workTarget.value)
+  const c = workBaseClass.value
   return !!c && (w.publishedClasses || []).includes(c.classId)
 }
 async function loadDetail() {
-  const c = classes.value.find(x => key(x) === workTarget.value)
+  const c = workBaseClass.value
   const w = works.value.find(x => x.workLibraryId === workPick.value)
   if (!c || !w) { workTitle.value = ''; workStem.value = ''; return }
   try {
@@ -351,7 +397,7 @@ async function loadDetail() {
   } catch { workTitle.value = w.text?.split('\n')[0] || ''; workStem.value = '' }
 }
 async function createDraft() {
-  const c = classes.value.find(x => key(x) === workTarget.value)
+  const c = workBaseClass.value
   if (!c || !allowed(c)) { msg.value = '请选择白名单内班级'; return }
   if (!draftTitle.value.trim() || !draftStem.value.trim()) { msg.value = '请填写作业标题与题干'; return }
   busy.value = true; msg.value = '正在新建作业草稿……'
@@ -378,15 +424,19 @@ async function createDraft() {
   } catch (e) { busy.value = false; msg.value = `新建失败：${String(e)}` }
 }
 async function publishWork(send: boolean) {
-  const c = classes.value.find(x => key(x) === workTarget.value && allowed(x))
+  const picks = pickedClasses(workTargets.value)
+  const c = workBaseClass.value
   const w = works.value.find(x => x.workLibraryId === workPick.value)
-  if (!c || !w) { msg.value = '请选择白名单班级与作业'; return }
+  if (!picks.length || !c || !w) { msg.value = '请勾选白名单班级并选择作业'; return }
   if (workPublished(w) || workUsed.value) { msg.value = '该作业已发布过，禁止重复发布；如需修改请先创建副本（副本+时间戳）。'; return }
   refreshStale()
   if (new Date(startTime.value.replace(/-/g, '/')).getTime() < Date.now() - 60_000) {
     msg.value = '开始时间早于当前时间，请点「恢复默认时间」后再发布。'; return
   }
-  if (send && !confirm(`确认把「${workTitle.value || w.text}」发布到 ${c.courseName}/${c.name}？`)) return
+  const courses = new Set(picks.map(x => x.courseId))
+  if (courses.size > 1) { msg.value = '作业发布仅支持同课程多班：请只勾选同一课程下的班级。'; return }
+  const classIds = picks.map(x => x.classId)
+  if (send && !confirm(`确认把「${workTitle.value || w.text}」发布到 ${picks.length} 个班？\n${picks.map(x => `${x.courseName}/${x.name}`).join('\n')}`)) return
   busy.value = true
   startLog('发布作业')
   try {
@@ -394,7 +444,8 @@ async function publishWork(send: boolean) {
       try { localStorage.setItem('xxt-work-defaults', JSON.stringify({ startTime: startTime.value, endTime: endTime.value, allowLate: allowLate.value, lateDeadline: lateDeadline.value, redoTimes: redoTimes.value })) } catch { /* noop */ }
     }
     const r = await startXxtWorkPublish(engUrl.value, tok.value, {
-      courseId: c.courseId, classId: c.classId, workLibraryId: w.workLibraryId, cpi: c.cpi,
+      courseId: c.courseId, classId: c.classId, classIds,
+      workLibraryId: w.workLibraryId, cpi: c.cpi,
       startTime: startTime.value, endTime: endTime.value, allowLate: allowLate.value,
       lateDeadline: lateDeadline.value, redoTimes: redoTimes.value, send,
     })
@@ -452,11 +503,11 @@ async function poll(jobId: string): Promise<{ ok: boolean; lines: string[] }> {
 }
 
 const folderCur = computed(() => {
-  const c = classes.value.find(x => key(x) === workTarget.value)
+  const c = workBaseClass.value
   return c ? (folderMap.value[folderKeyOf(c)] || { directoryId: '0', name: '根目录' }) : { directoryId: '0', name: '根目录' }
 })
 function setFolder(ev: Event) {
-  const c = classes.value.find(x => key(x) === workTarget.value)
+  const c = workBaseClass.value
   if (!c) return
   const id = (ev.target as HTMLSelectElement).value
   const f = folderList.value.find(x => x.directoryId === id) || { directoryId: '0', name: '根目录' }
@@ -466,7 +517,7 @@ function setFolder(ev: Event) {
 }
 const newFolderName = ref('')
 async function createFolder() {
-  const c = classes.value.find(x => key(x) === workTarget.value)
+  const c = workBaseClass.value
   if (!c || !allowed(c)) { msg.value = '该班未加入写操作白名单：请在页面上方「写操作白名单」勾选后再试'; return }
   if (!newFolderName.value.trim()) { msg.value = '请输入文件夹名'; return }
   busy.value = true; msg.value = '正在创建文件夹……'
@@ -484,7 +535,7 @@ async function createFolder() {
   busy.value = false
 }
 async function copySelectedWork() {
-  const c = classes.value.find(x => key(x) === workTarget.value && allowed(x))
+  const c = workBaseClass.value
   const w = works.value.find(x => x.workLibraryId === workPick.value)
   if (!c || !w) { msg.value = '请选择白名单班级与作业'; return }
   const stamp = new Date().toISOString().slice(0, 16).replace(/[-:T]/g, '')
@@ -556,10 +607,25 @@ onUnmounted(() => document.removeEventListener('visibilitychange', refreshStale)
 
     <div class="card">
       <h3>发通知</h3>
-      <p><label class="field">班级：<select v-model="noticeTarget" style="width:320px">
-        <option value="">（选择白名单班级）</option>
-        <option v-for="c in classes" :key="'n'+key(c)" :value="key(c)" :disabled="!allowed(c)">{{ c.courseName }} / {{ c.name }}</option>
-      </select></label></p>
+      <p class="hint" style="margin:0 0 4px">目标班级（<b>多选</b>，只列白名单班；勾选后同一通知发往全部勾选班）：</p>
+      <div v-if="classGroups.length" style="max-height:160px; overflow:auto; border:1px solid var(--c-border); border-radius:8px; padding:8px; margin-bottom:6px">
+        <p style="margin:0 0 4px">
+          <button class="btn small" @click="togglePickAll('notice', true)">全选</button>
+          <button class="btn small" style="margin-left:4px" @click="togglePickAll('notice', false)">清空</button>
+          <span class="hint" style="margin-left:8px">已选 {{ pickedKeys(noticeTargets).length }} 个班</span>
+        </p>
+        <div v-for="g in classGroups" :key="'ng'+g.courseId" style="margin-bottom:4px">
+          <label style="font-weight:600">
+            <input type="checkbox" :checked="g.classes.every(c => noticeTargets[key(c)])"
+                   @change="toggleCoursePick('notice', g, ($event.target as HTMLInputElement).checked)" />
+            {{ g.courseName }}
+          </label>
+          <span v-for="c in g.classes" :key="'n'+key(c)" style="margin-left:12px; white-space:nowrap">
+            <label><input type="checkbox" :value="key(c)" v-model="noticeTargets" /> {{ c.name }}</label>
+          </span>
+        </div>
+      </div>
+      <p v-else class="hint">白名单内暂无班级：请在上方「写操作白名单」勾选要发布的班。</p>
       <p><label class="field">标题：<input v-model="noticeTitle" maxlength="128" style="width:min(560px,90%)" /></label></p>
       <p><label class="field" style="vertical-align:top">正文：<textarea v-model="noticeBody" rows="4" style="width:min(640px,92%)"></textarea></label></p>
       <p>
@@ -586,10 +652,25 @@ onUnmounted(() => document.removeEventListener('visibilitychange', refreshStale)
 
     <div class="card">
       <h3>发布作业 <small>新建 1 道简答题草稿，或从作业库选择已有作业原样发布；同班同作业禁止重复发布</small></h3>
-      <p><label class="field">班级：<select v-model="workTarget" style="width:320px" @change="loadWorks()">
-        <option value="">（选择白名单班级）</option>
-        <option v-for="c in classes" :key="'w'+key(c)" :value="key(c)" :disabled="!allowed(c)">{{ c.courseName }} / {{ c.name }}</option>
-      </select></label></p>
+      <p class="hint" style="margin:0 0 4px">目标班级（<b>多选</b>，只列白名单班；作业库/文件夹以<b>第一个勾选班</b>为基准，同课程）：</p>
+      <div v-if="classGroups.length" style="max-height:160px; overflow:auto; border:1px solid var(--c-border); border-radius:8px; padding:8px; margin-bottom:6px">
+        <p style="margin:0 0 4px">
+          <button class="btn small" @click="togglePickAll('work', true)">全选</button>
+          <button class="btn small" style="margin-left:4px" @click="togglePickAll('work', false)">清空</button>
+          <span class="hint" style="margin-left:8px">已选 {{ pickedKeys(workTargets).length }} 个班</span>
+        </p>
+        <div v-for="g in classGroups" :key="'wg'+g.courseId" style="margin-bottom:4px">
+          <label style="font-weight:600">
+            <input type="checkbox" :checked="g.classes.every(c => workTargets[key(c)])"
+                   @change="toggleCoursePick('work', g, ($event.target as HTMLInputElement).checked)" />
+            {{ g.courseName }}
+          </label>
+          <span v-for="c in g.classes" :key="'w'+key(c)" style="margin-left:12px; white-space:nowrap">
+            <label><input type="checkbox" :value="key(c)" v-model="workTargets" @change="syncWorkBase" /> {{ c.name }}</label>
+          </span>
+        </div>
+      </div>
+      <p v-else class="hint">白名单内暂无班级：请在上方「写操作白名单」勾选要发布的班。</p>
       <p><label class="field">作业库文件夹：
         <select :value="folderCur.directoryId" style="width:260px" @change="setFolder($event)">
           <option value="0">根目录</option>

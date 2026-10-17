@@ -1139,7 +1139,7 @@ export async function fetchXxtWorkList(
 /** POST /xxt/work/publish：dry-run 或发布已有作业。 */
 export async function startXxtWorkPublish(
   engineAddr: string, token: string | undefined,
-  payload: { courseId: string; classId: string; workLibraryId: string; cpi: string;
+  payload: { courseId: string; classId: string; classIds?: string[]; workLibraryId: string; cpi: string;
     startTime?: string; endTime?: string; allowLate?: boolean; lateDeadline?: string;
     redoTimes?: number; send: boolean },
 ): Promise<{ jobId: string; mode: string }> {
