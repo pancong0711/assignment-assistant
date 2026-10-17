@@ -1435,6 +1435,16 @@ applyManualTranslation/setTranslationRatio 中 setTranslationRatio 保留——�
 
 ---
 
+## D95 · 通知/作业发布——多班勾选 + 白名单联动（2026-10-17）
+
+- 主需求单：`docs/48-D95-multiclass-publish.md`；
+- 现状：通知/作业目标班均**单选**；引擎 `send_notice_from_spec` **已支持多班**，`publish_work` 单班；
+- 拍板：多班勾选；白名单联动=**只列白名单班**；通知同内容发多班；
+- 先做真机验证（目标课程「大学物理知识点拾遗（by pc）」的默认班级 + 新建班级2：多班发通知/多班发作业），用户核验后再改 PWA；
+- 分期：U1 发现班级 → U2 多班通知 → U3 多班作业 → U4/U5 PWA 多选 → U6 文档/验证/push。
+
+---
+
 ## D94 · 点名册顺序为准（保序 merge）+ 标签预览/总览按加权成绩排序（2026-10-16）
 
 - 主需求单：`docs/47-D94-roster-order-and-sort-views.md`；
