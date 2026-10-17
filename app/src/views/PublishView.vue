@@ -375,10 +375,11 @@ const timeEdited = ref(false)
 
 function fmt(d: Date): string { const p = (n: number) => String(n).padStart(2, '0'); return `${d.getFullYear()}-${p(d.getMonth()+1)}-${p(d.getDate())} ${p(d.getHours())}:${p(d.getMinutes())}:${p(d.getSeconds())}` }
 function defaultTimes() {
+  // D97：开始 = 现在 + 5 分钟（满足平台"开始>=当前"，留出设置缓冲）；截止 = 现在 + 5 天。
   const now = new Date()
-  const start = now.getHours() < 18 ? new Date(now.getFullYear(), now.getMonth(), now.getDate(), 18, 0, 0) : now
-  const end = new Date(start); end.setDate(end.getDate() + 5); end.setHours(18, 0, 0, 0)
-  const late = new Date(end); late.setDate(late.getDate() + 2); late.setHours(18, 0, 0, 0)
+  const start = new Date(now.getTime() + 5 * 60_000)
+  const end = new Date(now.getTime() + 5 * 24 * 60 * 60_000)
+  const late = new Date(end.getTime() + 2 * 24 * 60 * 60_000)
   return { start: fmt(start), end: fmt(end), late: fmt(late) }
 }
 function applyDefaults() { const d = defaultTimes(); startTime.value = d.start; endTime.value = d.end; lateDeadline.value = d.late; timeEdited.value = false }
@@ -403,26 +404,70 @@ async function loadWorks(force = false) {
       return
     }
   }
-  const r = await fetchXxtWorkList(engUrl.value, tok.value, c.courseId, c.classId, c.cpi, dir)
+  const cids = pickedClasses(workTargets.value).filter(x => x.courseId === c.courseId).map(x => x.classId)
+  const r = await fetchXxtWorkList(engUrl.value, tok.value, c.courseId, c.classId, c.cpi, dir,
+                                   cids.length > 1 ? cids : undefined)
   works.value = r.items || []
   cacheSet(ck, works.value)
   workPick.value = ''; workTitle.value = ''; workStem.value = ''; workUsed.value = false
   await loadFolders()
 }
-function workPublished(w: XxtWorkLibraryItem): boolean {
-  const c = workBaseClass.value
-  return !!c && (w.publishedClasses || []).includes(c.classId)
+/** D97：该作业在**目标勾选班**中已发布的班（classId 列表）。 */
+function publishedPickedClasses(w: XxtWorkLibraryItem): string[] {
+  const set = new Set<string>(w.publishedClasses || [])
+  return pickedClasses(workTargets.value).filter(c => set.has(c.classId)).map(c => c.classId)
 }
+/** D97：下拉里显示的"已发 X/总 Y 班"标注。 */
+function workPubLabel(w: XxtWorkLibraryItem): string {
+  const picks = pickedClasses(workTargets.value)
+  if (!picks.length) return ''
+  const pub = publishedPickedClasses(w).length
+  if (pub === 0) return ''
+  if (pub >= picks.length) return '（全部班已发布）'
+  return `（已发布 ${pub}/${picks.length} 班）`
+}
+/** 是否**全部目标班**都已发布（才禁止）。 */
+function workPublished(w: XxtWorkLibraryItem): boolean {
+  const picks = pickedClasses(workTargets.value)
+  if (!picks.length) return false
+  const pub = new Set(publishedPickedClasses(w))
+  return picks.every(c => pub.has(c.classId))
+}
+/** D97：题干本地缓存（按 workLibraryId），避免每次都要等浏览器读取。 */
+interface WorkDetailCache { title: string; stem: string; used: boolean }
+function detailCacheKey(wid: string): string { return `xxt-work-detail-v1:${wid}` }
+function loadDetailCache(wid: string): WorkDetailCache | null { return cacheGet<WorkDetailCache>(detailCacheKey(wid)) }
+function saveDetailCache(wid: string, v: WorkDetailCache) { cacheSet(detailCacheKey(wid), v) }
+
 async function loadDetail() {
   const c = workBaseClass.value
   const w = works.value.find(x => x.workLibraryId === workPick.value)
   if (!c || !w) { workTitle.value = ''; workStem.value = ''; return }
+  const wid = w.workLibraryId
+  // D97：先显缓存（秒显），再后台刷新
+  const hit = loadDetailCache(wid)
+  if (hit) {
+    workTitle.value = hit.title || w.text?.split('\n')[0] || wid
+    workStem.value = hit.stem || ''
+    workUsed.value = hit.used
+  } else {
+    workTitle.value = w.text?.split('\n')[0] || wid
+    workStem.value = '（题干读取中…）'
+    workUsed.value = false
+  }
   try {
-    const d = await fetchXxtWorkDetail(engUrl.value, tok.value, c.courseId, c.classId, c.cpi, w.workLibraryId)
-    workTitle.value = d.title || w.text?.split('\n')[0] || w.workLibraryId
-    workStem.value = (d.stemHtml || '').replace(/<[^>]+>/g, '').trim()
-    workUsed.value = Boolean((d as { workUsed?: boolean }).workUsed)
-  } catch { workTitle.value = w.text?.split('\n')[0] || ''; workStem.value = '' }
+    const d = await fetchXxtWorkDetail(engUrl.value, tok.value, c.courseId, c.classId, c.cpi, wid)
+    // 仅当仍选中同一作业时回填（防竞态）
+    if (workPick.value !== wid) return
+    const title = d.title || w.text?.split('\n')[0] || wid
+    const stem = (d.stemHtml || '').replace(/<[^>]+>/g, '').trim()
+    const used = Boolean((d as { workUsed?: boolean }).workUsed)
+    workTitle.value = title; workStem.value = stem; workUsed.value = used
+    saveDetailCache(wid, { title, stem, used })
+  } catch {
+    if (workPick.value !== wid) return
+    if (!hit) { workTitle.value = w.text?.split('\n')[0] || ''; workStem.value = '' }
+  }
 }
 async function createDraft() {
   const c = workBaseClass.value
@@ -460,7 +505,9 @@ async function publishWork(send: boolean) {
   if (!picks.length) { failWork('请先勾选要发布的白名单班级'); return }
   if (!c) { failWork('请选择「作业来源课程」'); return }
   if (!w) { failWork('请先在「已有作业」中选择一个作业'); return }
-  if (workPublished(w) || workUsed.value) { failWork('该作业已发布过，禁止重复发布；如需修改请先创建副本（副本+时间戳）。'); return }
+  const pubPicked = new Set(publishedPickedClasses(w))
+  const unpub = picks.filter(x => !pubPicked.has(x.classId))
+  if (!unpub.length) { failWork('该作业在**全部勾选班**都已发布，禁止重复发布；如需修改请先创建副本（副本+时间戳）。'); return }
   refreshStale()
   if (new Date(startTime.value.replace(/-/g, '/')).getTime() < Date.now() - 60_000) {
     failWork('开始时间早于当前时间，请点「恢复默认时间」后再发布。'); return
@@ -472,8 +519,10 @@ async function publishWork(send: boolean) {
   if (c.courseId !== picks[0].courseId) {
     failWork('「作业来源课程」与目标班级课程不一致：请让来源课程 = 目标班级所在课程。'); return
   }
-  const classIds = picks.map(x => x.classId)
-  if (send && !confirm(`确认把「${workTitle.value || w.text}」发布到 ${picks.length} 个班？\n${picks.map(x => `${x.courseName}/${x.name}`).join('\n')}`)) return
+  const classIds = unpub.map(x => x.classId)
+  const skipped = picks.filter(x => pubPicked.has(x.classId))
+  if (skipped.length) appendLog(`[发布作业] 跳过已发布班：${skipped.map(x => x.name).join('、')}`)
+  if (send && !confirm(`确认把「${workTitle.value || w.text}」发布到 ${unpub.length} 个班？${skipped.length ? `（已跳过已发布 ${skipped.length} 个班）` : ''}\n${unpub.map(x => `${x.courseName}/${x.name}`).join('\n')}`)) return
   busy.value = true
   startLog('发布作业')
   try {
@@ -748,7 +797,7 @@ onUnmounted(() => document.removeEventListener('visibilitychange', refreshStale)
       <p><label class="field">已有作业：<select v-model="workPick" style="width:min(560px,90%)" @change="loadDetail">
         <option value="">（选择作业库中的作业）</option>
         <option v-for="w in works" :key="w.workLibraryId" :value="w.workLibraryId" :disabled="workPublished(w)">
-          {{ w.text || w.workLibraryId }}{{ workPublished(w) ? '（本班已发布）' : '' }}
+          {{ w.text || w.workLibraryId }}{{ workPubLabel(w) }}
         </option>
       </select></label>
         <button class="btn small" style="margin-left:8px" @click="loadWorks(true)">🔁 刷新作业库</button>

@@ -2034,10 +2034,12 @@ class Handler(BaseHTTPRequestHandler):
             clazz = (q.get("classId") or [""])[0]
             cpi = (q.get("cpi") or ["0"])[0]
             directory = (q.get("directoryId") or ["0"])[0]
+            class_ids = [x for x in (q.get("classIds") or [""])[0].split(",") if x.strip()]
             if not course or not clazz:
                 self._json({"ok": False, "error": "courseId/classId 必填"}, 400)
                 return
-            self._json(list_works(_xxt_home() / "xxt-storage.json", course, clazz, cpi, directory))
+            self._json(list_works(_xxt_home() / "xxt-storage.json", course, clazz, cpi, directory,
+                                  class_ids=class_ids or None))
             return
         elif u.path == "/xxt/notice/attachment-whitelist":
             from .xxt.allowlist import read_notice_attachment_exts

@@ -1442,6 +1442,7 @@ applyManualTranslation/setTranslationRatio 中 setTranslationRatio 保留——�
 - Q2 题干：`work_detail` 慢（开编辑器），PWA **本地缓存题干 + 先显缓存后刷新**；
 - Q3 已发布：`publishedClasses` 仅填查询班 + PWA 只看基准班 → **误报**；改为**逐目标班判定**，发布**跳过已发班**；
 - 分期：W1 默认时间 → W2 题干缓存 → W3 逐班已发布聚合 → W4 PWA 逐班标注/跳过 → W5 文档/验证/push。
+- 状态：**W1–W5 全部完成**；验证 engine pytest 391 passed / PWA build+selfcheck / 脱敏全绿。
 
 ---
 

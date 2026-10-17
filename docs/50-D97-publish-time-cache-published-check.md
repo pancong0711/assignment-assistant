@@ -1,7 +1,7 @@
 # D97 任务需求单：发布作业——默认时间(now+5min/now+5days) + 题干本地缓存 + 逐班「已发布」判定
 
 > 日期：2026-10-17
-> 状态：**已拍板**（讨论定调），按 §6 执行。
+> 状态：**W1–W5 全部完成**（2026-10-17）。验证 engine pytest 391 passed / PWA build+selfcheck / 脱敏全绿。
 > 关联：`docs/48-D95`、`docs/49-D96`；engine `xxt/work.py`（`list_works`/`published_library_ids`/`publish_work`/`work_detail`）、
 > PWA `PublishView.vue`。
 
@@ -64,11 +64,11 @@
 
 | # | 阶段 | 交付物 | 状态 |
 |---|---|---|---|
-| W1 | PWA 默认时间 now+5min / now+5days（含 CLI） | `PublishView.vue` + `cli.py` | ⏳ |
-| W2 | 题干本地缓存 + 先显缓存后刷新 | `PublishView.vue` | ⏳ |
-| W3 | 引擎：逐目标班「已发布」聚合（`list_works`/新端点） | `xxt/work.py` + `serve.py` | ⏳ |
-| W4 | PWA：逐班已发布标注 + 发布跳过已发班 + 提示 | `PublishView.vue` + `engineClient.ts` | ⏳ |
-| W5 | 文档 + 验证 + 去敏 push | 文档 + CI | ⏳ |
+| W1 | 默认时间 now+5min / now+5days（PWA + 引擎 `publish_work` 缺省） | `PublishView.vue` + `xxt/work.py` | ✅ |
+| W2 | 题干本地缓存 + 先显缓存后刷新 | `PublishView.vue`（`xxt-work-detail-v1:<wid>`） | ✅ |
+| W3 | 引擎：逐目标班「已发布」聚合（`list_works(class_ids=…)` + `_published_cached` 进程缓存） | `xxt/work.py` + `serve.py` | ✅ |
+| W4 | PWA：逐班已发布标注（已发布 X/Y 班）+ 发布跳过已发班 + 提示 | `PublishView.vue` + `engineClient.ts` | ✅ |
+| W5 | 文档 + 验证 + 去敏 push | 文档 + CI | ✅ |
 
 ## 7. 验收
 

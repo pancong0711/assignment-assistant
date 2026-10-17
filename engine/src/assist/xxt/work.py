@@ -44,8 +44,30 @@ def _receipt_dir() -> Path:
     return d
 
 
-def list_works(storage, course_id: str, class_id: str, cpi: str = "0", directory_id: str = "0") -> dict:
-    """只读列出作业库条目（含未发布草稿）。"""
+# D97：班级已发布集合的**进程内短期缓存**（避免多班逐个开浏览器；10 分钟 TTL）。
+_PUB_CACHE: dict = {}
+_PUB_TTL = 600
+
+
+def _published_cached(storage, course_id: str, class_id: str, cpi: str) -> set:
+    key = (str(course_id), str(class_id), str(cpi))
+    hit = _PUB_CACHE.get(key)
+    if hit and (time.time() - hit[0]) < _PUB_TTL:
+        return hit[1]
+    try:
+        pub = published_library_ids(storage, course_id, class_id, cpi)
+    except Exception:  # noqa: BLE001
+        pub = set()
+    _PUB_CACHE[key] = (time.time(), pub)
+    return pub
+
+
+def list_works(storage, course_id: str, class_id: str, cpi: str = "0", directory_id: str = "0",
+               class_ids: "list[str] | None" = None) -> dict:
+    """只读列出作业库条目（含未发布草稿）。
+
+    D97：`class_ids`（多目标班）时，`publishedClasses` 填**这些班里已发布该作业的班**（逐班判定）。
+    """
     from playwright.sync_api import sync_playwright
     from .session import check_session, _launch
     storage = Path(storage)
@@ -69,14 +91,14 @@ def list_works(storage, course_id: str, class_id: str, cpi: str = "0", directory
           canEdit: e.getAttribute('data-can-edit') === 'true',
         }))""")
         browser.close()
-    published: set[str] = set()
-    try:
-        published = published_library_ids(storage, course_id, class_id, cpi)
-    except Exception:  # noqa: BLE001
-        published = set()
+    # D97：逐目标班判定「已发布」；无 class_ids 时退回单班
+    targets = [str(x) for x in (class_ids or []) if str(x).strip()] or [str(class_id)]
+    pub_by_class: dict[str, set] = {}
+    for cid in targets:
+        pub_by_class[cid] = _published_cached(storage, course_id, cid, cpi)
     for it in items:
         wid = str(it.get("workLibraryId") or "")
-        it["publishedClasses"] = ([str(class_id)] if wid in published else [])
+        it["publishedClasses"] = [cid for cid in targets if wid in pub_by_class.get(cid, set())]
     return {"ok": True, "courseId": str(course_id), "classId": str(class_id),
             "cpi": str(cpi), "directoryId": str(directory_id), "items": items}
 
@@ -91,6 +113,14 @@ def publish_work(storage, course_id: str, class_id: str, work_library_id: str, *
     D95：`class_ids`（多班，平台"发放对象"支持一次勾选多班）优先于单个 `class_id`；
     逐班做白名单校验与"同班同作业"重复发布校验；任一班已发布即拒绝（避免半成功）。
     """
+    # D97：缺省时间 = 现在 + 5 分钟（开始）/ + 5 天（截止），避免"开始<当前"被平台拒。
+    if not str(start_time or "").strip() or not str(end_time or "").strip():
+        import datetime as _dt
+        _now = _dt.datetime.now()
+        if not str(start_time or "").strip():
+            start_time = (_now + _dt.timedelta(minutes=5)).strftime("%Y-%m-%d %H:%M:%S")
+        if not str(end_time or "").strip():
+            end_time = (_now + _dt.timedelta(days=5)).strftime("%Y-%m-%d %H:%M:%S")
     targets = [str(x) for x in (class_ids or []) if str(x).strip()] or [str(class_id)]
     # 去重保序
     seen = set(); targets = [t for t in targets if not (t in seen or seen.add(t))]
