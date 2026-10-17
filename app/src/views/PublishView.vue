@@ -132,13 +132,22 @@ function pickedClasses(sel: Record<string, boolean>): PubClass[] {
 function togglePickAll(sel: 'notice' | 'work', on: boolean) {
   const next: Record<string, boolean> = {}
   if (on) for (const c of whitelistedClasses.value) next[key(c)] = true
-  if (sel === 'notice') noticeTargets.value = next; else workTargets.value = next
+  if (sel === 'notice') noticeTargets.value = next
+  else { workTargets.value = next; syncWorkBase() }
+}
+function toggleClassPick(sel: 'notice' | 'work', c: PubClass, on: boolean) {
+  const cur = sel === 'notice' ? noticeTargets.value : workTargets.value
+  const next = { ...cur }
+  if (on) next[key(c)] = true; else delete next[key(c)]
+  if (sel === 'notice') noticeTargets.value = next
+  else { workTargets.value = next; syncWorkBase() }
 }
 function toggleCoursePick(sel: 'notice' | 'work', g: { classes: PubClass[] }, on: boolean) {
   const cur = sel === 'notice' ? noticeTargets.value : workTargets.value
   const next = { ...cur }
   for (const c of g.classes) { if (on) next[key(c)] = true; else delete next[key(c)] }
-  if (sel === 'notice') noticeTargets.value = next; else workTargets.value = next
+  if (sel === 'notice') noticeTargets.value = next
+  else { workTargets.value = next; syncWorkBase() }
 }
 /** 作业发布：以「第一个勾选班」为基准读取作业库/文件夹（同课程）。 */
 const workBaseKey = computed(() => pickedKeys(workTargets.value)[0] || '')
@@ -621,7 +630,8 @@ onUnmounted(() => document.removeEventListener('visibilitychange', refreshStale)
             {{ g.courseName }}
           </label>
           <span v-for="c in g.classes" :key="'n'+key(c)" style="margin-left:12px; white-space:nowrap">
-            <label><input type="checkbox" :value="key(c)" v-model="noticeTargets" /> {{ c.name }}</label>
+            <label><input type="checkbox" :checked="!!noticeTargets[key(c)]"
+                   @change="toggleClassPick('notice', c, ($event.target as HTMLInputElement).checked)" /> {{ c.name }}</label>
           </span>
         </div>
       </div>
@@ -666,7 +676,8 @@ onUnmounted(() => document.removeEventListener('visibilitychange', refreshStale)
             {{ g.courseName }}
           </label>
           <span v-for="c in g.classes" :key="'w'+key(c)" style="margin-left:12px; white-space:nowrap">
-            <label><input type="checkbox" :value="key(c)" v-model="workTargets" @change="syncWorkBase" /> {{ c.name }}</label>
+            <label><input type="checkbox" :checked="!!workTargets[key(c)]"
+                   @change="toggleClassPick('work', c, ($event.target as HTMLInputElement).checked)" /> {{ c.name }}</label>
           </span>
         </div>
       </div>
