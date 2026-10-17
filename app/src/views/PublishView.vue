@@ -150,12 +150,31 @@ function toggleCoursePick(sel: 'notice' | 'work', g: { classes: PubClass[] }, on
   else { workTargets.value = next; syncWorkBase() }
 }
 /** 作业发布：以「第一个勾选班」为基准读取作业库/文件夹（同课程）。 */
-const workBaseKey = computed(() => pickedKeys(workTargets.value)[0] || '')
-const workBaseClass = computed<PubClass | undefined>(() =>
-  whitelistedClasses.value.find(c => key(c) === workBaseKey.value))
+/** D96：作业来源课程（决定作业库/文件夹/作业列表的 (courseId,cpi)）。 */
+const workSourceCourseId = ref('')
+/** 勾选班涉及的课程（去重）。 */
+const workPickedCourses = computed(() => {
+  const seen: Record<string, { courseId: string; courseName: string }> = {}
+  for (const c of pickedClasses(workTargets.value)) {
+    seen[c.courseId] = seen[c.courseId] || { courseId: c.courseId, courseName: c.courseName }
+  }
+  return Object.values(seen)
+})
+/** 基准班：来源课程下第一个勾选班（取 cpi）。 */
+const workBaseClass = computed<PubClass | undefined>(() => {
+  const picks = pickedClasses(workTargets.value)
+  const cid = workSourceCourseId.value || picks[0]?.courseId || ''
+  return picks.find(c => c.courseId === cid)
+})
 function syncWorkBase() {
-  workTarget.value = workBaseKey.value
-  void loadWorks()
+  const picks = pickedClasses(workTargets.value)
+  // 来源课程失效（未在勾选内）→ 回到第一个勾选班的课程
+  if (workSourceCourseId.value && !picks.some(c => c.courseId === workSourceCourseId.value)) {
+    workSourceCourseId.value = picks[0]?.courseId || ''
+  }
+  if (!workSourceCourseId.value && picks.length) workSourceCourseId.value = picks[0].courseId
+  workTarget.value = workBaseClass.value ? key(workBaseClass.value) : ''
+  void loadWorks(true)
 }
 function allowExpandedState(cid: string): boolean { return allowExpanded.value[cid] !== false }
 function toggleAllowExpanded(cid: string, ev: Event) { allowExpanded.value = { ...allowExpanded.value, [cid]: (ev.target as HTMLDetailsElement).open } }
@@ -432,18 +451,27 @@ async function createDraft() {
     }
   } catch (e) { busy.value = false; msg.value = `新建失败：${String(e)}` }
 }
+/** D96：醒目反馈（消息 + 日志面板），避免"点了没反应"。 */
+function failWork(m: string) { msg.value = `⚠ ${m}`; appendLog(`[发布作业] ${m}`); startLog('发布作业') }
 async function publishWork(send: boolean) {
   const picks = pickedClasses(workTargets.value)
   const c = workBaseClass.value
   const w = works.value.find(x => x.workLibraryId === workPick.value)
-  if (!picks.length || !c || !w) { msg.value = '请勾选白名单班级并选择作业'; return }
-  if (workPublished(w) || workUsed.value) { msg.value = '该作业已发布过，禁止重复发布；如需修改请先创建副本（副本+时间戳）。'; return }
+  if (!picks.length) { failWork('请先勾选要发布的白名单班级'); return }
+  if (!c) { failWork('请选择「作业来源课程」'); return }
+  if (!w) { failWork('请先在「已有作业」中选择一个作业'); return }
+  if (workPublished(w) || workUsed.value) { failWork('该作业已发布过，禁止重复发布；如需修改请先创建副本（副本+时间戳）。'); return }
   refreshStale()
   if (new Date(startTime.value.replace(/-/g, '/')).getTime() < Date.now() - 60_000) {
-    msg.value = '开始时间早于当前时间，请点「恢复默认时间」后再发布。'; return
+    failWork('开始时间早于当前时间，请点「恢复默认时间」后再发布。'); return
   }
   const courses = new Set(picks.map(x => x.courseId))
-  if (courses.size > 1) { msg.value = '作业发布仅支持同课程多班：请只勾选同一课程下的班级。'; return }
+  if (courses.size > 1) {
+    failWork('作业库按课程独立，**发布限同课程**；请只勾选同一课程的班级（跨课程请分别发布）。'); return
+  }
+  if (c.courseId !== picks[0].courseId) {
+    failWork('「作业来源课程」与目标班级课程不一致：请让来源课程 = 目标班级所在课程。'); return
+  }
   const classIds = picks.map(x => x.classId)
   if (send && !confirm(`确认把「${workTitle.value || w.text}」发布到 ${picks.length} 个班？\n${picks.map(x => `${x.courseName}/${x.name}`).join('\n')}`)) return
   busy.value = true
@@ -580,7 +608,7 @@ onUnmounted(() => document.removeEventListener('visibilitychange', refreshStale)
   <section>
     <div class="card">
       <h2>发布-学习通 <small>通知 / 作业发布；写操作仅对「白名单」班级开放</small></h2>
-      <p v-if="msg" class="hint">{{ msg }}</p>
+      <p v-if="msg" class="notice info" style="margin:4px 0; font-weight:600">{{ msg }}</p>
       <p class="hint">当前批次：{{ runId || '（无）' }}；已选白名单：{{ Object.keys(allowKeys).filter(k => allowKeys[k]).length }} 个班</p>
     </div>
 
@@ -662,7 +690,7 @@ onUnmounted(() => document.removeEventListener('visibilitychange', refreshStale)
 
     <div class="card">
       <h3>发布作业 <small>新建 1 道简答题草稿，或从作业库选择已有作业原样发布；同班同作业禁止重复发布</small></h3>
-      <p class="hint" style="margin:0 0 4px">目标班级（<b>多选</b>，只列白名单班；作业库/文件夹以<b>第一个勾选班</b>为基准，同课程）：</p>
+      <p class="hint" style="margin:0 0 4px">目标班级（<b>多选</b>，只列白名单班；<b>发布限同课程</b>）：</p>
       <div v-if="classGroups.length" style="max-height:160px; overflow:auto; border:1px solid var(--c-border); border-radius:8px; padding:8px; margin-bottom:6px">
         <p style="margin:0 0 4px">
           <button class="btn small" @click="togglePickAll('work', true)">全选</button>
@@ -682,6 +710,14 @@ onUnmounted(() => document.removeEventListener('visibilitychange', refreshStale)
         </div>
       </div>
       <p v-else class="hint">白名单内暂无班级：请在上方「写操作白名单」勾选要发布的班。</p>
+      <p><label class="field" title="D96：作业库按课程独立；此处选择从哪个课程的作业库取作业/文件夹">
+        作业来源课程：
+        <select v-model="workSourceCourseId" style="width:280px" @change="syncWorkBase">
+          <option value="">（先勾选目标班级）</option>
+          <option v-for="c in workPickedCourses" :key="c.courseId" :value="c.courseId">{{ c.courseName }}（{{ c.courseId }}）</option>
+        </select>
+        <span class="hint" style="margin-left:8px" v-if="workPickedCourses.length > 1">⚠ 已勾选跨课程多班：发布限同课程</span>
+      </label></p>
       <p><label class="field">作业库文件夹：
         <select :value="folderCur.directoryId" style="width:260px" @change="setFolder($event)">
           <option value="0">根目录</option>
@@ -744,7 +780,7 @@ onUnmounted(() => document.removeEventListener('visibilitychange', refreshStale)
          style="position:fixed; inset:0; background:rgba(15,23,42,.45); z-index:101; display:flex; align-items:center; justify-content:center">
       <div style="background:var(--c-card,#fff); border-radius:12px; max-width:min(760px,94vw); max-height:86vh; display:flex; flex-direction:column; padding:16px">
         <h3 style="margin-top:0">{{ logTitle }} · CLI 输出<button class="btn" style="float:right" @click="logOpen = false">关闭</button></h3>
-        <p class="hint" style="margin:4px 0">{{ msg }}</p>
+        <p v-if="msg" class="notice info" style="margin:4px 0; font-weight:600">{{ msg }}</p>
         <pre style="flex:1; overflow:auto; white-space:pre-wrap; word-break:break-word; font-size:12px; background:var(--c-bg,#f7f7f9); border:1px solid var(--c-border); border-radius:8px; padding:8px; max-height:56vh">{{ logLines.join('\n') }}</pre>
       </div>
     </div>
