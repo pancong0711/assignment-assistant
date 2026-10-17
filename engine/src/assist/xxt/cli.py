@@ -329,7 +329,8 @@ def register(group: click.Group) -> None:
 
     @group.command("work-publish")
     @click.option("--course", "course_id", required=True)
-    @click.option("--class", "class_id", required=True)
+    @click.option("--class", "class_ids", multiple=True, required=True,
+                  help="目标班级 ID，可多次（D95：多班一次发布）")
     @click.option("--work-library-id", "work_library_id", required=True)
     @click.option("--cpi", required=True)
     @click.option("--start", "start_time", default="")
@@ -339,16 +340,18 @@ def register(group: click.Group) -> None:
     @click.option("--redo-times", default=0, type=int)
     @click.option("--send", is_flag=True, default=False, help="真正发布；缺省 dry-run")
     @click.option("--storage", "storage", default=None, type=click.Path(dir_okay=False))
-    def xxt_work_publish(course_id, class_id, work_library_id, cpi, start_time, end_time,
+    def xxt_work_publish(course_id, class_ids, work_library_id, cpi, start_time, end_time,
                          allow_late, late_deadline, redo_times, send, storage):
-        """发布作业设置（D79-C；默认 dry-run，白名单限制）。"""
+        """发布作业设置（D79-C；默认 dry-run，白名单限制；D95 支持多班）。"""
         from .work import publish_work
-        rep = publish_work(storage or default_storage(None), course_id, class_id,
+        cids = [str(x) for x in class_ids if str(x).strip()]
+        rep = publish_work(storage or default_storage(None), course_id, cids[0] if cids else "",
                            work_library_id, cpi=cpi, start_time=start_time,
                            end_time=end_time, allow_late=allow_late,
-                           late_deadline=late_deadline, redo_times=redo_times, send=send)
+                           late_deadline=late_deadline, redo_times=redo_times, send=send,
+                           class_ids=cids)
         _journal("xxt_work_publish",
-                 params={"courseId": course_id, "classId": class_id,
+                 params={"courseId": course_id, "classIds": cids,
                          "workLibraryId": work_library_id, "mode": rep.get("mode"),
                          "redo": redo_times, "allowLate": bool(allow_late)},
                  result="ok" if rep.get("ok") else "fail",

@@ -84,24 +84,36 @@ def list_works(storage, course_id: str, class_id: str, cpi: str = "0", directory
 def publish_work(storage, course_id: str, class_id: str, work_library_id: str, *,
                  cpi: str, start_time: str, end_time: str,
                  allow_late: bool = False, late_deadline: str = "",
-                 redo_times: int = 0, send: bool = False) -> dict:
-    """打开发布设置页，选目标班、填时间/重做，dry-run 或真正发布。"""
-    err = validate_work_target(course_id, class_id)
-    if err:
-        return {"ok": False, "error": err}
-    _dup_key = f"{course_id}|{work_library_id}|{class_id}"
-    if send and _dup_key in _load_index():
-        return {"ok": False, "error": "该作业已在本班发布过；同一作业同一班级不允许重复发布，"
-                                       "如需修改请先在学习通创建副本（副本+时间戳）后再发布。"}
-    platform_published = None
+                 redo_times: int = 0, send: bool = False,
+                 class_ids: "list[str] | None" = None) -> dict:
+    """打开发布设置页，选目标班（D95：支持多班一次发布）、填时间/重做，dry-run 或真正发布。
+
+    D95：`class_ids`（多班，平台"发放对象"支持一次勾选多班）优先于单个 `class_id`；
+    逐班做白名单校验与"同班同作业"重复发布校验；任一班已发布即拒绝（避免半成功）。
+    """
+    targets = [str(x) for x in (class_ids or []) if str(x).strip()] or [str(class_id)]
+    # 去重保序
+    seen = set(); targets = [t for t in targets if not (t in seen or seen.add(t))]
+    errs = []
+    for cid in targets:
+        e = validate_work_target(course_id, cid)
+        if e:
+            errs.append(e)
+    if errs:
+        return {"ok": False, "error": "；".join(errs)}
+    # 重复发布校验（逐班）
     if send:
+        idx = _load_index()
+        dup = [cid for cid in targets if f"{course_id}|{work_library_id}|{cid}" in idx]
+        if dup:
+            return {"ok": False, "error": f"该作业已在班级 {dup} 发布过；同一作业同一班级不允许重复发布，"
+                                           "如需修改请先在学习通创建副本（副本+时间戳）后再发布。"}
         try:
-            platform_published = published_library_ids(storage, course_id, class_id, str(cpi))
+            pub = published_library_ids(storage, course_id, targets[0], str(cpi)) or []
         except Exception:  # noqa: BLE001
-            platform_published = None
-        if platform_published is not None and str(work_library_id) in platform_published:
-            return {"ok": False, "error": "该作业已在本班发布过；同一作业同一班级不允许重复发布，"
-                                           "如需修改请先创建副本（副本+时间戳）后再发布。"}
+            pub = []
+        if str(work_library_id) in [str(x) for x in pub]:
+            return {"ok": False, "error": "该作业已在班级发布过（平台侧）；禁止重复发布。"}
     from playwright.sync_api import sync_playwright
     from .session import check_session, _launch
     storage = Path(storage)
@@ -129,22 +141,43 @@ def publish_work(storage, course_id: str, class_id: str, work_library_id: str, *
                 if r.request.method != "GET" else None)
         page.goto(url, wait_until="domcontentloaded", timeout=60000)
         page.wait_for_timeout(6000)
-        # 选目标班（弹窗）
+        # 选目标班（弹窗）——D95：支持多班，逐个点其 class_check
         page.locator("#choosepublish").click(timeout=10000)
         page.wait_for_timeout(2000)
         names = page.evaluate("""() => Array.from(document.querySelectorAll('#objectList .classData')).map(e => ({id:e.getAttribute('data'), name:(e.innerText||'').trim()}))""")
-        hit = next((x for x in names if str(x.get("id")) == str(class_id)), None)
-        if hit is None:
+        avail = {str(x.get("id")): x.get("name") for x in names}
+        missing = [c for c in targets if str(c) not in avail]
+        if missing:
             browser.close()
-            return {"ok": False, "error": f"目标班不在发放对象中：{class_id}",
+            return {"ok": False, "error": f"目标班不在发放对象中：{missing}",
                     "classes": names}
-        page.locator(f'a.classData[data="{class_id}"]').first.click(timeout=10000)
-        page.wait_for_timeout(500)
-        # 点击对应的 class_check（classData 本身可能只展开）
-        try:
-            page.locator("li.classLi .class_check").first.click(timeout=5000)
-        except Exception:
-            pass
+        picked = []
+        for cid in targets:
+            # 点该班所在 li.classLi 内的 .class_check（复选框 span）
+            ok_pick = page.evaluate("""(cid) => {
+              const a = document.querySelector(`#objectList .classData[data="${cid}"]`);
+              if (!a) return false;
+              const li = a.closest('li.classLi') || a.parentElement;
+              const cb = li ? li.querySelector('.class_check') : null;
+              if (!cb) return false;
+              if (!/class_checked/.test(cb.className)) cb.click();
+              return /class_checked/.test(cb.className);
+            }""", str(cid))
+            page.wait_for_timeout(500)
+            if ok_pick:
+                picked.append(str(cid))
+        if sorted(picked) != sorted([str(c) for c in targets]):
+            # 兜底：逐个用 playwright click 再试
+            for cid in targets:
+                if str(cid) in picked:
+                    continue
+                try:
+                    page.locator(f'a.classData[data="{cid}"]').first.click(timeout=5000)
+                    page.wait_for_timeout(300)
+                    page.locator('li.classLi .class_check').first.click(timeout=3000)
+                    picked.append(str(cid))
+                except Exception:  # noqa: BLE001
+                    pass
         page.locator("#confirmchoose").click(timeout=10000)
         page.wait_for_timeout(1000)
         # 时间
@@ -170,8 +203,16 @@ def publish_work(storage, course_id: str, class_id: str, work_library_id: str, *
         if not send:
             browser.close()
             return {"ok": True, "mode": "dry-run", "runId": run_id, "screenshot": str(pre),
-                    "classes": names, "courseId": str(course_id), "classId": str(class_id),
-                    "workLibraryId": work_library_id}
+                    "classes": names, "courseId": str(course_id), "classId": str(targets[0]),
+                    "classIds": targets, "workLibraryId": work_library_id}
+        # D95：平台前端 checkQuestion() 依赖隐藏域 #classid 做前置校验；多选时页面不自动赋值 →
+        # 点「发放」前显式补设（否则 AJAX clazzid 为空、校验不过、不触发提交）。
+        page.evaluate("""(cid) => {
+            const el = document.querySelector('#classid');
+            if (el && !el.value) el.value = String(cid);
+            // 兜底：若 .selectClass 为空，说明确认未生效
+        }""", str(targets[0]))
+        page.wait_for_timeout(300)
         # D83 修复：与 create_work 同款健壮点击（可见过滤 + 多定位器 + JS 兜底）
         _click_first_visible(
             page,

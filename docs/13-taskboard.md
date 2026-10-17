@@ -1442,6 +1442,8 @@ applyManualTranslation/setTranslationRatio 中 setTranslationRatio 保留——�
 - 拍板：多班勾选；白名单联动=**只列白名单班**；通知同内容发多班；
 - 先做真机验证（目标课程「大学物理知识点拾遗（by pc）」的默认班级 + 新建班级2：多班发通知/多班发作业），用户核验后再改 PWA；
 - 分期：U1 发现班级 → U2 多班通知 → U3 多班作业 → U4/U5 PWA 多选 → U6 文档/验证/push。
+- **真机验证（2026-10-17）**：多班**通知** ✅、多班**作业** ✅（平台返回 workRelationArray 两班各 workId）；
+  引擎 `publish_work(class_ids=[...])` 已支持多班（`--class` 可多次）；PWA 多选改造待用户批准。
 
 ---
 
