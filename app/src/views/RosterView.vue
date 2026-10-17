@@ -276,6 +276,12 @@ const wideHeaders = computed<WideHeader[]>(() =>
       excluded: false,
     }))
   }))
+/** D94-T3：总览显示顺序（默认点名册；可选按加权成绩 升/降）。 */
+const orderedWideRows = computed<WideRow[]>(() => {
+  const rows = wideRows.value
+  const idx = sortedIdx(roster.students, overviewSort.value)
+  return idx.map((i) => rows[i]).filter(Boolean)
+})
 const wideRows = computed<WideRow[]>(() => {
   const headers = wideHeaders.value
   // D46-4/D55-H3 综合得分列：按当前勾选源×列"干跑"原始分加权平均（不落库；正式写入走「重算并打 tag」）
@@ -493,11 +499,39 @@ const pageCount = computed(() => roster.students.length)
 const warnRatio = computed(() => roster.ratioSum > 1.0001)
 const warnRatioOff = computed(() => Math.abs(roster.ratioSum - 1) > 0.0001 && roster.ratioSum <= 1.0001)
 
+/* ---------- D94-T3：按加权成绩排序（仅视图；默认点名册顺序；无成绩者末尾） ---------- */
+const overviewSort = ref<'roster' | 'desc' | 'asc'>('roster')
+const labelSort = ref<'roster' | 'desc' | 'asc'>('roster')
+
+/** 综合得分（干跑，不落库）：与总览"综合得分*"同口径；无成绩 = null。 */
+function compositeScores(): Map<string, number | null> {
+  const shadow = roster.students.map((s) => ({ ...s }))
+  try { computeScoresFiltered(shadow, scoreSources.value.filter(isIncluded)) } catch { /* noop */ }
+  return new Map(shadow.map((s) => [`${s.name}\u0000${s.number}`, s.score]))
+}
+/** 按 sort 生成索引顺序（保留原索引，供编辑回调）。 */
+function sortedIdx<T extends { name: string; number: string }>(arr: T[], sort: 'roster' | 'desc' | 'asc'): number[] {
+  const idx = arr.map((_, i) => i)
+  if (sort === 'roster') return idx
+  const comp = compositeScores()
+  const scoreOf = (i: number) => comp.get(`${arr[i].name}\u0000${arr[i].number}`) ?? null
+  return idx.slice().sort((a, b) => {
+    const sa = scoreOf(a), sb = scoreOf(b)
+    const ha = typeof sa === 'number', hb = typeof sb === 'number'
+    if (ha && hb) { const d = (sa as number) - (sb as number); return sort === 'desc' ? -d : d }
+    if (ha !== hb) return ha ? -1 : 1      // 有成绩者在前
+    return a - b                            // 稳定
+  })
+}
+
 function setTag(stuIdx: number, ev: Event) {
   const val = (ev.target as HTMLSelectElement).value
   roster.setManualTag(roster.students[stuIdx], val)
 }
 
+/** D94-T3：标签预览显示行（原索引 + 学生），按 labelSort。 */
+const labelRows = computed<{ s: (typeof roster.students)[number]; i: number }[]>(() =>
+  sortedIdx(roster.students, labelSort.value).map((i) => ({ s: roster.students[i], i })))
 const batchNames = ref('')
 const batchTag = ref('copy')
 const batchCreateIfAbsent = ref(true)
@@ -779,6 +813,13 @@ const nonTranslationRatios = computed(() => roster.ratios.filter((g) => g.tag !=
         无论从哪个入口导入，名单都会写入）。
       </div>
       <h2>全部成绩总览（D46-4：每生一行 × 各源分数列 × 综合得分 · 勾选 = 是否参与综合）</h2>
+      <p style="display:flex; gap:6px; align-items:center; flex-wrap:wrap; margin:0 0 6px">
+        <span class="hint" style="margin:0">显示顺序：</span>
+        <button class="btn small" :class="{ primary: overviewSort === 'roster' }" @click="overviewSort = 'roster'">点名册顺序</button>
+        <button class="btn small" :class="{ primary: overviewSort === 'desc' }" @click="overviewSort = 'desc'">加权成绩 ↓ 降序</button>
+        <button class="btn small" :class="{ primary: overviewSort === 'asc' }" @click="overviewSort = 'asc'">加权成绩 ↑ 升序</button>
+        <span class="hint" style="margin:0">（仅影响显示，不改名单顺序；无成绩者排末尾）</span>
+      </p>
       <p class="notice info" style="margin:0 0 6px">
         <b>综合得分算法（D55-H3 拍板）</b>：<code>综合 = Σ(列原始分 × 列权重) / Σ列权重</code> ——
         只统计「已勾选」的列；<b>不做班内最高分归一</b>；单列（或全权重=1）时即该列原始分。
@@ -821,7 +862,7 @@ const nonTranslationRatios = computed(() => roster.ratios.filter((g) => g.tag !=
             </tr>
           </thead>
           <tbody>
-            <tr v-for="row in wideRows" :key="row.name + '\u0000' + row.number">
+            <tr v-for="row in orderedWideRows" :key="row.name + '\u0000' + row.number">
               <td class="sticky-col">{{ row.name || '（未命名）' }}</td>
               <td class="sticky-col">{{ row.number || '—' }}</td>
               <td v-for="(c, j) in row.cells" :key="j" :class="{ 'muted-cell': c === '' }"
@@ -893,6 +934,12 @@ const nonTranslationRatios = computed(() => roster.ratios.filter((g) => g.tag !=
     <!-- ============ D50b ③ 标签预览（分布统计 + 每生 tag/punish + 批量打 tag） ============ -->
     <div class="card" id="tag-preview">
       <h2>标签预览 <small style="font-weight:400;color:var(--c-muted)">比例切分结果 + 手动覆盖（special_tag_cfg；docs/13 D50b：原"特殊标签"卡更名）</small></h2>
+      <p style="display:flex; gap:6px; align-items:center; flex-wrap:wrap; margin:0 0 6px">
+        <span class="hint" style="margin:0">显示顺序：</span>
+        <button class="btn small" :class="{ primary: labelSort === 'roster' }" @click="labelSort = 'roster'">点名册顺序</button>
+        <button class="btn small" :class="{ primary: labelSort === 'desc' }" @click="labelSort = 'desc'">加权成绩 ↓ 降序</button>
+        <button class="btn small" :class="{ primary: labelSort === 'asc' }" @click="labelSort = 'asc'">加权成绩 ↑ 升序</button>
+      </p>
       <p class="hint">调整任何比例 → 在上方「分组比例」卡点「重算并自动切分打 tag」→ 本预览即时变化。手动改 tag = special_tag 覆盖（重算不被冲掉）。</p>
       <p class="hint" v-if="roster.students.length">
         分布：<code v-for="(n, t) in roster.tagCounts" :key="t" style="margin-right:6px">{{ STUDENT_TAG_LABELS[t] ?? t }}×{{ n }}</code>
@@ -920,7 +967,7 @@ const nonTranslationRatios = computed(() => roster.ratios.filter((g) => g.tag !=
           <tr><th>姓名</th><th>学号</th><th>tag（下拉=手动覆盖）</th><th style="width:70px">punish</th></tr>
         </thead>
         <tbody>
-          <tr v-for="(s, i) in roster.students" :key="i">
+          <tr v-for="({ s, i }) in labelRows" :key="i">
             <td>{{ s.name || '（未命名）' }}</td>
             <td>{{ s.number || '—' }}</td>
             <td>
