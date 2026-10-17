@@ -1435,6 +1435,15 @@ applyManualTranslation/setTranslationRatio 中 setTranslationRatio 保留——�
 
 ---
 
+## D96 · 发布作业「作业来源课程」+ 跨课程复制 + 发布反馈修复（2026-10-17）
+
+- 主需求单：`docs/49-D96-work-library-course-and-cross-course-copy.md`；
+- 查证：Q1「发布作业无反应」= 跨课程多班命中守卫仅小 hint；Q2 作业库按 `(courseId,cpi)`，之前用"第一个班"选错；Q3 workId 属特定课程，跨课程不可直接发布；
+- 拍板：作业库**课程级**；发布**限同课程**；新增「作业来源课程」下拉 + 「复制到其他课程作业库」（目标课程/文件夹两下拉+按钮）；
+- 分期：V1 实测跨课程复制 → V2 引擎 copy_work 跨课程 → V3 来源课程下拉 → V4 复制按钮 + 反馈修复 → V5 文档/验证/push。
+
+---
+
 ## D95 · 通知/作业发布——多班勾选 + 白名单联动（2026-10-17）
 
 - 主需求单：`docs/48-D95-multiclass-publish.md`；
