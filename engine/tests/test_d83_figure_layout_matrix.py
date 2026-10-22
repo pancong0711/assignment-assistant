@@ -23,9 +23,10 @@ from assist.paper.fonts import register_font
 
 
 def _cjk_font_available() -> bool:
-    resolved = register_font("simsun", "simsun.ttc", "wqy-microhei.ttc",
-                             workspace=None, user_cfg=None)
-    return Path(resolved).exists()
+    # register_font 返回**实际可用字体名**（D99：可能是降级的内置 CID 名），
+    # 返回空串才表示彻底不可用。
+    return bool(register_font("simsun", "simsun.ttc", "wqy-microhei.ttc",
+                              workspace=None, user_cfg=None))
 
 
 def _fig(tmp: Path) -> str:

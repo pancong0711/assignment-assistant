@@ -21,17 +21,30 @@ from reportlab.platypus import (BaseDocTemplate, Frame, FrameBreak, Image,
                                 PageBreak, PageTemplate, Paragraph, Table, TableStyle)
 
 from .. import ASSETS_DIR
-from .fonts import register_font
+from .fonts import CID_FALLBACK_NAME, register_font
 from .grid import normalize_per_page, resolve_grid
 from .watermark import merge_watermark, watermark_end, watermark_gen, watermark_preset
 
 A4_W, A4_H = A4
 
+# 正文字体名：默认 simsun；make_pdf 注册失败时改为内置 CID 中文字体。
+# 用小写函数而不是直接引用变量，避免 import 时序问题。
+_BODY_FONT = "simsun"
+_TITLE_FONT = "simkai"
+
+
+def body_font_name() -> str:
+    return _BODY_FONT
+
+
+def title_font_name() -> str:
+    return _TITLE_FONT
+
 
 # ---------------- 样式 ----------------
 
 def _contents_style():
-    return ParagraphStyle("assign_text", fontName="simsun", fontSize=11, leading=16)
+    return ParagraphStyle("assign_text", fontName=body_font_name(), fontSize=11, leading=16)
 
 
 def normalize_figure_pos(pos: str | None) -> str:
@@ -51,12 +64,12 @@ def _question_style(indent: str = "none") -> ParagraphStyle:
     """D83-3：题号+题干缩进三态。none（默认，紧挨文字）/ first（首行缩进）/ hanging（悬挂）。"""
     ind = str(indent or "none").strip().lower()
     if ind == "first":
-        return ParagraphStyle("assign_first", fontName="simsun", fontSize=11, leading=16,
+        return ParagraphStyle("assign_first", fontName=body_font_name(), fontSize=11, leading=16,
                               firstLineIndent=2 * 12, leftIndent=0)
     if ind == "hanging":
-        return ParagraphStyle("assign_hanging", fontName="simsun", fontSize=11, leading=16,
+        return ParagraphStyle("assign_hanging", fontName=body_font_name(), fontSize=11, leading=16,
                               leftIndent=13 * mm, firstLineIndent=-13 * mm)
-    return ParagraphStyle("assign_none", fontName="simsun", fontSize=11, leading=16)
+    return ParagraphStyle("assign_none", fontName=body_font_name(), fontSize=11, leading=16)
 
 
 def _fitted_image(img_path: str, max_w: float, max_h: float,
@@ -229,18 +242,18 @@ def _make_onpage(stu: dict, title: str, notes_prefix: str, orientation: str,
     def on_page(canvas, doc):
         canvas.saveState()
         fs = 18  # 横竖一致（用户决定）
-        canvas.setFont("simkai", fs)
+        canvas.setFont(title_font_name(), fs)
         canvas.drawCentredString(pw / 2, title_y, title)
-        canvas.setFont("simsun", 12)
+        canvas.setFont(body_font_name(), 12)
         col_w = width / 3
         for j, text in enumerate([f"班级：{stu.get('class', '')}",
                                   f"学号：{stu.get('number', '')}",
                                   f"姓名：{stu.get('name', '')}"]):
             canvas.drawString(x1 + j * col_w, info_y, text)
         # 作业标识（任务包 id）置于信息行右上方小字
-        canvas.setFont("simsun", 9)
+        canvas.setFont(body_font_name(), 9)
         from reportlab.pdfbase.pdfmetrics import stringWidth
-        aw = stringWidth(notes_prefix, "simsun", 9)
+        aw = stringWidth(notes_prefix, body_font_name(), 9)
         canvas.drawString(x1 + width - aw, info_y + 14, f"作业：{notes_prefix}")
         canvas.line(x1, info_y - 4, x1 + width, info_y - 4)
         canvas.line(x1, foot_line_y, x1 + width, foot_line_y)
@@ -286,8 +299,18 @@ def make_pdf(students: list[dict], items_of_student, out_dir: Path,
     from .assets import resolve_assets_dir
     explicit = assets_dir_explicit if assets_dir_explicit is not None else assets_dir
     assets_dir, _assets_src = resolve_assets_dir(ws=workspace, explicit=explicit)
-    register_font("simsun", "simsun.ttc", "wqy-microhei.ttc", workspace=workspace, user_cfg=user_cfg)
-    register_font("simkai", "simkai.ttf", "LXGWWenKai-Regular.ttf", workspace=workspace, user_cfg=user_cfg)
+    global _BODY_FONT, _TITLE_FONT
+    # register_font 返回**实际可用**的名字：拿到字体文件就沿用 reportlab_name，
+    # 找不到时返回内置 CID 中文名（见 fonts.CID_FALLBACK_NAME）；返回 "" 表示彻底不可用，
+    # 回退 Helvetica（中文会缺字，但不崩）。
+    body = register_font("simsun", "simsun.ttc", "wqy-microhei.ttc",
+                         workspace=workspace, user_cfg=user_cfg)
+    title = register_font("simkai", "simkai.ttf", "LXGWWenKai-Regular.ttf",
+                          workspace=workspace, user_cfg=user_cfg)
+    _BODY_FONT = body or "Helvetica"
+    _TITLE_FONT = title or _BODY_FONT
+    if body == CID_FALLBACK_NAME:
+        logger.warning(f"无中文字体文件，正文降级为 {CID_FALLBACK_NAME}（可显示中文）")
     now = datetime.now()
     out_dir.mkdir(parents=True, exist_ok=True)
     generated: list[Path] = []

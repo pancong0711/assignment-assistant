@@ -131,9 +131,19 @@ def logo_draw(canvas_info: dict, logo_path: str | Path, pos_sp: str,
     return canvas_info
 
 
-def text_draw(canvas_info: dict, text: str, pos_sp: str, fontname: str = "simsun",
+def _default_font() -> str:
+    """当前生效的正文字体名（D99：无中文字体时为内置 CID 字体，而非硬编码 simsun）。"""
+    try:
+        from .layout import body_font_name
+        return body_font_name()
+    except Exception:  # noqa: BLE001 — 循环导入/异常时退回内置西文字体
+        return "Helvetica"
+
+
+def text_draw(canvas_info: dict, text: str, pos_sp: str, fontname: str | None = None,
               fontsize: int = 40, transparency: float = 0.3) -> dict:
     """单行文字水印。迁移自 _textDraw()。"""
+    fontname = fontname or _default_font()
     c = canvas_info["canvas_obj"]
     c.setFont(fontname, fontsize)
     c.setFillColor("blue", alpha=transparency)
@@ -169,11 +179,12 @@ def _text_pos(canvas_info, c, text, pos_sp, fontname, fontsize):
     return _anchor(pos_sp, canvas_info["width"], canvas_info["height"], w, h)
 
 
-def text_draw_enhanced(canvas_info: dict, text_list, pos_sp: str, fontname: str = "simsun",
+def text_draw_enhanced(canvas_info: dict, text_list, pos_sp: str, fontname: str | None = None,
                        fontsize: int = 40, transparency: float = 0.3,
                        direction: str = "horizontal", line_spacing: float = 1.2,
                        column_spacing: float | None = None) -> dict:
     """多行/多列文字水印。迁移自 _textDrawEnhanced()（精简为 horizontal/vertical 两分支）。"""
+    fontname = fontname or _default_font()
     c, packet = canvas_info["canvas_obj"], canvas_info["packet"]
     width, height = canvas_info["width"], canvas_info["height"]
     c.setFont(fontname, fontsize)

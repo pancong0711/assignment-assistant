@@ -17,6 +17,11 @@ jobs:
       - uses: astral-sh/setup-uv@v5
         with:
           python-version: "3.13"
+      # 中文字体：reportlab 出 PDF 的用例（test_d87...）需要 wqy-microhei 作 simsun 的开源
+      # 替代（engine/assets/fonts/fonts.json 的映射）。缺字体时 register_font 会回落到
+      # 系统字体名 "simsun"，Ubuntu runner 上没有 → reportlab ValueError，测试必挂。
+      - name: 安装中文字体（wqy）
+        run: sudo apt-get update -qq && sudo apt-get install -y -qq fonts-wqy-microhei
       - name: pytest (engine)
         working-directory: engine
         run: |

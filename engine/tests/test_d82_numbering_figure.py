@@ -23,9 +23,10 @@ def _cjk_font_available() -> bool:
     """CI 无 CJK 字体时会回落到未注册的 'simsun' 名，reportlab Paragraph 直接报错；
     此类环境跳过需要真实出 PDF 的用例（与既有 _contents_style 同字体依赖）。"""
     from assist.paper.fonts import register_font
-    resolved = register_font("simsun", "simsun.ttc", "wqy-microhei.ttc",
-                             workspace=None, user_cfg=None)
-    return Path(resolved).exists()
+    # register_font 返回**实际可用字体名**（D99：可能是降级的内置 CID 名），
+    # 返回空串才表示彻底不可用。
+    return bool(register_font("simsun", "simsun.ttc", "wqy-microhei.ttc",
+                              workspace=None, user_cfg=None))
 
 
 def _kb(tmp: Path) -> Path:
