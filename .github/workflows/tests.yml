@@ -59,10 +59,14 @@ jobs:
         run: |
           npm ci
           npm run build
+          # 第二次构建到 dist-test 只为验证 Pages base 可用；postbuild 仍作用于 dist（已 stamp，
+          # D99 起脚本对重复 stamp 幂等跳过），这里显式给 dist-test 补一次 stamp。
           npm run build -- --base=./ --outDir dist-test --emptyOutDir false
+          node tools/stamp-sw.mjs --outDir=dist-test
           # 硬门禁：selfcheck 家族全部必须通过（D19/D47 family 语义 + 变体 + 水印 + 题图）
           npm run selfcheck
           test -f dist/index.html
+          test -f dist-test/index.html
 
       - name: LAN selftest（headless chromium via playwright 缓存可用时）
         run: echo "lan-selftest 在沙箱内已验证过；CI 中可选执行（需要浏览器二进制，暂跳过）"
