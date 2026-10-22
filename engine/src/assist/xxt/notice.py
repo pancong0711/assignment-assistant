@@ -6,8 +6,10 @@
 
 安全边界：
 - 默认只 dry-run；必须显式 `send=True` / CLI `--send` 才真正发送；
-- 当前测试阶段仅允许 `NOTICE_TEST_ALLOWLIST` 中的 courseId:classId；
-- 附件路径必须位于 workspace 下，且后缀为 pdf/doc/docx；
+- 只允许命中 workspace `settings.local.json → xxt.write_allowlist` 的 courseId:classId
+  （由 `xxt.allowlist.is_allowed` 判定；早期硬编码常量 `NOTICE_TEST_ALLOWLIST` 已删除）；
+- 附件路径必须位于 workspace 下，且后缀在 `xxt.notice_attachment_exts`（缺省
+  pdf/doc/docx/jpg/jpeg/png/webp/gif，见 `allowlist.DEFAULT_NOTICE_ATTACHMENT_EXTS`）；
 - 每次预检/发送都保存截图和 JSON receipt 到 `<xxt_home>/notice-sends/`。
 """
 from __future__ import annotations
@@ -19,12 +21,21 @@ import secrets
 import time
 from pathlib import Path
 
-# 临时写操作白名单：用户明确要求先只开通已真机验证过的课程/班级。
-# 后续扩大范围时改这里或迁移到配置项。
-NOTICE_TEST_ALLOWLIST = {
-    ("217801417", "40009084"),
-}
-ATTACH_SUFFIXES = (".pdf", ".doc", ".docx", ".jpg", ".jpeg", ".png", ".webp", ".gif")
+# 写操作白名单已统一到 workspace `settings.local.json → xxt.write_allowlist`
+# （见 `xxt.allowlist`）；此处不再保留硬编码课程/班级常量（P0 清理）。
+#
+# ATTACH_SUFFIXES 仅作兼容常量保留；真正的扩展名白名单走
+# `allowlist.read_notice_attachment_exts(ws)`，避免两套规则不一致。
+ATTACH_SUFFIXES = (".pdf", ".doc", ".docx", ".xls", ".xlsx",
+                   ".jpg", ".jpeg", ".png", ".webp", ".gif")
+
+# D99：通知编辑器里附件/图片块的 DOM 标记（与 work.py 的 _ATTACH_MARKERS 同口径）。
+# 文档类（pdf/doc/docx/xls/xlsx）→ editor-iframe；图片 → drag-image-wrap。
+_EDITOR_ATTACH_MARKERS = ('class="editor-iframe"', 'class="attach-iframe"',
+                          'class="drag-image-wrap"', 'ans-ued-img')
+# 上传中/失败占位文案：出现即「还没就绪」，不能当成功。
+_UPLOAD_PENDING_MARKERS = ("正在上传", "上传中", "uploadinfotext", "attachprogress")
+_UPLOAD_FAILED_MARKERS = ("imguploaderror", "上传失败", "附件上传失败")
 
 
 def normalize_targets(raw) -> list[dict]:
@@ -161,14 +172,128 @@ def _receipt_dir(home=None) -> Path:
     return d
 
 
-def _editor_attachment_count(page) -> int:
-    """统计编辑器里的附件/图片块；PDF 会插入 editor-iframe，图片插入 drag-image-wrap。"""
+def _editor_content(page) -> str | None:
+    """取编辑器 HTML；UEditor 不可用/上下文销毁时返回 None。"""
     try:
-        content = page.evaluate("UE.getEditor('container').getContent()") or ""
-        return (len(re.findall(r'class=\"editor-iframe\"', content))
-                + len(re.findall(r'class=\"drag-image-wrap\"', content)))
+        return page.evaluate("UE.getEditor('container').getContent()") or ""
     except Exception:
+        return None
+
+
+def _editor_attachment_count(page) -> int:
+    """统计编辑器里的附件/图片块（_EDITOR_ATTACH_MARKERS）；不可用时返回 -1。"""
+    content = _editor_content(page)
+    if content is None:
         return -1
+    return sum(content.count(m) for m in _EDITOR_ATTACH_MARKERS)
+
+
+def _editor_snapshot(page) -> dict | None:
+    """**一次** evaluate 取回编辑器状态（块数 / pending / error 节点 / 内容长度）。
+
+    D99 关键修复：图片编辑器的进度层是瞬态的（先出现 `imguploaderror`，几百 ms
+    后被清掉换成 `<img>`）。如果分两次 evaluate 分别取「块数」和「error 数」，
+    两次之间状态就可能翻转，导致把「已经成功」误判成「本次新增失败」。
+    因此所有判定字段必须在**同一个** JS 快照里取。
+    """
+    try:
+        return page.evaluate(r"""() => {
+          const content = (window.UE && UE.getEditor('container'))
+            ? (UE.getEditor('container').getContent() || '') : null;
+          if (content === null) return null;
+          const count = (s) => content.split(s).length - 1;
+          return {
+            len: content.length,
+            count: ['class="editor-iframe"', 'class="attach-iframe"',
+                    'class="drag-image-wrap"', 'ans-ued-img']
+                     .reduce((n, m) => n + count(m), 0),
+            pending: ['正在上传', '上传中', 'uploadinfotext', 'attachprogress']
+                       .some((m) => content.includes(m)),
+            errors: ['imguploaderror', '上传失败', '附件上传失败']
+                      .reduce((n, m) => n + count(m), 0),
+            // 成功证据：图片已换成真实/内联地址，或文档进度的 progress 层已消失。
+            settled: (() => {
+              const imgs = content.match(/<img[^>]*\ssrc="(data:image\/|https?:\/\/)/g) || [];
+              const blocks = count('class="editor-iframe"') + count('class="attach-iframe"')
+                           + count('class="drag-image-wrap"');
+              const progress = count('attachprogress') + count('imgprogress')
+                             + count('uploadinfotext') + count('imguploaderror');
+              return blocks > 0 && progress === 0 && (imgs.length > 0 || count('drag-image-wrap') === 0);
+            })(),
+          };
+        }""")
+    except Exception:
+        return None
+
+
+def _upload_progress(page, before: int) -> dict:
+    """单次快照 → 是否就绪、块数、是否仍在「正在上传」、失败占位数量。
+
+    D99 修复：上传刚触发时 DOM 里**已经**有 `editor-iframe`（里面写着
+    「正在上传...」），旧实现只要块数 > before 就判成功 → 假阳性。这里要求
+    块数增加 **且** 无 pending 标记才算就绪。失败与否由调用方用 errors 差分判断。
+    """
+    snap = _editor_snapshot(page)
+    if snap is None:
+        return {"ok": False, "count": -1, "pending": True, "errors": 0,
+                "settled": False, "error": "UEditor 不可用"}
+    return {"ok": snap["count"] > before and not snap["pending"],
+            "count": snap["count"], "pending": snap["pending"],
+            "errors": snap["errors"], "settled": snap.get("settled", True), "error": ""}
+
+
+def _upload_error_count(page) -> int:
+    """编辑器里失败占位的数量（用于「本次上传前后」差分）。"""
+    snap = _editor_snapshot(page)
+    return int(snap["errors"]) if snap else 0
+
+
+def _wait_upload(page, before: int, timeout_s: int = 90, poll_s: float = 0.5,
+                 stable_hits: int = 2, before_failed: int | None = None,
+                 error_grace_s: float = 5.0) -> tuple[bool, int]:
+    """等附件真正就绪：块数增加 + 无「正在上传」+ 连续若干次快照一致。
+
+    返回 (ok, count)。D99 用**采样轮询**替代旧的固定 `wait_for_timeout(2500)`：
+    小文件 ~1s 就绪，大文件/云盘慢时不会被 2.5s 误判为完成。
+
+    失败占位（imguploaderror）在真机上是**瞬态**的：png 上传时 0.07s 就出现
+    `imguploaderror`、0.33s 已有真实 `<img>`、1.1s 才清掉错误节点。所以：
+    - 出现新增失败占位**不立即判失败**，而是等 `error_grace_s` 宽限；
+    - 宽限内看到「成功证据」（真实 img src / progress 层清空）→ 按成功处理；
+    - 宽限耗尽仍失败 → 判失败。
+
+    `before_failed` 是上传前失败占位计数；不传按 0（严格模式，仅测试用）。
+    """
+    base_failed = 0 if before_failed is None else int(before_failed)
+    start = time.time()
+    deadline = start + timeout_s
+    last_count = before
+    stable = 0
+    err_since: float | None = None
+    while time.time() < deadline:
+        st = _upload_progress(page, before)
+        if st["count"] < 0:
+            return False, last_count
+        now = time.time()
+        has_new_err = int(st["errors"]) > base_failed
+        if has_new_err:
+            err_since = err_since if err_since is not None else now
+        else:
+            err_since = None
+        if st["ok"] and st.get("settled", True):
+            if st["count"] == last_count:
+                stable += 1
+            else:
+                last_count, stable = st["count"], 1
+            if stable >= stable_hits:
+                return True, st["count"]
+        elif has_new_err and (now - (err_since or now)) > error_grace_s:
+            return False, st["count"]
+        else:
+            stable = 0
+            last_count = st["count"]
+        page.wait_for_timeout(int(poll_s * 1000))
+    return False, last_count
 
 
 def _inject_send_map(page, items: list[dict]) -> list[dict]:
@@ -187,15 +312,13 @@ def _inject_send_map(page, items: list[dict]) -> list[dict]:
     }""", [{"id": k.get("classId"), "name": k.get("name")} for k in items])
 
 
-def _wait_upload(page, before: int, timeout_s: int = 90) -> tuple[bool, int]:
-    deadline = time.time() + timeout_s
-    last = before
-    while time.time() < deadline:
-        last = _editor_attachment_count(page)
-        if last > before:
-            return True, last
-        page.wait_for_timeout(1000)
-    return False, last
+def _upload_fail_reason(state: dict, new_failed: bool = False) -> str:
+    """把采样状态翻成人话，写进 receipt/异常信息。"""
+    if state.get("count", 0) < 0:
+        return "UEditor 不可用（无法读取编辑器内容）"
+    if new_failed:
+        return "本次上传后新增了失败占位（imguploaderror / 上传失败）"
+    return "编辑器块已出现但仍在「正在上传」，或 90s 内未稳定"
 
 
 def send_notice_from_spec(spec: dict, *, send: bool = False, storage: Path | str | None = None,
@@ -220,7 +343,13 @@ def send_notice_from_spec(spec: dict, *, send: bool = False, storage: Path | str
     for a in attachments_raw:
         p = safe_attachment_path(a, workspace)
         if p is None:
-            return {"ok": False, "error": f"附件不可用或不在 workspace 内：{a}", "sent": 0, "dryRun": not send}
+            from .allowlist import read_notice_attachment_exts
+            allowed = "/".join(read_notice_attachment_exts(workspace))
+            return {"ok": False,
+                    "error": (f"附件不可用或不在 workspace 内：{a}；"
+                              f"允许的后缀：{allowed}"
+                              "（可用 `assist xxt attachment-exts set --add --ext xxx` 扩展）"),
+                    "sent": 0, "dryRun": not send}
         att_paths.append(p)
 
     storage = Path(storage) if storage else xxt_home() / "xxt-storage.json"
@@ -278,14 +407,18 @@ def send_notice_from_spec(spec: dict, *, send: bool = False, storage: Path | str
                 count = _editor_attachment_count(page)
                 if count < 0:
                     raise RuntimeError("UEditor 不可用，无法确认正文/附件状态")
-                # 让 WebUploader 的文件输入处于可交互状态；不同页面可能有多个 hidden input。
-                try:
-                    btn = page.locator(".edui-for-attachment").first
-                    btn.scroll_into_view_if_needed(timeout=3000)
-                    btn.click(timeout=5000)
-                except Exception as exc:
-                    result.setdefault("notes", []).append(f"attachment-button-click-failed: {str(exc)[:160]}")
                 uploaded = []
+                upload_waits = []
+                # 失败占位可能是常驻节点：用「本次上传前后计数差」判定，而不是看有没有该节点。
+                failed_before = _upload_error_count(page)
+                if att_paths:
+                    # 让 WebUploader 的文件输入处于可交互状态；不同页面可能有多个 hidden input。
+                    try:
+                        btn = page.locator(".edui-for-attachment").first
+                        btn.scroll_into_view_if_needed(timeout=3000)
+                        btn.click(timeout=5000)
+                    except Exception as exc:
+                        result.setdefault("notes", []).append(f"attachment-button-click-failed: {str(exc)[:160]}")
                 for apath in att_paths:
                     before = count
                     # 附件按钮用的是 WebUploader 的通用 hidden input（无 accept）；
@@ -294,22 +427,32 @@ def send_notice_from_spec(spec: dict, *, send: bool = False, storage: Path | str
                     if loc.count() == 0:
                         loc = page.locator('input[type=file]').first
                     loc.wait_for(state="attached", timeout=10000)
+                    t_up = time.time()
                     loc.set_input_files(str(apath))
-                    ok, count = _wait_upload(page, before)
+                    # D99：轮询「块数增加 + 无正在上传 + 连续两次稳定」，不再固定等 2.5s。
+                    ok, count = _wait_upload(page, before, before_failed=failed_before)
+                    item_wait = {"name": apath.name, "ok": ok,
+                                 "wait_s": round(time.time() - t_up, 1)}
+                    upload_waits.append(item_wait)
                     if not ok:
+                        st = _upload_progress(page, before)
+                        new_failed = int(st.get("errors") or 0) > failed_before
+                        item_wait.update(pending=st.get("pending"), failed=new_failed,
+                                         count=st.get("count"), errors=st.get("errors"))
                         fail_shot = _receipt_dir(home) / f"{run_id}-{cid}-attach-fail.png"
                         try:
                             page.screenshot(path=str(fail_shot), full_page=True)
                         except Exception:
                             fail_shot = None
                         raise RuntimeError(
-                            f"附件上传未插入编辑器：{apath.name}"
+                            f"附件上传未就绪：{apath.name}；{_upload_fail_reason(st, new_failed)}"
                             + (f"；截图={fail_shot}" if fail_shot else "")
                             + f"；reqs={len(reqs)}")
+                    # 该文件已就绪：后续文件沿用新的基线，避免把前一个的遗留节点算到下一个头上。
+                    failed_before = _upload_error_count(page)
                     uploaded.append(apath.name)
                 if att_paths:
-                    # WebUploader 插入 iframe 后仍有草稿/上传收尾请求；立即点发送可能被页面校验拦住。
-                    page.wait_for_timeout(2500)
+                    result["uploadWaits"] = upload_waits
 
                 pre_shot = _receipt_dir(home) / f"{run_id}-{cid}-pre.png"
                 page.screenshot(path=str(pre_shot), full_page=True)

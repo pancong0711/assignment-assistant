@@ -341,7 +341,8 @@ assist xxt work-publish --course <id> --work-library-id <id>
   - PNG 图片：上传成功（pan-yz upload/v2 200），插入 `drag-image-wrap` / `editor-img`（内联图片块）；
 - engine 原先只按 `editor-iframe` 判断附件成功，因此图片会被误判失败；已改为同时统计
   `editor-iframe` 与 `drag-image-wrap`；
-- CLI/PWA 当前允许的通知附件后缀：pdf/doc/docx/jpg/jpeg/png/webp/gif；
+- CLI/PWA 当前允许的通知附件后缀：pdf/doc/docx/xls/xlsx/jpg/jpeg/png/webp/gif
+  （D99 起；xlsx 真机验证与 pdf/docx 同为 `editor-iframe` 云附件）；
 - 是否完全去掉后缀白名单待用户确认；平台 input 本身不限制，但建议只放开常用格式以避免
   平台对不常见格式的处理不一致。
 
@@ -349,7 +350,8 @@ assist xxt work-publish --course <id> --work-library-id <id>
 
 - 拍板：通知附件按**白名单模式**管理格式，不做完全放开；
 - 配置位置：workspace `settings.local.json` 的 `xxt.notice_attachment_exts`；
-- 默认：`pdf/doc/docx/jpg/jpeg/png/webp/gif`；
+- 默认：`pdf/doc/docx/xls/xlsx/jpg/jpeg/png/webp/gif`
+  （2026-10-22 D99 增加 xls/xlsx，真机矩阵验证见 `docs/52-D99-notice-attachment-matrix.md`）；
 - CLI：`safe_attachment_path` 与 `save_notice_uploads` 按该白名单校验；
 - PWA「发布-学习通 → 发通知」新增「附件格式白名单」折叠区：
   - 勾选允许的扩展名；

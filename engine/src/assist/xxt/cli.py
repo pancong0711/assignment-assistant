@@ -303,7 +303,8 @@ def register(group: click.Group) -> None:
     @click.option("--body", default="", help="通知正文（纯文本自动转段落）")
     @click.option("--body-html", default="", help="通知正文 HTML")
     @click.option("--attachment", "attachments", multiple=True,
-                  help="workspace 下 pdf/doc/docx 路径，可多次")
+                  help="workspace 下的附件路径，可多次；后缀须在 xxt.notice_attachment_exts"
+                       "（默认 pdf/doc/docx/xls/xlsx/图片，见 `assist xxt attachment-exts get`）")
     @click.option("--send", is_flag=True, default=False,
                   help="真正发送；缺省为 dry-run（只填表/上传附件并截图）")
     @click.option("--json-out", "json_out", default=None, type=click.Path(dir_okay=False),
@@ -844,13 +845,20 @@ def register(group: click.Group) -> None:
     @xxt_attachment_exts.command("set")
     @click.option("--workspace", "-w", default=None, help="workspace 路径（默认自动查找）")
     @click.option("--ext", "exts", multiple=True, required=True,
-                  help="允许的扩展名（可多次，可不带点），如 --ext pdf --ext png")
+                  help="允许的扩展名（可多次，可不带点），如 --ext pdf --ext xlsx")
+    @click.option("--add", "append", is_flag=True, default=False,
+                  help="在现有白名单上追加（默认覆盖；缺省配置时以默认白名单为底）")
     @click.option("--reset", is_flag=True, default=False,
                   help="恢复默认（等价于清空配置项）")
-    def xxt_attachment_exts_set(workspace, exts, reset):
-        """设置附件扩展名白名单；非法条目（空/含路径分隔符）直接拒绝。"""
+    def xxt_attachment_exts_set(workspace, exts, append, reset):
+        """设置附件扩展名白名单；非法条目（空/含路径分隔符）直接拒绝。
+
+        - 默认 `set` 是**覆盖**（会写 `xxt.notice_attachment_exts`）；
+        - `--add` 在**当前实际生效**的白名单（含默认值）上追加，避免误把默认 pdf/doc 覆盖掉；
+        - `--reset` 删除配置项、回到 `DEFAULT_NOTICE_ATTACHMENT_EXTS`。
+        """
         from .allowlist import (DEFAULT_NOTICE_ATTACHMENT_EXTS, normalize_exts,
-                                write_notice_attachment_exts)
+                                read_notice_attachment_exts, write_notice_attachment_exts)
         ws = _ws_or_none(workspace)
         if reset:
             clean = write_notice_attachment_exts(ws, list(DEFAULT_NOTICE_ATTACHMENT_EXTS))
@@ -861,8 +869,11 @@ def register(group: click.Group) -> None:
                 raise click.ClickException(f"非法扩展名：{bad}（只填后缀，如 pdf/png）")
             if not clean:
                 raise click.ClickException("至少提供一个有效扩展名")
+            if append:
+                clean = normalize_exts(read_notice_attachment_exts(ws) + clean)
             clean = write_notice_attachment_exts(ws, clean)
-        _journal("xxt_attachment_exts_set", params={"exts": clean, "reset": bool(reset)})
+        _journal("xxt_attachment_exts_set",
+                 params={"exts": clean, "reset": bool(reset), "append": bool(append)})
         click.echo(json.dumps({"ok": True, "exts": clean,
                                "source": "default" if reset else "configured"},
                               ensure_ascii=False, indent=1))

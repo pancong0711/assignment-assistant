@@ -1929,3 +1929,21 @@ applyManualTranslation/setTranslationRatio 中 setTranslationRatio 保留——�
   QwenWork `SKILL.md` 增加「第 3.5 步：失败先出自检报告」。
 - 测试：`tests/test_selfcheck.py`（9 例：分层结构、无后端、图片告警、无 key、缺 workspace、
   产物失败、CLI 退出码、人类可读含修复建议）。全量 **484 passed** / 脱敏通过。
+
+## D99 · 通知附件类型矩阵 + 上传就绪判定（2026-10-22）
+
+> 承接用户反馈：PWA 首次用 xlsx 发通知，报 `Page.goto: Timeout 60000ms`。
+> 需求单与真机数据见 `docs/52-D99-notice-attachment-matrix.md`。
+
+| # | 改动 | 文件 |
+|---|---|---|
+| V1 | 默认白名单增 `xls/xlsx` | `xxt/allowlist.py` |
+| V2 | 就绪判定改为单次快照（块数+pending+errors+settled 同帧取）+ 失败占位宽限 | `xxt/notice.py` |
+| V3 | 去掉上传后固定 `wait_for_timeout(2500)`，receipt 记 `uploadWaits` | `xxt/notice.py` |
+| V4 | `attachment-exts set --add`；`notice-send --attachment` 帮助对齐；附件被拒错误带允许后缀 | `xxt/cli.py` |
+| V5 | PWA 默认勾选对齐引擎默认值（xlsx 默认开） | `app/src/views/PublishView.vue` |
+
+验证：engine pytest 通知/附件相关 **40 passed**；真机 dry-run 四类附件
+（xlsx/pdf/png/docx，默认班级）全部 ok，各 ~1.1s 就绪。
+
+遗留：`page.goto` 60s 硬编码超时与慢网重试未在本次范围内（实测页面 ~1s 可开）。

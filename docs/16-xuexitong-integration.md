@@ -1083,3 +1083,8 @@ D64-f 批阅回写（写操作）：学习通侧填分/评语——**另行解�
 - 作业编辑器题型按课程不同：**简答题可能在「更多」弹层**里 → 直点失败要兜底展开；
 - 新建作业目录：草稿在**加题时**按编辑器 URL 的 `directoryid` 落目录，事后改隐藏域无效；
 - 附件/评语图片：文档类走 `editor-iframe`、图片走 `ans-ued-img`（计数口径要含两者）。
+- 通知附件「就绪」不能看块数：刚触发上传时 `editor-iframe` 里写的是「正在上传...」；
+  图片的 `imguploaderror` 是**瞬态**节点（实测 0.07s 出现、1.1s 才清掉）。
+  判定必须**同一次快照**取 块数/pending/errors/settled，失败占位给宽限期
+  （D99，见 `docs/52-D99-notice-attachment-matrix.md`）。
+- 通知附件默认后缀已含 `xls/xlsx`（D99 真机验证：与 pdf/docx 同为云附件 `insertCloud.html`）。

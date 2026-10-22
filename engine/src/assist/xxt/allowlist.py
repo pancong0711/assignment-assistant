@@ -88,7 +88,10 @@ def set_work_folder_default(ws, course_id: str, directory_id: str, name: str = "
     p.write_text(json.dumps(data, ensure_ascii=False, indent=1), encoding="utf-8")
     return folders[str(course_id)]
 
-DEFAULT_NOTICE_ATTACHMENT_EXTS = ["pdf", "doc", "docx", "jpg", "jpeg", "png", "webp", "gif"]
+# D99：默认白名单扩充 xls/xlsx（2026-10-22 真机矩阵验证：xlsx 与 pdf/docx 同为
+# `editor-iframe` 云附件，平台侧无格式限制）。其余 ppt/pptx/zip/txt 走 PWA 勾选扩展。
+DEFAULT_NOTICE_ATTACHMENT_EXTS = ["pdf", "doc", "docx", "xls", "xlsx",
+                                  "jpg", "jpeg", "png", "webp", "gif"]
 
 
 def normalize_exts(raw) -> list[str]:

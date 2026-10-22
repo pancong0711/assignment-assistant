@@ -226,13 +226,21 @@ async function loadFolders(force = false) {
 const noticeTitle = ref('作业通知-大学物理')
 const noticeBody = ref('作业纸见附件，请各位同学打印自己的那一张并手写完成、拍照上传到学习通作业里面。')
 const noticeAtt = ref<XxtNoticeAttachment[]>([])
-const attExts = ref<string[]>([])
-const attExtOptions = ['pdf', 'doc', 'docx', 'jpg', 'jpeg', 'png', 'webp', 'gif', 'xls', 'xlsx', 'ppt', 'pptx', 'zip', 'txt']
+// D99：默认勾选与引擎 DEFAULT_NOTICE_ATTACHMENT_EXTS 对齐（xls/xlsx 已默认放开）。
+const attExtDefaults = ['pdf', 'doc', 'docx', 'xls', 'xlsx', 'jpg', 'jpeg', 'png', 'webp', 'gif']
+const attExtOptions = ['pdf', 'doc', 'docx', 'xls', 'xlsx', 'jpg', 'jpeg', 'png', 'webp', 'gif', 'ppt', 'pptx', 'zip', 'txt']
+const attExts = ref<string[]>([...attExtDefaults])
 const attAccept = computed(() => attExts.value.map(e => '.' + e).join(','))
 const noticePick = ref<Record<string, boolean>>({})
 const uploadInput = ref<HTMLInputElement | null>(null)
 function attAllowed(name: string): boolean { const e = (name.split('.').pop() || '').toLowerCase(); return attExts.value.includes(e) }
-async function loadAttWhitelist() { try { attExts.value = await fetchXxtAttachmentWhitelist(engUrl.value, tok.value) } catch { /* noop */ } }
+async function loadAttWhitelist() {
+  try {
+    const exts = await fetchXxtAttachmentWhitelist(engUrl.value, tok.value)
+    // 引擎读不到配置时会回默认值；空数组视为"未配置"，保留默认勾选。
+    if (Array.isArray(exts) && exts.length) attExts.value = exts
+  } catch { /* noop */ }
+}
 async function saveAttWhitelist() { try { attExts.value = await saveXxtAttachmentWhitelist(engUrl.value, tok.value, attExts.value); await loadAtt(); msg.value = '附件格式白名单已保存' } catch (e) { msg.value = `白名单保存失败：${String(e)}` } }
 async function loadAtt() { try { noticeAtt.value = (await fetchXxtNoticeAttachments(engUrl.value, tok.value, 200)).filter(a => attAllowed(a.name)) } catch { /* noop */ } }
 function attNames() { return Object.keys(noticePick.value).filter(k => noticePick.value[k]).map(p => noticeAtt.value.find(a => a.path === p)?.name || p.split(/[\\/]/).pop() || p) }
