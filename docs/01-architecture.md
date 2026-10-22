@@ -39,6 +39,20 @@
    `http://127.0.0.1:<port>` 引擎是否在线，在线则解锁学习通自动化、
    批量 AI 批阅、LaTeX 精确排版等扩展功能。
 
+> **CLI 与 serve 的关系（2026-10-18 明确）**：CLI 是引擎本体，**纯进程内调用**——
+> 所有业务命令（`kb/sheet/grade/playground/xxt/...`）直接 `from .module import ...` 调函数，
+> 读写 workspace 本地文件，**不经过 HTTP、不需要 `assist serve` 在线**。
+> `serve` 只是给浏览器（PWA）用的 RPC/SSE 门面（`/xxt/*`、`/install/*`、`/jobs`），
+> 它内部把写操作套壳成 `python -m assist.cli <args>` 子进程，与 CLI 同一实现。
+> 因此：**AI/脚本应直接调用 `assist <cmd>`，不要绕 serve**；只有 PWA 需要 serve 常驻。
+> 唯一需要"生命周期管理者在场"的是两阶段引擎更新（`assist engine update` 只写
+> `_engine/staging` + `update.pending`，真正安装依赖 launcher `start.bat/start.sh`）。
+>
+> **并发安全（AI 并行调 CLI）**：配置/草稿类"读-改-写"文件统一走 `assist/filelock.py`
+> （跨平台排他锁 + 临时文件原子替换）：`xxt/grade_store`（草稿）、`files/solutions`
+> （答案多版本）、`xxt/work`（发布索引）、`packs`（作业包）。journal 这类纯追加的
+> 行式文件保持原样。新增任何"读 JSON→改→整写"的代码都应使用 `update_json()`。
+
 > 关键原则：**静态模式下功能可有降级，但不出现死页面**。
 > 例如静态模式里作业纸用 CSS 分页预览 / 浏览器打印输出 PDF；
 > companion 模式下由引擎用 reportlab/LaTeX 输出打印级 PDF 并带水印。

@@ -53,27 +53,36 @@ def save_draft(home, class_id: str, work_id: str, key: str, *,
     k = str(key or "").strip()
     if not k:
         return {"ok": False, "error": "缺少学生 key（workAnswerId 或姓名）"}
-    data = read_drafts(home, class_id, work_id)
-    cur = data.get(k) if isinstance(data.get(k), dict) else {}
-    if score is not None:
-        try:
-            cur["score"] = float(score)
-        except (TypeError, ValueError):
-            return {"ok": False, "error": f"分数非法：{score}"}
-    if comment:
-        cur["comment"] = str(comment)
-    if comment_text:
-        cur["comment_text"] = str(comment_text)
-    if images is not None:
-        cur["images"] = [{"name": str(i.get("name") or ""), "data_b64": str(i.get("data_b64") or "")}
-                         for i in images if isinstance(i, dict)]
-    if extra:
-        for kk, vv in extra.items():
-            cur[str(kk)] = vv
-    cur["updatedAt"] = time.strftime("%Y-%m-%d %H:%M:%S")
-    data[k] = cur
-    p.write_text(json.dumps(data, ensure_ascii=False, indent=1), encoding="utf-8")
-    return {"ok": True, "key": k, "draft": cur, "file": str(p)}
+    # 读-改-写必须整体在锁内：AI/脚本并行写同一份草稿文件时不丢更新、不留半截 JSON。
+    from ..filelock import update_json
+    box: dict = {}
+
+    def _mutate(data: dict) -> None:
+        cur = data.get(k) if isinstance(data.get(k), dict) else {}
+        if score is not None:
+            try:
+                cur["score"] = float(score)
+            except (TypeError, ValueError):
+                box["error"] = f"分数非法：{score}"
+                return
+        if comment:
+            cur["comment"] = str(comment)
+        if comment_text:
+            cur["comment_text"] = str(comment_text)
+        if images is not None:
+            cur["images"] = [{"name": str(i.get("name") or ""), "data_b64": str(i.get("data_b64") or "")}
+                             for i in images if isinstance(i, dict)]
+        if extra:
+            for kk, vv in extra.items():
+                cur[str(kk)] = vv
+        cur["updatedAt"] = time.strftime("%Y-%m-%d %H:%M:%S")
+        data[k] = cur
+        box["draft"] = cur
+
+    update_json(p, _mutate, default={})
+    if "error" in box:
+        return {"ok": False, "error": box["error"]}
+    return {"ok": True, "key": k, "draft": box["draft"], "file": str(p)}
 
 
 def normalize_draft(d: dict) -> dict:
@@ -127,39 +136,52 @@ def save_draft_sets(home, class_id: str, work_id: str, key: str, *,
     k = str(key or "").strip()
     if not k:
         return {"ok": False, "error": "缺少学生 key"}
-    data = read_drafts(home, class_id, work_id)
-    cur = normalize_draft(data.get(k) if isinstance(data.get(k), dict) else {})
-    if ai is not None:
-        cur["ai"] = {**(cur.get("ai") or {}), **{kk: vv for kk, vv in ai.items() if vv is not None}}
-    if human is not None:
-        cur["human"] = {**(cur.get("human") or {}), **{kk: vv for kk, vv in human.items() if vv is not None}}
-        if human:
-            cur["human"]["used"] = True
-    if human_mode is not None:
-        cur["humanMode"] = str(human_mode or "none")
-    if revision is not None:
-        cur["revision"] = {**(cur.get("revision") or {}), **revision}
-        cur["revision"].setdefault("at", time.strftime("%Y-%m-%d %H:%M:%S"))
-    if student:
-        cur["student"] = student
-    if tag:
-        cur["tag"] = tag
-    cur["revised"] = _is_revised(cur)
-    cur["updatedAt"] = time.strftime("%Y-%m-%d %H:%M:%S")
-    data[k] = cur
-    p.write_text(json.dumps(data, ensure_ascii=False, indent=1), encoding="utf-8")
-    return {"ok": True, "key": k, "draft": cur, "file": str(p)}
+    from ..filelock import update_json
+    box: dict = {}
+
+    def _mutate(data: dict) -> None:
+        cur = normalize_draft(data.get(k) if isinstance(data.get(k), dict) else {})
+        if ai is not None:
+            cur["ai"] = {**(cur.get("ai") or {}),
+                         **{kk: vv for kk, vv in ai.items() if vv is not None}}
+        if human is not None:
+            cur["human"] = {**(cur.get("human") or {}),
+                            **{kk: vv for kk, vv in human.items() if vv is not None}}
+            if human:
+                cur["human"]["used"] = True
+        if human_mode is not None:
+            cur["humanMode"] = str(human_mode or "none")
+        if revision is not None:
+            cur["revision"] = {**(cur.get("revision") or {}), **revision}
+            cur["revision"].setdefault("at", time.strftime("%Y-%m-%d %H:%M:%S"))
+        if student:
+            cur["student"] = student
+        if tag:
+            cur["tag"] = tag
+        cur["revised"] = _is_revised(cur)
+        cur["updatedAt"] = time.strftime("%Y-%m-%d %H:%M:%S")
+        data[k] = cur
+        box["draft"] = cur
+
+    update_json(p, _mutate, default={})
+    return {"ok": True, "key": k, "draft": box["draft"], "file": str(p)}
 
 
 def delete_draft(home, class_id: str, work_id: str, key: str) -> dict:
     p = draft_file(home, class_id, work_id)
     if p is None or not p.is_file():
         return {"ok": False, "error": "无草稿文件"}
-    data = read_drafts(home, class_id, work_id)
-    if str(key) not in data:
+    from ..filelock import update_json
+    box: dict = {"found": False}
+
+    def _mutate(data: dict) -> None:
+        if str(key) in data:
+            data.pop(str(key), None)
+            box["found"] = True
+
+    update_json(p, _mutate, default={})
+    if not box["found"]:
         return {"ok": False, "error": f"草稿不存在：{key}"}
-    data.pop(str(key), None)
-    p.write_text(json.dumps(data, ensure_ascii=False, indent=1), encoding="utf-8")
     return {"ok": True, "key": str(key)}
 
 

@@ -44,9 +44,35 @@
 - `docs/16-xuexitong-integration.md` — **阶段6 学习通整合任务需求单**（登录/读取/下载/上传/发布）
 - `_legacy/` — 原始两项目解档（仅本地参考，已被 gitignore，永不推送）
 
+## AI agent 使用（无 API key 也能跑）
+
+`skills/` 里是给 AI agent 的操作规程（先读 `skills/README.md`）。核心链路：
+
+```bash
+assist doctor --json                 # 探测能力：api / command / batch / agentCli
+assist grade --task a.json --xxt-class c:k --work w   # 程序逐生独立请求（隔离）
+```
+
+- **路径优先级**：`type=command`/本地端点 > `subagent` > `plan/collect`（兜底）> 逐条（禁止）；
+- **无 API key**：`assist llm provider --action set --type command --cmd <agent-cli>` 让程序回环
+  调用你的 agent CLI（每次新进程=天然隔离）；或 `assist grade-plan ...` 生成清单让 agent 自己做；
+- **批阅严谨性**：`json_schema` + `evidence`（引用原文）+ `confidence`（low 不计分）；
+- **执行报告**：`<grading>/batch-report.json`（成功/失败/耗时，失败可重跑）。
+
 ## 里程碑
 
 见 `docs/06-roadmap.md`（六阶段）。当前：阶段 0/1/2/3/3.5 已完成，
 阶段 4a 主体完成；作业纸 HTML/PDF 主通道、班级分层、批量批阅 CLI、TinyTeX/KaTeX
 可选依赖与 Pages 部署均已上线。剩余重点为阶段5 产品化收尾与阶段6 学习通接入；
 CLI 保持超集，便于 AI agent 在 PWA 不可用时作为备份完成全流程。
+
+## AI / 脚本调用约定
+
+- **直接调用 `assist <cmd>`，不需要 `assist serve` 常驻**：CLI 是进程内实现，读写本机
+  workspace 文件；`serve` 只是给浏览器（PWA）的 HTTP/SSE 门面。
+- **机读错误**：设置 `ASSIST_JSON_ERRORS=1`，失败时 stderr 输出一行
+  `{"ok": false, "error": "...", "type": "...", "exitCode": N}`，退出码 0=成功、
+  1=业务失败、2=用法错误。
+- **并发安全**：配置/草稿类"读-改-写"已加文件锁 + 原子写，多个 CLI 并行不会丢更新。
+- **更新引擎**：`assist engine update` 只暂存新版本，需 launcher（`start.bat/start.sh`）
+  重启后安装；用 `assist engine status [--json]` 查看当前停在哪一步。

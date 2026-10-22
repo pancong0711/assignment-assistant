@@ -1150,6 +1150,19 @@ class Handler(BaseHTTPRequestHandler):
                 return
             from .playground import ask as pga
             ws = Path(self.ws).resolve()
+            if payload.get("items"):
+                # D98：每条自带 question+images（各条互不共享）
+                rep = pga.batch_items(ws, items=payload.get("items") or [],
+                                      provider=str(payload.get("provider") or ""),
+                                      model=str(payload.get("model") or ""),
+                                      system=str(payload.get("system") or ""),
+                                      temperature=payload.get("temperature"),
+                                      max_tokens=int(payload.get("max_tokens") or 8192),
+                                      folder=str(payload.get("folder") or ""),
+                                      workers=int(payload.get("workers") or 3),
+                                      save=bool(payload.get("save", True)))
+                self._json(rep, 200 if rep.get("ok") else 400)
+                return
             rep = pga.batch(ws, questions=payload.get("questions") or [],
                             provider=str(payload.get("provider") or ""),
                             model=str(payload.get("model") or ""),
@@ -1159,7 +1172,8 @@ class Handler(BaseHTTPRequestHandler):
                             max_tokens=int(payload.get("max_tokens") or 8192),
                             folder=str(payload.get("folder") or ""),
                             workers=int(payload.get("workers") or 3),
-                            save=bool(payload.get("save", True)))
+                            save=bool(payload.get("save", True)),
+                            combine=bool(payload.get("combine", False)))
             self._json(rep, 200 if rep.get("ok") else 400)
             return
         if u.path == "/kb/ai-solve":

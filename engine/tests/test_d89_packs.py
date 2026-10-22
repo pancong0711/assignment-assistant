@@ -146,3 +146,13 @@ def test_serve_pack_crud(server):
 
     r = _post(base, "/pack", {"action": "delete", "id": "PK1"})
     assert r["ok"] is True and r["packs"] == []
+
+
+def test_save_pack_rejects_id_mismatch(tmp_path):
+    """--id 与文件内 id 不一致必须拒绝（避免自相矛盾的包）。"""
+    from assist.packs import save_pack
+    res = save_pack(tmp_path, "pack-a", {"id": "pack-b", "name": "x"})
+    assert res["ok"] is False and "不一致" in res["error"]
+    # 一致 / 没有内层 id 都允许
+    assert save_pack(tmp_path, "pack-a", {"id": "pack-a", "name": "x"})["ok"] is True
+    assert save_pack(tmp_path, "pack-c", {"name": "y"})["ok"] is True

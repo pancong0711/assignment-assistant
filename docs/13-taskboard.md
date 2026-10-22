@@ -1598,3 +1598,334 @@ applyManualTranslation/setTranslationRatio 中 setTranslationRatio 保留——�
   c) 页眉班级解析 `stu.class → 学习通班级名/class_dir → 空`（三端同步 + parity 哨兵）；
 - AI 入口（方案 A）：`GradingView` 重构为「AI 辅助批阅」（六区），迁移并删除 XxetongView 的临时面板，保留离线 CLI 块。
 - 状态：**§1–§5 全部完成**（含 docs/13/15/39 文档入口指向 + HelpView 卡片）；验证 engine pytest 271 passed / PWA build 通过。
+
+---
+
+## P0 · 题库/通知/作业 CLI 一致性清理（2026-10-18）
+
+> 触发：用户要求盘点「题库管理 / 发公告 / 发作业」三块 CLI 完整度与注释质量后，先做 P0（正确性/一致性，不改写操作行为）。
+> 范围：4 项；均含回归测试；引擎 pytest 398 passed。
+
+### P0-1 · 删除通知硬编码白名单（死常量 + 误导）
+
+- 现象：`xxt/notice.py` 顶部 `NOTICE_TEST_ALLOWLIST = {("217801417", "40009084")}` 已无任何生产代码引用
+  （仅测试 import），但模块 docstring 仍写"仅允许该常量中的班级" → 读者会误以为改常量即可加班级，
+  且仓库内滞留真实课程/班级 ID。
+- 处理：删除常量；docstring 改为「只允许命中 `xxt.write_allowlist`」；注释说明扩展名白名单走
+  `allowlist.read_notice_attachment_exts`（`ATTACH_SUFFIXES` 仅兼容保留）。
+- 测试：`test_no_hardcoded_allowlist_constant`（断言属性已不存在 + 未配置时历史测试班也被拒）。
+
+### P0-2 · `kb stats` 空题库提示指向不存在的命令
+
+- 现象：提示"可用 `assist kb init` 生成示例"，但 CLI **无 `kb init` 命令**（PWA 走 `/install/kb_init`）。
+- 处理：改为指向真实入口「PWA 体检页『创建题库』（引擎端点 /install/kb_init），或把 xlsx 放入 kb/」。
+- 测试：`test_cli_kb_stats_empty_hint_mentions_real_entry`（断言输出不含 `kb init`、含 `kb_init`）。
+
+### P0-3 · `xxt notice-send --target` 丢失 className
+
+- 现象：`--target courseId:classId[:className]` 的第三段被解析成 `cname`（课程名），
+  而班级 `name` 直接用了 `classId`（`kname = kid`）→ 通知收件人 sendMap 显示为数字 ID，
+  与帮助文案语义不符（`_inject_send_map` 用 `name` 作为收件人显示名）。
+- 处理：抽出纯函数 `xxt.cli.targets_from_pairs()`：
+  - 第三段 = **班级名**，透传为 `classes[].name`；缺省回落 classId；
+  - `courseName` CLI 直调无来源，回落 courseId；
+  - 同一 courseId 的多个 `--target` 合并到同一 course；
+  - 空 courseId/classId 显式报 UsageError。
+- 测试：`test_targets_from_pairs_keeps_class_name` / `test_targets_from_pairs_rejects_bad`。
+
+### P0-4 · `kb write` 未校验章节名（Excel sheet 名）
+
+- 现象：仅校验 `--kind`，章节名（= sheet 名）未校验；混入 `[]:*?/\` 或超 31 字符时由 openpyxl
+  抛堆栈，错误不友好。
+- 处理：`files/kb_io.py` 新增 `validate_sheet_name()`（非空 / ≤31 字符 / 禁 `[]:*?/\`）；
+  `write_chapters_preserving()` 入口做防御性 `ValueError`；CLI `kb write` 写前校验并抛
+  `click.ClickException`（可读错误 + 退出码非 0）。
+- 测试：`test_validate_sheet_name` / `test_write_chapters_preserving_rejects_bad_sheet` /
+  `test_cli_kb_write_rejects_bad_sheet`。
+
+### 文档同步
+
+- `docs/30-D78`：更正"当前测试白名单/临时硬编码"两处过时表述；
+- `docs/16`：安全边界白名单条目补充"唯一来源=配置、无硬编码旁路"；
+- `docs/12`：登记 P1 遗留（CLI 白名单/附件扩展名/作业改名/默认文件夹命令缺失等）。
+
+### 未做（转 P1/P2）
+
+- `work-rename` 有实现无 CLI；`write_allowlist` / `notice_attachment_exts` / `work_folders` 配置仅有 serve 端点；
+- `kb export/snapshot/stats` 缺 CLI 级测试；`kb write` 对 `*-example.xlsx` 的双通道策略待定；
+- `kb ai-solve` 串行、无批量；`notice-send`/`work-publish` 无 `--json-out`。
+
+---
+
+## P1 · 补齐 `assist xxt` 配置类 CLI（2026-10-18）
+
+> 承接 P0：底层能力早已有、CLI 缺入口的 4 项。拍板：**统一挂 `assist xxt` 下**（与既有写操作/管理命令同组），
+> 不新开顶层 `assist config` 组。验证：engine pytest 404 passed / 脱敏通过。
+
+### 新增命令
+
+| 命令 | 对应底层 | 说明 |
+|---|---|---|
+| `xxt allowlist list/add/rm` | `allowlist.read_allowlist/write_allowlist` | 写操作白名单维护；`list` 回显实际读取的 `settings.local.json` 路径；`add` 幂等（已存在只更新备注）；`rm` 不存在时退出码非 0 |
+| `xxt attachment-exts get/set` | `allowlist.read/write_notice_attachment_exts` | 通知/作业附件扩展名白名单；`get` 标注 `source=default/configured`；`set --reset` 恢复默认；非法扩展名（含 `/`、`.`、超长）拒绝 |
+| `xxt work-folder-default show/set` | `allowlist.work_folder_defaults/set_work_folder_default` | 作业库默认文件夹（按课程）；`show --course` 可过滤 |
+| `xxt work-rename` | `work.rename_work`（新增 `workspace` 参数） | 作业库改名；走编辑器保存；白名单前置拒绝（退出码 2） |
+
+### 要点
+
+- 所有配置类命令均带 `-w/--workspace`（与写操作命令同口径），默认自动查找；
+- 所有命令统一 JSON 输出（`ensure_ascii=False, indent=1`），便于脚本/PWA 套壳；
+- `allowlist` / `attachment-exts` / `work-folder-default` 的写操作均写 `pan` 全局 journal
+  （`_journal(...)`），被 serve 套壳时由 `ASSIST_NO_JOURNAL` 跳过，避免重复记录；
+- **顺带修复**：`work.rename_work()` 原先调用 `validate_work_target(course_id, class_id)`
+  未传 workspace → 读默认 workspace 校验，与 `create_work`/`publish_work` 不一致。
+  现新增 `workspace=None` 参数并透传；CLI 传 `find_workspace(workspace)`。
+
+### 测试（`engine/tests/test_p1_xxt_config_cli.py`，6 例）
+
+- allowlist add/list/rm + 幂等 + 落盘结构 + 删除不存在非 0；
+- CLI 加白名单后 `validate_work_target` 由拒转通（证明 CLI 写的就是引擎读的那份）；
+- attachment-exts 默认/设置/归一/非法拒绝/reset；
+- work-folder-default set/show（含按课程过滤）；
+- work-rename 白名单外**在启动浏览器前**拒绝（退出码 2）；
+- `rename_work(workspace=...)` 参数确实传入 `validate_work_target`（monkeypatch 断言）。
+
+### 未做（转 P2）
+
+- `notice-send` / `work-publish` 的 `--json-out`；`work-publish` 发布后回读摘要；
+- `kb ai-solve` 批量/并发；`kb export/snapshot/stats` CLI 级测试；`*-example.xlsx` 双通道策略；
+- `serve.py` 的配置类端点与本组 CLI 的「配置项 ↔ 命令/端点」对照表。
+
+---
+
+## P1.5 · CLI 与 serve 边界澄清 + 并发写安全（2026-10-18）
+
+> 触发：用户问「AI 使用 CLI 时是否有必要让 engine 始终在线？并检查其他 CLI 漏洞」。
+
+### 架构结论：CLI 不需要 serve 在线
+
+- CLI 全部为**进程内函数调用**，不依赖 `/xxt/*` 等 HTTP 端点，也不要求 8601 端口监听；
+- `serve` 是 PWA 专用门面，其写操作端点内部仍是 `python -m assist.cli <args>` 子进程，
+  与 CLI 同源；
+- 唯一例外是**两阶段引擎更新**：`assist engine update` 只暂存，安装靠 launcher。
+- 已写入 `docs/01-architecture.md`（CLI/serve 关系 + 并发安全两段）。
+
+### 修复的 CLI 漏洞
+
+| # | 问题 | 处理 |
+|---|---|---|
+| 1 | `kb export`/`kb snapshot`/`sheet demo`/`sheet make` 的 `_setup()` 未传 `workspace` → `-w` 静默失效 | 全部补传；CLI 已无漏传点 |
+| 2 | `kb export --fmt` 是假参数（未使用） | 显式只支持 json，其他格式给出错误 |
+| 3 | 并发"读-改-写"损坏：两个 CLI 同时写同一份草稿/答案版本/发布索引会丢更新或留半截 JSON | 新增 `assist/filelock.py`（`locked`/`atomic_write_text`/`update_json`），接入 `grade_store`（三处）、`files/solutions`（add/pin/rm）、`xxt/work`（发布索引）、`packs`（原子写） |
+
+### 并发安全设计
+
+- 锁：POSIX `fcntl.flock` / Windows `msvcrt.locking`，对 `<file>.lock` 排他，带超时（默认 30s，不无限挂起）；
+- 写：同目录临时文件 + `os.fsync` + `os.replace` 原子替换；
+- 读-改-写：`update_json(path, mutator)` 一步完成，天然串行；
+- 不在范围：journal 纯追加行文件（单行 append 保持原状）。
+
+### 测试
+
+- `tests/test_filelock.py`（5 例）：累加、损坏恢复、原子写无残留、可重入、**4 进程各 30 次精确累加**；
+- `test_xxt_grade_store.py::test_concurrent_save_drafts_no_lost_update`：4 进程各写 10 名学生，
+  断言 40 条全保留（修复前会丢）；
+- 全量：engine pytest 410 passed / 脱敏通过。
+
+### 待办（P2，未做）
+
+- CLI 统一机器可读错误（顶层异常 → 结构化 JSON，而非 traceback）；
+- `engine status/restart/--json/journal`（上次盘点项）；
+- `playground batch` 附件对每条问题重复拼 prompt（token 浪费）；
+- `pack save` 校验 pid 与文件内 id 一致；`kb export/snapshot/stats` 补测试。
+
+---
+
+## P2 · CLI 面向 AI/脚本的健壮性收尾（2026-10-18）
+
+> 承接 P1.5 的待办。验证：engine pytest 424 passed / 脱敏通过。
+
+### 1. 机读错误（`ASSIST_JSON_ERRORS`）
+
+- 问题：AI 调 CLI 时未处理异常会吐 Python traceback，无法解析；
+- 处理：`main()` 包一层异常处理。设环境变量 `ASSIST_JSON_ERRORS=1` 时，
+  `ClickException` / `UsageError` / 任意未处理异常统一向 **stderr** 输出一行：
+  `{"ok": false, "error": "...", "type": "...", "exitCode": N}`；
+- 退出码保持约定：UsageError/未知命令=2、ClickException=1、其他异常=1；
+- 未设置时行为不变（人类可读 + traceback），不影响现有 PWA 子进程调用（它们不设该变量）；
+- 测试：`tests/test_cli_json_errors.py`（ClickException / 未知命令 / 未处理异常 / 人类模式）。
+
+### 2. `assist engine status`（补齐更新闭环可观测性）
+
+- 问题：`engine update` 只写 `staging`+`pending`，用户/AI 无法判断"更新卡在哪"；
+- 处理：`engine_update.update_status(ws)` + CLI `assist engine status [--json]`：
+  本地/远端版本、`stage ∈ none|pending|failed`、`pending/staging/failed` 布尔、
+  staging 缺文件清单、人类可读 `hint`；
+- `assist engine update` 新增 `--json`（输出 rc/stage/lines/hint），并写 journal
+  （`engine_update` 事件，与 serve `install_engine_update` 同口径）；
+- 测试：`test_engine_update.py` 新增 pending/staging/failed 三态 + CLI `--json`。
+
+### 3. `playground batch --combine`（省 token）
+
+- 问题：批量模式下**同一组附件对每条问题重复发送**（图片 token 最贵）；
+- 处理：`batch(combine=True)` 把问题编号 `[Q1]/[Q2]` 合并进**一次**请求，附件只发一遍，
+  再按标记拆回答；`_split_combined` 缺标记时退化为整段给第 1 题；
+- CLI `playground batch --combine`；serve `/playground/batch` 透传 `combine`；
+- 测试：`tests/test_playground_combine.py`（单次请求、附件只出现一次、逐条模式不受影响、拆分兜底）。
+
+### 4. 其他
+
+- `packs.save_pack` 校验 `--id` 与文件内 `id` 一致（不一致拒绝）；
+- 补 `kb export/snapshot/stats` 的 CLI 级测试（`tests/test_kb_cli_commands.py`），
+  含 `-w` 生效、`--fmt` 非法拒绝、快照落盘。
+
+### 仍待办（P3）
+
+- README/使用说明补 `ASSIST_JSON_ERRORS` 约定；
+- `notice-send`/`work-publish --json-out` 与发布后回读摘要；
+- `kb ai-solve` 并发（与 token 线合并讨论）。
+
+---
+
+## D98 · 两段式转录/批阅的批量隔离 + 执行报告 + skill 规程（2026-10-18，讨论稿）
+
+- 主需求单：`docs/51-D98-llm-batch-isolation-skill.md`（§2 现状核查 / §3 隔离原理 / §7 分批）。
+- 用户裁决：① 同生多页同一批转录（不逐页合并）；② skill 放 `skills/`；③ 批阅补严谨性。
+- 核心结论（讨论）：
+  - **隔离靠"每条任务独立构造 messages + 独立请求"，不靠 subagent**；LLM 无状态，
+    `LLMClient.request` 每次全新 messages，已是结构性隔离。
+  - **subagent = agent 侧并行编排**；**程序并发 = 兜底且更可靠的主干**；两者共用"每条独立"输入契约。
+  - 现状：转录已逐生独立（✅）；Playground batch 是"全局附件+多问题"（❌ 不支持每条自带图/问题）；
+    评阅 batch 仅文字、转录无 batch（❌）；评阅缺 json_schema/evidence/confidence（❌）。
+- 计划：B1 items 契约 → B2 Playground items → B3 转录 batch → B4 评阅严谨性 → B5 skills → B6 文档。
+- **定稿（2026-10-18 第五轮）**：用户逐条拍板 → docs/51 §7 决策定稿、§8 执行顺序 B1–B9。
+  关键追加：**API key 路径（含 Aliyun batch）必须在 CLI 完整可用**（下载结果缺回灌，链路断裂已记录）；
+  逐条 agent 亲自做默认禁止；首选路径失败不自动降级；单条失败标记继续；模型可换默认 agent 当前模型。
+  立即按 B1 开工，每批完成更新本表。
+- 补充讨论（2026-10-18 第二轮）：确认"长会话全量重放"是 agent 默认行为，纯 skill 文本无法
+  保证隔离；定稿方向 = skill 写**能力探测 + A/B/C 降级**（A=subagent 原生、B=程序 batch 兜底、
+  C=主会话直做禁用），并要求主 agent **只读 batch-report 不读正文**。见 docs/51 §3/§4.5。
+- 补充讨论（2026-10-18 第三轮）：**无 API key 的套餐型 agent**。结论：assist 只有 HTTP+key 一条路，
+  不应"回调 agent 本身"；无 key 时 LLM 能力在 agent 侧，assist 降级为 `plan/collect`
+  （生成清单+提示词 → agent 做 LLM → 校验+Python 算分+执行报告）。subagent 为最优但依赖框架，
+  plan/collect 是更普适兜底。见 docs/51 §3.4–§3.6、B7。
+- 补充讨论（2026-10-18 第四轮）：用户定调**逐条 agent 亲自做 = 高风险默认禁止**；
+  正常路径仅两条：**type=command/本地端点** 或 **subagent**。新增 §3.7–§3.9：
+  路径优先级、agent 能力探测（doctor）、“如何启用”指引、`type=command` 设计。
+  进度表加 B7(command+doctor)/B8(plan/collect 兜底)；§8 列 6 个待确认。见 docs/51。
+
+### D98 执行进度（2026-10-18）
+
+- **B1 ✅ items 统一契约**：`grading/items.py`（normalize/build_messages/load_items_file），
+  `build_messages` 只接受单条 item → 结构上杜绝跨条污染；5 测试（含"请求体不含他条"断言）。
+- **B2 ✅ doctor 能力探测**：`providers.capabilities()`（api/command/batch/agentCli + recommendedPath）；
+  `assist doctor [--json]` 输出；4 测试。本机实测正确识别 `opencode` → 推荐 `command`。
+- **B3 ✅ type=command provider**：`grading/provider_command.py`（stdin JSON→stdout JSON、
+  临时文件传图、超时/非零退出可读诊断）；`LLMClient._request_via_command`（每次新进程=隔离）；
+  CLI `llm provider --type command --cmd …`；9 测试（含"两次调用不串上下文"）。
+  **端到端已验证**：`playground ask` 走 command provider 返回结果，全程无 API key。
+- **B4 ✅ 转录 batch + 执行报告**：`grading/batchrun.py`（通用并发编排 + `batch-report.json`，
+  单条失败标记继续）；`transcribe_batch`（每生一条 item、逐条独立）；`flow._run_transcribe`
+  改走 batch 并落诊断。4 测试；全量 446 passed。
+- **B5 ✅ 批阅严谨性**：`prompts.EVALUATION_SCHEMA`（补 evidence/why/confidence/correct_points）+
+  `EVIDENCE_INSTRUCTION`；`analyze` 优先 json_schema、不支持自动回退 json_object；
+  `score_from_analysis` 中 **confidence=low 不计扣分**；报告含 做对/问题/为什么/你的原文/待教师确认。5 测试。
+- **B6 ✅ API key 全链路（回灌）**：`llm_batch.parse_output_jsonl` + `apply_results`
+  （下载 JSONL → evaluations/*.json + Python 算分）；CLI `llm batch --apply --results`；
+  另补 `assist engine restart`（POST /restart，未运行时明确报错）。3 测试。
+  **Aliyun batch 真机 submit/poll/download 仍待用户配 key 验证**（本机无网）。
+- **B7 ✅ plan/collect 兜底**：`grading/plan_collect.py`（生成 task-list.json + 每生 agent-tasks/<id>.md +
+  collect 校验 + batch-report.json）；CLI `grade-plan xxt-plan` / `grade-plan collect`；
+  输出明确"程序不调用任何模型，正文由 agent 完成"。3 测试。
+- **B8 ✅ skills/**：`skills/README.md` + `transcribe/evaluate/grade-orchestrate/batch-isolation/provider-setup`
+  五份规程，含"能力探测 → 路径优先级（command > subagent > plan/collect > 禁止逐条）"、
+  "首选失败不自动降级"、"主会话只读报告不读正文"。
+- **B9 进行中**：README/docs 收尾。
+- 全量：engine pytest **457 passed** / 脱敏通过。
+
+### D98 收尾（2026-10-18，合并 P3 遗留）
+
+- **`kb ai-solve` 并发 ✅**：`solve_targets` 改用 `batchrun.run_items`（受控并发、单题失败标记继续），
+  CLI 加 `--concurrency`（默认 3）；`run_items` 条目统一 `status` 字段。
+- **`notice-send` / `work-publish --json-out` ✅**：结果同时写文件；`work-publish --send` 成功后有
+  `publishedCheck` 回读摘要（对齐 `create_work.directoryCheck`）。
+- **token usage 度量 ✅**：`LLMClient._record_usage/usage_summary`（OpenAI 兼容 usage）；
+  `flow._accum_usage` 按转录/评阅段汇总进 run summary；`grade` 结束打印
+  `prompt/completion/total/calls`。为后续"省 token"提供度量基准。
+- 测试：`tests/test_d98_remaining.py`（4 例）。全量 engine pytest **461 passed** / 脱敏通过。
+
+### D98 增补（2026-10-18 第二批）
+
+- **Playground batch `--items` ✅**：每条自带 `question` + `images`，逐条独立请求、互不共享
+  （`playground.ask.batch_items`；CLI `--items`；serve `/playground/batch` 支持 `items`）。
+  4 测试（含"甲/乙请求互不含对方文本与图片"）。
+- **qwen 系 skill 适配 ✅**：`skills/providers-qwen.md` + `tools/adapters/agent_adapter_qwen.py`
+  （把 stdin 契约转 `qwen -p/-m/--system-prompt`）；qwenwork/workbuddy 标 `【待确认】` 模板，
+  不臆造参数（本机未安装）。
+- **修 bug（command 模型）**：`LLMClient` 在 `type=command` 下**忽略配置默认模型**，
+  默认用 agent 当前模型，只有显式 `--model` 才传（裁决 7）。测试固化。
+- 全量：engine pytest **466 passed** / 脱敏通过。
+
+### D98 增补（2026-10-18 第三批）
+
+- **qwen adapter 实测化**：`tools/adapters/agent_adapter_qwen.py` 基于本机 qwen 0.13.2 实参重写
+  （`-p … -o json`；解析 `type=result` → `text` + `usage`）。用真实输出格式验证通过。
+- **command usage 贯通**：`provider_command` 回传 usage；`LLMClient` 记录 → 进入 token 度量。
+- **修关键 bug**：`LLMClient(ws=ws)` 原只读旧 `llm.api_key` 配置 → **command provider 下转录/批阅会失败**；
+  改为优先用 `providers/stages`（`_settings_from_workspace`），旧配置仅回退。加测试。
+- **qwenwork / workbuddy**：本环境无外网且未安装，**无法查证参数**；skill 保留"确认清单 + 模板"，
+  不臆造。待用户真机 `--help` 后回填。
+- 全量：engine pytest **467 passed** / 脱敏通过。
+
+### D98 增补（2026-10-18 第四批：能力检查项 + 平台调研）
+
+- **doctor 新增转录/图片风险检查项 ✅**：`providers._capability_warnings`
+  —— 转录段若引用 `supports_images=false` 的 command provider，输出
+  `transcription_command_no_images`（warn，可能导致读图失败）；非转录段的 command
+  给 info。CLI 加 `--[no-]supports-images`；6 测试。
+- **平台调研（官网抓取，可复现）**：
+  - **QwenWork**（`docs.qwenwork.ai`）：桌面/网页 GUI agent，skill = `~/.qwenwork/skills/<name>/SKILL.md`；支持 Hooks。
+  - **WorkBuddy**（`www.workbuddy.ai`）：腾讯桌面 AI agent（CodeBuddy 团队），skill = `skill.yml` + 实现文件 + README；支持多任务并行/MCP。
+  - **qwen CLI**：本机 0.13.2 实测，支持 `-p`、`-m`、`-o json`（含 usage）。
+  - **关键结论**：QwenWork/WorkBuddy **无 CLI/API 入口**，不能当 `assist` 的 LLM 后端；
+    正确用法是**把它们作为宿主**，装我们的原生 skill 去调用 `assist` CLI。
+- **原生 skill 包 ✅**：`skills/qwenwork/assignment-grading/SKILL.md`；
+  `skills/workbuddy/assignment-grading/{skill.yml,run.py,README.md}`。
+- 全量：engine pytest **469 passed** / 脱敏通过。
+
+### D98 增补（2026-10-18 第五批：skill 安装/校验器）
+
+- **`tools/skill_installer.py`**：统一管理 AI 宿主 skill。
+  - `list`：列出可装 skill 与宿主（qwenwork / workbuddy）；
+  - `check`：前置校验（`assist doctor --json` 能力、推荐路径、转录图片风险、文件齐全）；
+  - `install --host <h> [--dest]`：复制到宿主目录（qwenwork 默认 `~/.qwenwork/skills`，
+    workbuddy 需 `--dest`，官方未公开固定目录）；
+  - `verify --host <h> [--dest]`：校验安装完整性（区分"未安装"与"缺文件"）。
+- 全部支持 `--json`；退出码 0/1/2，便于 agent 脚本化调用。
+- 文档：`skills/README.md`、`skills/providers-qwen.md` 补安装命令。
+- 测试：`tests/test_skill_installer.py`（6 例，含真实复制与校验）。
+- 全量：engine pytest **475 passed** / 脱敏通过。
+
+### D98 增补（2026-10-18 第六批：自检/回执机制）
+
+**目标**：用户/开发者遇到失败时能**快速定位根因在哪一层**，而不是只看到一句"失败了"。
+
+- **`assist doctor --report [--json]`**（新 `selfcheck.py`）：分层自检报告，写
+  `<workspace>/selfcheck-report.json`：
+  | 层 | 内容 | 典型 code |
+  |---|---|---|
+  | `environment` | Python/依赖/uv | `dep_missing.*`、`uv_missing` |
+  | `config` | workspace、provider、两段式、key 是否就位 | `workspace_missing`、`stage_unset.*`、`stage_provider_no_key.*` |
+  | `capability` | 可用后端、转录图片风险 | `no_llm_backend`、`transcription_command_no_images` |
+  | `data` | 题库/班级/任务包 | `kb_missing`、`no_classes` |
+  | `artifact` | 最近 batch-report 失败项 | `recent_batch_failures` |
+  每条 issue 含 `code`（稳定标识）/`layer`/`level`/`message`/`fix`（可执行建议）。
+  退出码：无 error=0，有 error=1。
+- **根因精化**：`no_llm_backend` 不再被"检测到 agent CLI"误判为可用——必须真配成 provider；
+  并提示"检测到 opencode，但尚未配成 provider"。
+- **`skill_installer check` 复用 selfcheck**：与 `doctor --report` 同口径，输出带层与修复建议。
+- **宿主回执**：WorkBuddy `run.py` 失败时自动写 `<ws>/skill-receipts/receipt-*.json`
+  （含自检 summary），错误信息**不再甩 traceback**，改为最后一行 + 引导看自检；
+  QwenWork `SKILL.md` 增加「第 3.5 步：失败先出自检报告」。
+- 测试：`tests/test_selfcheck.py`（9 例：分层结构、无后端、图片告警、无 key、缺 workspace、
+  产物失败、CLI 退出码、人类可读含修复建议）。全量 **484 passed** / 脱敏通过。

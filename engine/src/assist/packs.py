@@ -82,6 +82,11 @@ def save_pack(ws, pid: str, data: dict) -> dict:
     p = _path(ws, pid)
     if not p:
         return {"ok": False, "error": "作业包 id 非法（1..80 字符，不含路径分隔符）"}
+    # 边界：--id 与文件内 id 不一致时拒绝（否则会出现「文件 A 里写着 id B」的自相矛盾包）。
+    inner_id = str((data or {}).get("id") or "").strip()
+    if inner_id and inner_id != str(pid):
+        return {"ok": False,
+                "error": f"作业包 id 冲突：--id={pid} 与文件内 id={inner_id} 不一致"}
     payload = {
         "schema": SCHEMA,
         "id": str(pid),
@@ -92,7 +97,8 @@ def save_pack(ws, pid: str, data: dict) -> dict:
         "note": str((data or {}).get("note") or ""),
         "updatedAt": time.strftime("%Y-%m-%d %H:%M:%S"),
     }
-    p.write_text(json.dumps(payload, ensure_ascii=False, indent=1), encoding="utf-8")
+    from .filelock import atomic_write_text
+    atomic_write_text(p, json.dumps(payload, ensure_ascii=False, indent=1))
     return {"ok": True, "pack": payload, "file": str(p)}
 
 

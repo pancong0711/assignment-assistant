@@ -48,9 +48,16 @@ def bootstrap(obj, workspace, no_sync):
 @cli.command()
 @click.option("--workspace", "-w", default=None)
 @click.option("--verbose", "-v", is_flag=True)
+@click.option("--json", "as_json", is_flag=True, help="输出 JSON（含 LLM/agent 能力探测）")
+@click.option("--report", "report_path", flag_value="", default=None,
+              help="生成完整自检报告（不填值=写到 <ws>/selfcheck-report.json；也可给路径）")
 @click.pass_obj
-def doctor(obj, workspace, verbose):
-    """环境体检：Python/uv/依赖/字体/引擎可导入性（对齐 PWA 体检页格式）。"""
+def doctor(obj, workspace, verbose, as_json, report_path):
+    """环境体检 + LLM 能力探测（D98-B2）：依赖 / API / command / batch / agent CLI。
+
+    agent 执行 skill 前应读 `--json` 的 `capabilities.recommendedPath` 决定走哪条路径：
+    `api`（有 key）| `command`（有 CLI/type=command）| `subagent-or-manual`（都没有）。
+    """
     import importlib
     from .workspace import find_workspace, load_workspace_settings
     ws_path = _setup(verbose or obj.get("verbose"), workspace)
@@ -72,11 +79,47 @@ def doctor(obj, workspace, verbose):
     cfg = load_workspace_settings(ws_path)
     checks.append(("settings.local.json", "green" if (ws_path / "settings.local.json").exists() else "yellow"))
     checks.append(("kb/problems.xlsx", "green" if (ws_path / "kb" / "problems.xlsx").exists() else "yellow"))
+    # D98-B2：LLM/agent 能力探测
+    from .grading.providers import capabilities
+    caps = capabilities(ws_path)
+
+    # D98：完整自检报告（环境/配置/能力/数据/产物 + 根因与修复建议）
+    if report_path is not None:
+        from .selfcheck import build_report, format_human, write_report
+        rep = build_report(ws_path)
+        out = (Path(report_path).expanduser() if str(report_path)
+               else (ws_path / "selfcheck-report.json"))
+        write_report(rep, out)
+        if as_json:
+            click.echo(json.dumps(rep, ensure_ascii=False, indent=2))
+        else:
+            click.echo(format_human(rep))
+            click.echo(f"\n报告已写入：{out}")
+        raise SystemExit(0 if rep["summary"]["ok"] else 1)
+
+    if as_json:
+        click.echo(json.dumps({
+            "checks": [{"name": n, "status": st} for n, st in checks],
+            "capabilities": caps,
+        }, ensure_ascii=False, indent=2))
+        return
     rows = ["项        状态", "-" * 24] + [f"{n:<10}{'✓' if s == 'green' else ('!' if s == 'yellow' else '✗')} ({s})" for n, s in checks]
     click.echo("\n".join(rows))
     bad = [n for n, s in checks if s == "red"]
     if bad:
         click.echo(f"缺失：{bad}。安装：assist bootstrap")
+    # 能力摘要（人读）
+    click.echo("")
+    click.echo("LLM 能力：")
+    click.echo(f"  api(有 key)     : {'✓ ' + ', '.join(caps['api']['providers']) if caps['api']['available'] else '✗ 未配置'}")
+    click.echo(f"  command(CLI回环): {'✓ ' + ', '.join(caps['command']['providers']) if caps['command']['available'] else '✗ 未配置'}")
+    click.echo(f"  batch           : {'✓ ' + ', '.join(caps['batch']['providers']) if caps['batch']['available'] else '✗ 不可用'}")
+    clis = caps["agentCli"]
+    click.echo(f"  agent CLI       : {'✓ ' + ', '.join(c['name'] for c in clis) if clis else '✗ 未检测到'}")
+    click.echo(f"  推荐路径        : {caps['recommendedPath']}")
+    for w in caps.get("warnings") or []:
+        mark = "⚠" if w.get("level") == "warn" else "·"
+        click.echo(f"  {mark} {w.get('message')}")
 
 
 @cli.group(help="引擎版本检测/在线更新（D65-P4；更新后需重启引擎）")
@@ -105,18 +148,106 @@ def engine_version(workspace, as_json):
         raise SystemExit(1)
 
 
+@engine.command("status")
+@click.option("--workspace", "-w", default=None, help="workspace 路径（默认自动查找）")
+@click.option("--json", "as_json", is_flag=True, help="输出完整 JSON（默认人类可读）")
+def engine_status(workspace, as_json):
+    """引擎状态：本地/远端版本 + 两阶段更新现场（pending/staging/failed）。
+
+    供 AI/脚本判断「更新卡在哪一步」：仅暂存(pending) 说明还需 launcher 重启安装。
+    """
+    ws = _setup(False, workspace)
+    from .engine_update import update_status
+    st = update_status(ws)
+    if as_json:
+        click.echo(json.dumps(st, ensure_ascii=False, indent=2))
+        return
+    loc = st.get("local") or {}
+    rem = st.get("remote") or {}
+    click.echo(f"本地：{loc.get('engine_version', '?')} commit={str(loc.get('commit') or '')[:12]}")
+    if st.get("ok"):
+        click.echo(f"远端：{rem.get('engine_version', '?')} commit={str(rem.get('commit') or '')[:12]}")
+    else:
+        click.echo(f"远端不可达：{st.get('error') or '未知错误'}")
+    click.echo(f"更新阶段：{st.get('stage')}（pending={st.get('pending')} "
+               f"staging={st.get('staging')} failed={st.get('failed')}）")
+    click.echo(f"提示：{st.get('hint')}")
+
+
+@engine.command("restart")
+@click.option("--workspace", "-w", default=None, help="workspace 路径（默认自动查找）")
+@click.option("--port", default=8601, show_default=True, help="本地 serve 端口")
+@click.option("--token", default="", help="lan 模式的访问 token（如已开启）")
+@click.option("--json", "as_json", is_flag=True, help="输出 JSON")
+def engine_restart(workspace, port, token, as_json):
+    """重启**正在运行的**本地 serve（POST /restart）。
+
+    CLI 自己是短命进程，无法"重启自身"；本命令用于让已运行的 serve 重新拉起
+    （例如 `assist engine update` 暂存了新版本后触发安装）。若 serve 未运行，会明确报错。
+    """
+    import urllib.error
+    import urllib.request
+    _setup(False, workspace)
+    url = f"http://127.0.0.1:{port}/restart" + (f"?token={token}" if token else "")
+    body = b"{}"
+    req = urllib.request.Request(url, data=body, method="POST",
+                                 headers={"Content-Type": "application/json"})
+    try:
+        with urllib.request.urlopen(req, timeout=15) as r:
+            rep = json.loads(r.read().decode("utf-8") or "{}")
+    except urllib.error.HTTPError as e:
+        detail = ""
+        try:
+            detail = e.read().decode("utf-8", "replace")[:400]
+        except Exception:  # noqa: BLE001
+            pass
+        rep = {"ok": False, "status": e.code, "error": f"HTTP {e.code}", "detail": detail}
+    except Exception as e:  # noqa: BLE001
+        rep = {"ok": False, "error": f"无法连接本地 serve（127.0.0.1:{port}）：{str(e)[:160]}",
+               "hint": "先启动 `assist serve`；若是 start.bat/start.sh 托管，重启会由 launcher 接管"}
+    if as_json:
+        click.echo(json.dumps(rep, ensure_ascii=False, indent=2))
+    else:
+        click.echo("重启请求已受理" if rep.get("ok") else f"重启失败：{rep.get('error')}")
+        if rep.get("hint"):
+            click.echo(f"提示：{rep['hint']}")
+    raise SystemExit(0 if rep.get("ok") else 2)
+
+
 @engine.command("update")
 @click.option("--workspace", "-w", default=None, help="workspace 路径（默认自动查找）")
 @click.option("--check", is_flag=True, help="只检测、不下载")
-def engine_update_cmd(workspace, check):
-    """检测并按需更新 engine；完成需重启引擎生效。"""
+@click.option("--json", "as_json", is_flag=True, help="输出 JSON（受 --verbose 日志转到 stderr）")
+def engine_update_cmd(workspace, check, as_json):
+    """检测并按需更新 engine（只暂存，需 launcher 重启安装）；--json 便于脚本/AI 解析。"""
     ws = _setup(False, workspace)
-    from .engine_update import check_engine_update, update_engine
+    from .engine_update import check_engine_update, update_engine, update_status
     if check:
         info = check_engine_update(ws)
         click.echo(json.dumps(info, ensure_ascii=False, indent=2))
         raise SystemExit(0 if info.get("ok") else 1)
-    rc = update_engine(ws, lambda line: click.echo(line))
+    lines: list[str] = []
+
+    def _emit(line: str) -> None:
+        lines.append(str(line))
+        if not as_json:
+            click.echo(line)
+
+    rc = update_engine(ws, _emit)
+    st = update_status(ws)
+    # 与 serve 的 install_engine_update 同口径记 journal（失败可回溯）。
+    try:
+        from .xxt import journal as _j
+        _j.log_event("engine_update", source="cli",
+                     params={"rc": rc, "stage": st.get("stage")},
+                     result="ok" if rc == 0 else "fail",
+                     error=("" if rc == 0 else "\n".join(lines[-5:])[:300]))
+    except Exception:  # noqa: BLE001
+        pass
+    if as_json:
+        click.echo(json.dumps({"ok": rc == 0, "rc": rc, "stage": st.get("stage"),
+                               "pending": st.get("pending"), "lines": lines,
+                               "hint": st.get("hint")}, ensure_ascii=False, indent=2))
     raise SystemExit(0 if rc == 0 else 1)
 
 
@@ -173,14 +304,16 @@ def _kb_dir(ws):
 def kb_stats(obj, workspace, verbose):
     """统计题库章节与题目数量。"""
     from .files import read_kb
-    kb_dir = _kb_dir(_setup(verbose or obj.get("verbose")))
+    # P0 附带修复：此前未把 --workspace 传给 _setup，-w 被忽略（落到默认 workspace）。
+    kb_dir = _kb_dir(_setup(verbose or obj.get("verbose"), workspace))
     kb_data = read_kb(kb_dir)
     rows = []
     for kind, chapters in kb_data.items():
         for chap, entries in chapters.items():
             rows.append((kind, chap, len(entries)))
     if not rows:
-        click.echo("题库为空（kb/ 下无 xlsx）。可用 `assist kb init` 生成示例。")
+        click.echo("题库为空（kb/ 下无 xlsx）。生成默认题库请用 PWA 体检页的"
+                   "「创建题库」（引擎端点 /install/kb_init），或把题库 xlsx 放入 kb/。")
         return
     click.echo(f"{'kind':>12} {'chapter':>10} count")
     click.echo("-" * 34)
@@ -195,9 +328,14 @@ def kb_stats(obj, workspace, verbose):
 @click.option("--verbose", "-v", is_flag=True)
 @click.pass_obj
 def kb_export(obj, fmt, workspace, verbose):
-    """导出 JSON 副本到 kb/export/（AI 阅读/diff 基准，不入库）。"""
+    """导出 JSON 副本到 kb/export/（AI 阅读/diff 基准，不入库）。
+
+    `--fmt` 目前只支持 json（保留参数以便将来扩展 csv/md）。
+    """
     from .files import read_kb, write_json
-    ws = _setup(verbose or obj.get("verbose"))
+    ws = _setup(verbose or obj.get("verbose"), workspace)
+    if fmt != "json":
+        raise click.ClickException(f"暂不支持的导出格式：{fmt}（当前仅 json）")
     out = write_json(ws / "kb", read_kb(ws / "kb"))
     click.echo(f"已导出 → {out}")
 
@@ -214,6 +352,7 @@ def kb_write(obj, input_path, kind, workspace, verbose):
     import re
     from .files import snapshot as snap
     from .files import write_chapters_preserving
+    from .files.kb_io import validate_sheet_name
     ws = _setup(verbose or obj.get("verbose"), workspace)
     payload = json.loads(Path(input_path).read_text(encoding="utf-8"))
     if not isinstance(payload, dict):
@@ -230,6 +369,11 @@ def kb_write(obj, input_path, kind, workspace, verbose):
             raise click.ClickException(f"非法 kind：{k}")
         if not all(isinstance(v, list) for v in chapters.values()):
             raise click.ClickException(f"{k} 的 chapters 值必须是条目数组")
+        # P0：章节名 = Excel sheet 名，写前先给出可读错误（而非 openpyxl 堆栈）。
+        for sheet in chapters:
+            err = validate_sheet_name(sheet)
+            if err:
+                raise click.ClickException(f"{k} 的章节名非法：{err}")
         snap(kb_dir, [str(k)])
         out = write_chapters_preserving(kb_dir / f"{k}.xlsx", chapters)
         click.echo(str(out))
@@ -242,7 +386,7 @@ def kb_write(obj, input_path, kind, workspace, verbose):
 def kb_snapshot(obj, workspace, verbose):
     """手动把 kb/*.xlsx 快照到 kb/.history/。"""
     from .files import snapshot as snap
-    ws = _setup(verbose or obj.get("verbose"))
+    ws = _setup(verbose or obj.get("verbose"), workspace)
     made = snap(ws / "kb")
     click.echo(f"快照 {len(made)} 个文件")
 
@@ -254,10 +398,11 @@ def kb_snapshot(obj, workspace, verbose):
 @click.option("--model", default="", help="覆盖模型名（缺省取评阅段配置）")
 @click.option("--pin", is_flag=True, help="作答后置顶为新生效答案（默认不置顶，不抢原答案）")
 @click.option("--apply", is_flag=True, help="真正写回 kb/solutions/（缺省 dry-run 只预览）")
+@click.option("--concurrency", default=3, type=int, show_default=True, help="并发题数")
 @click.option("--workspace", "-w", default=None)
 @click.option("--verbose", "-v", is_flag=True)
 @click.pass_obj
-def kb_ai_solve(obj, kb_kind, chap, ids, model, pin, apply, workspace, verbose):
+def kb_ai_solve(obj, kb_kind, chap, ids, model, pin, apply, concurrency, workspace, verbose):
     """D89-N5：对题库题目做 AI 作答（**不覆盖**原答案，新增版本；默认 dry-run）。"""
     from .grading import solve as solve_mod
     ws = _setup(verbose or obj.get("verbose"), workspace)
@@ -265,7 +410,8 @@ def kb_ai_solve(obj, kb_kind, chap, ids, model, pin, apply, workspace, verbose):
     targets = solve_mod.list_targets(ws, kb_kind, chap, id_list)
     if not targets:
         raise click.ClickException("未选中任何题目（检查 --kb-kind/--chap/--ids）")
-    res = solve_mod.solve_targets(ws, targets, model=model, apply=apply, pin=pin, dry_run=True)
+    res = solve_mod.solve_targets(ws, targets, model=model, apply=apply, pin=pin,
+                                  dry_run=True, concurrency=concurrency)
     if res.get("dryRun"):
         click.echo(json.dumps({"dryRun": True, "planned": res["planned"],
                                "ids": [p["id"] for p in res.get("plans", [])]},
@@ -384,7 +530,7 @@ def sheet_demo(obj, out, orientation, no_watermark, workspace, verbose):
     from PIL import Image as PILImage
     from . import ASSIST_ROOT
     from .paper import make_pdf
-    ws = _setup(verbose or obj.get("verbose"))
+    ws = _setup(verbose or obj.get("verbose"), workspace)
     out_dir = (ws / "classes" / "_demo" / "sheets" / "out").resolve()
     # 合成两张"题干图"（视频/截图占位），不含任何真实数据
     figs = []
@@ -464,7 +610,7 @@ def sheet_make(obj, task_path, roster_path, out, no_watermark, assets_dir, works
     """按任务包生成每生一份作业纸 PDF（xlsx 名单驱动）。"""
     from .paper import sheets_from_task
     from .workspace import load_workspace_settings
-    ws = _setup(verbose or obj.get("verbose"))
+    ws = _setup(verbose or obj.get("verbose"), workspace)
     files = sheets_from_task(
         Path(task_path).expanduser().resolve(), ws,
         out_dir=Path(out).expanduser().resolve() if out else None,
@@ -506,22 +652,41 @@ def playground_ask(obj, question, attachments, provider, model, folder, no_save,
 
 
 @playground_grp.command("batch")
-@click.option("--questions-file", required=True, help="每行一个问题的文本文件")
-@click.option("--attach", "attachments", multiple=True)
+@click.option("--questions-file", default="", help="每行一个问题的文本文件（与 --items 二选一）")
+@click.option("--items", "items_path", default=None, type=click.Path(exists=True, dir_okay=False),
+              help="items JSON：每条自带 question+images（D98；各条互不共享）")
+@click.option("--attach", "attachments", multiple=True, help="全局附件（仅非 items 模式）")
 @click.option("--provider", default="")
 @click.option("--model", default="")
 @click.option("--folder", default="默认")
+@click.option("--workers", default=3, type=int, show_default=True, help="并发数")
+@click.option("--combine", is_flag=True, default=False,
+              help="合并为一次请求（附件只发一遍，省 token；问题很多时慎用）")
 @click.option("--workspace", "-w", default=None)
 @click.option("--verbose", "-v", is_flag=True)
 @click.pass_obj
-def playground_batch(obj, questions_file, attachments, provider, model, folder, workspace, verbose):
-    """批量发送（逐条独立调用，受控并发）。"""
+def playground_batch(obj, questions_file, items_path, attachments, provider, model, folder,
+                     workers, combine, workspace, verbose):
+    """批量发送：默认逐条独立；--combine 合并省 token；--items 每条自带图+文。"""
     from .playground import ask as pga
     ws = _setup(verbose or obj.get("verbose"), workspace)
-    qs = [ln.strip() for ln in Path(questions_file).expanduser().read_text(encoding="utf-8").splitlines()
-          if ln.strip()]
-    res = pga.batch(ws, questions=qs, provider=provider, model=model,
-                    attachments=list(attachments), folder=folder)
+    if items_path:
+        from .grading.items import load_items_file
+        try:
+            items = load_items_file(items_path)
+        except Exception as exc:  # noqa: BLE001
+            raise click.ClickException(f"items 文件非法：{exc}")
+        res = pga.batch_items(ws, items=items, provider=provider, model=model,
+                              folder=folder, workers=workers)
+    else:
+        if not questions_file:
+            raise click.UsageError("需要 --questions-file 或 --items")
+        qs = [ln.strip() for ln in
+              Path(questions_file).expanduser().read_text(encoding="utf-8").splitlines()
+              if ln.strip()]
+        res = pga.batch(ws, questions=qs, provider=provider, model=model,
+                        attachments=list(attachments), folder=folder, combine=combine,
+                        workers=workers)
     click.echo(json.dumps(res, ensure_ascii=False, indent=2))
     if not res.get("ok"):
         raise click.ClickException(res.get("error") or "批量失败")
@@ -1024,6 +1189,19 @@ def llm_config(migrate, workspace):
 @llm.command("provider")
 @click.option("--action", type=click.Choice(["list", "set", "delete", "stage"]), default="list")
 @click.option("--name", default="", help="provider 名称")
+@click.option("--type", "provider_type", default="",
+              type=click.Choice(["", "api", "command"]),
+              help="api=HTTP+key；command=回环外部 agent CLI（无 key 场景，D98-B3）")
+@click.option("--cmd", "cmd", multiple=True,
+              help="command 型命令（可多次；支持 {model} 占位，如 --cmd opencode --cmd run）")
+@click.option("--input-mode", "input_mode", default="", type=click.Choice(["", "stdin"]),
+              help="命令输入方式（当前只支持 stdin 传 JSON）")
+@click.option("--output-mode", "output_mode", default="",
+              type=click.Choice(["", "stdout-json", "stdout-text"]),
+              help="命令输出方式（缺省 stdout-json）")
+@click.option("--timeout", "timeout_s", default=None, type=int, help="command 超时秒（缺省 300）")
+@click.option("--supports-images/--no-supports-images", "supports_images", default=None,
+              help="该 command 后端是否支持图片（缺省未标记）；转录段用它时会告警")
 @click.option("--base-url", "base_url", default="")
 @click.option("--api-key", "api_key", default=None, help="留空=不改；--clear-key 显式清除")
 @click.option("--clear-key", is_flag=True, default=False)
@@ -1031,8 +1209,13 @@ def llm_config(migrate, workspace):
 @click.option("--model", default="", help="模型名（会记入该 provider 的模型历史）")
 @click.option("--stage", default="", type=click.Choice(["", "transcription", "evaluation"]))
 @click.option("--workspace", "-w", default=None)
-def llm_provider(action, name, base_url, api_key, clear_key, batch_support, model, stage, workspace):
-    """D86 §2：provider 管理（list/set/delete/stage）。key 只掩码回显，绝不入日志。"""
+def llm_provider(action, name, provider_type, cmd, input_mode, output_mode, timeout_s,
+                 supports_images, base_url, api_key, clear_key, batch_support, model, stage,
+                 workspace):
+    """D86 §2：provider 管理（list/set/delete/stage）。key 只掩码回显，绝不入日志。
+
+    D98-B3：`--type command --cmd ...` 可配置"回环外部 agent CLI"（无 API key 也能转录/批阅）。
+    """
     from .workspace import find_workspace
     from .grading import providers
     ws = find_workspace(workspace)
@@ -1045,8 +1228,12 @@ def llm_provider(action, name, base_url, api_key, clear_key, batch_support, mode
                                   batch=(True if batch_support else None))
     else:
         key_arg = "" if clear_key else api_key
-        rep = providers.save_provider(ws, name, base_url=base_url, api_key=key_arg,
-                                      batch_support=(True if batch_support else None), model=model)
+        rep = providers.save_provider(
+            ws, name, base_url=base_url, api_key=key_arg,
+            batch_support=(True if batch_support else None), model=model,
+            provider_type=provider_type, cmd=list(cmd) if cmd else None,
+            input_mode=input_mode, output_mode=output_mode, timeout_s=timeout_s,
+            supports_images=supports_images)
     click.echo(json.dumps(rep, ensure_ascii=False, indent=1))
     raise SystemExit(0 if rep.get("ok") else 2)
 
@@ -1060,12 +1247,16 @@ def llm_provider(action, name, base_url, api_key, clear_key, batch_support, mode
 @click.option("--poll", "poll_id", default="", help="轮询批次状态 <batch_id>")
 @click.option("--download", "download_id", default="", help="下载结果 <output_file_id>")
 @click.option("--out", "out_path", default="", help="下载结果落盘路径")
+@click.option("--apply", "apply_results", is_flag=True, default=False,
+              help="把下载/batch 结果 JSONL 回灌为 evaluations/*.json（D98-B6）")
+@click.option("--results", "results_path", default="", help="--apply 的输入 JSONL（缺省用 --out）")
 @click.option("--workspace", "-w", default=None)
 def llm_batch(task_path, jsonl_path, provider_name, limit, submit, poll_id, download_id,
-              out_path, workspace):
+              out_path, apply_results, results_path, workspace):
     """D86 §7：LLM batch（Aliyun/OpenAI 兼容）——默认 dry-run（生成 JSONL + 说明）。
 
-    本机无法联网实测；失败会输出完整诊断（HTTP 状态/响应原文/URL/批次 id），便于回传排查。
+    D98-B6：`--apply` 把下载的 batch output JSONL **回灌**为评阅产物（补齐原断裂链路）。
+    失败会输出完整诊断（HTTP 状态/响应原文/URL/批次 id），便于回传排查。
     """
     from .workspace import find_workspace
     from .grading import llm_batch as B, providers as P
@@ -1074,10 +1265,28 @@ def llm_batch(task_path, jsonl_path, provider_name, limit, submit, poll_id, down
         click.echo(json.dumps(B.poll(ws, provider_name, poll_id), ensure_ascii=False, indent=1))
         return
     if download_id:
-        click.echo(json.dumps(B.download(ws, provider_name, download_id,
-                                         out_path or "batch-results.jsonl"),
-                              ensure_ascii=False, indent=1))
-        return
+        got = B.download(ws, provider_name, download_id,
+                         out_path or "batch-results.jsonl")
+        click.echo(json.dumps(got, ensure_ascii=False, indent=1))
+        if not (apply_results and got.get("ok")):
+            return
+        results_path = results_path or got.get("out") or ""
+    if apply_results:
+        if not results_path:
+            raise click.UsageError("--apply 需要 --results <jsonl>（或配合 --download/--out）")
+        if not task_path:
+            raise click.UsageError("--apply 需要 --task <任务包> 以定位 evalications 目录")
+        from .grading.flow import grading_dir, _paths
+        task = json.loads(Path(task_path).expanduser().read_text(encoding="utf-8"))
+        base = grading_dir(ws, task)
+        paths = _paths(base)
+        task_id = str(task.get("id") or "task")
+        rep = B.apply_results(ws, results_path, evaluated_dir=paths["evaluations"],
+                              transcripts_dir=paths["transcripts"],
+                              homework_name=str(task.get("course") or "") + " " + task_id,
+                              model="")
+        click.echo(json.dumps(rep, ensure_ascii=False, indent=1))
+        raise SystemExit(0 if rep.get("ok") else 2)
     if not jsonl_path:
         if not task_path:
             raise click.UsageError("需要 --jsonl 或 --task")
@@ -1174,6 +1383,70 @@ def grade(obj, task_path, pads_dir, images_dir, rerun, xxt_class, work_id, plan_
             kwargs["mode"] = mode
     rec = run_step(tp, ws, rerun, **kwargs) if rerun else run_task(tp, ws, **kwargs)
     click.echo(f"完成 run_id={rec['run_id']} steps={rec['steps_done']}\n产物目录={rec['bucket']}")
+    usage = rec.get("usage") or {}
+    if usage.get("total"):
+        t = usage["total"]
+        click.echo(f"token 用量：prompt={t.get('prompt_tokens', 0)} "
+                   f"completion={t.get('completion_tokens', 0)} "
+                   f"total={t.get('total_tokens', 0)} calls={t.get('calls', 0)}"
+                   "（provider 未返回 usage 时可能为 0）")
+
+
+@cli.group("grade-plan", help="D98-B7：无 LLM 的清单/收作业（兜底；程序不调模型）")
+def grade_plan_grp():
+    pass
+
+
+@grade_plan_grp.command("xxt-plan")
+@click.option("--task", "task_path", required=True, help="任务包 JSON")
+@click.option("--xxt-class", "xxt_class", required=True, help="<courseId>:<classId>")
+@click.option("--work", "work_id", default="", help="学习通 workId")
+@click.option("--pads-dir", "pads_dir", default=None, help="作业包目录（按 tag 匹配）")
+@click.option("--tags", "tags", default="")
+@click.option("--workspace", "-w", default=None)
+def grade_plan_xxt(task_path, xxt_class, work_id, pads_dir, tags, workspace):
+    """生成转录任务清单（每生一条；程序不调模型，正文由 agent 完成）。"""
+    from .grading import inputs as _inputs
+    from .grading.plan_collect import build_task_list, plan_items_from_plan
+    from .grading.transcribe import TRANSCRIPTION_PROMPT
+    from .workspace import find_workspace
+    ws = find_workspace(workspace)
+    task = json.loads(Path(task_path).expanduser().read_text(encoding="utf-8"))
+    task_id = str(task.get("id") or "task")
+    cid, _, kid = str(xxt_class).partition(":")
+    from .xxt import classmap
+    resolved = classmap.resolve_class_dir(ws, cid, kid, str(task.get("class") or ""))
+    class_dir = resolved.get("classDir") or str(task.get("class_dir") or "classes")
+    tag_list = [t.strip() for t in str(tags).split(",") if t.strip()]
+    plan = _inputs.build_plan(ws, task_id=task_id, class_dir=class_dir, class_id=kid,
+                              work_id=work_id, mode="optimized", tags=tag_list,
+                              tasks_dir=Path(pads_dir).expanduser().resolve() if pads_dir else None)
+    _inputs.save_plan(ws, class_dir, plan)
+    base = ws / class_dir / "grading" / task_id
+    items = plan_items_from_plan(ws, task_id=task_id, class_dir=class_dir,
+                                 transcripts_out=base / "transcripts")
+    if not items:
+        raise click.ClickException("没有可转录的学生（检查 class-map / 作业下载 / tags）")
+    rep = build_task_list(items=items, out_dir=base / "plan-collect", kind="transcribe",
+                          prompt_template="{question}\n\n请转录这些图片：\n{images}",
+                          system=TRANSCRIPTION_PROMPT)
+    click.echo(json.dumps({"ok": True, "notice": rep["notice"], "total": rep["total"],
+                           "taskList": str(base / "plan-collect" / "task-list.json"),
+                           "transcriptsDir": str(base / "transcripts")},
+                          ensure_ascii=False, indent=1))
+
+
+@grade_plan_grp.command("collect")
+@click.option("--task-list", "task_list_path", required=True, help="plan 产出的 task-list.json")
+@click.option("--results-dir", "results_dir", required=True, help="agent 写回结果的目录")
+@click.option("--kind", default="transcribe", type=click.Choice(["transcribe", "evaluate"]))
+def grade_plan_collect(task_list_path, results_dir, kind):
+    """校验 agent 写回的结果并生成 batch-report.json（程序不调模型）。"""
+    from .grading.plan_collect import collect
+    tl = json.loads(Path(task_list_path).expanduser().read_text(encoding="utf-8"))
+    rep = collect(task_list=tl, results_dir=Path(results_dir).expanduser(), kind=kind)
+    click.echo(json.dumps(rep, ensure_ascii=False, indent=1))
+    raise SystemExit(0 if rep.get("failed") == 0 else 1)
 
 
 @cli.group(help="学习通对接（D63 T1；登录/体检为可选依赖 playwright）")
@@ -1184,8 +1457,47 @@ from .xxt.cli import register as _register_xxt  # noqa: E402
 _register_xxt(xxt)
 
 
+# ---------------- 机读错误：AI/脚本调用 CLI 时不要吃 traceback ----------------
+# 约定（docs/13 P1.5）：未处理异常默认打印 traceback（保持人读体验）；
+# 但设 `ASSIST_JSON_ERRORS=1` 或加全局 `--json-errors` 时，改为向 stderr 输出一行
+# 结构化 JSON：{"ok": false, "error": "...", "type": "...", "exitCode": N}。
+# 退出码约定：click UsageError=2、ClickException=1、其它未处理异常=1。
+
+def _json_errors_enabled() -> bool:
+    import os
+    return str(os.environ.get("ASSIST_JSON_ERRORS") or "").strip().lower() in ("1", "true", "yes")
+
+
+def _emit_json_error(exc: BaseException, exit_code: int) -> None:
+    import sys
+    payload = {"ok": False, "error": str(exc) or exc.__class__.__name__,
+               "type": exc.__class__.__name__, "exitCode": exit_code}
+    sys.stderr.write(json.dumps(payload, ensure_ascii=False) + "\n")
+
+
 def main():
-    cli(obj={})
+    """CLI entry：包一层异常处理，支持 ASSIST_JSON_ERRORS 机读错误（便于 AI agent 调）。"""
+    json_mode = _json_errors_enabled()
+    try:
+        cli.main(args=None, standalone_mode=False, obj={})
+    except click.ClickException as exc:
+        if json_mode:
+            _emit_json_error(exc, exc.exit_code)
+            raise SystemExit(exc.exit_code)
+        exc.show()
+        raise SystemExit(exc.exit_code)
+    except click.Abort:
+        if json_mode:
+            _emit_json_error(RuntimeError("aborted"), 130)
+            raise SystemExit(130)
+        raise
+    except SystemExit:
+        raise
+    except BaseException as exc:  # noqa: BLE001 —— 顶层兜底：任何未处理异常
+        if json_mode:
+            _emit_json_error(exc, 1)
+            raise SystemExit(1)
+        raise
 
 
 if __name__ == "__main__":

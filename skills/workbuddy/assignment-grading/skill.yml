@@ -1,0 +1,35 @@
+name: assignment-grading
+version: "1.0.0"
+description: >-
+  大学物理作业两段式 AI 批阅：先逐生独立转录（读图），再只吃文字做评阅，
+  通过本机 assist CLI 执行；正文落文件、会话只读执行报告，避免上下文串味与 token 浪费。
+author: assignment-assistant
+triggers:
+  - 批阅作业
+  - 转录学生作答
+  - AI 批改
+  - 生成批阅报告
+  - assignment grading
+entry: run.py
+language: python
+requires:
+  - "assist CLI（assignment-assistant 引擎）已在 PATH"
+  - "workspace 已配置 provider/stages（assist doctor 可查）"
+permissions:
+  - run_local_commands
+inputs:
+  - name: task
+    description: 任务包 JSON 路径（含 items/tag/grade 配置）
+    required: true
+  - name: xxt_class
+    description: "<courseId>:<classId>（学习通班级）"
+    required: true
+  - name: work
+    description: 学习通 workId
+    required: false
+  - name: rerun
+    description: "可选：evaluate / report（只重跑该步）"
+    required: false
+outputs:
+  - name: report
+    description: "<classDir>/grading/<taskId>/batch-report.json 执行报告"

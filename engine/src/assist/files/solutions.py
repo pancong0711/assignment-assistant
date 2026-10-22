@@ -100,7 +100,8 @@ def save_solutions(ws, qid: str, data: dict) -> dict:
     if not p:
         return {"ok": False, "error": "题目 id 非法（1..120 字符，不含路径分隔符）"}
     payload = _normalize({**data, "qid": str(qid)})
-    p.write_text(json.dumps(payload, ensure_ascii=False, indent=1), encoding="utf-8")
+    from ..filelock import atomic_write_text
+    atomic_write_text(p, json.dumps(payload, ensure_ascii=False, indent=1))
     return {"ok": True, "solutions": payload, "file": str(p)}
 
 
@@ -109,49 +110,65 @@ def add_version(ws, qid: str, text: str, *, source: str = "ai", model: str = "",
     """追加一版（不可覆盖）。AI 作答默认 pin=False（不抢答案）；人可随后 pin。"""
     if not str(text or "").strip():
         return {"ok": False, "error": "答案内容为空"}
-    cur = read_solutions(ws, qid) or {"qid": str(qid), "kb": kb, "chap": chap, "versions": []}
-    cur.setdefault("versions", [])
-    vid = _next_version_id(cur["versions"])
-    entry = {"id": vid, "text": str(text), "source": str(source or "ai"),
-             "model": str(model or ""), "at": time.strftime("%Y-%m-%d %H:%M:%S"),
-             "pinned": bool(pin)}
-    if pin:
-        for v in cur["versions"]:
-            v["pinned"] = False
-    cur["versions"].append(entry)
-    if kb and not cur.get("kb"):
-        cur["kb"] = kb
-    if chap and not cur.get("chap"):
-        cur["chap"] = chap
-    res = save_solutions(ws, qid, cur)
+    path = _path(ws, qid)
+    if not path:
+        return {"ok": False, "error": "题目 id 非法（1..120 字符，不含路径分隔符）"}
+    # AI 批量作答可能并行写同一题：整段读-改-写锁内，避免版本号撞车/丢版本。
+    from ..filelock import locked
+    with locked(path):
+        cur = read_solutions(ws, qid) or {"qid": str(qid), "kb": kb, "chap": chap, "versions": []}
+        cur.setdefault("versions", [])
+        vid = _next_version_id(cur["versions"])
+        entry = {"id": vid, "text": str(text), "source": str(source or "ai"),
+                 "model": str(model or ""), "at": time.strftime("%Y-%m-%d %H:%M:%S"),
+                 "pinned": bool(pin)}
+        if pin:
+            for v in cur["versions"]:
+                v["pinned"] = False
+        cur["versions"].append(entry)
+        if kb and not cur.get("kb"):
+            cur["kb"] = kb
+        if chap and not cur.get("chap"):
+            cur["chap"] = chap
+        res = save_solutions(ws, qid, cur)
     if res.get("ok"):
         res["added"] = entry
     return res
 
 
 def pin_version(ws, qid: str, version_id: str) -> dict:
-    cur = read_solutions(ws, qid)
-    if not cur:
-        return {"ok": False, "error": f"题目无版本库：{qid}"}
-    found = False
-    for v in cur.get("versions", []):
-        want = str(v.get("id")) == str(version_id)
-        v["pinned"] = want
-        found = found or want
-    if not found:
-        return {"ok": False, "error": f"版本不存在：{version_id}"}
-    return save_solutions(ws, qid, cur)
+    path = _path(ws, qid)
+    if not path:
+        return {"ok": False, "error": "题目 id 非法"}
+    from ..filelock import locked
+    with locked(path):
+        cur = read_solutions(ws, qid)
+        if not cur:
+            return {"ok": False, "error": f"题目无版本库：{qid}"}
+        found = False
+        for v in cur.get("versions", []):
+            want = str(v.get("id")) == str(version_id)
+            v["pinned"] = want
+            found = found or want
+        if not found:
+            return {"ok": False, "error": f"版本不存在：{version_id}"}
+        return save_solutions(ws, qid, cur)
 
 
 def remove_version(ws, qid: str, version_id: str) -> dict:
-    cur = read_solutions(ws, qid)
-    if not cur:
-        return {"ok": False, "error": f"题目无版本库：{qid}"}
-    before = len(cur.get("versions", []))
-    cur["versions"] = [v for v in cur.get("versions", []) if str(v.get("id")) != str(version_id)]
-    if len(cur["versions"]) == before:
-        return {"ok": False, "error": f"版本不存在：{version_id}"}
-    return save_solutions(ws, qid, cur)
+    path = _path(ws, qid)
+    if not path:
+        return {"ok": False, "error": "题目 id 非法"}
+    from ..filelock import locked
+    with locked(path):
+        cur = read_solutions(ws, qid)
+        if not cur:
+            return {"ok": False, "error": f"题目无版本库：{qid}"}
+        before = len(cur.get("versions", []))
+        cur["versions"] = [v for v in cur.get("versions", []) if str(v.get("id")) != str(version_id)]
+        if len(cur["versions"]) == before:
+            return {"ok": False, "error": f"版本不存在：{version_id}"}
+        return save_solutions(ws, qid, cur)
 
 
 def effective_solution(ws, qid: str, fallback: str = "") -> dict:

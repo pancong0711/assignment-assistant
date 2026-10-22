@@ -121,3 +121,43 @@ def transcribe_student(client: LLMClient, images: list[Path], student: str,
     if not data["_name_match"]:
         logger.warning(f"转录内容中未检测到学生姓名 '{student}'，请人工复核")
     return out
+
+
+# ---------------- D98-B4：转录 batch（items 模式） ----------------
+
+def transcribe_item(client: LLMClient, item: dict, out_dir: Path,
+                    model: str | None = None) -> dict:
+    """转录**单个 item**（一名学生，多页在 item.images 内）→ 写 transcripts/<id>.json。
+
+    返回 {ok, out, student, nameMatch, error?}；单条失败不抛（由 batchrun 收集）。
+    """
+    from .items import image_files
+    student = str(item.get("id"))
+    try:
+        imgs = image_files(item)
+        if not imgs:
+            return {"ok": False, "student": student, "error": "无可用图片",
+                    "images": list(item.get("images") or [])}
+        path = transcribe_student(client, imgs, student, Path(out_dir), model=model)
+        data = json.loads(Path(path).read_text(encoding="utf-8"))
+        return {"ok": True, "out": str(path), "student": student,
+                "nameMatch": bool(data.get("_name_match")),
+                "pages": len(imgs)}
+    except Exception as exc:  # noqa: BLE001 —— 单条失败标记，继续其余
+        return {"ok": False, "student": student,
+                "error": f"{exc.__class__.__name__}: {str(exc)[:300]}",
+                "images": [str(p) for p in (item.get("images") or [])]}
+
+
+def transcribe_batch(client: LLMClient, items: list[dict], out_dir: Path, *,
+                     model: str | None = None, concurrency: int = 3,
+                     emit=None) -> dict:
+    """转录 batch：items 逐条独立请求（结构性隔离）+ 并发 + 执行报告。"""
+    from .batchrun import run_items
+    out_dir = Path(out_dir)
+    out_dir.mkdir(parents=True, exist_ok=True)
+    return run_items(
+        items,
+        lambda it: transcribe_item(client, it, out_dir, model=model),
+        kind="transcribe", concurrency=concurrency, out_dir=out_dir.parent,
+        emit=emit)

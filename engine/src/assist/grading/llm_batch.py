@@ -236,3 +236,102 @@ def plan_batch_items(ws, task_path, *, provider_name: str = "", mode: str = "opt
                           tag=str(stu.get("tag") or "")),
                       "response_format": {"type": "json_object"}})
     return {"items": items, "model": model, "provider": pname, "dir": str(paths["reports"].parent)}
+
+
+# ---------------- D98-B6：batch 结果回灌 ----------------
+
+def parse_output_jsonl(text: str) -> list[dict]:
+    """解析 OpenAI/Aliyun batch **output** JSONL。
+
+    每行形如：
+      {"id":"batch_req_1","custom_id":"学生甲","response":{"status_code":200,
+        "body":{"choices":[{"message":{"content":"{...}"}}]}},"error":null}
+    返回 [{custom_id, ok, content|error}]。
+    """
+    out: list[dict] = []
+    for line in (text or "").splitlines():
+        line = line.strip()
+        if not line:
+            continue
+        try:
+            row = json.loads(line)
+        except Exception:  # noqa: BLE001
+            continue
+        cid = str(row.get("custom_id") or row.get("id") or "")
+        err = row.get("error")
+        resp = row.get("response") or {}
+        status = resp.get("status_code")
+        if err or (status and int(status) != 200):
+            msg = err.get("message") if isinstance(err, dict) else str(err or f"status={status}")
+            out.append({"custom_id": cid, "ok": False, "error": str(msg)[:300]})
+            continue
+        body = resp.get("body") or {}
+        content = ""
+        try:
+            content = body["choices"][0]["message"]["content"]
+        except Exception:  # noqa: BLE001
+            content = ""
+        out.append({"custom_id": cid, "ok": bool(content), "content": content,
+                    "error": "" if content else "响应无 content"})
+    return out
+
+
+def apply_results(ws, results_jsonl, *, evaluated_dir, transcripts_dir=None,
+                  homework_name: str = "", model: str = "") -> dict:
+    """把下载的 batch 结果回灌为 `evaluations/<student>.json` + `.md`。
+
+    - 按 `custom_id`（=学生）匹配；解析 content 为 analysis JSON；
+    - 复用 `evaluate.build_result_from_analysis`（Python 算分，含 low 不计分）；
+    - 可选：从 transcripts 带 quality / _name_match；
+    - 单条失败只标记，不中断；返回 {ok, written, failed, items}。
+    """
+    from .evaluate import build_result_from_analysis, write_result
+    from .transcribe import parse_llm_json
+    from pathlib import Path as _P
+
+    p = _P(results_jsonl)
+    if not p.is_file():
+        return {"ok": False, "error": f"结果文件不存在：{p}"}
+    rows = parse_output_jsonl(p.read_text(encoding="utf-8"))
+    if not rows:
+        return {"ok": False, "error": "结果文件为空或格式不符（期望 batch output JSONL）"}
+
+    tr_dir = _P(transcripts_dir) if transcripts_dir else None
+    written, failed, items = 0, 0, []
+    for row in rows:
+        student = str(row.get("custom_id") or "").strip()
+        if not row.get("ok") or not student:
+            failed += 1
+            items.append({"student": student, "ok": False, "error": row.get("error")})
+            continue
+        try:
+            analysis = parse_llm_json(row["content"])
+        except Exception as exc:  # noqa: BLE001
+            failed += 1
+            items.append({"student": student, "ok": False,
+                          "error": f"分析 JSON 解析失败：{str(exc)[:160]}"})
+            continue
+        quality, name_match = None, True
+        if tr_dir:
+            tf = tr_dir / f"{student}.json"
+            if tf.is_file():
+                try:
+                    td = json.loads(tf.read_text(encoding="utf-8"))
+                    quality = td.get("quality")
+                    name_match = bool(td.get("_name_match", True))
+                except Exception:  # noqa: BLE001
+                    pass
+        try:
+            result = build_result_from_analysis(analysis, student=student, quality=quality,
+                                                homework_name=homework_name, model=model,
+                                                name_match=name_match)
+            out = write_result(result, _P(evaluated_dir))
+            written += 1
+            items.append({"student": student, "ok": True, "out": str(out),
+                          "score": result.get("total_score")})
+        except Exception as exc:  # noqa: BLE001
+            failed += 1
+            items.append({"student": student, "ok": False,
+                          "error": f"写评阅结果失败：{str(exc)[:160]}"})
+    return {"ok": written > 0, "written": written, "failed": failed, "items": items,
+            "total": len(rows)}

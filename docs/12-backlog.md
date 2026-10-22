@@ -638,3 +638,63 @@ rainclass 67/67，PWA↔engine 全等，仅末位浮点四舍五入噪声）。
 - P2 备用方案（2026-10-09）：PWA 设置中心已接 `/pw/pkgs`，展示直下链接/收包路径/目标目录，并可触发“从收包目录安装”。验证：`npm run build` + `selfcheck:roster-fig` 通过。P3 教师引导已落地（HelpView + docs/15）。
 - start.bat 更新策略补充（2026-10-09）：远端 `engine-version.json` vs 本地 `_engine\engine-version.json` 先对比，相同复用、不同才下载；版本检测失败回退本地；更新后启动新引擎进程生效。CI 随 Pages 发布版本标记。
 - 决议修订（2026-10-09 用户拍板）：更新检测/更新引擎主入口改到 PWA「检测更新 / 更新引擎」按钮（D65-P4）；start.bat 保留快速缓存启动。start.bat 启动时版本对比视为过渡实现，P4 落地时简化/可选化。P4 已实施：/engine/version + /install/engine_update + PWA 更新卡 + CLI engine version/update；更新后自动 restart 轮询。验证：52 tests、npm build、selfcheck 通过；远端版本标记待 CI 首次发布。
+- ✅ P1.5（2026-10-18，见 docs/13「CLI 与 serve 边界澄清 + 并发写安全」）：
+  `kb export/snapshot`、`sheet demo/make` 的 `-w` 静默失效已修；`kb export --fmt` 假参数已修；
+  新增 `assist/filelock.py`，草稿/答案版本/发布索引/作业包改为加锁 + 原子写（并发不丢更新）。
+- ✅ P2 · CLI 面向 AI/脚本的健壮性（2026-10-18，见 docs/13「P2 · CLI 面向 AI/脚本的健壮性收尾」）：
+  - `ASSIST_JSON_ERRORS=1` → 异常统一为结构化 JSON（stderr 一行，稳定退出码）；
+  - `assist engine status [--json]` + `engine update --json` + journal；
+  - `playground batch --combine`（附件只发一遍，省 token）；
+  - `pack save` 校验 id 一致；`kb export/snapshot/stats` 补 CLI 测试。
+- P3 · 剩余：`engine restart`（非 launcher 场景）；`notice-send`/`work-publish --json-out`；
+  README 补 JSON 错误约定；`kb ai-solve` 并发。
+
+# 2026-10-18 · D98：LLM 两段式批量隔离 / 执行报告 / skill（已定稿执行）
+- 主需求单 `docs/51-D98-llm-batch-isolation-skill.md` §7 决策定稿 / §8 执行顺序。
+- **B1–B9 执行清单**：items 契约 → doctor 能力探测 → type=command provider → 转录 batch →
+  批阅严谨性(json_schema/evidence/confidence) → **API key 全链路(含 batch 回灌)** →
+  plan/collect 兜底 → skills 五份 → 文档。
+- 合并执行：`engine restart`、`notice-send/work-publish --json-out`、`kb ai-solve` 并发、
+  Playground batch items、token usage 记录。
+- 隔离原理：程序层"每任务独立请求"= 结构性隔离；subagent 为 agent 侧编排。
+- **执行进度（2026-10-18）**：B1 items ✅ / B2 doctor ✅ / B3 type=command ✅ / B4 转录 batch ✅ /
+  B5 批阅严谨性 ✅ / B6 batch 回灌 ✅（`llm batch --apply`）/ B7 plan-collect ✅ / B8 skills ✅；
+  B9 文档收尾中。engine pytest 457 passed。
+- **待真机验证**：Aliyun batch submit/poll/download（本机无网）；command provider 接真实 agent CLI；
+  subagent 路径需具体 agent 框架。
+- ✅ 收尾（2026-10-18）：`kb ai-solve` 并发（`--concurrency`）、`notice-send`/`work-publish --json-out`、
+  `work-publish` 发布后回读摘要、**token usage 度量**（LLMClient.usage + run summary + grade 打印）。
+  全量 pytest 461 passed。
+- 剩余（P4）：Aliyun batch 真机验证；`type=command` 接真实 agent CLI 的 adapter；subagent 路径真机；
+  基于 usage 度量的省 token 优化（同 tag 合并评阅、图片压缩、prompt caching）——待讨论。
+
+# 2026-10-18 · CLI 盘点后的遗留（题库/通知/作业；P0 已完成）
+
+- ✅ P0（已做，见 docs/13「P0 · 题库/通知/作业 CLI 一致性清理」）：删通知硬编码白名单；
+  修 `kb stats` 提示；`notice-send --target` 透传 className；`kb write` 校验章节名。
+- ✅ P1 · 补齐 CLI 超集（已完成 2026-10-18，见 docs/13「P1 · 补齐 assist xxt 配置类 CLI」）：
+  - `assist xxt allowlist list/add/rm`（对应 serve `/xxt/write-allowlist`）；
+  - `assist xxt attachment-exts get/set`（对应 `xxt.notice_attachment_exts`）；
+  - `assist xxt work-rename`（封装 `work.py:rename_work`，并补 workspace 透传）；
+  - `assist xxt work-folder-default show/set`（对应 `allowlist.set_work_folder_default`）；
+  - 归属拍板：统一挂 `assist xxt`（不新开 `assist config`）；测试 `test_p1_xxt_config_cli.py` 6 例。
+- P1 · 输出/脚本体面：`notice-send`、`work-publish` 加 `--json-out`（`requests/responses` 过大易刷屏）；
+  `work-publish` 加发布后回读摘要（对齐 `create_work.directoryCheck`）。
+- P2 · 题库：`kb export/snapshot/stats` 补 CLI 级测试；`kb write` 对 `*-example.xlsx` 与
+  主文件的双通道策略定版（当前 CLI 只写 `<kind>.xlsx`，不碰 example；`snapshot` 按 stem 精确匹配会漏 example）；
+  `kb ai-solve` 串行调用改并发/批量。
+- P2 · 注释：`notice.py` 的 `ATTACH_SUFFIXES` 仅兼容保留，后续确认无引用后可删；
+  `serve.py` 与 CLI 的配置类端点建议补一份「配置项 ↔ 命令/端点」对照表。
+
+- ✅ Playground batch `--items`（每条自带图+问题）已完成；✅ qwen 系 skill 适配（`skills/providers-qwen.md` + adapter）。
+- ✅ D98 第四批（2026-10-18）：doctor 转录/图片风险检查项（`transcription_command_no_images`）；
+  QwenWork / WorkBuddy / qwen CLI 官网调研；原生 skill 包（QwenWork `SKILL.md`、WorkBuddy `skill.yml`）。
+- 平台结论：QwenWork/WorkBuddy 为 GUI agent、无 CLI/API，**不能**作为 `type=command` 后端；
+  只能作为宿主装载我们的 skill 调 `assist`。
+- ✅ D98 第五批（2026-10-18）：`tools/skill_installer.py`（list/check/install/verify，`--json`）；
+  QwenWork/WorkBuddy skill 安装与校验自动化；6 测试；全量 475 passed。
+- 仍待真机：QwenWork/WorkBuddy 中实际触发 skill；qwen CLI 读图能力确认。
+
+- ✅ D98 第六批（2026-10-18）：自检/回执机制——`assist doctor --report [--json]` 分层诊断
+  （environment/config/capability/data/artifact，含 code+fix）；`skill_installer check` 同口径；
+  WorkBuddy `run.py` 失败写 receipt；QwenWork SKILL 加自检步骤。9 测试；全量 484 passed。

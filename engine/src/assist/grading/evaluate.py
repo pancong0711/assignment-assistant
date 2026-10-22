@@ -18,7 +18,7 @@ from pathlib import Path
 
 from loguru import logger
 
-from .llm import LLMClient
+from .llm import LLMAPIError, LLMClient
 from .transcribe import parse_llm_json
 
 # ---- 迁移自 _legacy/2601playwright/src/llm/evaluator.py ANALYSIS_PROMPT ----
@@ -119,21 +119,39 @@ def build_user_prompt(items: list[dict], markdown_text: str, student: str = "") 
     if q_lines:
         parts.append("作业纸题目（学生作业应逐题对应以下题目，若对不上请把 "
                      "question_match.status 设为 false）：\n\n" + "\n\n".join(q_lines))
+    from .prompts import EVIDENCE_INSTRUCTION
+    parts.append(EVIDENCE_INSTRUCTION)
     parts.append(f"学生答案（转录）：\n{markdown_text}")
     return "\n\n".join(parts)
 
 
 def analyze(client: LLMClient, user_prompt: str, model: str | None = None,
-            max_tokens: int = 8192) -> dict:
-    """调用 LLM 得到结构化分析 JSON（截断翻倍重试，迁移自 evaluator.evaluate_markdown）。"""
+            max_tokens: int = 8192, *, strict_schema: bool = True) -> dict:
+    """调用 LLM 得到结构化分析 JSON。
+
+    D98-B5：优先用 `json_schema`（严格结构，含 evidence/confidence）；
+    provider 不支持 schema 时**自动回退** `json_object`（并记 warning）。
+    截断时 max_tokens 翻倍重试（迁移自 evaluator.evaluate_markdown）。
+    """
+    from .prompts import EVALUATION_SCHEMA
     _mt = max_tokens
+    use_schema = strict_schema
     for _ in range(4):
+        rf = EVALUATION_SCHEMA if use_schema else {"type": "json_object"}
         try:
             raw = client.chat(system_prompt=ANALYSIS_PROMPT, user_text=user_prompt,
-                              model=model, temperature=0.2,
-                              response_format={"type": "json_object"},
+                              model=model, temperature=0.2, response_format=rf,
                               max_tokens=_mt, step="evaluation")
             return parse_llm_json(raw)
+        except LLMAPIError as e:
+            # 部分 provider 不支持 json_schema（400/参数错误）→ 回退 json_object 再试一次
+            msg = str(e)
+            if use_schema and ("schema" in msg.lower() or "response_format" in msg.lower()
+                               or "400" in msg):
+                logger.warning("provider 不支持 json_schema，回退 json_object 重试")
+                use_schema = False
+                continue
+            raise
         except json.JSONDecodeError as e:
             if "Unterminated string" in str(e) and _mt < 262144:
                 _mt = min(_mt * 2, 262144)
@@ -158,12 +176,16 @@ def score_from_analysis(analysis: dict, quality: dict | None = None) -> dict:
         if q.get("reasoning", {}).get("status") == "brief":
             q_deduct += 10
         errors = q.get("errors", [])
-        q_deduct += min(len(errors) * 5, 20)
+        # D98-B5：confidence=low 的错误只提示、不扣分（防幻觉误伤）
+        counted = [e for e in errors if str(e.get("confidence") or "high").lower() != "low"]
+        q_deduct += min(len(counted) * 5, 20)
         q_deduct = min(q_deduct, 20)
         if q_deduct > 0:
             score -= q_deduct
             brief = "+" if q.get("reasoning", {}).get("status") == "brief" else ""
-            deductions.append(f"第{q_id}题 扣{q_deduct}分（推理{brief}错误{len(errors)}处）")
+            low_n = len(errors) - len(counted)
+            extra = f"，另有{low_n}处低置信度未计" if low_n > 0 else ""
+            deductions.append(f"第{q_id}题 扣{q_deduct}分（推理{brief}错误{len(counted)}处{extra}）")
 
     dia_cnt = sum(1 for q in analysis.get("questions", []) if not q.get("has_diagram", True))
     q_count = len(analysis.get("questions", []))
@@ -200,7 +222,9 @@ def score_from_analysis(analysis: dict, quality: dict | None = None) -> dict:
             s = base + (1 if idx < remainder else 0)
             if q.get("reasoning", {}).get("status") == "brief":
                 s -= 10
-            s -= min(len(q.get("errors", [])) * 5, 20)
+            _errs = [e for e in q.get("errors", [])
+                     if str(e.get("confidence") or "high").lower() != "low"]
+            s -= min(len(_errs) * 5, 20)
             raw_scores.append(max(0, s))
         raw_total = sum(raw_scores)
         diff = raw_total - final_score
@@ -233,14 +257,31 @@ def build_feedback_md(result: dict, student_name: str = "学生",
               f"**总分：{result.get('total_score', '?')} / 100**"]
     for d in result.get("deductions", []):
         lines.append(f"- {d}")
+    low_items: list[str] = []
     for q in (analysis or result.get("analysis", {})).get("questions", []):
         lines += ["", f"### 第 {q.get('id', '?')} 题"]
         rn = q.get("reasoning", {}).get("note", "")
         if rn:
             lines.append(f"**思路：**{rn}")
-        for e in q.get("errors", []):
+        # 做对之处
+        for cp in q.get("correct_points") or []:
+            lines.append(f"- ✅ **做对：**{cp}")
+        errors = q.get("errors") or []
+        for e in errors:
+            conf = str(e.get("confidence") or "high").lower()
+            if conf == "low":
+                # 低置信度：只在"不确定项"里提示，不计分
+                low_items.append(f"第 {q.get('id', '?')} 题：{e.get('description', '')}"
+                                 + (f"（依据：{e.get('evidence')}）" if e.get("evidence") else ""))
+                continue
+            desc = e.get("description", "")
+            lines.append(f"- ❌ **问题：**{desc}")
+            if e.get("why"):
+                lines.append(f"  - **为什么：**{e['why']}")
+            if e.get("evidence"):
+                lines.append(f"  - **你的原文：**`{e['evidence']}`")
             if e.get("guidance"):
-                lines.append(f"- **想一想：**{e['guidance']}")
+                lines.append(f"  - **想一想：**{e['guidance']}")
         if not q.get("has_diagram", True):
             lines.append("- 提示：缺少示意图，请补上。")
     # 整体引导
@@ -249,6 +290,10 @@ def build_feedback_md(result: dict, student_name: str = "学生",
         lines += ["", "---", "## 整体思考", g]
     for s in result.get("strengths", []):
         lines.append(f"- 值得肯定：{s}")
+    # D98-B5：低置信度"不确定项"单列（未计入扣分，供教师复核）
+    if low_items:
+        lines += ["", "---", "## 待教师确认（AI 低置信度，未计分）"]
+        lines += [f"- {x}" for x in low_items]
     lines += ["", "---", "*AI 辅助批阅*"]
     return "\n".join(lines)
 
@@ -299,4 +344,46 @@ def evaluate_student(client: LLMClient, transcript_file: Path, items: list[dict]
         logger.warning(f"[{student}] 疑似顶替作业（与任务包题目无关）：{match.get('note')}")
     if not result["_name_match"]:
         logger.warning(f"[{student}] 转录姓名可能不匹配，请人工复核")
+    return out
+
+
+# ---------------- D98-B6：batch 结果回灌（下载的 JSONL → evaluations/*.json） ----------------
+
+def build_result_from_analysis(analysis: dict, *, student: str, quality: "dict | None" = None,
+                               homework_name: str = "", model: str = "",
+                               name_match: bool = True) -> dict:
+    """把**单条 analysis**变成与 evaluate_student 同结构的评阅结果（供 batch 回灌）。"""
+    match = analysis.get("question_match", {}) if isinstance(analysis, dict) else {}
+    substitution = (match.get("status") is False)
+    result = score_from_analysis(analysis or {}, quality=quality)
+    result["analysis"] = analysis
+    if quality:
+        result["quality"] = quality
+    if substitution:
+        result["verdict"] = "suspected-substitution"
+        result["deductions"] = list(result["deductions"]) + [
+            f"顶替嫌疑：{match.get('note', '学生作答与作业纸题目无关')}"]
+    else:
+        result["verdict"] = "normal"
+    result["feedback_md"] = build_feedback_md(result, student, homework_name, analysis=analysis)
+    result.update({
+        "student": student,
+        "homework": homework_name,
+        "model": model,
+        "_source": "llm_batch",
+        "_eval_version": 2,
+        "timestamp": time.strftime("%Y-%m-%d %H:%M"),
+        "_name_match": bool(name_match),
+    })
+    return result
+
+
+def write_result(result: dict, out_dir: Path) -> Path:
+    """把评阅结果写为 evaluations/<student>.json + .md。"""
+    out_dir = Path(out_dir)
+    out_dir.mkdir(parents=True, exist_ok=True)
+    out = out_dir / f"{result['student']}.json"
+    out.write_text(json.dumps(result, ensure_ascii=False, indent=2), encoding="utf-8")
+    if result.get("feedback_md"):
+        out.with_suffix(".md").write_text(result["feedback_md"], encoding="utf-8")
     return out

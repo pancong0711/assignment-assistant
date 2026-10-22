@@ -37,3 +37,25 @@ def test_delete_draft(tmp_path: Path):
     assert delete_draft(tmp_path, "C1", "W1", "X")["ok"] is True
     assert read_drafts(tmp_path, "C1", "W1") == {}
     assert delete_draft(tmp_path, "C1", "W1", "X")["ok"] is False
+
+
+def test_concurrent_save_drafts_no_lost_update(tmp_path):
+    """AI/脚本并行写同一份草稿文件：不同学生条目必须全部保留。"""
+    import multiprocessing as mp
+    from assist.xxt import grade_store
+    home = tmp_path
+
+    def worker(start: int):
+        for i in range(start, start + 10):
+            r = grade_store.save_draft(home, "c1", "w1", f"stu{i}",
+                                       score=80 + i % 10, comment=f"学生{i}")
+            assert r["ok"], r
+
+    procs = [mp.Process(target=worker, args=(i * 10,)) for i in range(4)]
+    for pr in procs:
+        pr.start()
+    for pr in procs:
+        pr.join(timeout=60)
+    assert all(pr.exitcode == 0 for pr in procs)
+    drafts = grade_store.read_drafts(home, "c1", "w1")
+    assert len(drafts) == 40, f"期望 40 个学生，实际 {len(drafts)}（发生丢更新）"

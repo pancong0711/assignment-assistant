@@ -1065,6 +1065,10 @@ D64-f 批阅回写（写操作）：学习通侧填分/评语——**另行解�
 
 1. **白名单**：所有平台写操作必须命中 `settings.local.json → xxt.write_allowlist`；
    校验不过时**在启动浏览器之前**即拒绝（CLI 退出码 2 / serve 400），并回显实际读取的白名单文件与条目。
+   - 唯一来源是配置：`notice.py` 已不再内置硬编码测试班（P0 清理 2026-10-18）；
+   - 维护入口：PWA「发布-学习通」勾选；CLI：`assist xxt allowlist list|add|rm`
+     （P1，2026-10-18；附件格式 `assist xxt attachment-exts get|set`，
+     作业库默认文件夹 `assist xxt work-folder-default show|set`）。
 2. **默认 dry-run**：`notice-send` / `work-publish` / `grade-upload` / `mark-submitted` 等一律默认
    dry-run，真正写库需显式 `--send` / `--confirm-send`（PWA 为二次确认）。
 3. **幂等**：同一作业同班级发布、同一学生已批阅的重复提交默认拒绝（`--force` 才覆盖）。

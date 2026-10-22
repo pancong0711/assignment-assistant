@@ -160,3 +160,89 @@ def build_consistency_prompt(*, questions, student_name: str = "",
     if markdown_text:
         parts.append(f"作答转录片段（前 2000 字）：\n{markdown_text[:2000]}")
     return "\n\n".join(parts)
+
+
+# ---------------- D98-B5：严谨批阅 schema（补回 json_schema + evidence + confidence） ----------------
+
+# 在旧版 EVALUATION_SCHEMA 基础上增加：
+# - errors[].evidence：引用学生转录中的**原文片段**（治幻觉、供核对）
+# - errors[].confidence / questions[].confidence：high|medium|low
+# - 每题 correct_points：做对之处（用户要求"哪里做的正确"）
+EVALUATION_SCHEMA = {
+    "type": "json_schema",
+    "json_schema": {
+        "name": "evaluation_result",
+        "strict": True,
+        "schema": {
+            "type": "object",
+            "properties": {
+                "question_match": {
+                    "type": "object",
+                    "properties": {"status": {"type": "boolean"}, "note": {"type": "string"}},
+                    "required": ["status", "note"], "additionalProperties": False,
+                },
+                "questions": {
+                    "type": "array",
+                    "items": {
+                        "type": "object",
+                        "properties": {
+                            "id": {"type": "integer"},
+                            "reasoning": {
+                                "type": "object",
+                                "properties": {
+                                    "status": {"type": "string", "enum": ["ok", "brief"]},
+                                    "note": {"type": "string"},
+                                },
+                                "required": ["status", "note"], "additionalProperties": False,
+                            },
+                            "correct_points": {"type": "array", "items": {"type": "string"}},
+                            "errors": {
+                                "type": "array",
+                                "items": {
+                                    "type": "object",
+                                    "properties": {
+                                        "step": {"type": "string"},
+                                        "description": {"type": "string"},
+                                        "guidance": {"type": "string"},
+                                        "deduct": {"type": "integer"},
+                                        "evidence": {"type": "string"},
+                                        "confidence": {"type": "string",
+                                                       "enum": ["high", "medium", "low"]},
+                                        "why": {"type": "string"},
+                                    },
+                                    "required": ["step", "description", "guidance", "deduct",
+                                                 "evidence", "confidence", "why"],
+                                    "additionalProperties": False,
+                                },
+                            },
+                            "confidence": {"type": "string", "enum": ["high", "medium", "low"]},
+                            "has_diagram": {"type": "boolean"},
+                        },
+                        "required": ["id", "reasoning", "correct_points", "errors",
+                                     "confidence", "has_diagram"],
+                        "additionalProperties": False,
+                    },
+                },
+                "has_signature": {"type": "boolean"},
+                "summary": {"type": "string"},
+                "guidance": {"type": "string"},
+                "strengths": {"type": "array", "items": {"type": "string"}},
+                "weaknesses": {"type": "array", "items": {"type": "string"}},
+            },
+            "required": ["question_match", "questions", "has_signature", "summary",
+                         "guidance", "strengths", "weaknesses"],
+            "additionalProperties": False,
+        },
+    },
+}
+
+# 严谨批阅 prompt 补充段（拼在 ANALYSIS_PROMPT 后或作为 user 前缀）
+EVIDENCE_INSTRUCTION = """严谨性要求（必须遵守）：
+1. 每条 errors 必须给 `evidence`：**逐字引用学生转录中对应片段**（找不到原文就不要报这条错）。
+2. 每条 errors 必须给 `why`：说明"为什么判定这是错误"（物理原理/计算依据），不要只描述现象。
+3. 每条 errors 与每题都要给 `confidence`（high/medium/low）：
+   - 看不清、公式歧义、学生写法非常规 → 至少 medium，必要时 low；
+   - low 置信度的错误**只提示、不扣分**（由程序处理）。
+4. 每题给 `correct_points`：列出学生做得对的地方（至少 1 条，确实全错才可空）。
+5. `guidance` 用苏格拉底式提问引导，**不要直接给答案**。
+6. 不得编造学生未写的内容；`evidence` 对不上原文时宁可标 low。"""

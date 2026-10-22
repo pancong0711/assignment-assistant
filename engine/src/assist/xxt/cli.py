@@ -26,6 +26,34 @@ def _journal(kind: str, *, params=None, result: str = "ok", error: str = "") -> 
         pass
 
 
+def targets_from_pairs(target_pairs) -> list[dict]:
+    """`--target courseId:classId[:className]` → normalize_targets 形态。
+
+    D77 语义：第三段是**班级名**（通知收件人 sendMap 的显示名），不是课程名；
+    CLI 直调没有课程名来源，`courseName` 回落 courseId。同一 courseId 的多个
+    `--target` 合并到一个 course 的 classes 下。
+    """
+    targets: list[dict] = []
+    for pair in target_pairs or []:
+        parts = str(pair).split(":", 2)
+        if len(parts) < 2:
+            raise click.UsageError("--target 格式应为 courseId:classId[:className]")
+        cid, kid = parts[0].strip(), parts[1].strip()
+        if not cid or not kid:
+            raise click.UsageError("--target 的 courseId/classId 不能为空")
+        kname = parts[2].strip() if len(parts) > 2 and parts[2].strip() else kid
+        found = False
+        for c in targets:
+            if c["courseId"] == cid:
+                c["classes"].append({"classId": kid, "name": kname})
+                found = True
+                break
+        if not found:
+            targets.append({"courseId": cid, "courseName": cid,
+                            "classes": [{"classId": kid, "name": kname}]})
+    return targets
+
+
 def register(group: click.Group) -> None:
     @group.command("install")
     def xxt_install():
@@ -278,30 +306,17 @@ def register(group: click.Group) -> None:
                   help="workspace 下 pdf/doc/docx 路径，可多次")
     @click.option("--send", is_flag=True, default=False,
                   help="真正发送；缺省为 dry-run（只填表/上传附件并截图）")
+    @click.option("--json-out", "json_out", default=None, type=click.Path(dir_okay=False),
+                  help="同时把结果写入该 JSON 文件（便于脚本/agent 读取）")
     @click.option("--storage", "storage", default=None, type=click.Path(dir_okay=False))
-    def xxt_notice_send(spec_path, target_pairs, title, body, body_html, attachments, send, storage):
+    def xxt_notice_send(spec_path, target_pairs, title, body, body_html, attachments, send,
+                        json_out, storage):
         """发布学习通课程通知（D77 写操作；默认 dry-run，白名单限制）。"""
         from .notice import normalize_targets, send_notice_from_spec
         if spec_path:
             spec = json.loads(Path(spec_path).read_text(encoding="utf-8"))
         else:
-            targets = []
-            for pair in target_pairs:
-                parts = str(pair).split(":", 2)
-                if len(parts) < 2:
-                    raise click.UsageError("--target 格式应为 courseId:classId[:className]")
-                cid, kid = parts[0].strip(), parts[1].strip()
-                cname = parts[2].strip() if len(parts) > 2 else ""
-                kname = kid
-                found = False
-                for c in targets:
-                    if c["courseId"] == cid:
-                        c["classes"].append({"classId": kid, "name": kname})
-                        found = True
-                        break
-                if not found:
-                    targets.append({"courseId": cid, "courseName": cname,
-                                    "classes": [{"classId": kid, "name": kname}]})
+            targets = targets_from_pairs(target_pairs)
             spec = {"targets": targets, "title": title,
                     "bodyHtml": body_html or body, "attachments": list(attachments)}
         rep = send_notice_from_spec(spec, send=bool(send), storage=storage)
@@ -311,6 +326,9 @@ def register(group: click.Group) -> None:
                          "attachments": rep.get("attachments"), "receipt": rep.get("receipt")},
                  result="ok" if rep.get("ok") else "fail",
                  error=str(rep.get("error") or "")[:200])
+        if json_out:
+            Path(json_out).expanduser().write_text(
+                json.dumps(rep, ensure_ascii=False, indent=1), encoding="utf-8")
         click.echo(json.dumps(rep, ensure_ascii=False, indent=1))
         raise SystemExit(0 if rep.get("ok") else 2)
 
@@ -339,9 +357,11 @@ def register(group: click.Group) -> None:
     @click.option("--late-deadline", "late_deadline", default="")
     @click.option("--redo-times", default=0, type=int)
     @click.option("--send", is_flag=True, default=False, help="真正发布；缺省 dry-run")
+    @click.option("--json-out", "json_out", default=None, type=click.Path(dir_okay=False),
+                  help="同时把结果写入该 JSON 文件（便于脚本/agent 读取）")
     @click.option("--storage", "storage", default=None, type=click.Path(dir_okay=False))
     def xxt_work_publish(course_id, class_ids, work_library_id, cpi, start_time, end_time,
-                         allow_late, late_deadline, redo_times, send, storage):
+                         allow_late, late_deadline, redo_times, send, json_out, storage):
         """发布作业设置（D79-C；默认 dry-run，白名单限制；D95 支持多班）。"""
         from .work import publish_work
         cids = [str(x) for x in class_ids if str(x).strip()]
@@ -350,12 +370,30 @@ def register(group: click.Group) -> None:
                            end_time=end_time, allow_late=allow_late,
                            late_deadline=late_deadline, redo_times=redo_times, send=send,
                            class_ids=cids)
+        # 发布后回读摘要（对齐 create_work.directoryCheck）：真正发送并成功时，回读班级作业列表确认
+        if send and rep.get("ok"):
+            try:
+                from .work import list_class_works
+                chk = list_class_works(default_storage(None), course_id, cids[0], cpi)
+                ids = [str(x.get("workId") or x.get("workLibraryId") or "")
+                       for x in (chk.get("items") or [])]
+                rep["publishedCheck"] = {
+                    "classId": cids[0], "found": str(work_library_id) in ids,
+                    "hint": "" if str(work_library_id) in ids else
+                            "回读未找到该作业，请到平台确认是否发布成功",
+                }
+            except Exception as exc:  # noqa: BLE001
+                rep["publishedCheck"] = {"classId": cids[0], "found": None,
+                                         "error": str(exc)[:200]}
         _journal("xxt_work_publish",
                  params={"courseId": course_id, "classIds": cids,
                          "workLibraryId": work_library_id, "mode": rep.get("mode"),
                          "redo": redo_times, "allowLate": bool(allow_late)},
                  result="ok" if rep.get("ok") else "fail",
                  error=str(rep.get("error") or rep.get("responseText") or "")[:200])
+        if json_out:
+            Path(json_out).expanduser().write_text(
+                json.dumps(rep, ensure_ascii=False, indent=1), encoding="utf-8")
         click.echo(json.dumps(rep, ensure_ascii=False, indent=1))
         raise SystemExit(0 if rep.get("ok") else 2)
 
@@ -711,3 +749,179 @@ def register(group: click.Group) -> None:
         _journal("xxt_login", result="ok" if ok else "fail",
                  error=str(rep.get("verdict") or rep.get("stage") or "")[:200])
         raise SystemExit(0 if ok else 2)
+
+    # ---------------- P1：配置类命令（白名单 / 附件格式 / 作业默认文件夹） ----------------
+    # 统一挂 `assist xxt` 下（与既有写操作/管理命令同组），补齐 serve 侧仅有端点的能力。
+
+    def _ws_or_none(workspace=None):
+        """配置类命令共用：workspace 显式参数优先，缺省自动查找（与写操作命令同口径）。"""
+        from ..workspace import find_workspace
+        return find_workspace(workspace)
+
+    @group.group("allowlist")
+    def xxt_allowlist():
+        """写操作白名单（settings.local.json → xxt.write_allowlist）。
+
+        所有平台写操作（发通知/建作业/发布/上传批阅）在启动浏览器前都会校验此白名单。
+        """
+
+    @xxt_allowlist.command("list")
+    @click.option("--workspace", "-w", default=None, help="workspace 路径（默认自动查找）")
+    @click.option("--json-out", "json_out", default=None, type=click.Path(dir_okay=False),
+                  help="同时把结果写入该 JSON 文件")
+    def xxt_allowlist_list(workspace, json_out):
+        """列出当前白名单条目（含实际读取的配置文件路径）。"""
+        from .allowlist import _settings_path, read_allowlist
+        ws = _ws_or_none(workspace)
+        rep = {"ok": True, "workspace": str(ws), "settings": str(_settings_path(ws)),
+               "items": read_allowlist(ws)}
+        if json_out:
+            Path(json_out).expanduser().write_text(json.dumps(rep, ensure_ascii=False, indent=1),
+                                                   encoding="utf-8")
+        click.echo(json.dumps(rep, ensure_ascii=False, indent=1))
+
+    @xxt_allowlist.command("add")
+    @click.option("--workspace", "-w", default=None, help="workspace 路径（默认自动查找）")
+    @click.option("--course", "course_id", required=True, help="courseId")
+    @click.option("--class", "class_id", required=True, help="classId")
+    @click.option("--name", default="", help="班级备注名（可选，仅显示用）")
+    def xxt_allowlist_add(workspace, course_id, class_id, name):
+        """把一个 courseId:classId 加入白名单（已存在则更新备注，不重复）。"""
+        from .allowlist import read_allowlist, write_allowlist
+        ws = _ws_or_none(workspace)
+        items = read_allowlist(ws)
+        hit = next((x for x in items
+                    if str(x["courseId"]) == str(course_id) and str(x["classId"]) == str(class_id)), None)
+        if hit is None:
+            items.append({"courseId": str(course_id), "classId": str(class_id), "name": str(name)})
+        elif name:
+            hit["name"] = str(name)
+        clean = write_allowlist(ws, items)
+        _journal("xxt_allowlist_add", params={"courseId": course_id, "classId": class_id})
+        click.echo(json.dumps({"ok": True, "items": clean}, ensure_ascii=False, indent=1))
+
+    @xxt_allowlist.command("rm")
+    @click.option("--workspace", "-w", default=None, help="workspace 路径（默认自动查找）")
+    @click.option("--course", "course_id", required=True)
+    @click.option("--class", "class_id", required=True)
+    def xxt_allowlist_rm(workspace, course_id, class_id):
+        """把一个 courseId:classId 移出白名单。"""
+        from .allowlist import read_allowlist, write_allowlist
+        ws = _ws_or_none(workspace)
+        items = read_allowlist(ws)
+        keep = [x for x in items
+                if not (str(x["courseId"]) == str(course_id) and str(x["classId"]) == str(class_id))]
+        removed = len(items) - len(keep)
+        clean = write_allowlist(ws, keep)
+        _journal("xxt_allowlist_rm", params={"courseId": course_id, "classId": class_id,
+                                             "removed": removed},
+                 result="ok" if removed else "fail")
+        click.echo(json.dumps({"ok": bool(removed), "removed": removed, "items": clean},
+                              ensure_ascii=False, indent=1))
+        if not removed:
+            raise click.ClickException("白名单中不存在该条目")
+
+    @group.group("attachment-exts")
+    def xxt_attachment_exts():
+        """通知/作业附件的扩展名白名单（settings.local.json → xxt.notice_attachment_exts）。"""
+
+    @xxt_attachment_exts.command("get")
+    @click.option("--workspace", "-w", default=None, help="workspace 路径（默认自动查找）")
+    def xxt_attachment_exts_get(workspace):
+        """查看当前附件扩展名白名单（含是否使用默认值）。"""
+        from .allowlist import (DEFAULT_NOTICE_ATTACHMENT_EXTS, _read_settings,
+                                read_notice_attachment_exts)
+        ws = _ws_or_none(workspace)
+        raw = ((_read_settings(ws).get("xxt") or {}).get("notice_attachment_exts"))
+        configured = isinstance(raw, list)
+        click.echo(json.dumps({
+            "ok": True, "workspace": str(ws),
+            "exts": read_notice_attachment_exts(ws),
+            "source": "configured" if configured else "default",
+            "defaults": list(DEFAULT_NOTICE_ATTACHMENT_EXTS),
+        }, ensure_ascii=False, indent=1))
+
+    @xxt_attachment_exts.command("set")
+    @click.option("--workspace", "-w", default=None, help="workspace 路径（默认自动查找）")
+    @click.option("--ext", "exts", multiple=True, required=True,
+                  help="允许的扩展名（可多次，可不带点），如 --ext pdf --ext png")
+    @click.option("--reset", is_flag=True, default=False,
+                  help="恢复默认（等价于清空配置项）")
+    def xxt_attachment_exts_set(workspace, exts, reset):
+        """设置附件扩展名白名单；非法条目（空/含路径分隔符）直接拒绝。"""
+        from .allowlist import (DEFAULT_NOTICE_ATTACHMENT_EXTS, normalize_exts,
+                                write_notice_attachment_exts)
+        ws = _ws_or_none(workspace)
+        if reset:
+            clean = write_notice_attachment_exts(ws, list(DEFAULT_NOTICE_ATTACHMENT_EXTS))
+        else:
+            clean = normalize_exts(list(exts))
+            bad = [e for e in clean if "/" in e or "\\" in e or "." in e or len(e) > 12]
+            if bad:
+                raise click.ClickException(f"非法扩展名：{bad}（只填后缀，如 pdf/png）")
+            if not clean:
+                raise click.ClickException("至少提供一个有效扩展名")
+            clean = write_notice_attachment_exts(ws, clean)
+        _journal("xxt_attachment_exts_set", params={"exts": clean, "reset": bool(reset)})
+        click.echo(json.dumps({"ok": True, "exts": clean,
+                               "source": "default" if reset else "configured"},
+                              ensure_ascii=False, indent=1))
+
+    @group.group("work-folder-default")
+    def xxt_work_folder_default():
+        """作业库默认文件夹（settings.local.json → xxt.work_folders.<courseId>）。"""
+
+    @xxt_work_folder_default.command("show")
+    @click.option("--workspace", "-w", default=None, help="workspace 路径（默认自动查找）")
+    @click.option("--course", "course_id", default="", help="只看该课程；缺省列出全部")
+    def xxt_work_folder_default_show(workspace, course_id):
+        """查看各课程的作业库默认文件夹。"""
+        from .allowlist import _settings_path, work_folder_defaults
+        ws = _ws_or_none(workspace)
+        data = work_folder_defaults(ws)
+        if course_id:
+            data = {str(course_id): data.get(str(course_id), {})}
+        click.echo(json.dumps({"ok": True, "workspace": str(ws),
+                               "settings": str(_settings_path(ws)), "work_folders": data},
+                              ensure_ascii=False, indent=1))
+
+    @xxt_work_folder_default.command("set")
+    @click.option("--workspace", "-w", default=None, help="workspace 路径（默认自动查找）")
+    @click.option("--course", "course_id", required=True)
+    @click.option("--directory-id", "directory_id", required=True, help="作业库文件夹 ID（0=根目录）")
+    @click.option("--name", default="", help="文件夹名备注（可选）")
+    def xxt_work_folder_default_set(workspace, course_id, directory_id, name):
+        """设置某课程的作业库默认文件夹（新建草稿/复制时用）。"""
+        from .allowlist import set_work_folder_default
+        ws = _ws_or_none(workspace)
+        rep = set_work_folder_default(ws, str(course_id), str(directory_id), name=str(name))
+        _journal("xxt_work_folder_default_set",
+                 params={"courseId": course_id, "directoryId": directory_id})
+        click.echo(json.dumps({"ok": True, "courseId": str(course_id), **rep},
+                              ensure_ascii=False, indent=1))
+
+    # ---------------- P1：作业改名（封装 work.rename_work） ----------------
+    @group.command("work-rename")
+    @click.option("--workspace", "-w", default=None, help="workspace 路径（默认自动查找）")
+    @click.option("--course", "course_id", required=True)
+    @click.option("--class", "class_id", required=True)
+    @click.option("--cpi", default="0")
+    @click.option("--directory-id", "directory_id", default="0")
+    @click.option("--work-library-id", "work_library_id", required=True)
+    @click.option("--title", required=True, help="新标题（≤100 字）")
+    @click.option("--storage", "storage", default=None, type=click.Path(dir_okay=False))
+    def xxt_work_rename(workspace, course_id, class_id, cpi, directory_id, work_library_id,
+                        title, storage):
+        """重命名作业库作业（白名单限制；平台只对文件夹提供库内改名接口，故走编辑器保存）。"""
+        from .work import rename_work
+        from ..workspace import find_workspace
+        ws = find_workspace(workspace)
+        rep = rename_work(default_storage(None), course_id, class_id, cpi, directory_id,
+                          work_library_id, title, workspace=ws)
+        _journal("xxt_work_rename",
+                 params={"courseId": course_id, "classId": class_id,
+                         "workLibraryId": work_library_id, "title": title},
+                 result="ok" if rep.get("ok") else "fail",
+                 error=str(rep.get("error") or "")[:200])
+        click.echo(json.dumps(rep, ensure_ascii=False, indent=1))
+        raise SystemExit(0 if rep.get("ok") else 2)

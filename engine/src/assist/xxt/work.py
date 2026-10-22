@@ -265,10 +265,9 @@ def publish_work(storage, course_id: str, class_id: str, work_library_id: str, *
         pass
     if parsed.get("status"):
         try:
-            idx = _load_index()
-            idx[_dup_key] = {"at": time.strftime("%Y-%m-%d %H:%M:%S"), "runId": run_id,
-                             "workId": ((parsed.get("workRelationArray") or [{}])[0]).get("workId")}
-            _save_index(idx)
+            entry = {"at": time.strftime("%Y-%m-%d %H:%M:%S"), "runId": run_id,
+                     "workId": ((parsed.get("workRelationArray") or [{}])[0]).get("workId")}
+            _update_index(lambda idx: idx.__setitem__(_dup_key, entry))
         except Exception:  # noqa: BLE001
             pass
     return {"ok": bool(parsed.get("status")), "mode": "send", "runId": run_id,
@@ -746,8 +745,16 @@ def _load_index() -> dict:
         return {}
 
 
+def _update_index(mutator) -> dict:
+    """锁内读-改-写发布索引（并发发布不丢条目；崩溃不留半截 JSON）。"""
+    from ..filelock import update_json
+    return update_json(_index_path(), mutator, default={})
+
+
 def _save_index(d: dict) -> None:
-    _index_path().write_text(json.dumps(d, ensure_ascii=False, indent=1), encoding="utf-8")
+    """（保留给只读-后-整写的老调用点；新代码优先用 _update_index。）"""
+    from ..filelock import atomic_write_text
+    atomic_write_text(_index_path(), json.dumps(d, ensure_ascii=False, indent=1))
 
 
 def published_classes(course_id: str, work_library_id: str) -> list[str]:
@@ -833,9 +840,12 @@ def copy_work(storage, course_id: str, class_id: str, cpi: str, directory_id: st
 
 
 def rename_work(storage, course_id: str, class_id: str, cpi: str, directory_id: str,
-                work_library_id: str, new_title: str) -> dict:
-    """重命名作业库作业：打开编辑器改标题后保存（学习通库内重命名接口只对文件夹生效）。"""
-    err = validate_work_target(course_id, class_id)
+                work_library_id: str, new_title: str, workspace=None) -> dict:
+    """重命名作业库作业：打开编辑器改标题后保存（学习通库内重命名接口只对文件夹生效）。
+
+    `workspace` 用于白名单校验（与 create_work/publish_work 同口径；缺省自动查找）。
+    """
+    err = validate_work_target(course_id, class_id, workspace)
     if err:
         return {"ok": False, "error": err}
     from playwright.sync_api import sync_playwright

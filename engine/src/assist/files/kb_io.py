@@ -164,6 +164,28 @@ def _cell(entry: dict, col: str):
     return v
 
 
+# Excel sheet 名限制：≤31 字符，不含 []:*?/\，且不能为空/不能是历史保留名
+# （openpyxl 会直接抛异常，这里提前给出可读错误）。
+_SHEET_NAME_FORBIDDEN = set("[]:*?/\\")
+
+
+def validate_sheet_name(name: str) -> str:
+    """校验 Excel sheet 名；返回错误文案（合法返回空串）。
+
+    规则对齐 Excel/openpyxl：非空、≤31 字符、不含 []:*?/\\ 这六个字符。
+    （`validate_sheet_name` 只做静态校验，不检查重名——由 openpyxl 负责。）
+    """
+    n = str(name or "")
+    if not n.strip():
+        return "章节名不能为空"
+    if len(n) > 31:
+        return f"章节名过长（{len(n)} > 31 字符）：{n}"
+    bad = sorted({c for c in n if c in _SHEET_NAME_FORBIDDEN})
+    if bad:
+        return f"章节名含非法字符 {''.join(bad)}：{n}"
+    return ""
+
+
 def write_chapters_preserving(xlsx_path: Path, chapters: dict[str, list[dict]],
                               columns: list[str] | None = None) -> Path:
     """把 {sheet: [条目,...]} 写回现有 xlsx，**保留单元格样式**（B4）。
@@ -174,6 +196,9 @@ def write_chapters_preserving(xlsx_path: Path, chapters: dict[str, list[dict]],
     2. 按现有表头映射列，仅改 cell.value（不重建 Cell 对象，样式/列宽/批注保留）；
     3. 删除新增数据行之后的旧行，并移除本次未提供的旧 sheet。
     """
+    bad = [(name, err) for name in chapters if (err := validate_sheet_name(name))]
+    if bad:
+        raise ValueError("; ".join(f"{n}: {e}" for n, e in bad))
     columns = columns or COLUMNS
     if xlsx_path.exists():
         wb = load_workbook(xlsx_path)

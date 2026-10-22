@@ -123,6 +123,15 @@ def _plan_student_images(ctx: dict) -> "dict[str, list]":
 
 
 def _run_transcribe(ctx: dict, client, transcripts_dir: Path) -> list[Path]:
+    """D98-B4：改为 batch（items 逐条独立 + 并发 + 执行报告）。
+
+    - 每名学生一个 item（同生多页在 images 内，同一次请求）；
+    - 单生失败**标记该条并继续**其余（用户裁决 6），不再整批中断；
+    - 报告写 `<grading>/batch-report.json`。
+    """
+    from .items import normalize_items
+    from .transcribe import transcribe_batch
+
     model = (ctx["task"].get("grade", {}).get("models", {}) or {}).get("transcription")
     plan_groups = _plan_student_images(ctx) if ctx.get("plan") else {}
     if plan_groups:
@@ -134,17 +143,22 @@ def _run_transcribe(ctx: dict, client, transcripts_dir: Path) -> list[Path]:
         if not groups:
             logger.warning(f"图片目录为空（无 .png/.jpg 等文件），跳过转录: {images_dir}")
             return []
-    outs = []
-    for student, imgs in sorted(groups.items()):
-        logger.info(f"[转录] {student}（{len(imgs)} 张）")
-        try:
-            outs.append(transcribe_student(client, list(imgs), student, transcripts_dir, model=model))
-        except Exception as exc:  # noqa: BLE001 —— 单生失败不阻断全班，落诊断
-            logger.error(f"[转录失败] {student}: {str(exc)[:200]}")
-            _diag(ctx, step="transcribe", student=student, error=str(exc)[:500],
-                  model=model, images=[getattr(x, "name", str(x)) for x in imgs])
-            raise
-    return outs
+
+    items = normalize_items([
+        {"id": student, "question": "请转录这份物理作业图片", "images": [str(p) for p in imgs]}
+        for student, imgs in sorted(groups.items())
+    ])
+    concurrency = int(ctx.get("concurrency") or 3)
+    report = transcribe_batch(client, items, transcripts_dir, model=model,
+                              concurrency=concurrency,
+                              emit=lambda line: logger.info(f"[转录] {line}"))
+    for it in report.get("items") or []:
+        if not it.get("ok"):
+            _diag(ctx, step="transcribe", student=it.get("id"), error=it.get("error"),
+                  images=it.get("images") or [])
+    if report.get("failed"):
+        logger.warning(f"[转录] {report['failed']}/{report['total']} 名学生失败（已标记，继续后续步骤）")
+    return [Path(it["out"]) for it in (report.get("items") or []) if it.get("ok") and it.get("out")]
 
 
 def _plan_items_for(ctx: dict, student: str) -> "list[dict] | None":
@@ -242,6 +256,7 @@ def run_task(task_path: Path, ws: Path, images_dir: Path | None = None,
         "mode": (str(mode) or (plan or {}).get("mode") or "optimized"),
         "diag": base / "diagnostics.jsonl",
         "report_kind": (plan or {}).get("reportKind") or "ai",
+        "concurrency": int((grade_cfg.get("concurrency") or 3)),
     }
     if plan:
         students = (plan.get("students") or [])
@@ -268,12 +283,14 @@ def run_task(task_path: Path, ws: Path, images_dir: Path | None = None,
                 from .llm import LLMClient
                 client = LLMClient(ws=ws)
                 produced = [str(x) for x in _run_transcribe(ctx, client, p["transcripts"])]
+                _accum_usage(ctx, "transcribe", client)
             elif step == "evaluate":
                 if not any(ctx["transcripts_dir"].glob("*.json")):
                     raise RuntimeNotFoundError(ctx["transcripts_dir"])
                 from .llm import LLMClient
                 client = LLMClient(ws=ws)
                 produced = [str(x) for x in _run_evaluate(ctx, client, p["evaluations"])]
+                _accum_usage(ctx, "evaluate", client)
             elif step == "report":
                 produced = [str(x) for x in _run_report(ctx, p["reports"])]
             else:
@@ -306,9 +323,27 @@ def run_task(task_path: Path, ws: Path, images_dir: Path | None = None,
     # run 汇总记录（D8：任务包 = 执行历史；任务包内 journal 数组不入库但存在于工作区副本）
     summary_rec = {"ts": time.strftime("%Y-%m-%d %H:%M:%S"), "run_id": run_id,
                    "step": "run", "steps_done": to_run, "status": "done",
-                   "bucket": str(base)}
+                   "bucket": str(base), "usage": ctx.get("usage") or {}}
     journal_append(journal, summary_rec)
     return summary_rec
+
+
+def _accum_usage(ctx: dict, step: str, client) -> None:
+    """D98：把本步 client 的 token 用量并入 ctx（最终写入 run summary / journal）。"""
+    try:
+        u = client.usage_summary() if hasattr(client, "usage_summary") else {}
+    except Exception:  # noqa: BLE001
+        u = {}
+    if not u:
+        return
+    usage = ctx.setdefault("usage", {})
+    step_u = usage.setdefault(step, {"prompt_tokens": 0, "completion_tokens": 0,
+                                     "total_tokens": 0, "calls": 0})
+    for k in ("prompt_tokens", "completion_tokens", "total_tokens", "calls"):
+        step_u[k] = int(step_u.get(k, 0)) + int(u.get(k, 0) or 0)
+    usage["total"] = {k: sum(int((v or {}).get(k, 0) or 0) for v in usage.values()
+                             if isinstance(v, dict))
+                      for k in ("prompt_tokens", "completion_tokens", "total_tokens", "calls")}
 
 
 class RuntimeNotFoundError(RuntimeError):

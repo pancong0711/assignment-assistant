@@ -206,6 +206,59 @@ def _download_zip(url: str, dest: Path, emit) -> None:
             raise RuntimeError("文件头不是 zip")
 
 
+def update_status(ws: Path) -> dict:
+    """只读：本地/远端版本 + 两阶段更新现场（pending/staging/update.failed）。
+
+    返回可直接 JSON 化的 dict；`stage` ∈ none|pending|failed，便于 AI/CLI 判断
+    「更新卡在哪一步」（例如已暂存但 launcher 未执行安装）。
+    """
+    ws = Path(ws)
+    root = ws / "_engine"
+    pending = root / "update.pending"
+    failed = root / "update.failed"
+    staging = root / "staging"
+
+    info = check_engine_update(ws)
+    status = {
+        "ok": bool(info.get("ok")),
+        "local": info.get("local"),
+        "remote": info.get("remote"),
+        "updateAvailable": info.get("update_available"),
+        "remoteUrl": info.get("remote_url"),
+        "error": info.get("error") or "",
+        "pending": pending.is_file(),
+        "staging": staging.is_dir(),
+        "failed": failed.is_file(),
+        "engineRoot": str(root),
+    }
+    if pending.is_file():
+        status["stage"] = "pending"
+        try:
+            status["pendingInfo"] = json.loads(pending.read_text(encoding="utf-8"))
+        except Exception:  # noqa: BLE001
+            status["pendingInfo"] = None
+    elif failed.is_file():
+        status["stage"] = "failed"
+    else:
+        status["stage"] = "none"
+    if staging.is_dir():
+        status["stagingMissingFiles"] = missing_required_files(staging)
+    status["hint"] = _stage_hint(status)
+    return status
+
+
+def _stage_hint(status: dict) -> str:
+    stage = status.get("stage")
+    if stage == "pending":
+        return ("已下载并暂存待安装：请重启 launcher（start.bat/start.sh）"
+                "或经 PWA「更新引擎」→ /restart 让安装生效。")
+    if stage == "failed":
+        return "上次更新安装失败（见 _engine/update.failed）；请查看 launcher 日志后重试。"
+    if status.get("updateAvailable"):
+        return "有可用更新：运行 `assist engine update` 暂存新版本。"
+    return "已是最新（或远端不可达，见 error）。"
+
+
 def update_engine(ws: Path, emit) -> int:
     """D71 两阶段更新：只下载/解压到 staging 并写 pending；不碰运行中的 venv。
 

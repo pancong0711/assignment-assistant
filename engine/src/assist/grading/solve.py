@@ -57,36 +57,51 @@ def _client(ws: Path, model: str = ""):
     from .llm import LLMClient
     from .providers import stage_endpoint
     ep = stage_endpoint(ws, "evaluation")
-    settings = {"base_url": ep.get("base_url"), "api_key": ep.get("api_key"),
-                "model": model or ep.get("model") or ""}
+    # 透传端点全部字段（含 type/cmd），否则 command 型 provider 会退化成 api 调用。
+    settings = {**ep, "model": model or ep.get("model") or ""}
     return LLMClient(settings=settings), (model or ep.get("model") or "")
 
 
 def solve_targets(ws: Path, targets: list[dict], *, model: str = "", apply: bool = False,
-                  pin: bool = False, dry_run: bool = True) -> dict:
-    """对 targets 逐题 AI 作答；apply=False 只预览。返回 {ok, planned, written, results[]}。"""
+                  pin: bool = False, dry_run: bool = True, concurrency: int = 3) -> dict:
+    """对 targets AI 作答（D98：并发）；apply=False 只预览。返回 {ok, planned, written, results[]}。"""
     plans = [{"id": t["id"], "prompt": build_question_prompt(t.get("content", ""),
                                                              t.get("related", ""), t.get("type", "")),
               "kb": t.get("kb", ""), "chap": t.get("chap", "")} for t in targets]
     if dry_run and not apply:
         return {"ok": True, "dryRun": True, "planned": len(plans), "plans": plans}
     client, used_model = _client(ws, model)
-    results = []
-    written = 0
-    for p in plans:
+
+    def _one(p: dict) -> dict:
+        """单题作答（每调用独立请求）。"""
         try:
             text = client.chat(system_prompt=SOLVE_SYSTEM_PROMPT, user_text=p["prompt"],
                                step="evaluation")
             if apply:
                 r = sol.add_version(ws, p["id"], text, source="ai", model=used_model,
                                     kb=p.get("kb", ""), chap=p.get("chap", ""), pin=pin)
-                written += 1 if r.get("ok") else 0
-                results.append({"id": p["id"], "ok": bool(r.get("ok")), "chars": len(text),
-                                "model": used_model, "error": r.get("error")})
-            else:
-                results.append({"id": p["id"], "ok": True, "chars": len(text), "model": used_model})
+                return {"id": p["id"], "ok": bool(r.get("ok")), "chars": len(text),
+                        "model": used_model, "error": r.get("error")}
+            return {"id": p["id"], "ok": True, "chars": len(text), "model": used_model}
         except Exception as exc:  # noqa: BLE001
             logger.warning(f"AI 作答失败 {p['id']}: {type(exc).__name__}")
-            results.append({"id": p["id"], "ok": False, "error": str(exc)[:200]})
+            return {"id": p["id"], "ok": False, "error": str(exc)[:200]}
+
+    # D98：并发（复用 batchrun 的受控线程池；单题失败不阻断其余）
+    from .batchrun import run_items
+    items = [{"id": p["id"]} for p in plans]
+    by_id = {p["id"]: p for p in plans}
+    report = run_items(items, lambda it: _one(by_id[it["id"]]),
+                       kind="solve", concurrency=concurrency)
+    # run_items 的条目：{id, status: ok|fail, ms, ...extra(含 _one 的 ok/chars/model/error)}
+    results = []
+    for it in report.get("items") or []:
+        item = {k: v for k, v in it.items() if k not in ("status",)}
+        item["ok"] = (it.get("status") == "ok")
+        if it.get("status") != "ok" and not item.get("error"):
+            item["error"] = it.get("error") or "failed"
+        results.append(item)
+    written = sum(1 for r in results if r.get("ok")) if apply else 0
     return {"ok": True, "model": used_model, "planned": len(plans),
-            "written": written, "results": results}
+            "written": written, "results": results, "concurrency": concurrency,
+            "failed": report.get("failed", 0)}

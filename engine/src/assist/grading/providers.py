@@ -62,13 +62,99 @@ def list_providers(ws=None, *, mask: bool = True) -> list[dict]:
         key = keys.get(name, "")
         out.append({
             "name": name,
+            "type": str(p.get("type") or "api"),
             "base_url": str(p.get("base_url") or ""),
+            "cmd": [str(x) for x in (p.get("cmd") or [])] if isinstance(p.get("cmd"), list) else [],
+            "input_mode": str(p.get("input_mode") or "stdin"),
+            "output_mode": str(p.get("output_mode") or "stdout-json"),
+            "timeout_s": int(p.get("timeout_s") or 300),
+            "supports_images": bool(p.get("supports_images", True)),
             "models": [str(m) for m in (p.get("models") or [])][:MAX_MODELS],
             "batch_support": bool(p.get("batch_support")),
             "api_key": mask_key(key) if mask else key,
             "has_key": bool(key),
         })
     return out
+
+
+# 常见 agent CLI（用于 doctor 能力探测：有则可走 `type=command` 回环）。
+KNOWN_AGENT_CLIS = ("opencode", "codex", "claude", "cursor-agent", "aider", "gemini")
+
+
+def capabilities(ws=None) -> dict:
+    """D98-B2：LLM 能力探测（供 doctor / skill 判断该走哪条路径）。
+
+    返回：
+      {
+        "api":    {"available": bool, "providers": [names...]},           # base_url+key
+        "command":{"available": bool, "providers": [names...]},           # type=command
+        "batch":  {"available": bool, "providers": [names...]},           # batch_support
+        "agentCli": [{"name": ..., "path": ...}],                         # 本机检测到的 agent CLI
+        "recommendedPath": "api" | "command" | "subagent-or-manual"
+      }
+    """
+    import shutil
+    provs = list_providers(ws, mask=False)
+    api_names = [p["name"] for p in provs
+                 if p.get("base_url") and (p.get("has_key") or p.get("api_key"))]
+    cmd_names = [p["name"] for p in provs if str(p.get("type") or "") == "command"]
+    batch_names = [p["name"] for p in provs if p.get("batch_support")]
+    clis = []
+    for name in KNOWN_AGENT_CLIS:
+        pth = shutil.which(name)
+        if pth:
+            clis.append({"name": name, "path": pth})
+
+    if api_names:
+        recommended = "api"
+    elif cmd_names or clis:
+        recommended = "command"
+    else:
+        recommended = "subagent-or-manual"
+
+    warnings = _capability_warnings(provs, ws)
+    return {
+        "api": {"available": bool(api_names), "providers": api_names},
+        "command": {"available": bool(cmd_names), "providers": cmd_names},
+        "batch": {"available": bool(batch_names), "providers": batch_names},
+        "agentCli": clis,
+        "recommendedPath": recommended,
+        "warnings": warnings,
+    }
+
+
+def _capability_warnings(provs: list[dict], ws=None) -> list[dict]:
+    """能力组合的风险提示（doctor 展示；不改变执行）。
+
+    最重要一条：**转录段用了 command 但该 CLI 不支持读图** → 转录拿不到图。
+    应把 transcription 段换成 type=api 的视觉模型（D98 讨论结论）。
+    """
+    warns: list[dict] = []
+    by_name = {str(p.get("name")): p for p in provs}
+    # 1) 转录段实际引用的 provider 不支持图片
+    try:
+        tr = (stages(ws).get("transcription") or {}).get("provider") or ""
+    except Exception:  # noqa: BLE001
+        tr = ""
+    p = by_name.get(str(tr))
+    if p and str(p.get("type") or "") == "command" and p.get("supports_images") is False:
+        warns.append({
+            "level": "warn", "code": "transcription_command_no_images",
+            "provider": p.get("name"),
+            "message": (f"转录段使用 command provider「{p.get('name')}」，但其不支持图片："
+                        "转录会读不到作答图。请把 transcription 段改为 type=api 的视觉模型，"
+                        "或确认该 CLI 能读取图片路径（然后重设为 supports_images=true）。"),
+        })
+    # 2) 所有 command 且明确不支持图片的 provider 提示一次（信息级）
+    for p in provs:
+        if str(p.get("type") or "") == "command" and p.get("supports_images") is False \
+                and str(p.get("name")) != str(tr):
+            warns.append({
+                "level": "info", "code": "command_no_images",
+                "provider": p.get("name"),
+                "message": f"provider「{p.get('name')}」不支持图片，仅用于纯文本任务（如批阅）。",
+            })
+    return warns
 
 
 def get_provider(ws, name: str) -> "dict | None":
@@ -125,8 +211,14 @@ def migrate_legacy(ws=None) -> dict:
 
 def save_provider(ws, name: str, *, base_url: str = "", api_key: "str | None" = None,
                   batch_support: "bool | None" = None, model: str = "",
-                  forget_model: str = "") -> dict:
-    """新增/更新一个 provider。api_key=None 表示不改；'' 表示清除。"""
+                  forget_model: str = "", provider_type: str = "", cmd: "list[str] | None" = None,
+                  input_mode: str = "", output_mode: str = "",
+                  timeout_s: "int | None" = None, supports_images: "bool | None" = None) -> dict:
+    """新增/更新一个 provider。api_key=None 表示不改；'' 表示清除。
+
+    支持 `provider_type="api"|"command"`：command 型用 `cmd` 回环调用外部 agent CLI
+    （D98-B3），此时不需要 base_url/api_key。
+    """
     from ..settings_store import update_secrets, update_settings
     name = str(name or "").strip()
     if not name:
@@ -142,6 +234,21 @@ def save_provider(ws, name: str, *, base_url: str = "", api_key: "str | None" = 
             provs.append(cur)
         if base_url:
             cur["base_url"] = str(base_url)
+        if provider_type:
+            if provider_type not in ("api", "command"):
+                holder["error"] = f"provider_type 只能是 api/command：{provider_type}"
+                return
+            cur["type"] = provider_type
+        if cmd is not None:
+            cur["cmd"] = [str(x) for x in cmd]
+        if input_mode:
+            cur["input_mode"] = input_mode
+        if output_mode:
+            cur["output_mode"] = output_mode
+        if timeout_s is not None:
+            cur["timeout_s"] = int(timeout_s)
+        if supports_images is not None:
+            cur["supports_images"] = bool(supports_images)
         if batch_support is not None:
             cur["batch_support"] = bool(batch_support)
         if forget_model:
@@ -166,6 +273,8 @@ def save_provider(ws, name: str, *, base_url: str = "", api_key: "str | None" = 
             else:
                 pm.pop(name, None)
         update_secrets(ws, _sfn)
+    if holder.get("error"):
+        return {"ok": False, "error": holder["error"]}
     return {"ok": True, "provider": {k: v for k, v in holder.get("provider", {}).items() if k != "api_key"}}
 
 
@@ -236,4 +345,10 @@ def stage_endpoint(ws, stage: str) -> dict:
     base = str(prov.get("base_url") or llm.get("base_url") or DEFAULT_BASE_URL)
     model = str(st.get("model") or llm.get(f"{stage}_model") or llm.get("model") or "")
     return {"provider": name, "base_url": base, "api_key": key or str(llm.get("api_key") or ""),
-            "model": model, "batch": bool(st.get("batch")), "host": host_of(base)}
+            "model": model, "batch": bool(st.get("batch")), "host": host_of(base),
+            # D98-B3：command 型 provider（无 key 回环），供 LLMClient 判定走子进程
+            "type": str(prov.get("type") or "api"),
+            "cmd": [str(x) for x in (prov.get("cmd") or [])] if isinstance(prov.get("cmd"), list) else [],
+            "input_mode": str(prov.get("input_mode") or "stdin"),
+            "output_mode": str(prov.get("output_mode") or "stdout-json"),
+            "timeout_s": int(prov.get("timeout_s") or 300)}

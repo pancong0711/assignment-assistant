@@ -153,3 +153,42 @@ def test_start_bat_d73_12_integrity_contract():
         assert b"REDOWNLOADED" in raw, name
     engine_bat = (root / "engine" / "run_engine.bat").read_bytes()
     assert b"cannot import assist.xxt.session" in engine_bat
+
+
+def test_update_status_stages(tmp_path, monkeypatch):
+    """engine status：pending/staging/failed 三种现场要能被识别（AI 判断卡在哪）。"""
+    import assist.engine_update as eu
+
+    # 屏蔽联网：统一返回"有更新"
+    monkeypatch.setattr(eu, "check_engine_update",
+                        lambda ws: {"ok": True, "update_available": True,
+                                    "local": {"engine_version": "0.1"}, "remote": {"engine_version": "0.2"},
+                                    "remote_url": "u", "error": ""})
+    ws = tmp_path
+    root = ws / "_engine"
+
+    st = eu.update_status(ws)
+    assert st["stage"] == "none" and st["pending"] is False
+
+    root.mkdir(parents=True, exist_ok=True)
+    (root / "update.pending").write_text('{"commit":"abc"}', encoding="utf-8")
+    (root / "staging").mkdir()
+    st = eu.update_status(ws)
+    assert st["stage"] == "pending" and st["pending"] is True
+    assert st["pendingInfo"]["commit"] == "abc"
+    assert "重启" in st["hint"] or "launcher" in st["hint"]
+
+    (root / "update.pending").unlink()
+    (root / "update.failed").write_text("x", encoding="utf-8")
+    st = eu.update_status(ws)
+    assert st["stage"] == "failed" and st["failed"] is True
+
+
+def test_cli_engine_status_json(tmp_path):
+    from click.testing import CliRunner
+    from assist.cli import cli
+    r = CliRunner().invoke(cli, ["engine", "status", "-w", str(tmp_path), "--json"])
+    assert r.exit_code == 0, r.output
+    import json as _j
+    d = _j.loads(r.output)
+    assert "stage" in d and "local" in d
