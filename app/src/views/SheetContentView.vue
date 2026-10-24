@@ -155,7 +155,8 @@ async function downloadBatchZip() {
   }
   exportingBatch.value = true
   try {
-    await ensureDefaultSheetHtmlProvider((kind) => kb.book(kind as never))
+    // D100-T7：batch zip 内嵌 HTML 的参考答案同样走生效版
+    await ensureDefaultSheetHtmlProvider((kind) => kb.book(kind as never), kb.effectiveSolution)
     setBatchHtmlIncludeSolution(batchIncludeAnswers.value)   // D57-2
     const { blob, cd, padCount } = await buildVariantBatchZip(roster.students, pad.savedJsons())
     downloadBlob(blob, `batch-package-${new Date().toISOString().slice(0, 10)}.zip`)

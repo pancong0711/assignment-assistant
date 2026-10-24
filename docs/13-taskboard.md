@@ -1947,3 +1947,21 @@ applyManualTranslation/setTranslationRatio 中 setTranslationRatio 保留——�
 （xlsx/pdf/png/docx，默认班级）全部 ok，各 ~1.1s 就绪。
 
 遗留：`page.goto` 60s 硬编码超时与慢网重试未在本次范围内（实测页面 ~1s 可开）。
+
+## D100 · 参考答案「生效版」读取链路收口（2026-10-24）
+
+> 承接用户反馈：AI 作答写回后题库 solution 列显示空、作业纸预览勾选参考答案看不到 AI 答案。
+> 需求单/根因/决策/验收见 `docs/53-D100-effective-solution-read-path.md`。
+
+| # | 改动 | 文件 |
+|---|---|---|
+| T1 | `effective_map` / `solutions_digest` 批量入口 | `engine/src/assist/files/solutions.py` |
+| T2 | `GET /kb/solutions` 返回 `{effective, digest}`（`?raw=1` 兼容） | `engine/src/assist/serve.py` |
+| T3 | AI 作答默认置顶（`pin=True`；CLI `--no-pin` 关闭） | `grading/solve.py`、`cli.py` |
+| T4 | `assist sheet html` 题帧走 `effective_solution`（修漏改） | `paper/htmlfile.py` |
+| T5 | `pickEffectiveSolution` + `expandPadItems(..., solOf)` | `app/src/lib/sheetHtml.ts` |
+| T6 | kb store 生效答案索引（`solIndex`/`solutionsRev`/`bumpSolutions`） | `app/src/stores/kb.ts`、`lib/engineClient.ts` |
+| T7 | 预览/输出/整班/变体 zip 全部注入生效解析器 | `SheetPreviewSection`/`SheetOutputSection`/`SheetDesignView`/`RosterView`/`variantBatch`/`SheetContentView` |
+| T8 | 题库单元格生效摘要徽标；AI 面板默认置顶 + 作答后刷新索引 | `KbEditorView.vue`、`AiGradingPanel.vue`、`App.vue` |
+
+验证：engine pytest **512 passed**（新增 D100 12 例）；app `npm run selfcheck` 全绿（新增 `selfcheck-d100-solution-readpath.mjs`）；`vue-tsc -b` + `vite build` 0 err；端到端脚本确认"AI 作答 → 版本库 → 作业纸 HTML 含 AI 答案"。

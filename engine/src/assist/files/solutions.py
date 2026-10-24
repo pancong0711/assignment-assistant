@@ -106,8 +106,14 @@ def save_solutions(ws, qid: str, data: dict) -> dict:
 
 
 def add_version(ws, qid: str, text: str, *, source: str = "ai", model: str = "",
-                kb: str = "", chap: str = "", pin: bool = False) -> dict:
-    """追加一版（不可覆盖）。AI 作答默认 pin=False（不抢答案）；人可随后 pin。"""
+                kb: str = "", chap: str = "", pin: bool = False,
+                pin_if_unpinned: bool = False) -> dict:
+    """追加一版（不可覆盖）。默认 pin=False（不抢答案）；人可随后 pin。
+
+    D100-T3：`pin_if_unpinned=True` = 「AI 作答默认成为生效答案」——仅当版本库
+    **当前没有任何 pinned 版**时才自动置顶（等价"第一个答案即是答案"）。
+    调用方（`solve_targets`）已改为显式 `pin=True`，本参数保留给"保守置顶"场景。
+    """
     if not str(text or "").strip():
         return {"ok": False, "error": "答案内容为空"}
     path = _path(ws, qid)
@@ -119,6 +125,8 @@ def add_version(ws, qid: str, text: str, *, source: str = "ai", model: str = "",
         cur = read_solutions(ws, qid) or {"qid": str(qid), "kb": kb, "chap": chap, "versions": []}
         cur.setdefault("versions", [])
         vid = _next_version_id(cur["versions"])
+        if pin_if_unpinned and not any(v.get("pinned") for v in cur["versions"]):
+            pin = True
         entry = {"id": vid, "text": str(text), "source": str(source or "ai"),
                  "model": str(model or ""), "at": time.strftime("%Y-%m-%d %H:%M:%S"),
                  "pinned": bool(pin)}
@@ -171,23 +179,66 @@ def remove_version(ws, qid: str, version_id: str) -> dict:
         return save_solutions(ws, qid, cur)
 
 
+def _effective_of(doc: "dict | None", fallback: str = "") -> dict:
+    """版本库文档 → 生效答案（纯函数，供单题/批量共用）。"""
+    if doc and doc.get("versions"):
+        chosen, frm = None, "latest"
+        for v in doc["versions"]:
+            if v.get("pinned"):
+                chosen, frm = v, "pinned"
+                break
+        if chosen is None:
+            chosen = doc["versions"][-1]
+        return {"text": str(chosen.get("text") or ""), "source": str(chosen.get("source") or ""),
+                "model": str(chosen.get("model") or ""), "at": str(chosen.get("at") or ""),
+                "version": str(chosen.get("id") or ""), "from": frm,
+                "n_versions": len(doc["versions"]),
+                "ai_versions": sum(1 for v in doc["versions"] if v.get("source") == "ai")}
+    if str(fallback or "").strip():
+        return {"text": str(fallback), "source": "", "model": "", "at": "",
+                "version": "", "from": "fallback", "n_versions": 0, "ai_versions": 0}
+    return {"text": "", "source": "", "model": "", "at": "", "version": "",
+            "from": "xlsx", "n_versions": 0, "ai_versions": 0}
+
+
 def effective_solution(ws, qid: str, fallback: str = "") -> dict:
     """生效答案（实时读）：pinned 版 > 最新版 > xlsx fallback（旧数据兼容）。
 
-    返回 {text, source, model, at, version, from}（from ∈ pinned|latest|fallback|xlsx）。
+    返回 {text, source, model, at, version, from, n_versions, ai_versions}
+    （from ∈ pinned|latest|fallback|xlsx）。
     """
-    cur = read_solutions(ws, qid)
-    if cur and cur.get("versions"):
-        for v in cur["versions"]:
-            if v.get("pinned"):
-                return {"text": str(v.get("text") or ""), "source": str(v.get("source") or ""),
-                        "model": str(v.get("model") or ""), "at": str(v.get("at") or ""),
-                        "version": str(v.get("id") or ""), "from": "pinned"}
-        v = cur["versions"][-1]
-        return {"text": str(v.get("text") or ""), "source": str(v.get("source") or ""),
-                "model": str(v.get("model") or ""), "at": str(v.get("at") or ""),
-                "version": str(v.get("id") or ""), "from": "latest"}
-    if str(fallback or "").strip():
-        return {"text": str(fallback), "source": "", "model": "", "at": "",
-                "version": "", "from": "fallback"}
-    return {"text": "", "source": "", "model": "", "at": "", "version": "", "from": "xlsx"}
+    return _effective_of(read_solutions(ws, qid), fallback)
+
+
+def effective_map(ws) -> dict:
+    """**批量**生效答案索引：{qid: effective_solution(...)}（无 fallback）。
+
+    D100-T1：供 PWA 一次拉全库（`GET /kb/solutions`）与 `assist sheet html` 出图共用，
+    避免逐题读盘；语义与 `effective_solution` 逐条一致（同一 `_effective_of`）。
+    """
+    out: dict = {}
+    for d in list_solutions(ws):
+        qid = str(d.get("qid") or "").strip()
+        if not qid:
+            continue
+        eff = _effective_of(d)
+        if not str(eff.get("text") or "").strip():
+            continue
+        eff["id"] = eff.get("version") or ""
+        out[qid] = eff
+    return out
+
+
+def solutions_digest(ws) -> float:
+    """版本库最近修改时间（秒，无文件=0）——前端据此判断是否需要重拉索引。"""
+    try:
+        files = list(solutions_dir(ws).glob("*.json"))
+    except OSError:
+        return 0.0
+    best = 0.0
+    for f in files:
+        try:
+            best = max(best, f.stat().st_mtime)
+        except OSError:
+            continue
+    return best

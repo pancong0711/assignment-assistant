@@ -1195,8 +1195,9 @@ class Handler(BaseHTTPRequestHandler):
                 args += ["--ids", ",".join(str(i) for i in ids)]
             if payload.get("model"):
                 args += ["--model", str(payload.get("model"))]
-            if payload.get("pin"):
-                args += ["--pin"]
+            # D100-T3：AI 作答默认置顶（生效答案）；显式 pin=false 才保持"不抢原答案"。
+            if payload.get("pin", True) is False:
+                args += ["--no-pin"]
             if apply:
                 args += ["--apply"]
             home = _xxt_home(); env = _xxt_env(home); cwd = str(_ws())
@@ -2004,8 +2005,16 @@ class Handler(BaseHTTPRequestHandler):
             d = sol.read_solutions(Path(self.ws).resolve(), qid)
             self._json(d or {"ok": False, "error": f"无版本库：{qid}"}, 200 if d else 404)
         elif u.path == "/kb/solutions":
+            # D100-T2：批量生效答案索引 {qid: {text, source, version, from, ...}}，
+            # 供 PWA 一次性取全库（题库表格摘要 + 作业纸预览题帧），语义 = effective_solution。
             from .files import solutions as sol
-            self._json({"ok": True, "items": sol.list_solutions(Path(self.ws).resolve())})
+            ws_ = Path(self.ws).resolve()
+            q = urllib.parse.parse_qs(u.query)
+            if q.get("raw", ["0"])[0] == "1":
+                self._json({"ok": True, "items": sol.list_solutions(ws_)})
+            else:
+                self._json({"ok": True, "effective": sol.effective_map(ws_),
+                            "digest": sol.solutions_digest(ws_)})
         elif u.path == "/kb/catalog":
             from .files.kb_io import catalog as _catalog
             q = urllib.parse.parse_qs(u.query)

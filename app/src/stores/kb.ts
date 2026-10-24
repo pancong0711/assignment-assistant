@@ -6,6 +6,8 @@ import {
 import { readKbXlsx, writeKbXlsx } from '../lib/kbXlsx'
 import { downloadData, pickDirectory, writeFileInDir } from '../lib/fsAccess'
 import { demoBooks } from '../demo/demoData'
+import { fetchKbSolutionIndex, type KbSolutionEntry } from '../lib/engineClient'
+import { pickEffectiveSolution, type SolutionLike } from '../lib/sheetHtml'
 
 /** 题库 store：浏览器内存中的 kb（xlsx = source of truth，docs/05-D3）。
  *  读：教师上传 xlsx / 加载合成示例 / zip 导入；
@@ -91,6 +93,14 @@ export const useKbStore = defineStore('kb', {
     /** 已连接的 kb 所在目录句柄名字（句柄本体存内存，不序列化） */
     fsDirName: '' as string,
     dirty: false,
+    /** D100-T6：题库 solution 版本库「生效答案」索引（qid → {text, from, version, ...}）。
+     *  来源 = 引擎 `GET /kb/solutions`（批量）；引擎离线时为空 → 全部回落 xlsx `solution` 列。
+     *  不持久化（每次刷新重拉，避免 xlsx 与版本库长期漂移）。 */
+    solIndex: {} as Record<string, KbSolutionEntry>,
+    /** D100-T6：索引刷新次数（预览 computed 依赖它 → AI 作答完成后能立即重算）。 */
+    solutionsRev: 0,
+    /** 索引最近一次成功/失败的状态文案（供设置/题库页展示）。 */
+    solutionsMsg: '' as string,
   }),
   getters: {
     allBooks(state): KbBook[] {
@@ -101,6 +111,21 @@ export const useKbStore = defineStore('kb', {
     },
     hasData(state): boolean {
       return KB_KINDS.some((k) => state.books[k].chapters.length > 0)
+    },
+    /** D100-T6：生效答案解析器（供 `expandPadItems` 注入）。
+     *  pinned 版 > 最新版 > xlsx `solution` 列 fallback，语义同引擎 `effective_solution`。 */
+    effectiveSolution(state): (qid: string, fallback: string) => SolutionLike {
+      return (qid, fallback) => {
+        // 批量索引条目本身已是"生效版"（引擎 effective_solution 同语义）；
+        // pickEffectiveSolution 对扁平条目会补全 version（field=id）并保留 from/pinned。
+        const hit = state.solIndex[String(qid)]
+        if (hit && String(hit.text ?? '').trim()) return pickEffectiveSolution(hit, fallback)
+        return pickEffectiveSolution(null, fallback)
+      }
+    },
+    /** 某题是否已有版本库记录（题库表格摘要用）。 */
+    solutionOf(state): (qid: string) => KbSolutionEntry | undefined {
+      return (qid) => state.solIndex[String(qid)]
     },
     /** 全库题目的扁平索引（供设计器选题） */
     allRows(state): Array<{ kind: KbKind; chap: string; row: KbRow }> {
@@ -266,6 +291,24 @@ export const useKbStore = defineStore('kb', {
     },
     touch() {
       this.dirty = true
+    },
+    /** D100-T6：从引擎拉全库生效答案索引（幂等；引擎离线 → 清空索引并回落 xlsx 列）。 */
+    async refreshSolutions(): Promise<{ ok: boolean; count: number; message: string }> {
+      const { useSettingsStore } = await import('./settings')
+      const settings = useSettingsStore()
+      const r = await fetchKbSolutionIndex(settings.engineUrl, settings.engineToken)
+      const eff = r.effective ?? {}
+      this.solIndex = eff
+      this.solutionsRev += 1
+      const ok = r.ok !== false && !!r.effective
+      this.solutionsMsg = ok
+        ? `已载入 ${Object.keys(eff).length} 题生效答案（引擎版本库）`
+        : '引擎离线或未启用版本库：参考答案回落题库 solution 列'
+      return { ok, count: Object.keys(eff).length, message: this.solutionsMsg }
+    },
+    /** D100-T6：本地已知变更（AI 作答完成 / 手动追加·置顶·删除版本）后刷新索引。 */
+    async bumpSolutions(): Promise<void> {
+      try { await this.refreshSolutions() } catch { /* 引擎离线：保持旧索引/xlsx 回落 */ }
     },
     rowText(kind: KbKind, chap: string, id: string): string {
       const c = this.books[kind]?.chapters.find((x) => x.name === chap)

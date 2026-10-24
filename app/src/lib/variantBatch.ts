@@ -16,7 +16,7 @@ import JSZip from 'jszip'
 import { writeRosterXlsx } from './rosterXlsx'
 import type { RosterStudent } from './roster'
 import { parseTaskpad } from './taskpad'
-import { stringifySheetHtml, expandPadItems } from './sheetHtml'
+import { stringifySheetHtml, expandPadItems, type SolutionResolver } from './sheetHtml'
 import { STUDENT_TAG_LABELS } from './kb'
 import { PRINT_GUIDE_SUMMARY } from './printGuide'
 
@@ -42,12 +42,16 @@ export function getBatchHtmlIncludeSolution(): boolean { return batchHtmlInclude
 /** [D33 接线 + D43 遗留②] provider 使用 stringifySheetHtml（sheetHtml.ts）；
  *  KaTeX 走同源 relative（sheets/<id>.html 相对 ./katex/）→ batch zip 需内嵌
  *  sheets/katex/（见 addKatexToZip：从 PWA 同源 dist 经 fetch 收集，一次 608KB）。 */
-export async function ensureDefaultSheetHtmlProvider(kbBookOf: (kind: string) => unknown) {
+export async function ensureDefaultSheetHtmlProvider(
+  kbBookOf: (kind: string) => unknown,
+  /** D100-T7：生效答案解析器（kb store 注入）；缺省只读 xlsx `solution` 列。 */
+  solOf?: SolutionResolver,
+) {
   if (sheetHtmlProvider) return
   setSheetHtmlProvider((_id: string, json: string, students) => {
     const pad = parseTaskpad(JSON.parse(json))
     return stringifySheetHtml(
-      [{ pad, items: expandPadItems(pad, kbBookOf as never) }],
+      [{ pad, items: expandPadItems(pad, kbBookOf as never, solOf) }],
       { students: students as never, katex: 'relative', includeSolution: batchHtmlIncludeSolution }   // D57-2
     )
   })

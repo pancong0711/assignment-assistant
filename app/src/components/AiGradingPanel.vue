@@ -7,6 +7,7 @@
  */
 import { computed, onMounted, ref, watch } from 'vue'
 import { useTaskpadStore } from '../stores/taskpad'
+import { useKbStore } from '../stores/kb'
 import {
   extractJobError, fetchLlmConfig, fetchXxtClassMap, fetchXxtGradeDrafts, fetchXxtLoginJob,
   fetchXxtReviewIndex, fetchXxtReviewStudents, postLlmProvider, postXxtClassMap,
@@ -16,6 +17,7 @@ import {
 
 const props = defineProps<{ engineAddr: string; token?: string }>()
 const taskpadStore = useTaskpadStore()
+const kbStore = useKbStore()
 import { usePackStore } from '../stores/packs'
 import PlaygroundPanel from './PlaygroundPanel.vue'
 import StudentReviewModal from './StudentReviewModal.vue'
@@ -54,7 +56,8 @@ async function loadKbCatalog() {
 // 切换题库/章节时清空已选题号
 watch(kbKind, () => { kbChap.value = ''; kbIdsSel.value = [] })
 watch(kbChap, () => { kbIdsSel.value = [] })
-const kbPin = ref(false); const kbApply = ref(false)
+// D100-T3/T8：AI 作答默认置顶（生效答案）；取消勾选 = 只追加版本不抢原答案
+const kbPin = ref(true); const kbApply = ref(false)
 const kbSolveMsg = ref('')
 const kbSolving = ref(false)
 async function solveByKb() {
@@ -71,7 +74,14 @@ async function solveByKb() {
         const lines = job.lines || []
         kbSolveMsg.value = (lines.slice(-1)[0] || '进行中…').slice(-220)
         if (job.status === 'running') { window.setTimeout(tick, 2000); return }
-        kbSolveMsg.value = `${kbApply.value ? '作答并写回' : 'dry-run 预览'}完成：' + (lines.slice(-2).join(' ') || '')`
+        if (kbApply.value) {
+          // D100-T8：作答写回版本库 → 刷新生效答案索引（题库表格/作业纸预览立即跟随）
+          await kbStore.bumpSolutions()
+          kbSolveMsg.value = `作答并写回完成（${kbPin.value ? '已置顶为生效答案' : '未置顶，仅追加版本'}）：`
+            + (lines.slice(-2).join(' ') || '')
+          return
+        }
+        kbSolveMsg.value = 'dry-run 预览完成：' + (lines.slice(-2).join(' ') || '')
       } catch (e) { kbSolveMsg.value = extractJobError(String(e)) || String(e) }
     }
     tick()
@@ -476,7 +486,9 @@ onMounted(async () => { await loadConfig(); await loadWorks(); loadKbCatalog() }
         <input v-model="kbModel" placeholder="模型名（空=评阅段配置）" style="width:180px" />
         <button class="btn small" @click="kbCustomModel = false">用下拉</button>
       </template>
-      <label class="field"><input type="checkbox" v-model="kbPin" /> 作答后置顶</label>
+      <label class="field" title="默认勾选：AI 作答即成为生效答案（旧版仍在版本库，可一键 pin 回）">
+        <input type="checkbox" v-model="kbPin" /> 作答后置顶（默认）
+      </label>
       <label class="field" title="不勾=仅 dry-run 预览将作答哪些题；勾=真正调 LLM 并写回 kb/solutions/">
         <input type="checkbox" v-model="kbApply" /> 真正作答并写回
       </label>
@@ -487,8 +499,9 @@ onMounted(async () => { await loadConfig(); await loadWorks(); loadKbCatalog() }
       <span v-else>（未选题号：将按整章/整库作答）</span>
     </div>
     <p class="hint" style="margin:6px 0 0">
-      AI 作答**不覆盖**原答案：每次新增一版（含模型名 + 时间戳），可在「题库编辑器 → solution 🔍 预览」里勾选查看/置顶；
-      作业包与批阅会**实时读取置顶版**。
+      AI 作答**不覆盖**原答案：每次新增一版（含模型名 + 时间戳），默认**置顶为生效答案**
+      （可在「题库编辑器 → solution 🔍 预览」里改选/置顶旧版）；作业纸预览、作业包与批阅统一**实时读取生效版**
+      （置顶版 → 最新版 → 题库 solution 列）。索引状态：{{ kbStore.solutionsMsg || '（未刷新）' }}
     </p>
     <p class="hint" v-if="kbSolveMsg">{{ kbSolveMsg }}</p>
 

@@ -65,7 +65,8 @@ const pageStatus = ref('')
 function currentInput(): SheetHtmlPadInput {
   return {
     pad: JSON.parse(JSON.stringify(pad.current)),
-    items: expandPadItems(pad.current, (kind) => kb.book(kind as KbKind)),
+    // D100-T7：参考答案走生效版（版本库置顶/最新版 → 回落 xlsx 列）
+    items: expandPadItems(pad.current, (kind) => kb.book(kind as KbKind), kb.effectiveSolution),
   }
 }
 function templateStudents(): NonNullable<SheetHtmlPadInput['students']> {

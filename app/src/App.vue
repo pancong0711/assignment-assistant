@@ -62,7 +62,9 @@ onMounted(() => {
 onMounted(async () => {
   try {
     const { useKbStore } = await import('./stores/kb')
+    // D100：先恢复 workspace 题库，再拉 solution 生效答案索引（引擎离线则静默回落 xlsx 列）
     await useKbStore().restoreWorkspace()
+    await useKbStore().bumpSolutions()
   } catch { /* noop */ }
 })
 onUnmounted(() => {

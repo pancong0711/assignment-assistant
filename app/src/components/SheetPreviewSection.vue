@@ -64,10 +64,15 @@ const wmPageTextModel = computed({
 function notify(m: string) { emit('notify', m) }
 
 /* ---------- 运行数据 ---------- */
-const sheetHtmlItems = computed<SheetHtmlItem[]>(() => itemsFor(pad.current))
+// D100-T7：依赖 kb.solutionsRev —— AI 作答/置顶完成后索引刷新即可触发预览重建
+const sheetHtmlItems = computed<SheetHtmlItem[]>(() => {
+  void kb.solutionsRev
+  return itemsFor(pad.current)
+})
 
 function itemsFor(p: Taskpad): SheetHtmlItem[] {
-  return expandPadItems(p, (kind) => kb.book(kind as KbKind))
+  // D100-T7：注入生效答案解析器（版本库置顶/最新版 → 回落 xlsx 列）
+  return expandPadItems(p, (kind) => kb.book(kind as KbKind), kb.effectiveSolution)
 }
 
 /* ---------- 模板口径（与 SheetOutputSection 同一函数语义） ---------- */
@@ -98,7 +103,8 @@ function scheduleLive() {
   liveTimer = window.setTimeout(() => { liveHtml.value = buildLiveHtml() }, 180)
 }
 const liveKey = computed(() =>
-  JSON.stringify([pad.current, sheetHtmlItems.value, includeAnswers.value, showSamples.value, props.includeWatermark, props.includePageText, settings.wmAssets]))
+  JSON.stringify([pad.current, sheetHtmlItems.value, includeAnswers.value, showSamples.value,
+    props.includeWatermark, props.includePageText, settings.wmAssets]))
 watch(liveKey, scheduleLive, { immediate: true })
 
 /* ---------- 弹层预览（清单行/全部连排 & 当前模板细看） ---------- */

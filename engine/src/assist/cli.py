@@ -396,14 +396,15 @@ def kb_snapshot(obj, workspace, verbose):
 @click.option("--chap", default="", help="章节 sheet 名（如 chap10）；缺省=整库")
 @click.option("--ids", default="", help="题号（逗号分隔）；缺省=该章全部")
 @click.option("--model", default="", help="覆盖模型名（缺省取评阅段配置）")
-@click.option("--pin", is_flag=True, help="作答后置顶为新生效答案（默认不置顶，不抢原答案）")
+@click.option("--pin/--no-pin", default=True,
+              help="作答后置顶为新生效答案（默认置顶；--no-pin 只追加版本、不抢原答案）")
 @click.option("--apply", is_flag=True, help="真正写回 kb/solutions/（缺省 dry-run 只预览）")
 @click.option("--concurrency", default=3, type=int, show_default=True, help="并发题数")
 @click.option("--workspace", "-w", default=None)
 @click.option("--verbose", "-v", is_flag=True)
 @click.pass_obj
 def kb_ai_solve(obj, kb_kind, chap, ids, model, pin, apply, concurrency, workspace, verbose):
-    """D89-N5：对题库题目做 AI 作答（**不覆盖**原答案，新增版本；默认 dry-run）。"""
+    """D89-N5/D100：对题库题目做 AI 作答（**不覆盖**原答案，新增版本并默认置顶；默认 dry-run）。"""
     from .grading import solve as solve_mod
     ws = _setup(verbose or obj.get("verbose"), workspace)
     id_list = [x.strip() for x in str(ids).split(",") if x.strip()]

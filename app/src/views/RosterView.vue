@@ -354,7 +354,8 @@ function buildClassInputs(): { inputs: SheetHtmlPadInput[]; unmatched: number; u
     roster.students, pad.savedJsons(), classPreviewFallbackId.value)
   const inputs: SheetHtmlPadInput[] = groups.map((g) => ({
     pad: g.pad,
-    items: expandPadItems(g.pad, (kind) => kbStore.book(kind as KbKind)),
+    // D100-T7：参考答案走生效版（版本库置顶/最新版 → 回落 xlsx 列）
+    items: expandPadItems(g.pad, (kind) => kbStore.book(kind as KbKind), kbStore.effectiveSolution),
     // D93-fix：按**学号升序**排序（= 教务处点名册顺序）；学号空缺者排末尾、保持稳定。
     // 说明：成绩/雨课堂源常按分数降序，故必须显式按学号重排，才能得到教务处名单顺序。
     students: [...g.students]
@@ -381,7 +382,7 @@ function buildClassInputs(): { inputs: SheetHtmlPadInput[]; unmatched: number; u
 function classOrderResolver(): (stu: SheetHtmlStudent) => { pad: any; items: any[] } | null {
   const { groups } = partitionStudentsByTag(roster.students, pad.savedJsons(), classPreviewFallbackId.value)
   const padByTag = new Map<string, { pad: any; items: any[] }>()
-  const itemsOf = (p: any) => expandPadItems(p, (k) => kbStore.book(k as KbKind))
+  const itemsOf = (p: any) => expandPadItems(p, (k) => kbStore.book(k as KbKind), kbStore.effectiveSolution)
   for (const g of groups) {
     const tag = padInferredTag(g.pad.items, g.pad.target_tag) || ''
     if (tag) padByTag.set(tag, { pad: g.pad, items: itemsOf(g.pad) })

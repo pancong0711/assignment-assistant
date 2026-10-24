@@ -1460,6 +1460,30 @@ export async function fetchKbSolutions(
   }
 }
 
+/** D100-T2：`GET /kb/solutions`（无 qid）→ 全库生效答案索引 {qid: {text,source,version,from,...}}。
+ *  引擎离线/未实现时返回空索引（调用方回落 xlsx `solution` 列，行为同 D100 前）。 */
+export interface KbSolutionEntry extends SolutionVersion {
+  /** 引擎 `effective_map` 额外回填的版本号别名（= version）。 */
+  id: string
+  version?: string; from?: string; pinned?: boolean
+  n_versions?: number; ai_versions?: number
+}
+export interface KbSolutionIndex {
+  ok?: boolean; effective?: Record<string, KbSolutionEntry>
+  digest?: number; error?: string
+}
+
+export async function fetchKbSolutionIndex(
+  engineAddr: string, token?: string,
+): Promise<KbSolutionIndex> {
+  const base = normalizeEngineAddr(engineAddr)
+  try {
+    return (await getJson2(engineUrlWithToken(base, '/kb/solutions', token))) as KbSolutionIndex
+  } catch {
+    return { ok: false, effective: {} }
+  }
+}
+
 /** POST /kb/solution：追加/置顶/删除某题的某版本（action = add|pin|rm）。 */
 export async function mutateKbSolution(
   engineAddr: string, token: string | undefined,

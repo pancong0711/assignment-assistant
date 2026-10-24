@@ -3,7 +3,8 @@
 定位（docs/42-D89）：**不是批阅**；输入=题库题目（章节+ids 或整章），输出=AI 解答文本。
 - **不覆盖**原答案：每次作答经 solutions.add_version 追加一版；
 - 版本带 source="ai" + model + at 时间戳（便于长期维护/多版本对照）；
-- 默认**不置顶**（不抢占生效答案）；可 --pin 显式置顶；
+- **默认置顶**（D100-T3：AI 重新生成即成为生效答案；旧版仍在版本库，可一键 pin 回）；
+  需要"不抢答案"时显式 `--no-pin` / 请求体 `pin:false`；
 - 默认 dry-run：只打印将作答的题目与提示，不调 LLM（--submit/--apply 才真跑）。
 """
 from __future__ import annotations
@@ -63,8 +64,12 @@ def _client(ws: Path, model: str = ""):
 
 
 def solve_targets(ws: Path, targets: list[dict], *, model: str = "", apply: bool = False,
-                  pin: bool = False, dry_run: bool = True, concurrency: int = 3) -> dict:
-    """对 targets AI 作答（D98：并发）；apply=False 只预览。返回 {ok, planned, written, results[]}。"""
+                  pin: bool = True, dry_run: bool = True, concurrency: int = 3) -> dict:
+    """对 targets AI 作答（D98：并发）；apply=False 只预览。返回 {ok, planned, written, results[]}。
+
+    D100-T3：`pin=True`（默认）= 作答后置顶为新生效答案（"AI 生成内容默认置顶"）；
+    传 False 则只追加版本（等价旧行为，不抢原答案）。
+    """
     plans = [{"id": t["id"], "prompt": build_question_prompt(t.get("content", ""),
                                                              t.get("related", ""), t.get("type", "")),
               "kb": t.get("kb", ""), "chap": t.get("chap", "")} for t in targets]

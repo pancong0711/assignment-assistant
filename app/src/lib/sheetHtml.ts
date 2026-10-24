@@ -39,6 +39,11 @@ export interface SheetHtmlItem {
   no?: string
   content: string
   solution?: string
+  /** D100：答案来源（pinned|latest|fallback|xlsx），供 UI 标注"AI 版/未置顶"。 */
+  solutionFrom?: string
+  /** D100：生效版本号（如 v3）与来源（ai|human）。 */
+  solutionVersion?: string
+  solutionSource?: string
   /** kb 行 img_path（file 相对路径 hint；PWA 无文件系统 → 打印预览显示占位框） */
   imgPath?: string
   tag?: string
@@ -751,12 +756,63 @@ export function printSheetHtml(html: string): void {
   document.body.appendChild(iframe)
 }
 
+/* ---------- D100：参考答案「生效版」解析（与引擎 effective_solution 同语义） ---------- */
+
+/** 版本库文档（GET /kb/solutions/<qid> 或批量索引条目）→ 生效答案。
+ *  优先级与 `engine/src/assist/files/solutions.py:effective_solution` 逐条一致：
+ *  pinned 版 > 最新版 > fallback（xlsx `solution` 列）> 空。 */
+export interface SolutionLike {
+  text?: string; source?: string; model?: string; at?: string
+  version?: string; from?: string; pinned?: boolean; id?: string
+  versions?: SolutionLike[]
+}
+
+export function pickEffectiveSolution(
+  doc: SolutionLike | null | undefined, fallback = '',
+): SolutionLike {
+  const vs = (doc?.versions ?? []).filter((v) => String(v?.text ?? '').trim())
+  if (vs.length) {
+    const pinned = vs.find((v) => v.pinned)
+    const v = pinned ?? vs[vs.length - 1]
+    return {
+      text: String(v.text ?? ''), source: String(v.source ?? ''), model: String(v.model ?? ''),
+      at: String(v.at ?? ''), version: String(v.version ?? v.id ?? ''),
+      from: pinned ? 'pinned' : 'latest', pinned: !!pinned,
+    }
+  }
+  // 扁平条目（`GET /kb/solutions` 批量索引已算好生效版：{id, text, from, pinned}）直接采用
+  const flat = String(doc?.text ?? '')
+  if (!doc?.versions && flat.trim()) {
+    return {
+      text: flat, source: String(doc?.source ?? ''), model: String(doc?.model ?? ''),
+      at: String(doc?.at ?? ''), version: String(doc?.version ?? doc?.id ?? ''),
+      from: String(doc?.from ?? (doc?.pinned ? 'pinned' : 'latest')),
+      pinned: !!doc?.pinned,
+    }
+  }
+  const fb = String(fallback ?? '')
+  return fb.trim()
+    ? { text: fb, source: '', model: '', at: '', version: '', from: 'fallback', pinned: false }
+    : { text: '', source: '', model: '', at: '', version: '', from: 'xlsx', pinned: false }
+}
+
+/** 生效答案解析器（注入点）：qid + xlsx 列 fallback → {text, from, version, ...}。
+ *  PWA 侧由 kb store 提供（版本库索引 → 回退 xlsx 列）；缺省（不传）时等价旧行为。 */
+export type SolutionResolver = (qid: string, fallback: string) => SolutionLike
+
+/** 缺省解析器：只读 xlsx 列（引擎离线 / 未接线时的保守回落，与 D100 前行为一致）。 */
+export const xlsxOnlySolutions: SolutionResolver = (_qid, fallback) => pickEffectiveSolution(null, fallback)
+
 /* ---------- 题目展开辅助（VC-2：清单里任一作业纸直接预览） ---------- */
 
-/** 作业纸 items → 模板题帧：从 kb store 取 content/solution/img_path（未命中即跳过）。 */
+/** 作业纸 items → 模板题帧：从 kb store 取 content/solution/img_path（未命中即跳过）。
+ *
+ *  D100-T5：`solOf` 注入「参考答案生效版」解析器（pinned > 最新版 > xlsx 列）。
+ *  不传时回落 xlsx 列（`r.solution`）——旧行为，保证引擎离线也能出同一份预览。 */
 export function expandPadItems(
   pad: Taskpad,
   bookOf: (kind: KbKind) => KbBook | undefined,
+  solOf: SolutionResolver = xlsxOnlySolutions,
 ): SheetHtmlItem[] {
   const out: SheetHtmlItem[] = []
   let seq = 0
@@ -776,8 +832,11 @@ export function expandPadItems(
       // D93-copy：抄写题有 page → 改写题干
       const isCopy = item.kb === 'copy' || tag === 'copy'
       const content = (isCopy && r.page) ? copyContent(r.page, r.content, id) : r.content
-      out.push({ id, no: label || (auto ? `${seq}.` : id), content, solution: r.solution,
-                 imgPath: r.img_path, tag })
+      // D100-T5：生效答案（版本库置顶/最新版优先；引擎离线回落 xlsx solution 列）
+      const eff = solOf(String(id), r.solution || '')
+      out.push({ id, no: label || (auto ? `${seq}.` : id), content, solution: eff.text || r.solution,
+                 solutionFrom: eff.from, solutionVersion: eff.version || '',
+                 solutionSource: eff.source || '', imgPath: r.img_path, tag })
       seen.add(id)
     }
     // D93-summary：该 tag 命中 → 追加 1 道（除非已手工加过 id=summary）
@@ -804,9 +863,11 @@ export function expandPadItems(
   if (wantTranslation && !seen.has(TRANSLATION_ID) && transRows.length) {
     const picked = transRows[seedIndex(seed, transRows.length)]
     seq += 1
+    const effT = solOf(String(picked.id ?? TRANSLATION_ID), picked.solution || '')
     out.push({ id: TRANSLATION_ID, no: auto ? `${seq}.` : TRANSLATION_ID,
-               content: picked.content, solution: picked.solution, imgPath: picked.img_path,
-               tag: 'translation' })
+               content: picked.content, solution: effT.text || picked.solution, imgPath: picked.img_path,
+               solutionFrom: effT.from, solutionVersion: effT.version || '',
+               solutionSource: effT.source || '', tag: 'translation' })
     seen.add(TRANSLATION_ID)
   }
   return out

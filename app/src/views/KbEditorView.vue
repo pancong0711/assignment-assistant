@@ -60,16 +60,22 @@ async function solAdd(fromXlsx: boolean) {
     kb: solKb.value, chap: solChap.value,
   })
   solBusy.value = false
-  if (r.ok && r.solutions) { solVersions.value = r.solutions.versions ?? []; solMsg.value = '已追加一版（未覆盖原答案）' }
-  else solMsg.value = r.error || '引擎离线：版本库仅在引擎在线时写入'
+  if (r.ok && r.solutions) {
+    solVersions.value = r.solutions.versions ?? []
+    solMsg.value = '已追加一版（未覆盖原答案）'
+    void kb.bumpSolutions()      // D100-T8：作业纸预览/表格摘要立即跟随
+  } else solMsg.value = r.error || '引擎离线：版本库仅在引擎在线时写入'
 }
 async function solPin(v: SolutionVersion) {
   solBusy.value = true
   const r = await mutateKbSolution(settings.engineUrl, settings.engineToken,
     { action: 'pin', qid: solQid.value, version: v.id })
   solBusy.value = false
-  if (r.ok && r.solutions) { solVersions.value = r.solutions.versions ?? []; solMsg.value = `已置顶 ${v.id}` }
-  else solMsg.value = r.error || '置顶失败（引擎离线）'
+  if (r.ok && r.solutions) {
+    solVersions.value = r.solutions.versions ?? []
+    solMsg.value = `已置顶 ${v.id}`
+    void kb.bumpSolutions()      // D100-T8：作业纸预览立即用新置顶版
+  } else solMsg.value = r.error || '置顶失败（引擎离线）'
 }
 async function solRm(v: SolutionVersion) {
   solBusy.value = true
@@ -80,11 +86,41 @@ async function solRm(v: SolutionVersion) {
     solVersions.value = r.solutions.versions ?? []
     if (solPick.value === v.id) solPick.value = ''
     solMsg.value = `已删除 ${v.id}`
+    void kb.bumpSolutions()      // D100-T8
   } else solMsg.value = r.error || '删除失败（引擎离线）'
 }
-function solCellText(r: { id: string; solution: string }) {
-  const t = (r.solution || '').slice(0, 14)
-  return t ? `${t}${(r.solution || '').length > 14 ? '…' : ''}` : '（空）'
+/** D100-T8：solution 单元格摘要/徽标 = **生效答案**（版本库置顶/最新版 → 回落 xlsx 列）。
+ *  xlsx `solution` 列只做 fallback，因此这里不再显示误导性的"空"（除非两处都空）。
+ *  性能：一次遍历预计算（每行 1 次解析），模板只读结果——避免行内重复解析。 */
+interface SolCellView { text: string; full: string; badge: string; hasVersions: boolean }
+const solCells = computed<Record<string, SolCellView>>(() => {
+  void kb.solutionsRev                       // 索引刷新 → 重新计算
+  const out: Record<string, SolCellView> = {}
+  for (const r of visibleRows.value) {
+    const eff = kb.effectiveSolution(String(r.id), r.solution || '')
+    const full = String(eff.text || '')
+    const ver = String(eff.version || '')
+    const who = eff.source === 'ai' ? 'AI' : (eff.source ? '人工' : '')
+    let badge = ''
+    if (full.trim()) {
+      if (eff.from === 'pinned') badge = `${who}${ver ? ' ' + ver : ''} ★`
+      else if (eff.from === 'latest') badge = `${who}${ver ? ' ' + ver : ''}（未置顶）`
+      else badge = eff.from === 'fallback' ? 'xlsx 旧列' : ''
+    }
+    out[String(r.id)] = {
+      text: full ? `${full.slice(0, 14)}${full.length > 14 ? '…' : ''}` : '（空）',
+      full: full || String(r.solution || ''),
+      badge,
+      hasVersions: !!kb.solutionOf(String(r.id)),
+    }
+  }
+  return out
+})
+/** 单行视图（模板用；缺省回落 xlsx 列，保证不抛错）。 */
+function solCell(r: { id: string; solution: string }): SolCellView {
+  return solCells.value[String(r.id)] ?? {
+    text: (r.solution || '').slice(0, 14) || '（空）', full: r.solution || '', badge: '', hasVersions: false,
+  }
 }
 
 /* ---------- B3/D46-5：题图上传（kb/fig 素材库，水印 wmAssets 同模式） ----------
@@ -142,6 +178,8 @@ const status = ref('')
 onMounted(() => {
   // B4：提前探测引擎在线状态，保证第一次「保存」就有机会走样式保留写回。
   void settings.pingEngine()
+  // D100-T8：拉一次生效答案索引（引擎离线 → 静默回落 xlsx solution 列）
+  void kb.bumpSolutions()
   if (kb.restorePersisted()) {
     pickChapter(true)
   }
@@ -294,9 +332,10 @@ function addChapter() {
               <template v-else-if="col === 'solution'">
                 <div style="display:flex; align-items:center; gap:4px">
                   <span class="hint" style="margin:0; max-width:180px; overflow:hidden; text-overflow:ellipsis; white-space:nowrap"
-                        :title="r.solution">{{ solCellText(r) }}</span>
-                  <button class="btn small" title="预览题目与答案（多版本勾选/置顶，D89）"
-                          @click="openSolution(r)">🔍 预览</button>
+                        :title="solCell(r).full">{{ solCell(r).text }}</span>
+                  <span v-if="solCell(r).badge" class="hint" style="margin:0; font-size:11px; white-space:nowrap">{{ solCell(r).badge }}</span>
+                  <button class="btn small" :title="solCell(r).hasVersions ? '预览题目与答案（多版本勾选/置顶，D89）' : '预览题目与答案（暂无版本库记录）'"
+                          @click="openSolution(r)">{{ solCell(r).hasVersions ? '🔍 预览' : '🔍' }}</button>
                 </div>
               </template>
               <input v-else

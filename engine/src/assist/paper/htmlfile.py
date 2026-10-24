@@ -199,13 +199,19 @@ def _watermark_items(task: dict, ws: Path, assets_dir: Path | None,
     return out
 
 
-def expand_items_html(task: dict, kb_dir: Path, numbering: str = "auto") -> list[dict]:
+def expand_items_html(task: dict, kb_dir: Path, numbering: str = "auto",
+                      ws: Path | None = None) -> list[dict]:
     """任务包 items → 模板题帧（no/content/solution/img，img_path 相对 kb/）。
 
     D82：题号规则与 PDF/PWA 同口径（auto=连续 1./2.；id=题库 id；labels 覆盖优先，
     经 resolve_items 统一展开）。模板渲染改为「题号+题干」悬挂缩进 + 图右上两列。
+
+    D100-T4：参考答案统一走 `effective_solution(ws, qid, xlsx列)` —— pinned > 最新版 >
+    xlsx 列 fallback（与批阅侧 `grading/flow.expand_items` 同一入口）。此前只读 xlsx
+    列，导致「AI 作答写进版本库的答案在作业纸 HTML 里看不到」。
     """
     from ..files import read_kb
+    from ..files.solutions import effective_solution
     from .task import resolve_items
     kb_data = read_kb(kb_dir)
     # 参考答案按题库 id 建索引（resolve_items 返回 4 元组不含 solution，与 PDF 同契约）
@@ -215,7 +221,9 @@ def expand_items_html(task: dict, kb_dir: Path, numbering: str = "auto") -> list
             for e in entries:
                 qid = str(e.get("id") or "")
                 if qid:
-                    sol_by_id[qid] = str(e.get("solution") or "")
+                    fallback = str(e.get("solution") or "")
+                    eff = effective_solution(ws, qid, fallback) if ws is not None else {"text": fallback}
+                    sol_by_id[qid] = str(eff.get("text") or fallback)
     out: list[dict] = []
     # 用带序号的展开（auto/id/labels 与 PDF/PWA 同口径）
     qid_seq = _resolved_ids(kb_data, task)
@@ -269,7 +277,7 @@ def build_context(task: dict, students: list[dict], kb_dir: Path, ws: Path,
     per_page = normalize_per_page(lay.get("per_page"), orientation)
     grid = resolve_grid(orientation, per_page,
                         lay.get("grid_rows"), lay.get("grid_cols"))
-    frames = expand_items_html(task, kb_dir, str(lay.get("numbering") or "auto"))
+    frames = expand_items_html(task, kb_dir, str(lay.get("numbering") or "auto"), ws=ws)
     wm_raw = task.get("watermark") or {}
     wm_enabled = (not no_watermark) and wm_raw.get("enabled", True) is not False
     wm = {"enabled": wm_enabled,
