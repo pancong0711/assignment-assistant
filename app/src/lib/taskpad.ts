@@ -304,10 +304,14 @@ export function gridLineStyles(rows: number, cols: number): Array<{ dir: 'v' | '
   return out
 }
 
-/** HTML .sheet-body 内联 CSS Grid 样式（PWA/j2 同口径）。 */
-export function gridBodyStyle(rows: number, cols: number, order: 'row' | 'col'): string {
-  const flow = order === 'col' ? 'column' : 'row'
-  return `display:grid;grid-template-columns:repeat(${cols}, minmax(0, 1fr));grid-template-rows:repeat(${rows}, minmax(0, 1fr));grid-auto-flow:${flow};`
+/** HTML .sheet-body 内联样式（PWA/j2 同口径）。
+ *
+ *  D102：改为**流式纵向排布** —— 不再输出 "repeat(N, minmax(0,1fr))" 等分行高。
+ *  等分行高强制每题占固定高度，参考答案超长时会被 overflow:hidden 裁掉；
+ *  现在每题高度随内容增长、后续题目自然后推（页尾可能留白，用户已接受）。
+ *  `rows`/`cols`/`order` 仍保留为参数：调用方继续输出 data-* 属性供排查/旧测试兼容。 */
+export function gridBodyStyle(_rows: number, _cols: number, _order: 'row' | 'col'): string {
+  return 'display:flex;flex-direction:column;gap:0;overflow:visible;'
 }
 
 const POS_VALUES = new Set(['lt', 'mt', 'rt', 'lm', 'mm', 'rm', 'lb', 'mb', 'rb'])

@@ -30,11 +30,16 @@ def test_resolve_grid_explicit():
 
 
 def test_grid_line_styles_and_body():
+    # 网格解析本身（rows/cols/order）保留：data-* 属性仍输出，供排查与旧测试兼容
     ls = grid_line_styles(4, 1)
     assert len(ls) == 3 and all(x["dir"] == "h" for x in ls)
     ls = grid_line_styles(2, 2)
     assert {x["dir"] for x in ls} == {"v", "h"}
+    # D102：.sheet-body 改流式纵向排布 —— 不再输出等分行高（会裁切超长参考答案）
     st = grid_body_style(2, 2, "row")
-    assert "grid-template-rows" in st and "grid-auto-flow:row" in st
-    st = grid_body_style(1, 2, "col")
-    assert "grid-auto-flow:column" in st
+    assert "grid-template-rows" not in st, "D102：不得再等分行高（会裁切答案）"
+    assert "grid-template-columns" not in st
+    assert "display:flex" in st and "flex-direction:column" in st
+    assert "overflow:visible" in st
+    # 行/列数不再影响排版结果（幂等）
+    assert grid_body_style(1, 2, "col") == st

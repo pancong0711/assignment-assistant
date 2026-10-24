@@ -87,9 +87,10 @@ function resetSquareGrid() {
   pad.setGridSize(g.rows, g.cols)
   notify(`已按 N=${pad.current.layout.per_page} 匀好为 ${g.rows}行×${g.cols}列（最接近方阵）`)
 }
+/** D102：行/列数已不参与排版（流式排布），不再做容量校验告警 —— 仅提示历史字段。 */
 const gridWarning = computed(() => {
-  const r = Number(gridRows.value); const c = Number(gridCols.value); const n = pad.current.layout.per_page
-  if (r * c < n) return `⚠ 当前网格容量 ${r}×${c}=${r * c} < 每页题数 ${n}；渲染时会回退到方向默认网格，请调大行/列数。`
+  const r = Number(gridRows.value); const c = Number(gridCols.value)
+  if (!(r >= 1) || !(c >= 1)) return '⚠ 行/列数应为正整数（历史字段，当前不影响排版）。'
   return ''
 })
 
@@ -346,8 +347,8 @@ function saveOnly() {
         <p>
           <label class="field"><input type="radio" name="orient" :checked="pad.current.layout.orientation === 'portrait'" @change="setOrientation('portrait')" />竖版 A4</label>
           <label class="field"><input type="radio" name="orient" :checked="pad.current.layout.orientation === 'landscape'" @change="setOrientation('landscape')" />横版 A4</label>
-          <label class="field">每页题数 N：
-            <select :value="pad.current.layout.per_page" @change="setPerPage(Number(($event.target as HTMLSelectElement).value) as PerPage)" title="1–12（D61：题数 + 显式行列网格；缺省 竖1横2）">
+          <label class="field">每页最多题数 N：
+            <select :value="pad.current.layout.per_page" @change="setPerPage(Number(($event.target as HTMLSelectElement).value) as PerPage)" title="1–12（D102：每题高度随内容自适应，答案较长时实际每页题数会少于 N）">
               <option v-for="n in MAX_PER_PAGE" :key="n" :value="n">{{ n }}</option>
             </select>
           </label>
@@ -357,11 +358,13 @@ function saveOnly() {
           <button class="btn small" style="margin-left:6px" @click="resetSquareGrid">均匀方阵</button>
         </p>
         <p class="hint">
-          D61 网格语义：N 题/页，行×列 可容纳 N 题时多余格子留空（空位在阅读顺序末尾）。
-          竖版=行优先（左→右、上→下）；横版=列优先（上→下、左→右）。
-          当前容量 {{ gridDisplay.rows }}×{{ gridDisplay.cols }}={{ gridDisplay.capacity }}，空位 {{ gridDisplay.empty }} 个。
+          <b>D102 流式排布</b>：每页<b>最多</b> N 题；每题高度随内容（题干+参考答案）自适应，
+          答案较长时该题会占更多高度、把后续题目往后推，必要时跨页——<b>答案永远不会被裁切</b>。
+          因此实际每页题数可能少于 N，页尾可能留白（用户拍板 2026-10-24）。
+          分隔虚线<b>跟随题目</b>（画在每题底边），不再按等分格定位。
+          行/列数保留为历史字段（供排查），不再影响排版高度。
+          当前记录 {{ gridDisplay.rows }}×{{ gridDisplay.cols }}。
           <span v-if="gridWarning" class="status-fail">{{ gridWarning }}</span>
-          预览/打印虚线分隔与引擎 PDF 同口径。
         </p>
         <p>
           <label class="field">页眉标题：<input type="text" v-model="headTitle" style="width:180px" @change="pad.current.layout.header.title = headTitle" /></label>

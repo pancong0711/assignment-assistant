@@ -107,11 +107,11 @@ def grid_line_styles(rows: int, cols: int) -> list[dict]:
 
 
 def grid_body_style(rows: int, cols: int, order: str) -> str:
-    """HTML .sheet-body 的内联 CSS Grid 样式（PWA/j2 同口径）。"""
-    flow = "column" if order == "col" else "row"
-    return (
-        "display:grid;"
-        f"grid-template-columns:repeat({cols}, minmax(0, 1fr));"
-        f"grid-template-rows:repeat({rows}, minmax(0, 1fr));"
-        f"grid-auto-flow:{flow};"
-    )
+    """HTML .sheet-body 的内联样式（PWA/j2 同口径）。
+
+    D102：改为**流式纵向排布** —— 不再用 "repeat(N, minmax(0,1fr))" 等分行高。
+    等分行高会强制每道题占固定高度，参考答案超长时被 overflow:hidden 裁掉。
+    现在每题高度随内容增长，后续题目自然后推（页尾可能留白，用户已接受）。
+    `rows`/`cols`/`order` 参数保留：模板仍输出 data-* 属性供排查与旧测试兼容。
+    """
+    return "display:flex;flex-direction:column;gap:0;overflow:visible;"

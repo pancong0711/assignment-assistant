@@ -1984,3 +1984,24 @@ applyManualTranslation/setTranslationRatio 中 setTranslationRatio 保留——�
 
 验证：engine pytest **512 passed**；app selfcheck 全绿；`vue-tsc`+`build` 0 err；Chromium 离线实测四种定界符全部渲染。
 
+## D102 · 参考答案溢出 → 流式排布（2026-10-24）
+
+> 承接用户反馈：参考答案放不下被截断；完整显示又会顶破版式。
+> 需求单/实测/决策见 `docs/55-D102-flow-layout-solution-overflow.md`。
+
+| # | 改动 | 文件 |
+|---|---|---|
+| T1 | `.sheet-body` 改 flex 列（去等分行高）；题框自然高 + `overflow:visible` | `lib/sheetHtml.ts` |
+| T2 | j2 模板同步（D1 超集铁律） | `assignment.html.j2` |
+| T3 | 打印：页高自适应 + 页脚绝对贴底 + 题目不横切 | 同上两处 |
+| T4 | 「每页题数」→「每页最多题数」+ 流式语义说明 | `SheetLayoutView.vue` |
+| T5 | `gridBodyStyle`/`grid_body_style` 不再输出固定行高 | `lib/taskpad.ts`、`paper/grid.py` |
+| T6 | 自检（含 esbuild 语法哨兵）+ 旧断言更新 | `selfcheck-d102-flow-layout.mjs`、`test_grid.py`、`test_sheet_html.py` |
+
+**决策**：答案必须完整（溢出把后续题后推）；接受页尾留白；虚线跟随题目；`per_page` = 每页最多 N 题。
+
+验证：engine pytest **512 passed**；app selfcheck 全绿；`vue-tsc`+`build` 0 err；
+Chromium 实测零裁剪、页高自适应、题目不合并（每页从一道题开始）。
+
+遗留：单题超过一整页时仍会被分页切开（A4 物理限制）；多页时页码仍显示「第 1/1 页」。
+

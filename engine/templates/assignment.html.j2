@@ -50,26 +50,38 @@ body {
 }
 .doc-hint { max-width: 210mm; margin: 8mm auto 2mm; font-size: 11px; color: #475569;
   background: #fff; border: 1px dashed var(--hairline); border-radius: 8px; padding: 6px 10px; }
+/* D102：页高自适应（min-height 保底一页）—— 答案文本超长时页面随内容长，绝不裁切正文。
+   内容超过 A4 时由浏览器自动分页（单容器方案；页尾可能留白，用户已接受）。 */
 .sheet-page {
-  position: relative; background: #fff; overflow: hidden;
-  width: 210mm; height: 296mm; margin: 10mm auto; padding: 12mm 14mm;
+  position: relative; background: #fff; overflow: visible;
+  width: 210mm; min-height: 296mm; height: auto; margin: 10mm auto; padding: 12mm 14mm;
   display: flex; flex-direction: column; gap: 2mm;
   box-shadow: 0 2px 10px rgba(31, 41, 55, 0.18);
   -webkit-print-color-adjust: exact; print-color-adjust: exact;
 }
-.sheet-page.landscape { width: 297mm; height: 209mm; }
+.sheet-page.landscape { width: 297mm; min-height: 209mm; }
 .sheet-header { border-bottom: 2px solid var(--line); text-align: center; font-weight: 700; padding-bottom: 2mm; }
 .sh-title { font-size: 16pt; }
 /* D83-4：信息行各 span 等宽左对齐、铺满整行；页眉不放日期（页脚保留） */
 .sh-info { display: grid; grid-auto-flow: column; grid-auto-columns: 1fr; gap: 2mm;
   font-weight: 400; font-size: 10.5pt; text-align: left; margin-top: 1.6mm; color: #222; }
 .sh-assign { color: var(--muted); }
-.sheet-body { flex: 1; display: grid; gap: 3mm; min-height: 0; min-width: 0; }
-/* D61：rows×cols 显式网格；行优先/列优先由内联 grid-auto-flow 决定，空位在阅读顺序末尾。 */
+/* D102 流式排布：题目按内容高度纵向排列（不再等分网格）。
+   `data-grid/data-rows/data-cols` 仍保留（排查/兼容旧测试），但不再参与高度分配。 */
+.sheet-body { flex: none; display: flex; flex-direction: column; gap: 0; min-width: 0; }
 .sheet-body.divided { gap: 0; position: relative; }
-.sheet-frame { min-width: 0; min-height: 0; border: 1px dashed var(--hairline);
-  border-radius: 2mm; padding: 3mm; overflow: hidden; display: flex; flex-direction: row; align-items: flex-start; gap: 3mm; }
+.sheet-body.divided .sheet-frame { word-break: break-word; }
+/* D102：题框高度随内容增长；溢出可见（绝不裁切答案）；
+   底边虚线 = 「虚线跟随题目」（替代旧的百分比绝对定位 .sf-line）；
+   break-inside:avoid 保证题目之间不被分页合并/切断。 */
+.sheet-frame { min-width: 0; border: 1px dashed var(--hairline);
+  border-radius: 2mm; padding: 3mm; overflow: visible; flex: none;
+  display: flex; flex-direction: row; align-items: flex-start; gap: 3mm;
+  break-inside: avoid; page-break-inside: avoid; }
+/* D102：divided = 有分隔线的版式（>=2 题）→ 题框去边框，改用底边虚线（跟随题目）。 */
 .sheet-body.divided .sheet-frame { border: none; border-radius: 0; padding: 3mm 4mm; }
+.sheet-body.divided .sheet-frame + .sheet-frame { border-top: none; }
+.sheet-body:not(.divided) .sheet-frame { border-bottom: none; }
 /* D83-2：四态位置 —— text-right/left 同行两列；below-* 题文满宽、图下一行 */
 .sheet-frame.pos-text-left { flex-direction: row-reverse; }
 .sheet-frame.pos-below-left, .sheet-frame.pos-below-right { flex-direction: column; align-items: stretch; }
@@ -88,12 +100,18 @@ body {
   border-radius: 2mm; padding: 4mm; text-align: center; }
 .q-solution { color: var(--muted); font-size: 10pt; border-top: 1px dashed #dfe3ea;
   padding-top: 1.5mm; margin-top: auto; }
+/* D102：页脚不参与收缩，贴在页内容之后（页高自适应时 margin-top:auto 会兜到页底）。 */
 .sheet-footer { border-top: 1px solid var(--line); padding-top: 1.5mm; font-size: 10pt;
-  color: var(--muted); display: flex; justify-content: space-between; gap: 3mm; }
-/* 多题/页分隔线（虚线，止于内容区，不穿页眉页脚；与 CSS 预览/引擎 PDF 同口径） */
-.sf-line { position: absolute; pointer-events: none; z-index: 2; }
+  color: var(--muted); display: flex; justify-content: space-between; gap: 3mm;
+  flex: none; margin-top: auto; }
+/* D102：旧「按等分格百分比定位」的虚线已废弃 —— 题目高度不再相等，绝对定位必然错位。
+   分隔线改由题目自身底边绘制（见 .sheet-body.divided .sheet-frame 的 border-bottom）。
+   保留 .sf-line 选择器（默认隐藏）仅为兼容旧产物/旧测试的 DOM 结构。 */
+.sf-line { display: none; position: absolute; pointer-events: none; z-index: 2; }
 .sf-line.v { top: 0; bottom: 0; width: 1px; background-image: repeating-linear-gradient(to bottom, #777 0 5px, transparent 5px 10px); }
 .sf-line.h { left: 0; right: 0; height: 1px; background-image: repeating-linear-gradient(to right, #777 0 5px, transparent 5px 10px); }
+/* D102：虚线跟随题目 —— 每题底边一条（末题也画，作为题区与页脚的分界）。 */
+.sheet-body.divided .sheet-frame { border-bottom: 1px dashed #777; }
 /* 水印层（每页重建；items 逐层 + 页码大字） */
 .wm-layer { position: absolute; inset: 0; pointer-events: none; z-index: 5; }
 .wm-page-text { position: absolute; left: 16%; top: 38%; font-size: 46pt; color: #333;
@@ -109,8 +127,15 @@ body {
 @media print {
   body { background: #fff; }
   .doc-hint { display: none !important; }
-  .sheet-page { margin: 0; box-shadow: none; page-break-after: always; break-after: page; }
+  /* D102：页高自适应（不锁 296mm，否则超出内容被裁）；页与页之间仍强制换页。 */
+  .sheet-page { margin: 0; box-shadow: none; min-height: 0; height: auto;
+    page-break-after: always; break-after: page; }
   .sheet-page.last { page-break-after: auto; break-after: auto; }
+  /* D102-P1：跨页时 margin-top:auto 会把页脚解析到下一页顶部 —— 打印改为绝对定位贴页底。 */
+  .sheet-page { position: relative; }
+  .sheet-footer { position: absolute; bottom: 6mm; left: 14mm; right: 14mm; margin-top: 0; }
+  /* D102-P2：保证单题不被横切（需同时写旧/新属性）。单题超过一整页时仍会被切，属物理限制。 */
+  .sheet-frame { break-inside: avoid; page-break-inside: avoid; }
 }
 </style>
 </head>

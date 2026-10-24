@@ -144,9 +144,11 @@ def test_sheet_html_cli_dual_layout_and_template_markers(ws: Path):
                                  "-o", str(ws / "tmp" / "sheet-p4.html")])
     assert res_p4.exit_code == 0, res_p4.output
     html_p4 = (ws / "tmp" / "sheet-p4.html").read_text(encoding="utf-8")
-    assert 'data-grid="4x1"' in html_p4            # D61：不再 cross
-    assert html_p4.count('class="sf-line h"') == 3 * len(SYNTHETIC_STUDENTS)   # 每页3横线 × 2 生（四等分）
-    assert '.sheet-body { flex: 1; display: grid;' in html_p4
+    assert 'data-grid="4x1"' in html_p4            # D61：不再 cross（data-* 保留供排查）
+    # D61→D102：sf-line 结构保留但默认隐藏；分隔线改由题框底边绘制（跟随题目高度）
+    assert 'class="sf-line h"' in html_p4
+    assert '.sf-line { display: none;' in html_p4, "D102：绝对定位虚线必须隐藏（题高不等会错位）"
+    assert '.sheet-body { flex: none; display: flex; flex-direction: column;' in html_p4
 
     # ---- ② portrait per_page=4 + 无 roster（合成 学生A/B informational；缺省输出路径） ----
     task2 = _write_task(ws, "portrait", 4,
