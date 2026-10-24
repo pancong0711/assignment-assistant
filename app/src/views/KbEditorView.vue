@@ -1,10 +1,11 @@
 <script setup lang="ts">
-import { computed, onMounted, ref } from 'vue'
+import { computed, nextTick, onMounted, ref, watch } from 'vue'
 import { KB_KINDS, KB_KIND_LABELS, type KbKind } from '../lib/kb'
 import { useKbStore, getKbDirHandle } from '../stores/kb'
 import { detectCapabilities, fsWriteHint, writeFileInDir } from '../lib/fsAccess'
 import { useSettingsStore } from '../stores/settings'
 import { fetchKbSolutions, mutateKbSolution, type SolutionVersion } from '../lib/engineClient'
+import { renderMathIn, KATEX_DONE_ATTR } from '../lib/katexRender'
 
 const kb = useKbStore()
 const settings = useSettingsStore()
@@ -49,6 +50,25 @@ async function openSolution(row: { id: string; content: string; solution: string
   solBusy.value = false
 }
 function closeSolution() { solOpen.value = false }
+
+/* ---------- D101：弹窗内的 LaTeX 渲染（题干 + 当前答案） ----------
+ * 与打印模板同一套定界符（$..$ / $$..$$ / \(..\) / \[..\]）；切换版本或追加/置顶后
+ * 内容变化需重渲染（先清 data-katex-done 标记再渲染，避免旧 DOM 叠加）。 */
+const solContentEl = ref<HTMLElement | null>(null)
+const solTextEl = ref<HTMLElement | null>(null)
+
+async function renderSolutionMath() {
+  await nextTick()
+  for (const el of [solContentEl.value, solTextEl.value]) {
+    if (!el) continue
+    el.removeAttribute(KATEX_DONE_ATTR)
+    await renderMathIn(el, true)
+  }
+}
+
+// 弹窗打开、版本切换（solPick）、版本列表变化（追加/置顶/删除）→ 重渲染
+watch([solOpen, solPick, () => solVersions.value.map((v) => `${v.id}:${v.pinned ? 1 : 0}`).join(',')],
+  () => { if (solOpen.value) void renderSolutionMath() })
 
 async function solAdd(fromXlsx: boolean) {
   if (!solQid.value) return
@@ -367,7 +387,7 @@ function addChapter() {
       <div class="modal" style="max-width:640px; width:92vw; max-height:84vh; overflow:auto">
         <h3 style="margin-top:0">题目与答案 · <code>{{ solQid }}</code></h3>
         <p class="hint" style="margin:0 0 6px">题目内容：</p>
-        <div style="border:1px solid var(--c-border); border-radius:6px; padding:8px; white-space:pre-wrap; margin-bottom:10px">{{ solContent || '（无题干）' }}</div>
+        <div ref="solContentEl" class="sol-math" style="border:1px solid var(--c-border); border-radius:6px; padding:8px; white-space:pre-wrap; margin-bottom:10px">{{ solContent || '（无题干）' }}</div>
 
         <p class="hint" style="margin:0 0 4px">
           答案版本（勾选查看；★=生效/置顶）；
@@ -386,7 +406,7 @@ function addChapter() {
             <button class="btn small" :disabled="solBusy" @click="solRm(v)">删除</button>
           </li>
         </ul>
-        <div style="border:1px solid var(--c-border); border-radius:6px; padding:8px; white-space:pre-wrap; min-height:48px">
+        <div ref="solTextEl" class="sol-math" style="border:1px solid var(--c-border); border-radius:6px; padding:8px; white-space:pre-wrap; min-height:48px">
           <span v-if="solShown">{{ solShown.text }}</span>
           <span v-else-if="solFallback">{{ solFallback }}<br><span class="hint">（题库 solution 旧列；可「收编为 v1」纳入版本库）</span></span>
           <span v-else class="hint">（暂无答案）</span>

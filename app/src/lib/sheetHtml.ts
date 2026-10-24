@@ -458,18 +458,28 @@ function katexScript(): string {
   return `<script>
 /* KaTeX 自动渲染（仅题干/答案）。
    D93-S5：不依赖 DOMContentLoaded 与 defer 的时序——轮询等待 renderMathInElement 就绪后再渲染，
-   最多等 ~5s；始终不可用则保留 $..$ 源码降级（不报错）。 */
+   最多等 ~5s；始终不可用则保留源码降级（不报错）。
+   D101：② 补 \(..\)、\[..\] 两个 LaTeX 定界符（AI/人工都有可能产出；此前只有 $ 系列，
+   导致 \[a=\frac{dv}{dt}\] 原样显示）；③ 渲染幂等（已渲染节点打 data-katex-done，
+   srcdoc 重建/load 补渲染都不会重复处理）。 */
 (function () {
   var opts = {
+    // 顺序要求：长定界符在前（$$ 先于 $、\[ 先于 \()，否则 $$x$$ 会被拆成两个行内公式
     delimiters: [
       { left: '$$', right: '$$', display: true },
-      { left: '$', right: '$', display: false }
+      { left: '\\\\[', right: '\\\\]', display: true },
+      { left: '$', right: '$', display: false },
+      { left: '\\\\(', right: '\\\\)', display: false }
     ],
     throwOnError: false
   };
   function render() {
     document.querySelectorAll('.q-content, .q-solution').forEach(function (el) {
-      try { window.renderMathInElement(el, opts); } catch (e) { /* 降级 */ }
+      if (el.getAttribute('data-katex-done') === '1') return;   // 幂等
+      try {
+        window.renderMathInElement(el, opts);
+        el.setAttribute('data-katex-done', '1');
+      } catch (e) { /* 降级：保留源码 */ }
     });
   }
   var tries = 0;
@@ -483,7 +493,10 @@ function katexScript(): string {
   } else {
     waitReady();
   }
-  window.addEventListener('load', function () { if (typeof window.renderMathInElement === 'function') render(); });
+  // D101：srcdoc 实时重建时 DOMContentLoaded 可能已过/首帧未就绪 —— load 后无条件补一次
+  window.addEventListener('load', function () {
+    if (typeof window.renderMathInElement === 'function') render();
+  });
 })();
 <\/script>`
 }

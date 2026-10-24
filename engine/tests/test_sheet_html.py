@@ -232,6 +232,19 @@ def test_sheet_html_cli_dual_layout_and_template_markers(ws: Path):
                    "doc.figure.max_h_mm", "fr.no"]:
         assert marker in tpl, f"模板缺少 D82-C 标记: {marker}"
 
+    # D101：参考答案 LaTeX 定界符四处（$$ \[ $ \(）必须在两处同口径。
+    # 两侧**源码层数不同、产物一致**：
+    #   TS 在模板字符串里 → 源码 4 个反斜杠，求值后 2 个写入 HTML；
+    #   j2 是原样文本     → 源码 2 个反斜杠，直接写入 HTML。
+    # 最终 HTML 都必须「2 个反斜杠 + 方括号」（浏览器 JS 求值得 \[；1 个被吞成 "["
+    # 时公式原样显示源码 —— 即 D101 修复的 bug）。
+    _BS = chr(92)
+    for src, name, n_bs in [(ts_src, "TS sheetHtml.ts", 4), (tpl, "j2 模板", 2)]:
+        for delim in ["{ left: '$$'", "{ left: '$'",
+                      "{ left: '" + _BS * n_bs + "['", "{ left: '" + _BS * n_bs + "('" ]:
+            assert delim in src, f"{name} 缺少 LaTeX 定界符: {delim!r}"
+        assert "data-katex-done" in src, f"{name} 缺少渲染幂等标记（D101）"
+
 
 def test_sheet_html_d82_numbering_labels_and_figure_box(ws: Path):
     """D82-C：HTML 通道题号规则/覆盖 + 题图最大框 与 PDF/PWA 同口径。"""

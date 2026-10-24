@@ -169,20 +169,36 @@ body {
 {% endfor %}
 {% endfor %}
 <script>
-/* KaTeX 自动渲染（仅题干/答案；CDN 不可达时跳过=源码降级，不报错） */
-document.addEventListener('DOMContentLoaded', function () {
+/* KaTeX 自动渲染（仅题干/答案；不可达时跳过=源码降级，不报错）。
+   D101：补 \(..\)、\[..\] 两个 LaTeX 定界符（AI/人工都会产出；此前只有 $ 系列，
+   导致 \[a=\frac{dv}{dt}\] 原样显示为源码）；渲染幂等（data-katex-done 标记）。
+   与 app/src/lib/sheetHtml.ts:katexScript 逐字同构（D1 超集铁律，parity 哨兵护航）。 */
+function _renderMathAll() {
   if (typeof window.renderMathInElement !== 'function') return;
   var opts = {
+    // 顺序要求：长定界符在前（$$ 先于 $、\[ 先于 \()，否则 $$x$$ 会被拆成两个行内公式
     delimiters: [
       { left: '$$', right: '$$', display: true },
-      { left: '$', right: '$', display: false }
+      { left: '\\[', right: '\\]', display: true },
+      { left: '$', right: '$', display: false },
+      { left: '\\(', right: '\\)', display: false }
     ],
     throwOnError: false
   };
   document.querySelectorAll('.q-content, .q-solution').forEach(function (el) {
-    try { window.renderMathInElement(el, opts); } catch (e) { /* 降级：保留源码 */ }
+    if (el.getAttribute('data-katex-done') === '1') return;   // 幂等
+    try {
+      window.renderMathInElement(el, opts);
+      el.setAttribute('data-katex-done', '1');
+    } catch (e) { /* 降级：保留源码 */ }
   });
-});
+}
+if (document.readyState === 'loading') {
+  document.addEventListener('DOMContentLoaded', _renderMathAll);
+} else {
+  _renderMathAll();
+}
+window.addEventListener('load', _renderMathAll);
 </script>
 </body>
 </html>

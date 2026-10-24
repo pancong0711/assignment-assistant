@@ -1965,3 +1965,22 @@ applyManualTranslation/setTranslationRatio 中 setTranslationRatio 保留——�
 | T8 | 题库单元格生效摘要徽标；AI 面板默认置顶 + 作答后刷新索引 | `KbEditorView.vue`、`AiGradingPanel.vue`、`App.vue` |
 
 验证：engine pytest **512 passed**（新增 D100 12 例）；app `npm run selfcheck` 全绿（新增 `selfcheck-d100-solution-readpath.mjs`）；`vue-tsc -b` + `vite build` 0 err；端到端脚本确认"AI 作答 → 版本库 → 作业纸 HTML 含 AI 答案"。
+
+## D101 · 参考答案 LaTeX 在预览未渲染（2026-10-24）
+
+> 承接用户反馈：题库编辑器与作业纸预览里的参考答案 LaTeX 没渲染。
+> 需求单/实测矩阵/决策见 `docs/54-D101-latex-render-in-preview.md`。
+
+| # | 改动 | 文件 |
+|---|---|---|
+| T1 | 补 `\[..\]`、`\(..\)` 定界符（长定界符在前） | `lib/sheetHtml.ts`、`assignment.html.j2` |
+| T2 | 渲染幂等（`data-katex-done`）+ `load` 后补渲染（srcdoc 重建场景） | 同上 |
+| T3 | 新增 `katexRender.ts`：同源懒加载 + 幂等渲染 + 定界符单一事实源 | `app/src/lib/katexRender.ts` |
+| T4 | 题库编辑器 🔍 弹窗接入公式渲染（切换版本重渲染） | `KbEditorView.vue` |
+| T5 | 自检 + parity 哨兵（含转义层数断言与变异验证） | `selfcheck-d101-latex-render.mjs`、`test_sheet_html.py` |
+
+**坑**：定界符转义层数——HTML 源必须 2 个反斜杠（JS 求值 `\[`）；TS 模板字符串写 4 个、j2 写 2 个。
+1 个会被 JS 吞成 `[` 导致完全不渲染（即本次 bug）。
+
+验证：engine pytest **512 passed**；app selfcheck 全绿；`vue-tsc`+`build` 0 err；Chromium 离线实测四种定界符全部渲染。
+
