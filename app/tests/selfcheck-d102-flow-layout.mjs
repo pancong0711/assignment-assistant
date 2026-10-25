@@ -1,4 +1,6 @@
-/** D102 自检：参考答案溢出 → 流式排布（答案必须完整）。
+/** D102 自检（**已由 D103 取代**）：D102 的「单列流式」是版式回归，
+ *  D103 恢复了 MxN 网格与虚线。本文件保留为**回归哨兵**，断言 D102 的
+ *  "去网格"改动不得回潮 —— 即：MxN 网格与虚线必须存在。
  *
  *  1) .sheet-body 不再等分行高（grid-template-rows 必须缺席 —— 否则超长答案被裁）；
  *  2) 题框高度随内容：overflow 不得为 hidden、必须 flex:none、break-inside:avoid；
@@ -30,13 +32,14 @@ const { emptyTaskpad, gridBodyStyle } = await import(pathToFileURL(tpBundle).hre
 
 /* ---------- 0) gridBodyStyle 不再等分行高 ---------- */
 {
+  // D103：必须是 MxN 等分网格（版式控制权），不得退回单列流式
   const st = gridBodyStyle(4, 1, 'row')
-  assert.ok(!st.includes('grid-template-rows'), 'D102：不得输出 grid-template-rows（等分行高会裁切答案）')
-  assert.ok(!st.includes('grid-template-columns'), 'D102：不得输出 grid-template-columns')
-  assert.ok(st.includes('flex-direction:column'), 'D102：应改为纵向流式')
-  assert.ok(st.includes('overflow:visible'), 'D102：容器必须允许内容撑开')
-  assert.equal(gridBodyStyle(1, 2, 'col'), st, 'D102：rows/cols 不再影响排版结果')
-  console.log('0) gridBodyStyle 改流式（无等分行高）… ok')
+  assert.ok(st.includes('display:grid'), 'D103：必须输出 CSS Grid（MxN 版式）')
+  assert.ok(st.includes('grid-template-rows:repeat(4, minmax(0, 1fr))'), 'D103：必须等分行高')
+  assert.ok(st.includes('grid-template-columns:repeat(1, minmax(0, 1fr))'))
+  assert.ok(!st.includes('flex-direction:column'), 'D103：不得退回单列流式（D102 回归）')
+  assert.notEqual(gridBodyStyle(1, 2, 'col'), gridBodyStyle(2, 1, 'row'), 'D103：行列必须影响排版')
+  console.log('0) gridBodyStyle 为 MxN 网格（D102 回归哨兵）… ok')
 }
 
 const pad = emptyTaskpad(); pad.id = 'd102'; pad.layout.per_page = 4
@@ -49,11 +52,9 @@ const html = stringifySheetHtml([{ pad, items }],
 
 /* ---------- 1) 无等分行高 ---------- */
 {
-  assert.ok(!html.includes('grid-template-rows:repeat('), 'D102：产物不得含等分行高')
-  // CSS 是多行书写（属性间有空格），用宽松匹配
-  assert.ok(/\.sheet-body \{[^}]*display:\s*flex[^}]*flex-direction:\s*column/.test(html),
-    'D102：.sheet-body 应为 flex 列')
-  console.log('1) 产物无等分行高、改 flex 列 … ok')
+  assert.ok(html.includes('grid-template-rows:repeat('), 'D103：产物必须含 MxN 等分行高')
+  assert.ok(/\.sheet-body \{[^}]*display:\s*grid/.test(html), 'D103：.sheet-body 应为 grid')
+  console.log('1) 产物为 MxN 网格 … ok')
 }
 
 /* ---------- 2) 题框不裁切 ---------- */
@@ -62,19 +63,19 @@ const html = stringifySheetHtml([{ pad, items }],
   const m = html.match(/^\.sheet-frame \{([^}]*)\}/m)
   assert.ok(m, '应能找到 .sheet-frame 主规则')
   const rule = m[1]
-  assert.ok(/overflow:\s*visible/.test(rule), 'D102：.sheet-frame 必须 overflow:visible（不得 hidden 裁掉答案）')
-  assert.ok(/flex:\s*none/.test(rule), 'D102：题框不得参与 flex 收缩')
+  // D103：格内允许裁剪（超长答案由预排版切段续写，不靠 overflow 撑开）
+  assert.ok(/overflow:\s*hidden/.test(rule), 'D103：格内裁剪（续写由预排版负责）')
   assert.ok(/break-inside:\s*avoid/.test(rule), 'D102：题目之间不得被分页合并')
   assert.ok(/page-break-inside:\s*avoid/.test(rule), 'D102：需同时写旧属性兼容')
-  console.log('2) 题框 overflow:visible / flex:none / break-inside:avoid … ok')
+  console.log('2) 格内裁剪 overflow:hidden + break-inside:avoid … ok')
 }
 
 /* ---------- 3) 虚线跟随题目 ---------- */
 {
-  assert.ok(/\.sf-line \{ display: none/.test(html), 'D102：绝对定位虚线必须隐藏（题高不等会错位）')
-  assert.ok(/\.sheet-body\.divided \.sheet-frame \{ border-bottom: 1px dashed/.test(html),
-    'D102：分隔线应由题框底边绘制（跟随题目）')
-  console.log('3) 虚线跟随题目（废弃百分比绝对定位）… ok')
+  // D103：虚线必须可见，且由 .sf-line 按网格百分比绘制（横+竖）
+  assert.ok(!/\.sf-line \{ display: none/.test(html), 'D103：虚线必须可见')
+  assert.ok(/\.sf-line\.v \{/.test(html) && /\.sf-line\.h \{/.test(html), 'D103：横竖虚线样式都要保留')
+  console.log('3) 虚线可见（横+竖，按网格绘制）… ok')
 }
 
 /* ---------- 4) 页高自适应 ---------- */
@@ -82,12 +83,10 @@ const html = stringifySheetHtml([{ pad, items }],
   const m = html.match(/^\.sheet-page \{([^}]*)\}/m)
   assert.ok(m, '应能找到 .sheet-page 主规则')
   const rule = m[1]
-  assert.ok(/min-height:\s*296mm/.test(rule), 'D102：页高应有 min-height 保底')
-  assert.ok(/height:\s*auto/.test(rule), 'D102：页高必须 auto（否则超出内容被裁）')
-  assert.ok(/overflow:\s*visible/.test(rule), 'D102：页容器不得 hidden')
-  // 注意：不能直接匹配 "height: 296mm"，否则会与 "min-height: 296mm" 冲突 —— 用词边界精确判断
-  assert.ok(!/(?:^|[;{\s])height:\s*296mm/.test(rule), 'D102：不得再锁死 height:296mm')
-  console.log('4) 页高自适应（min-height + height:auto）… ok')
+  // D103：恢复固定页高（MxN 需要确定格高；溢出由预排版处理）
+  assert.ok(/height:\s*296mm/.test(rule), 'D103：页高固定 296mm')
+  assert.ok(/overflow:\s*hidden/.test(rule), 'D103：页容器裁剪（内容由预排版保证放得下）')
+  console.log('4) 固定页高 296mm（MxN）… ok')
 }
 
 /* ---------- 5) 打印规则 ---------- */
@@ -95,9 +94,9 @@ const html = stringifySheetHtml([{ pad, items }],
   const printBlock = html.slice(html.indexOf('@media print'))
   assert.ok(/\.sheet-footer \{[^}]*position:\s*absolute[^}]*bottom:/.test(printBlock),
     'D102-P1：打印时页脚须绝对定位贴页底（否则跨页跑到下一页顶部）')
-  assert.ok(/\.sheet-page \{[^}]*min-height:\s*0[^}]*height:\s*auto/.test(printBlock),
-    'D102：打印态不得锁页高（应为 min-height:0 + height:auto）')
-  console.log('5) 打印态页脚定位 + 页高自适应 … ok')
+  assert.ok(/\.sheet-page \{[^}]*page-break-after:\s*always/.test(printBlock),
+    'D103：打印态每页强制换页')
+  console.log('5) 打印态每页强制换页 + 页脚贴页底 … ok')
 }
 
-console.log('\nD102 流式排布自检通过 ✔')
+console.log('\nD102→D103 版式回归哨兵通过 ✔（MxN 网格 + 虚线必须保留）')

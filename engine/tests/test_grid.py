@@ -30,16 +30,18 @@ def test_resolve_grid_explicit():
 
 
 def test_grid_line_styles_and_body():
-    # 网格解析本身（rows/cols/order）保留：data-* 属性仍输出，供排查与旧测试兼容
+    # D103：恢复 MxN 等分网格 —— 版式控制权是作业纸样式的重要组成部分
     ls = grid_line_styles(4, 1)
     assert len(ls) == 3 and all(x["dir"] == "h" for x in ls)
     ls = grid_line_styles(2, 2)
     assert {x["dir"] for x in ls} == {"v", "h"}
-    # D102：.sheet-body 改流式纵向排布 —— 不再输出等分行高（会裁切超长参考答案）
+    # 横版 1x2：中间一条竖线（用户明确要求保留）
+    assert grid_line_styles(1, 2) == [{"dir": "v", "style": "left:50.0%"}]
     st = grid_body_style(2, 2, "row")
-    assert "grid-template-rows" not in st, "D102：不得再等分行高（会裁切答案）"
-    assert "grid-template-columns" not in st
-    assert "display:flex" in st and "flex-direction:column" in st
-    assert "overflow:visible" in st
-    # 行/列数不再影响排版结果（幂等）
-    assert grid_body_style(1, 2, "col") == st
+    assert "display:grid" in st
+    assert "grid-template-columns:repeat(2, minmax(0, 1fr))" in st
+    assert "grid-template-rows:repeat(2, minmax(0, 1fr))" in st
+    assert "grid-auto-flow:row" in st
+    assert "grid-auto-flow:column" in grid_body_style(1, 2, "col")
+    # 行列数确实影响排版（非幂等）—— 这是版式控制权的体现
+    assert grid_body_style(1, 2, "col") != grid_body_style(2, 1, "row")
