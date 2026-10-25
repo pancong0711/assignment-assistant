@@ -59,8 +59,10 @@ def expand_items(ws: Path, task: dict) -> list[dict]:
             qid = str(e.get("id") or "")
             fallback = str(e.get("solution", "") or "")
             eff = effective_solution(ws, qid, fallback) if qid else {"text": fallback}
+            # D105：批阅 prompt 用纯文本（text_plain），md+html 仅用于显示
+            sol_text = str(eff.get("text_plain") or eff.get("text") or fallback)
             out.append({"序号": idx, "content": e.get("content", ""),
-                        "solution": eff.get("text", fallback), "tag": tag, "img": img})
+                        "solution": sol_text, "tag": tag, "img": img})
     if not out:
         logger.warning("任务包未选中任何题目")
     return out

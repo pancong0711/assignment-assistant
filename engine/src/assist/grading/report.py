@@ -47,7 +47,17 @@ KIND_LABEL = {"ai": "AI 批阅报告", "human": "人工批阅报告",
 
 
 def _md_to_html(md_text: str) -> str:
-    try:                                   # 有 markdown 库则正规转换
+    """D105：报告正文也走 md+html 白名单渲染（与作业纸同一实现）。
+
+    之前直接 `markdown.markdown(...)`：既不净化（AI 输出可注入脚本），
+    也会把 `\\(..\\)` / `\\[..\\]` 当转义吃掉导致公式显示为源码。
+    """
+    try:
+        from ..paper.richdoc import render_rich
+        return render_rich(md_text)
+    except Exception:  # noqa: BLE001
+        pass
+    try:                                   # 兜底：有 markdown 库则正规转换
         import markdown as _md
         return _md.markdown(md_text, extensions=["tables", "fenced_code"])
     except Exception:                      # noqa: BLE001 —— 无依赖时最小降级

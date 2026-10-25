@@ -84,11 +84,44 @@ function sanitizeWithoutDom(html: string): string {
   })
 }
 
+/** 受保护的公式片段（避免 markdown-it 把 \( \[ 当转义吃掉，或把 _ * 当强调）。 */
+const MATH_PLACEHOLDER = 'D105MATHPLACEHOLDER'
+
+/** 把公式片段抽出占位，避免被 Markdown 规则改写；渲染后再还原。 */
+function protectMath(src: string): { text: string; math: string[] } {
+  const math: string[] = []
+  // 顺序要求：先长后短（$$ 先于 $、\[ 先于 \(）；
+  // 注意：markdown-it 会把 \[ 当转义序列 → 必须先摘出来
+  const patterns = [
+    /\$\$[\s\S]*?\$\$/g,
+    /\\\[[\s\S]*?\\\]/g,
+    /\\\([\s\S]*?\\\)/g,
+    /\$(?:\\.|[^$\\])+\$/g,
+  ]
+  let out = src
+  for (const re of patterns) {
+    out = out.replace(re, (m) => {
+      const idx = math.length
+      math.push(m)
+      return `${MATH_PLACEHOLDER}${idx}END`
+    })
+  }
+  return { text: out, math }
+}
+
+/** 还原公式占位（在 markdown 渲染后、净化前）。 */
+function restoreMath(html: string, math: string[]): string {
+  return html.replace(new RegExp(MATH_PLACEHOLDER + '(\\d+)END', 'g'), (_m, i: string) => {
+    return math[Number(i)] ?? ''
+  })
+}
+
 /** Markdown + HTML 白名单 → 安全 HTML。 */
 export function renderRich(text: string): string {
   const src = String(text ?? '')
   if (!src.trim()) return ''
-  const parsed = mdParser().render(dropDangerousBlocks(src))
+  const { text: guarded, math } = protectMath(dropDangerousBlocks(src))
+  const parsed = restoreMath(mdParser().render(guarded), math)
   // 无 DOM（Node/SSR）时 DOMPurify 无 sanitize → 走保守兜底
   if (typeof (DOMPurify as unknown as { sanitize?: unknown }).sanitize !== 'function') {
     return sanitizeWithoutDom(parsed)
@@ -108,6 +141,24 @@ export function renderRich(text: string): string {
 /** 属性级的 data:image 校验（DOMPurify 的 URI 正则在 img src 上再兜一层）。 */
 export function isDataImage(src: string): boolean {
   return DATA_IMG_RE.test(String(src ?? '').trim())
+}
+
+/** 行内渲染：去掉最外层 `<p>...</p>` 包裹，使「题号 + 正文」能排在同一行。
+ *
+ *  D105 修复：之前题干用 renderRich 直接插在题号后，`<p>` 是块级元素 →
+ *  题号独占一行、正文另起一行（用户反馈的"题号后空一行"）。
+ *  仅当内容为**单一段落**时去包裹；多段/表格/SVG 等保持原样（需要块级）。
+ */
+export function renderRichInline(text: string): string {
+  const html = renderRich(text)
+  if (!html) return ''
+  const trimmed = html.trim()
+  // 必须**整体**就是一个 <p>…</p>（内部不得再出现 </p> 或块级标签）
+  const m = /^<p>((?:(?!<\/p>)[\s\S])*)<\/p>$/.exec(trimmed)
+  if (!m) return html
+  const inner = m[1]
+  if (/<(table|ul|ol|li|h[1-6]|blockquote|pre|svg|div|p|br\/?)>/i.test(inner)) return html
+  return inner
 }
 
 /** md+html → 纯文本（检索 / Excel 摘要 / xlsx solution 列）。 */

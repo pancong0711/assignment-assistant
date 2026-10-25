@@ -61,7 +61,9 @@ def _questions_of(task: dict, ws=None) -> list[dict]:
         qid = str(it.get("no") or it.get("id") or "")
         fallback = str(it.get("solution") or "")
         # D89-N3：有 ws 且有 qid → 实时读最新置顶版
-        sol = effective_solution(ws, qid, fallback).get("text", fallback) if (ws and qid) else fallback
+        # D105：批阅 prompt 用**纯文本**（text_plain），避免 md+html/SVG 浪费 token
+        eff = effective_solution(ws, qid, fallback) if (ws and qid) else {}
+        sol = str(eff.get("text_plain") or eff.get("text") or fallback)
         out.append({"no": str(it.get("no") or ""), "content": str(it.get("content") or ""),
                     "solution": sol,
                     "tag": str(it.get("tag") or task.get("target_tag") or "")})

@@ -98,6 +98,39 @@ def _sanitize(html_text: str) -> str:
 
 # ---------------- 渲染 ----------------
 
+_MATH_PLACEHOLDER = "D105MATHPLACEHOLDER"
+_MATH_END = "END"
+
+_MATH_PATTERNS = [
+    re.compile(r"\$\$[\s\S]*?\$\$"),
+    re.compile(r"\\\[[\s\S]*?\\\]"),
+    re.compile(r"\\\([\s\S]*?\\\)"),
+    re.compile(r"\$(?:\\.|[^$\\])+\$"),
+]
+
+
+def _protect_math(src: str) -> tuple[str, list[str]]:
+    """把公式片段抽出占位，避免 Markdown 把 \\( \\[ 当转义吃掉（D105 修复）。"""
+    math: list[str] = []
+
+    def _sub(m: "re.Match[str]") -> str:
+        math.append(m.group(0))
+        return f"{_MATH_PLACEHOLDER}{len(math) - 1}{_MATH_END}"
+
+    out = src
+    for pat in _MATH_PATTERNS:
+        out = pat.sub(_sub, out)
+    return out, math
+
+
+def _restore_math(html_text: str, math: list[str]) -> str:
+    def _sub(m: "re.Match[str]") -> str:
+        idx = int(m.group(1))
+        return math[idx] if 0 <= idx < len(math) else m.group(0)
+
+    return re.sub(rf"{_MATH_PLACEHOLDER}(\d+){_MATH_END}", _sub, html_text)
+
+
 def _md_to_html(md_text: str) -> str:
     """Markdown → HTML（表格/围栏代码/换行），失败则按段落转义降级。"""
     try:
@@ -135,7 +168,26 @@ def render_rich(text: str) -> str:
     src = str(text or "")
     if not src.strip():
         return ""
-    return _sanitize(_md_to_html(_drop_dangerous_blocks(src)))
+    guarded, math = _protect_math(_drop_dangerous_blocks(src))
+    return _sanitize(_restore_math(_md_to_html(guarded), math))
+
+
+def render_rich_inline(text: str) -> str:
+    """行内渲染：去掉最外层 `<p>`，让「题号 + 正文」排在同一行（D105 修复）。
+
+    仅当整体就是单个 `<p>…</p>`（内部无块级标签）时去包裹。
+    """
+    html = render_rich(text)
+    if not html:
+        return ""
+    trimmed = html.strip()
+    m = re.fullmatch(r"<p>((?:(?!</p>)[\s\S])*)</p>", trimmed)
+    if not m:
+        return html
+    inner = m.group(1)
+    if re.search(r"<(table|ul|ol|li|h[1-6]|blockquote|pre|svg|div|p|br/?)[\s>]", inner, re.I):
+        return html
+    return inner
 
 
 # ---------------- 纯文本派生 ----------------

@@ -179,9 +179,9 @@ body {
       <div class="q-body indent-{{ doc.indent }}">
         {% for b in c.blocks %}
         {%- if b.kind == 'content' %}
-        <div class="q-content">{% if b.cont %}<span class="q-cont">（题 {{ c.no|replace('.', '') }} 续）</span>{% elif c.no %}{{ c.no }}  {% endif %}{{ b.html|safe if b.html else b.text }}</div>
+        <div class="q-content">{% if b.cont %}<span class="q-cont">（题 {{ c.no|replace('.', '') }} 续）</span>{% elif c.no %}{{ c.no }}  {% endif %}{{ b.html_inline|safe if b.html_inline else b.text }}</div>
         {%- elif doc.include_solution %}
-        <div class="q-solution">{% if b.cont %}<span class="q-cont">（题 {{ c.no|replace('.', '') }} 续）</span>{% endif %}<span class="q-sol-label">参考答案：</span>{% if b.scale and b.scale < 1 %}<span style="display:inline-block;transform:scale({{ b.scale }});transform-origin:left top;">{{ b.html|safe if b.html else b.text }}</span>{% else %}{{ b.html|safe if b.html else b.text }}{% endif %}</div>
+        <div class="q-solution">{% if b.cont %}<span class="q-cont">（题 {{ c.no|replace('.', '') }} 续）</span>{% endif %}{% if b.show_sol_label %}<span class="q-sol-label">参考答案：</span>{% endif %}{% if b.scale and b.scale < 1 %}<span style="display:inline-block;transform:scale({{ b.scale }});transform-origin:left top;">{{ b.html|safe if b.html else b.text }}</span>{% else %}{{ b.html|safe if b.html else b.text }}{% endif %}</div>
         {%- endif %}
         {% endfor %}
       </div>
@@ -191,7 +191,7 @@ body {
     {%- else %}{% for fr in pg.frames %}
     <div class="sheet-frame pos-{{ doc.figure.pos }}">
       <div class="q-body indent-{{ doc.indent }}">
-        <div class="q-content">{% if fr.no %}{{ fr.no }}  {% endif %}{{ fr.content_html|safe if fr.content_html else fr.content }}{% if fr.tag %} <span class="q-tag">【{{ fr.tag }}】</span>{% endif %}</div>
+        <div class="q-content">{% if fr.no %}{{ fr.no }}  {% endif %}{{ fr.content_html_inline|safe if fr.content_html_inline else fr.content }}{% if fr.tag %} <span class="q-tag">【{{ fr.tag }}】</span>{% endif %}</div>
         {% if doc.include_solution and fr.solution %}<div class="q-solution">参考答案：{{ fr.solution_html|safe if fr.solution_html else fr.solution }}</div>{% endif %}
       </div>
       {%- set fig_w = '%.1f'|format(doc.figure.max_w_mm * doc.figure.scale) %}

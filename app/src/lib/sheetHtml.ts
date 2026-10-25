@@ -26,7 +26,7 @@ import { gridBodyStyle, gridLineStyles, resolveGrid,
   seedIndex, copyContent, SUMMARY_ID, SUMMARY_CONTENT, TRANSLATION_ID,
   type Taskpad } from './taskpad'
 import type { KbBook, KbKind } from './kb'
-import { renderRich, stripMarkup } from './richdoc'
+import { renderRich, renderRichInline, stripMarkup } from './richdoc'
 
 export interface SheetHtmlStudent {
   name: string
@@ -590,15 +590,20 @@ function cellBodyHtml(cell: SheetHtmlCellView, includeSolution: boolean, indentC
     const contMark = b.cont ? `<span class="q-cont">（题 ${escapeHtml(cell.no.replace(/\.$/, ''))} 续）</span>` : ''
     if (b.kind === 'content') {
       const no = b.cont ? '' : (cell.no ? `${cell.no}  ` : '')
-      // D105：md+html 渲染（白名单净化）；降级为纯文本
-      const body = renderRich(b.text) || escapeHtml(stripMarkup(b.text))
+      // D105 修复：题干用**行内**渲染，题号与正文同一行（此前 renderRich 的 <p>
+      // 让题号独占一行 → 用户反馈"题号后空一行"）
+      const body = renderRichInline(b.text) || escapeHtml(stripMarkup(b.text))
       parts.push(`<div class="q-content">${contMark}${escapeHtml(no)}${body}</div>`)
     } else if (includeSolution) {
       const scaleStyle = b.scale && b.scale < 1
         ? ` style="display:inline-block;transform:scale(${b.scale});transform-origin:left top;"`
         : ''
       const body = renderRich(b.text) || escapeHtml(stripMarkup(b.text))
-      parts.push(`<div class="q-solution">${contMark}<span class="q-sol-label">参考答案：</span>`
+      // D105 修复：「参考答案：」只在本格**首个**答案块前出现一次
+      // （此前每个切分段都重复一次，与「题 N 续」曾出现的问题同源）
+      const isFirstSol = !parts.some((x) => x.includes('q-solution'))
+      const label = isFirstSol ? '<span class="q-sol-label">参考答案：</span>' : ''
+      parts.push(`<div class="q-solution">${contMark}${label}`
         + `<span${scaleStyle}>${body}</span></div>`)
     }
   }
@@ -653,7 +658,7 @@ function pageBlockHtml(pad: Taskpad, items: SheetHtmlItem[], stu: SheetHtmlStude
     </div>`).join('\n    ')
       : items.map((fr) => `<div class="sheet-frame pos-${normalizeFigurePos(pad.layout.figure?.pos)}">
       <div class="q-body indent-${normalizeIndent(pad.layout.indent)}">
-        <div class="q-content">${escapeHtml(fr.no ? `${fr.no}  ` : '')}${renderRich(fr.content) || escapeHtml(fr.content)}</div>
+        <div class="q-content">${escapeHtml(fr.no ? `${fr.no}  ` : '')}${renderRichInline(fr.content) || escapeHtml(fr.content)}</div>
         ${(includeSolution && fr.solution) ? `<div class="q-solution">参考答案：${renderRich(fr.solution)}</div>` : ''}
       </div>
       ${figHtml(fr.imgPath, figAssets, pad.layout.figure)}

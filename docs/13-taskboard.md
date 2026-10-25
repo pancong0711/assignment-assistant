@@ -2048,3 +2048,14 @@ PDF 教师版 2 题→2 页且含置顶答案、页码正确。
 验证：engine **565 passed**；app selfcheck 全绿（117 条）；`vue-tsc`/`build` 0 err；
 端到端：纯 CLI `layout → html` 输出格渲染 + 续格标注；答案含 SVG/表格正确渲染且零脚本泄漏。
 
+### D105 修复（2026-10-25 用户反馈）
+
+| 问题 | 根因 | 修复 |
+|---|---|---|
+| 题号后空一行 | `renderRich` 输出块级 `<p>` | 新增 `renderRichInline` / `render_rich_inline` |
+| 「参考答案：」每行重复 | 按切分段加标签 | 按格判定，仅首个答案块标注 |
+| 公式显示 LaTeX 源码 | Markdown 把 `\(` `\[` 当转义吃掉 | 渲染前抽占位符，渲染后还原（双端） |
+| 审核发现：报告未净化 / prompt 用 html / PWA 报告不渲染 / 星号误斜体 | — | 一并修复 |
+
+验证：engine **571 passed**；app selfcheck 全绿；真实浏览器实测三项均正确。
+

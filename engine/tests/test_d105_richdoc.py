@@ -161,3 +161,57 @@ def test_summarize_keeps_old_when_no_versions(tmp_path):
     from assist.files.kb_io import summarize_solutions
     out = summarize_solutions(tmp_path / "ws", {"c": [{"id": "c9", "solution": "旧列值"}]})
     assert out["c"][0]["solution"] == "旧列值"
+
+
+# ---------------- 渲染修复（用户反馈 2026-10-25） ----------------
+
+def test_backslash_delimiters_survive_markdown():
+    """markdown 的转义规则会吃掉 \\( \\[ 的反斜杠 → 公式变普通文本（用户反馈）。"""
+    h = render_rich(r"求 \(v=2t\) 与 \[a=2\]")
+    assert r"\(v=2t\)" in h, "行内反斜杠括号定界符必须保留"
+    assert r"\[a=2\]" in h, "行间反斜杠方括号定界符必须保留"
+
+
+def test_dollar_math_survives_table():
+    h = render_rich("| a | b |\n|---|---|\n| $x$ | $y$ |")
+    assert "$x$" in h and "$y$" in h
+    assert "<table>" in h
+
+
+def test_render_rich_inline_strips_single_p():
+    """题号与题干同一行：单段内容不得被 <p> 包裹（用户反馈"题号后空一行"）。"""
+    from assist.paper.richdoc import render_rich_inline
+    out = render_rich_inline("求 $v=2t$ 的速度")
+    assert not out.strip().startswith("<p>"), f"应去掉 <p> 包裹：{out}"
+    assert "求" in out and "$v=2t$" in out
+
+
+def test_render_rich_inline_keeps_block_content():
+    """多段/表格必须保持块级（不能拆）。"""
+    from assist.paper.richdoc import render_rich_inline
+    assert render_rich_inline("第一段\n\n第二段").strip().startswith("<p>")
+    assert render_rich_inline("| a |\n|---|\n| 1 |").strip().startswith("<table>")
+
+
+def test_report_md_to_html_sanitized(tmp_path):
+    """批阅报告正文也必须净化（AI 输出直接进报告 PNG）。"""
+    from assist.grading.report import _md_to_html
+    h = _md_to_html("**粗** <script>alert(1)</script> 公式 $v=2t$")
+    assert "<script" not in h
+    assert "alert(1)" not in h
+    assert "<strong>粗</strong>" in h
+    assert "$v=2t$" in h
+
+
+def test_grading_prompt_uses_plain_text(tmp_path):
+    """批阅 prompt 用 text_plain，避免 md+html/SVG 浪费 token。"""
+    from assist.files import solutions as sol
+    from assist.grading.inputs import _questions_of
+    ws = tmp_path / "ws"
+    sol.add_version(ws, "q1", "答案正文 <svg><circle r=\"9\"/></svg>", source="ai")
+    sol.pin_version(ws, "q1", "v1")
+    # _questions_of 优先取 it["no"] 作为 qid（与任务包语义一致）
+    qs = _questions_of({"items": [{"id": "q1", "no": "q1", "content": "题干", "tag": "t"}]}, ws)
+    sol_text = qs[0]["solution"]
+    assert "<svg" not in sol_text, "prompt 不得包含 SVG"
+    assert "答案正文" in sol_text

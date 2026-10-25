@@ -29,6 +29,8 @@ export interface ReportQuestion {
   score?: { got: number; full: number }
 }
 
+import { renderRich } from './richdoc'
+
 export interface ReviewReport {
   student: { name: string; number: string; classDisplay?: string }
   assignment: { id: string; title: string; course: string; className: string; date: string }
@@ -75,12 +77,12 @@ function questionHtml(q: ReportQuestion, idx: number): string {
   const sc = q.score ? `<span class="score-chip">${q.score.got} / ${q.score.full}</span>` : ''
   return `<div class="qrow">
     ${sc}<div class="sec-t"><span class="qno">${q.no}</span> 题目</div>
-    <div class="sec-body">${q.stem}</div>
-    ${q.transcript ? `<div class="sec-t">作答（转录）</div><div class="sec-body">${q.transcript}</div>` : `${img || ''}
+    <div class="sec-body">${renderRich(q.stem)}</div>
+    ${q.transcript ? `<div class="sec-t">作答（转录）</div><div class="sec-body">${renderRich(q.transcript)}</div>` : `${img || ''}
       ${q.images?.length ? '' : '<div class="sec-body" style="color:#888">（未见作答）</div>'}`}
     ${img}
     <div class="sec-t">评阅</div>
-    <div class="review-box">${q.review || '（无评阅）'}</div>
+    <div class="review-box">${q.review ? renderRich(q.review) : '（无评阅）'}</div>
   </div>`
 }
 
@@ -113,8 +115,7 @@ export function stringifyReviewReportHtml(r: ReviewReport): string {
   }
 
   const total = r.total
-    ? `<div class="qrow"><div class="sec-t">总评</div><div class="review-box">${r.total.comment ||
-      ''}</div></div>` : ''
+    ? `<div class="qrow"><div class="sec-t">总评</div><div class="review-box">${renderRich(r.total.comment || '')}</div></div>` : ''
 
   return `<!DOCTYPE html>
 <html lang="zh-CN">

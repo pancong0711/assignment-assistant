@@ -287,18 +287,31 @@ def _layout_cells_for_page(layout: dict, page_no: int, frames_by_qid: dict) -> "
         qid = str(first.get("qid") or "")
         fr = frames_by_qid.get(qid) or {}
         is_first = not first.get("cont")
-        from .richdoc import render_rich
+        from .richdoc import render_rich, render_rich_inline
+        # D105 修复：「参考答案：」只在该格**首个**答案块前出现一次
+        first_sol_done = False
+        block_views = []
+        for b in blocks:
+            raw = str(b.get("text") or "")
+            is_sol = str(b.get("kind") or "content") == "solution"
+            show_label = is_sol and not first_sol_done
+            if is_sol:
+                first_sol_done = True
+            block_views.append({
+                "kind": str(b.get("kind") or "content"),
+                "text": raw,
+                "html": render_rich(raw),
+                "html_inline": render_rich_inline(raw),
+                "cont": bool(b.get("cont")),
+                "scale": b.get("scale"),
+                "show_sol_label": show_label,
+            })
         out.append({
             "row": int(c.get("row") or 0),
             "col": int(c.get("col") or 0),
             "qid": qid,
             "no": str(first.get("no") or fr.get("no") or ""),
-            "blocks": [{"kind": str(b.get("kind") or "content"),
-                        "text": str(b.get("text") or ""),
-                        # D105：预渲染安全 HTML（模板用 |safe 插入）
-                        "html": render_rich(str(b.get("text") or "")),
-                        "cont": bool(b.get("cont")),
-                        "scale": b.get("scale")} for b in blocks],
+            "blocks": block_views,
             # 题图只在该题首格渲染
             "img_b64": fr.get("img_b64") if is_first else None,
             "img_mime": fr.get("img_mime") if is_first else None,
@@ -322,11 +335,12 @@ def build_context(task: dict, students: list[dict], kb_dir: Path, ws: Path,
                         lay.get("grid_rows"), lay.get("grid_cols"))
     frames = expand_items_html(task, kb_dir, str(lay.get("numbering") or "auto"), ws=ws)
     # D105：参考答案/题干支持 md+html → 预渲染安全 HTML（模板只做插入，不做二次处理）
-    from .richdoc import render_rich, strip_markup
+    from .richdoc import render_rich, render_rich_inline, strip_markup
     for fr in frames:
         fr["solution_html"] = render_rich(str(fr.get("solution") or ""))
         fr["solution_plain"] = strip_markup(str(fr.get("solution") or ""))
         fr["content_html"] = render_rich(str(fr.get("content") or ""))
+        fr["content_html_inline"] = render_rich_inline(str(fr.get("content") or ""))
     wm_raw = task.get("watermark") or {}
     wm_enabled = (not no_watermark) and wm_raw.get("enabled", True) is not False
     wm = {"enabled": wm_enabled,

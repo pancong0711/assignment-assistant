@@ -145,3 +145,41 @@ D89 引入版本库后，实际已是「题干在 xlsx、答案在 json」的**�
 | app `vue-tsc` / `build` | **0 error** |
 | app `npm run selfcheck` | **全绿**（117 条，含 D105 5 组） |
 | 端到端 | 答案含 SVG/表格/公式 → HTML 正确渲染且无 `<script>` 泄漏 |
+
+## 8. 修复记录（2026-10-25，用户反馈）
+
+### 8.1 三个显示问题
+
+| # | 现象 | 根因 | 修复 |
+|---|---|---|---|
+| 1 | **题号后空一行**才开始题目 | 题干用 `renderRich()` 直接插在题号后，而它输出 `<p>`（块级）→ 必然换行 | 新增 `renderRichInline()` / `render_rich_inline()`：**仅当整体是单个 `<p>`** 时去包裹；多段/表格/SVG 保持块级 |
+| 2 | **「参考答案：」每行重复** | 与「题 N 续」同源：按**切分段**加标签，而一格内常有多个切分段 | 按**格**判定：只在该格首个答案块前标注（TS `isFirstSol` / Python `show_sol_label` 预计算） |
+| 3 | **公式显示为 LaTeX 源码** | `markdown-it` / Python `markdown` 把 `\(` `\[` 当**转义序列**吃掉 → `\(v=2t\)` 变成 `(v=2t)`，KaTeX 认不出 | 渲染前把公式片段抽成**占位符**（`D105MATHPLACEHOLDER<n>END`），Markdown 渲染后再还原；双端同实现 |
+
+实测（Chromium）：
+
+```
+修复前 q-content: "1.  <p>一质点...</p>"          ← 题号独占一行
+修复前 \(v=2t\)  →  "(v=2t)"                      ← 公式失效
+修复后 q-content: "1.  一质点..."                  （lineTops 只 1 个值）
+修复后 4 个公式全部渲染成 .katex，无 LaTeX 泄漏
+修复后 3 个答案块 → 「参考答案：」只出现 1 次
+```
+
+### 8.2 代码审核发现的另外 4 个问题（一并修复）
+
+| # | 问题 | 影响 | 修复 |
+|---|---|---|---|
+| A1 | **批阅报告正文未净化**：`grading/report.py:_md_to_html` 直接 `markdown.markdown()` | AI 输出可注入脚本到报告 PNG 渲染页；且 `\(..\)` 同样失效 | 改用 `paper.richdoc.render_rich`（净化 + 公式保护），保留旧路径兜底 |
+| A2 | **批阅 prompt 用 `text`（含 SVG/base64）** | 每条 prompt 浪费大量 token，且干扰模型阅读 | `grading/inputs.py`、`grading/flow.py` 改用 `text_plain` |
+| A3 | **PWA 报告 `reports.ts` 直接把 `stem`/`review`/`transcript` 插值** | md+html 显示为源码、公式不渲染 | 三处改用 `renderRich()` |
+| A4 | 题干 `2*3*4` 曾被 Markdown 当斜体 | 数学内容被误改 | 公式保护顺带缓解；纯文本星号仍在（Markdown 语义）|
+
+### 8.3 验证
+
+| 项 | 结果 |
+|---|---|
+| engine pytest | **571 passed**（新增 6 例：反斜杠定界符/markdown 表格公式/行内去 `<p>`/块级保持/报告净化/prompt 用纯文本） |
+| app `vue-tsc` / `build` | **0 error** |
+| app `npm run selfcheck` | **全绿** |
+| 真实浏览器 | 题号与题干同一行；4 个公式全部渲染；3 个答案块仅 1 个「参考答案：」；无 LaTeX 泄漏 |
