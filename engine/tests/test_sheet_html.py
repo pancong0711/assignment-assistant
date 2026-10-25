@@ -105,7 +105,7 @@ def test_sheet_html_cli_dual_layout_and_template_markers(ws: Path):
     res = runner.invoke(cli, ["sheet", "html", "--task", str(task),
                               "--roster", str(ws / "roster.xlsx"),
                               "--workspace", str(ws),
-                              "-o", str(ws / "tmp" / "sheet.html")])
+                              "-o", str(ws / "tmp" / "sheet.html"), "--no-measure"])
     assert res.exit_code == 0, res.output
     out = ws / "tmp" / "sheet.html"
     assert out.exists()
@@ -141,7 +141,7 @@ def test_sheet_html_cli_dual_layout_and_template_markers(ws: Path):
     res_p4 = runner.invoke(cli, ["sheet", "html", "--task", str(task_p4),
                                  "--students", "sample", "--no-watermark",
                                  "--workspace", str(ws),
-                                 "-o", str(ws / "tmp" / "sheet-p4.html")])
+                                 "-o", str(ws / "tmp" / "sheet-p4.html"), "--no-measure"])
     assert res_p4.exit_code == 0, res_p4.output
     html_p4 = (ws / "tmp" / "sheet-p4.html").read_text(encoding="utf-8")
     assert 'data-grid="4x1"' in html_p4            # D61：不再 cross
@@ -155,7 +155,7 @@ def test_sheet_html_cli_dual_layout_and_template_markers(ws: Path):
     task2 = _write_task(ws, "portrait", 4,
                         {"enabled": False, "style": "default"})
     res2 = runner.invoke(cli, ["sheet", "html", "--task", str(task2),
-                               "--workspace", str(ws)])   # 不传 -o：走缺省输出路径
+                               "--workspace", str(ws), "--no-measure"])   # 不传 -o：走缺省输出路径
     assert res2.exit_code == 0, res2.output
     default_out = ws / "classes" / "classA" / "sheets" / "html" / "demo-html.html"
     assert default_out.exists(), res2.output
@@ -178,7 +178,7 @@ def test_sheet_html_cli_dual_layout_and_template_markers(ws: Path):
                                  "--roster", str(ws / "roster.xlsx"),
                                  "--no-solution",
                                  "--workspace", str(ws),
-                                 "-o", str(ws / "tmp" / "sheet-nosol.html")])
+                                 "-o", str(ws / "tmp" / "sheet-nosol.html"), "--no-measure"])
     assert res_ns.exit_code == 0, res_ns.output
     html_ns = (ws / "tmp" / "sheet-nosol.html").read_text(encoding="utf-8")
     assert "参考答案" not in html_ns
@@ -188,7 +188,7 @@ def test_sheet_html_cli_dual_layout_and_template_markers(ws: Path):
                                  "--no-solution",
                                  "--students", "sample",
                                  "--workspace", str(ws),
-                                 "-o", str(ws / "tmp" / "sheet-sample.html")])
+                                 "-o", str(ws / "tmp" / "sheet-sample.html"), "--no-measure"])
     assert res_sm.exit_code == 0, res_sm.output
     html_sm = (ws / "tmp" / "sheet-sample.html").read_text(encoding="utf-8")
     assert html_sm.count('<section class="sheet-page') == 2
@@ -198,7 +198,7 @@ def test_sheet_html_cli_dual_layout_and_template_markers(ws: Path):
                                  "--no-solution",
                                  "--students", "blank",
                                  "--workspace", str(ws),
-                                 "-o", str(ws / "tmp" / "sheet-blank.html")])
+                                 "-o", str(ws / "tmp" / "sheet-blank.html"), "--no-measure"])
     assert res_bl.exit_code == 0, res_bl.output
     html_bl = (ws / "tmp" / "sheet-blank.html").read_text(encoding="utf-8")
     assert html_bl.count('<section class="sheet-page') == 1
@@ -210,7 +210,7 @@ def test_sheet_html_cli_dual_layout_and_template_markers(ws: Path):
                                  "--roster", str(ws / "roster.xlsx"),
                                  "--katex", "local",
                                  "--workspace", str(ws),
-                                 "-o", str(ws / "tmp" / "sheet-katexlocal.html")])
+                                 "-o", str(ws / "tmp" / "sheet-katexlocal.html"), "--no-measure"])
     assert res_kl.exit_code == 0, res_kl.output
     html_kl = (ws / "tmp" / "sheet-katexlocal.html").read_text(encoding="utf-8")
     assert '../katex/katex.min.css' in html_kl and '../katex/contrib/auto-render.min.js' in html_kl
@@ -262,7 +262,7 @@ def test_sheet_html_d82_numbering_labels_and_figure_box(ws: Path):
     runner = CliRunner()
     out = ws / "tmp" / "d82c.html"
     res = runner.invoke(cli, ["sheet", "html", "--task", str(task),
-                              "--workspace", str(ws), "-o", str(out)])
+                              "--workspace", str(ws), "-o", str(out), "--no-measure"])
     assert res.exit_code == 0, res.output
     html = out.read_text(encoding="utf-8")
     # id 编号模式：题库 id 出现；labels 覆盖生效
@@ -280,7 +280,7 @@ def test_sheet_html_auto_numbering_sequential(ws: Path):
     runner = CliRunner()
     out = ws / "tmp" / "auto.html"
     res = runner.invoke(cli, ["sheet", "html", "--task", str(task),
-                              "--workspace", str(ws), "-o", str(out)])
+                              "--workspace", str(ws), "-o", str(out), "--no-measure"])
     assert res.exit_code == 0, res.output
     html = out.read_text(encoding="utf-8")
     assert "1.  " in html
@@ -308,7 +308,7 @@ def test_sheet_html_figure_pos_alignment(ws: Path, pos: str, expect_align: str):
     runner = CliRunner()
     res = runner.invoke(cli, ["sheet", "html", "--task", str(task),
                               "--roster", str(ws / "roster.xlsx"),
-                              "--workspace", str(ws), "-o", str(out)])
+                              "--workspace", str(ws), "-o", str(out), "--no-measure"])
     assert res.exit_code == 0, res.output
     html = out.read_text(encoding="utf-8")
     assert f'class="sheet-frame pos-{pos}"' in html, f"缺少 pos-{pos} 帧 class"
@@ -369,7 +369,7 @@ def test_sheet_html_no_classa_fallback(tmp_path: Path):
     runner = CliRunner()
     out = tmp_path / "tmp" / "noclassA.html"
     res = runner.invoke(cli, ["sheet", "html", "--task", str(task), "--roster", str(roster),
-                              "--workspace", str(tmp_path), "-o", str(out)])
+                              "--workspace", str(tmp_path), "-o", str(out), "--no-measure"])
     assert res.exit_code == 0, res.output
     html = out.read_text(encoding="utf-8")
     assert "classA" not in html, "页眉不得再回落硬编码 classA"

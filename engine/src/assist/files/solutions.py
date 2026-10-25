@@ -62,6 +62,16 @@ def _next_version_id(versions: list[dict]) -> str:
     return f"v{n}"
 
 
+def _to_plain(text: str) -> str:
+    """md+html → 纯文本（复用 richdoc 的同一实现；失败则退化为去标签）。"""
+    try:
+        from ..paper.richdoc import strip_markup
+        return strip_markup(text, limit=200)
+    except Exception:  # noqa: BLE001
+        import re
+        return re.sub(r"<[^>]+>", "", str(text or ""))[:200]
+
+
 def _normalize(d: dict) -> dict:
     d = d if isinstance(d, dict) else {}
     vs = [v for v in (d.get("versions") or []) if isinstance(v, dict) and str(v.get("text") or "").strip()]
@@ -70,6 +80,9 @@ def _normalize(d: dict) -> dict:
     for v in vs:
         v["source"] = str(v.get("source") or "human")
         v["text"] = str(v.get("text") or "")
+        # D105：text_plain = 纯文本派生（检索/摘要/xlsx solution 列）；
+        # 显式传入则尊重（允许人工覆盖），否则由 text 现算。
+        v["text_plain"] = str(v.get("text_plain") or "") or _to_plain(v["text"])
         v["model"] = str(v.get("model") or "")
         v["at"] = str(v.get("at") or "")
         p = bool(v.get("pinned"))
@@ -189,15 +202,17 @@ def _effective_of(doc: "dict | None", fallback: str = "") -> dict:
                 break
         if chosen is None:
             chosen = doc["versions"][-1]
-        return {"text": str(chosen.get("text") or ""), "source": str(chosen.get("source") or ""),
+        return {"text": str(chosen.get("text") or ""),
+                "text_plain": str(chosen.get("text_plain") or "") or _to_plain(chosen.get("text") or ""),
+                "source": str(chosen.get("source") or ""),
                 "model": str(chosen.get("model") or ""), "at": str(chosen.get("at") or ""),
                 "version": str(chosen.get("id") or ""), "from": frm,
                 "n_versions": len(doc["versions"]),
                 "ai_versions": sum(1 for v in doc["versions"] if v.get("source") == "ai")}
     if str(fallback or "").strip():
-        return {"text": str(fallback), "source": "", "model": "", "at": "",
-                "version": "", "from": "fallback", "n_versions": 0, "ai_versions": 0}
-    return {"text": "", "source": "", "model": "", "at": "", "version": "",
+        return {"text": str(fallback), "text_plain": str(fallback), "source": "", "model": "",
+                "at": "", "version": "", "from": "fallback", "n_versions": 0, "ai_versions": 0}
+    return {"text": "", "text_plain": "", "source": "", "model": "", "at": "", "version": "",
             "from": "xlsx", "n_versions": 0, "ai_versions": 0}
 
 

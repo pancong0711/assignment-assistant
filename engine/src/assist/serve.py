@@ -987,6 +987,11 @@ class Handler(BaseHTTPRequestHandler):
                 for it in saved:
                     args += ["--attach", str(it.get("path"))]
             home = _xxt_home(); env = _xxt_env(home); cwd = str(_ws())
+            # D106：图片压缩模式与 SVG 重绘开关（PWA 设置 → 环境变量）
+            if str(payload.get("imageMode") or "") == "original":
+                env["ASSIST_IMAGE_MODE"] = "original"
+            if payload.get("svgRedraw") is True:
+                env["ASSIST_SVG_REDRAW"] = "1"
             ok, detail = _xxt_preflight(cwd, env)
             if not ok:
                 self._json({"ok": False, "error": "engine 无法 import assist.cli", "detail": detail}, 500)
@@ -1204,6 +1209,11 @@ class Handler(BaseHTTPRequestHandler):
             if apply:
                 args += ["--apply"]
             home = _xxt_home(); env = _xxt_env(home); cwd = str(_ws())
+            # D106：图片压缩模式与 SVG 重绘开关（PWA 设置 → 环境变量）
+            if str(payload.get("imageMode") or "") == "original":
+                env["ASSIST_IMAGE_MODE"] = "original"
+            if payload.get("svgRedraw") is True:
+                env["ASSIST_SVG_REDRAW"] = "1"
             ok, detail = _xxt_preflight(cwd, env)
             if not ok:
                 self._json({"ok": False, "error": "engine 无法 import assist.cli", "detail": detail}, 500)
@@ -1365,6 +1375,11 @@ class Handler(BaseHTTPRequestHandler):
             if payload.get("limit"):
                 args += ["--limit", str(int(payload.get("limit")))]
             home = _xxt_home(); env = _xxt_env(home); cwd = str(_ws())
+            # D106：图片压缩模式与 SVG 重绘开关（PWA 设置 → 环境变量）
+            if str(payload.get("imageMode") or "") == "original":
+                env["ASSIST_IMAGE_MODE"] = "original"
+            if payload.get("svgRedraw") is True:
+                env["ASSIST_SVG_REDRAW"] = "1"
             ok, detail = _xxt_preflight(cwd, env)
             if not ok:
                 self._json({"ok": False, "error": "engine 无法 import assist.cli", "detail": detail}, 500)
@@ -1406,6 +1421,11 @@ class Handler(BaseHTTPRequestHandler):
             args = ["grade-drafts", "--task", str(pad_path), "--class", kid, "--work", work,
                     "--kind", kind]
             home = _xxt_home(); env = _xxt_env(home); cwd = str(_ws())
+            # D106：图片压缩模式与 SVG 重绘开关（PWA 设置 → 环境变量）
+            if str(payload.get("imageMode") or "") == "original":
+                env["ASSIST_IMAGE_MODE"] = "original"
+            if payload.get("svgRedraw") is True:
+                env["ASSIST_SVG_REDRAW"] = "1"
             ok, detail = _xxt_preflight(cwd, env)
             if not ok:
                 self._json({"ok": False, "error": "engine 无法 import assist.cli", "detail": detail}, 500)
@@ -1513,6 +1533,11 @@ class Handler(BaseHTTPRequestHandler):
             if force:
                 args += ["--force"]
             home = _xxt_home(); env = _xxt_env(home); cwd = str(_ws())
+            # D106：图片压缩模式与 SVG 重绘开关（PWA 设置 → 环境变量）
+            if str(payload.get("imageMode") or "") == "original":
+                env["ASSIST_IMAGE_MODE"] = "original"
+            if payload.get("svgRedraw") is True:
+                env["ASSIST_SVG_REDRAW"] = "1"
             ok, detail = _xxt_preflight(cwd, env)
             if not ok:
                 self._json({"ok": False, "error": "engine 无法 import assist.cli", "detail": detail}, 500)

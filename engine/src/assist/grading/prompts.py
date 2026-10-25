@@ -246,3 +246,21 @@ EVIDENCE_INSTRUCTION = """严谨性要求（必须遵守）：
 4. 每题给 `correct_points`：列出学生做得对的地方（至少 1 条，确实全错才可空）。
 5. `guidance` 用苏格拉底式提问引导，**不要直接给答案**。
 6. 不得编造学生未写的内容；`evidence` 对不上原文时宁可标 low。"""
+
+
+# D106：可选的 SVG 重绘指令（默认关；开启后追加到转录 prompt）
+SVG_REDRAW_INSTRUCTION = """
+
+补充要求（手绘图重绘）：
+如果学生有手绘示意图/受力图/电路图，请用**内联 SVG** 重绘并插入 markdown：
+- 用 <svg viewBox="0 0 200 150" xmlns="http://www.w3.org/2000/svg"> 包裹；
+- 只用 line/rect/circle/ellipse/polyline/polygon/path/text 这些基本图元；
+- 黑白线稿（stroke="black" fill="none"），最多 20 个图元，不要用样式表；
+- 不要引用任何外部资源（不要 <image>、不要 href）；
+- 若无法可靠重绘，则保留文字描述 "[此处有手绘图表：…]"。
+"""
+
+
+def transcription_prompt(svg_redraw: bool = False) -> str:
+    """返回转录 prompt；svg_redraw=True 时追加 SVG 重绘要求（默认关）。"""
+    return TRANSCRIPTION_PROMPT + (SVG_REDRAW_INSTRUCTION if svg_redraw else "")

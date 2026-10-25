@@ -24,6 +24,9 @@ import StudentReviewModal from './StudentReviewModal.vue'
 const packStore = usePackStore()
 
 const msg = ref('')
+/* D106：转录图片发送模式 + SVG 重绘（默认关） */
+const imageMode = ref<'auto' | 'original'>('auto')
+const svgRedraw = ref(false)
 const busy = ref(false)
 const progress = ref('')
 let pollTimer: number | undefined
@@ -253,6 +256,8 @@ async function startAi() {
       ...(padsPayload && padsPayload.length > 1 ? { pads: padsPayload } : {}),
       mode: mode.value, tags: [...tagsSel.value],
       limit: Number(limit.value) || 0,
+      imageMode: imageMode.value,      // D106
+      svgRedraw: svgRedraw.value,      // D106
     })
     stopPoll()
     const tick = async () => {
@@ -422,6 +427,30 @@ onMounted(async () => { await loadConfig(); await loadWorks(); loadKbCatalog() }
         <button class="btn small" type="button" @click="tagsSel = [...tagOptions]">全选</button>
       </label>
       <label class="field">限前 <input v-model.number="limit" type="number" min="0" style="width:70px" /> 名</label>
+    <!-- D106：转录设置（图片压缩 / SVG 重绘） -->
+    <div class="card" style="margin:8px 0; padding:8px 10px; border-left:3px solid var(--c-border)">
+      <div style="font-weight:600; margin-bottom:4px; font-size:13px">转录设置</div>
+      <label class="field" style="display:block; margin:2px 0">
+        图片发送方式：
+        <select v-model="imageMode" style="min-width:190px">
+          <option value="auto">自动压缩（推荐，节省 token/时间）</option>
+          <option value="original">原图直发（不计流量，用于对比转录效果）</option>
+        </select>
+      </label>
+      <p class="hint" style="margin:2px 0 6px">
+        自动压缩按体积分档：≤2MB 且长边≤2000px 原样发送；更大时缩到长边 2000/1600px 并转 JPEG。
+        <b>原始图片始终保留在本地</b>，压缩只作用于送去模型的副本。
+      </p>
+      <label class="field" style="display:block; margin:2px 0">
+        <input type="checkbox" v-model="svgRedraw" /> 让 AI 用 SVG 重绘学生手绘图（默认关）
+      </label>
+      <p class="hint" style="margin:2px 0 0">
+        <b>SVG 重绘含义</b>：转录时让 AI 把学生画在纸上的示意图/受力图/电路图，
+        用内联 <code>&lt;svg&gt;</code>（黑白线稿、最多 20 个图元）重新画出来，
+        这样批阅报告里能看到"矢量图"而不是文字描述。
+        仅建议几何/受力/电路类题目开启：会增加耗时与输出 token，且 AI 可能画得不准确，请人工核对。
+      </p>
+    </div>
       <button class="btn" :disabled="busy" @click="startAi">▶ 开始 AI 批阅</button>
     </div>
     <p v-if="progress" class="hint" style="margin-top:6px">{{ progress }}</p>

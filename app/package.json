@@ -13,18 +13,21 @@
     "selfcheck:roster-fig": "esbuild src/lib/rosterXlsx.ts --bundle --platform=node --format=esm --outfile=tests/rosterXlsx.bundle.mjs --external:xlsx --log-level=error && esbuild src/lib/roster.ts --bundle --platform=node --format=esm --outfile=tests/roster.bundle.mjs --external:xlsx --log-level=error && esbuild src/lib/sheetHtml.ts --bundle --platform=node --format=esm --outfile=tests/sheetHtml.bundle.mjs --external:jszip --log-level=error && node tests/selfcheck-roster-fig.mjs",
     "selfcheck:family": "esbuild src/lib/rosterXlsx.ts --bundle --platform=node --format=esm --outfile=tests/rosterXlsx.bundle.mjs --external:xlsx --log-level=error && node tests/selfcheck-family.mjs",
     "selfcheck:variants": "node tests/selfcheck-variants.mjs",
-    "selfcheck": "npm run selfcheck:roster-fig && npm run selfcheck:family && npm run selfcheck:variants && npm run selfcheck:job-error && node tests/selfcheck-watermark-or-doctor.mjs && node tests/selfcheck-pack-move.mjs && node tests/selfcheck-playground-draft.mjs && node tests/selfcheck-d93-compose.mjs && node tests/selfcheck-d93-wmstyle.mjs && node tests/selfcheck-d93-class-preview.mjs && node tests/selfcheck-d94-roster-order.mjs && node tests/selfcheck-d94-view-sort.mjs && node tests/selfcheck-d95-multiselect.mjs && node tests/selfcheck-d96-work-course.mjs && node tests/selfcheck-d97-published.mjs && node tests/selfcheck-d100-solution-readpath.mjs && node tests/selfcheck-d101-latex-render.mjs && node tests/selfcheck-d102-flow-layout.mjs && node tests/selfcheck-d103-autolayout.mjs",
+    "selfcheck": "npm run selfcheck:roster-fig && npm run selfcheck:family && npm run selfcheck:variants && npm run selfcheck:job-error && node tests/selfcheck-watermark-or-doctor.mjs && node tests/selfcheck-pack-move.mjs && node tests/selfcheck-playground-draft.mjs && node tests/selfcheck-d93-compose.mjs && node tests/selfcheck-d93-wmstyle.mjs && node tests/selfcheck-d93-class-preview.mjs && node tests/selfcheck-d94-roster-order.mjs && node tests/selfcheck-d94-view-sort.mjs && node tests/selfcheck-d95-multiselect.mjs && node tests/selfcheck-d96-work-course.mjs && node tests/selfcheck-d97-published.mjs && node tests/selfcheck-d100-solution-readpath.mjs && node tests/selfcheck-d101-latex-render.mjs && node tests/selfcheck-d102-flow-layout.mjs && node tests/selfcheck-d103-autolayout.mjs && node tests/selfcheck-d105-richdoc.mjs",
     "selfcheck:job-error": "esbuild src/lib/engineClient.ts --bundle --platform=node --format=esm --outfile=tests/engineClient.bundle.mjs --log-level=error && node tests/selfcheck-job-error.mjs",
     "postbuild": "node tools/stamp-sw.mjs"
   },
   "dependencies": {
+    "dompurify": "^3.4.17",
     "jszip": "^3.10.1",
     "katex": "0.16.4",
+    "markdown-it": "^14.3.3",
     "pinia": "^3.0.3",
     "vue": "^3.5.13",
     "xlsx": "^0.18.5"
   },
   "devDependencies": {
+    "@types/markdown-it": "^14.2.0",
     "@vitejs/plugin-vue": "^5.2.4",
     "typescript": "~5.8.3",
     "vite": "^6.3.5",

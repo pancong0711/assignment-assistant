@@ -2037,3 +2037,14 @@ PDF 教师版 2 题→2 页且含置顶答案、页码正确。
 
 验证：engine **527 passed**；app selfcheck 全绿；真实浏览器测量确认续段填满同页各格、后续题目顺延。
 
+## D105 / D106 / D107（2026-10-25）
+
+| # | 内容 | 状态 |
+|---|---|---|
+| D105 | 答案真源 = json（`text` md+html + `text_plain`）；xlsx solution 列降为摘要；md+html 白名单渲染（双端 55 标签一致）；🔍 弹窗源码编辑+实时预览+保存新版本；交付包含 solutions | ✅ |
+| D106 | 转录图片分段压缩（≤2MB/≤2000px 原样；否则缩 2000/1600 + JPEG q88/q85）；原图不改；`original` 模式可选；SVG 重绘默认关并有明确说明 | ✅ |
+| D107 | `assist sheet layout`（Playwright + 前端同一 bundle）→ 纯 CLI 可生成 `layout_result`；`sheet html` 自动测量、`--no-measure` 可关 | ✅ |
+
+验证：engine **565 passed**；app selfcheck 全绿（117 条）；`vue-tsc`/`build` 0 err；
+端到端：纯 CLI `layout → html` 输出格渲染 + 续格标注；答案含 SVG/表格正确渲染且零脚本泄漏。
+

@@ -44,7 +44,7 @@ def _layout(*pages) -> dict:
 def _render(ws: Path, task: Path) -> str:
     out = ws / "o.html"
     r = CliRunner().invoke(cli, ["sheet", "html", "--task", str(task),
-                                 "--workspace", str(ws), "-o", str(out), "--students", "blank"])
+                                 "--workspace", str(ws), "-o", str(out), "--students", "blank", "--no-measure"])
     assert r.exit_code == 0, r.output
     return out.read_text(encoding="utf-8")
 
@@ -124,7 +124,7 @@ def test_layout_result_respects_no_solution(tmp_path):
     out = ws / "o.html"
     r = CliRunner().invoke(cli, ["sheet", "html", "--task", str(_task(ws, layout)),
                                  "--workspace", str(ws), "-o", str(out),
-                                 "--students", "blank", "--no-solution"])
+                                 "--students", "blank", "--no-measure", "--no-solution"])
     assert r.exit_code == 0, r.output
     html = out.read_text(encoding="utf-8")
     assert "题干一" in html

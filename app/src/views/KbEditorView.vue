@@ -6,6 +6,7 @@ import { detectCapabilities, fsWriteHint, writeFileInDir } from '../lib/fsAccess
 import { useSettingsStore } from '../stores/settings'
 import { fetchKbSolutions, mutateKbSolution, type SolutionVersion } from '../lib/engineClient'
 import { renderMathIn, KATEX_DONE_ATTR } from '../lib/katexRender'
+import { renderRich } from '../lib/richdoc'
 
 const kb = useKbStore()
 const settings = useSettingsStore()
@@ -55,6 +56,52 @@ function closeSolution() { solOpen.value = false }
  * 与打印模板同一套定界符（$..$ / $$..$$ / \(..\) / \[..\]）；切换版本或追加/置顶后
  * 内容变化需重渲染（先清 data-katex-done 标记再渲染，避免旧 DOM 叠加）。 */
 const solContentEl = ref<HTMLElement | null>(null)
+// D105：源码编辑（Markdown + HTML 白名单）→ 保存为新版本
+const solEditing = ref(false)
+const solDraft = ref('')
+const solPreviewEl = ref<HTMLElement | null>(null)
+
+/** 进入编辑：以当前选中版本（或旧列）为草稿。 */
+function beginEdit() {
+  solDraft.value = String(solShown.value?.text ?? solFallback.value ?? '')
+  solEditing.value = true
+  void nextTick(() => renderDraft())
+}
+function cancelEdit() { solEditing.value = false; solDraft.value = '' }
+
+/** 渲染草稿预览（md+html → 安全 HTML + KaTeX）。 */
+async function renderDraft() {
+  await nextTick()
+  const el = solPreviewEl.value
+  if (!el) return
+  el.innerHTML = renderRich(solDraft.value) || `<span class="hint">（空）</span>`
+  el.removeAttribute(KATEX_DONE_ATTR)
+  await renderMathIn(el, true)
+}
+
+/** 保存草稿为新版本（追加，不覆盖）；pin=true 则同时置顶。 */
+async function saveDraft(pin: boolean) {
+  const text = solDraft.value.trim()
+  if (!text) { solMsg.value = '内容为空，未保存'; return }
+  solBusy.value = true
+  const r = await mutateKbSolution(settings.engineUrl, settings.engineToken, {
+    action: 'add', qid: solQid.value, text, source: 'human',
+    kb: solKb.value, chap: solChap.value,
+  })
+  solBusy.value = false
+  if (!r.ok || !r.solutions) { solMsg.value = r.error || '保存失败（引擎离线）'; return }
+  solVersions.value = r.solutions.versions ?? []
+  const added = r.added
+  if (pin && added) {
+    const rp = await mutateKbSolution(settings.engineUrl, settings.engineToken,
+      { action: 'pin', qid: solQid.value, version: added.id })
+    if (rp.ok && rp.solutions) solVersions.value = rp.solutions.versions ?? []
+  }
+  solEditing.value = false
+  solDraft.value = ''
+  solMsg.value = pin ? '已保存为新版本并置顶（text_plain 摘要已同步）' : '已保存为新版本（未置顶）'
+  void kb.bumpSolutions()
+}
 const solTextEl = ref<HTMLElement | null>(null)
 
 async function renderSolutionMath() {
@@ -406,14 +453,36 @@ function addChapter() {
             <button class="btn small" :disabled="solBusy" @click="solRm(v)">删除</button>
           </li>
         </ul>
-        <div ref="solTextEl" class="sol-math" style="border:1px solid var(--c-border); border-radius:6px; padding:8px; white-space:pre-wrap; min-height:48px">
-          <span v-if="solShown">{{ solShown.text }}</span>
+        <!-- D105：预览态（渲染 md+html：SVG/表格/公式） -->
+        <div v-if="!solEditing" ref="solTextEl" class="sol-math"
+             style="border:1px solid var(--c-border); border-radius:6px; padding:8px; min-height:48px; white-space:normal">
+          <template v-if="solShown">
+            <div v-html="renderRich(solShown.text) || '<span class=&quot;hint&quot;>（空）</span>'"></div>
+          </template>
           <span v-else-if="solFallback">{{ solFallback }}<br><span class="hint">（题库 solution 旧列；可「收编为 v1」纳入版本库）</span></span>
           <span v-else class="hint">（暂无答案）</span>
         </div>
+        <!-- D105：编辑态（源码 + 实时预览） -->
+        <div v-else style="display:flex; gap:8px; align-items:stretch; flex-wrap:wrap">
+          <textarea v-model="solDraft" @input="renderDraft" rows="12"
+            placeholder="支持 Markdown + HTML 白名单：表格、**加粗**、$公式$、内联 <svg> 示意图、data:image 图片"
+            style="flex:1 1 300px; min-width:260px; font-family:ui-monospace,Menlo,Consolas,monospace; font-size:12px;
+                   padding:6px 8px; border:1px solid var(--c-border); border-radius:6px; resize:vertical"></textarea>
+          <div ref="solPreviewEl" class="sol-math"
+               style="flex:1 1 300px; min-width:260px; border:1px solid var(--c-border); border-radius:6px; padding:8px;
+                      min-height:120px; overflow:auto; background:#fcfcfd"></div>
+        </div>
         <p style="margin:8px 0 0; display:flex; gap:8px; flex-wrap:wrap">
-          <button class="btn small" :disabled="solBusy || !solFallback.trim()" @click="solAdd(true)">＋ 把旧列收编为首版</button>
-          <button class="btn small" :disabled="solBusy || !solShown" @click="solAdd(false)">＋ 复制当前版为人工新版本</button>
+          <template v-if="!solEditing">
+            <button class="btn small primary" :disabled="solBusy || !solShown" @click="beginEdit">✏️ 编辑源码</button>
+            <button class="btn small" :disabled="solBusy || !solFallback.trim()" @click="solAdd(true)">＋ 把旧列收编为首版</button>
+            <button class="btn small" :disabled="solBusy || !solShown" @click="solAdd(false)">＋ 复制当前版为人工新版本</button>
+          </template>
+          <template v-else>
+            <button class="btn small primary" :disabled="solBusy" @click="saveDraft(true)">保存为新版本并置顶</button>
+            <button class="btn small" :disabled="solBusy" @click="saveDraft(false)">仅保存为新版本</button>
+            <button class="btn small" :disabled="solBusy" @click="cancelEdit">取消</button>
+          </template>
           <span style="flex:1"></span>
           <button class="btn small" @click="closeSolution">关闭</button>
         </p>

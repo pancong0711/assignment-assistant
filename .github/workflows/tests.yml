@@ -70,6 +70,9 @@ jobs:
           node tools/stamp-sw.mjs --outDir=dist-test
           # 硬门禁：selfcheck 家族全部必须通过（D19/D47 family 语义 + 变体 + 水印 + 题图）
           npm run selfcheck
+          # D107：把前端「测量+排版」打包成引擎可用的 bundle（CLI 与 PWA 同一算法）
+          node ../engine/tools/build-layout-bundle.mjs
+          test -f ../engine/src/assist/paper/layout_bundle.mjs
           test -f dist/index.html
           test -f dist-test/index.html
 

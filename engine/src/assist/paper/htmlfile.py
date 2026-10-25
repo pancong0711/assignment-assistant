@@ -287,6 +287,7 @@ def _layout_cells_for_page(layout: dict, page_no: int, frames_by_qid: dict) -> "
         qid = str(first.get("qid") or "")
         fr = frames_by_qid.get(qid) or {}
         is_first = not first.get("cont")
+        from .richdoc import render_rich
         out.append({
             "row": int(c.get("row") or 0),
             "col": int(c.get("col") or 0),
@@ -294,6 +295,8 @@ def _layout_cells_for_page(layout: dict, page_no: int, frames_by_qid: dict) -> "
             "no": str(first.get("no") or fr.get("no") or ""),
             "blocks": [{"kind": str(b.get("kind") or "content"),
                         "text": str(b.get("text") or ""),
+                        # D105：预渲染安全 HTML（模板用 |safe 插入）
+                        "html": render_rich(str(b.get("text") or "")),
                         "cont": bool(b.get("cont")),
                         "scale": b.get("scale")} for b in blocks],
             # 题图只在该题首格渲染
@@ -318,6 +321,12 @@ def build_context(task: dict, students: list[dict], kb_dir: Path, ws: Path,
     grid = resolve_grid(orientation, per_page,
                         lay.get("grid_rows"), lay.get("grid_cols"))
     frames = expand_items_html(task, kb_dir, str(lay.get("numbering") or "auto"), ws=ws)
+    # D105：参考答案/题干支持 md+html → 预渲染安全 HTML（模板只做插入，不做二次处理）
+    from .richdoc import render_rich, strip_markup
+    for fr in frames:
+        fr["solution_html"] = render_rich(str(fr.get("solution") or ""))
+        fr["solution_plain"] = strip_markup(str(fr.get("solution") or ""))
+        fr["content_html"] = render_rich(str(fr.get("content") or ""))
     wm_raw = task.get("watermark") or {}
     wm_enabled = (not no_watermark) and wm_raw.get("enabled", True) is not False
     wm = {"enabled": wm_enabled,
@@ -414,13 +423,51 @@ def default_out_path(ws: Path, task: dict) -> Path:
     return ws / class_dir / "sheets" / "html" / f"{task.get('id', 'assignment')}.html"
 
 
+def ensure_layout_result(task: dict, ws: Path, *, include_solution: bool = True,
+                        no_measure: bool = False) -> dict:
+    """D107：缺 `layout_result` 且带答案时，自动测量并写回 taskpad JSON（原地）。
+
+    - `include_solution=False`（学生版）不触发（学生版不需要答案续格）；
+    - 已有 `layout_result` 直接复用（不重复测量）；
+    - 测量失败（无 Playwright/Chromium）→ 记 warning 并回退旧网格，不阻断出图。
+    """
+    if not include_solution or no_measure:
+        return task
+    if isinstance(task.get("layout_result"), dict) and (task["layout_result"].get("pages")):
+        return task
+    try:
+        from .layout_measure import measure_layout
+        from ..files import read_kb          # noqa: F401 —— 本函数作用域内需显式导入
+        from ..files.solutions import effective_solution
+        from .task import resolve_items_with_ids
+        lay = task.get("layout") or {}
+        orientation = "landscape" if lay.get("orientation") == "landscape" else "portrait"
+        kb_data = read_kb(ws / "kb")
+        base = resolve_items_with_ids(kb_data, task.get("items", []), ws / "kb",
+                                      str(lay.get("numbering") or "auto"),
+                                      seed=task.get("random_seed"),
+                                      target_tag=str(task.get("target_tag") or ""))
+        items = []
+        for content, _img, _tag, no, qid in base:
+            eff = effective_solution(ws, str(qid), "") if qid else {"text": ""}
+            items.append({"qid": str(qid), "no": str(no), "content": str(content),
+                          "solution": str(eff.get("text") or "")})
+        result = measure_layout(items, orientation=orientation)
+        task["layout_result"] = result
+        logger.info(f"D107：自动测量完成 → {len(result.get('pages') or [])} 页")
+    except Exception as exc:  # noqa: BLE001 —— 测量不可用不应阻断出图
+        logger.warning(f"D107：自动测量失败，回退旧网格（{exc}）")
+    return task
+
+
 def sheet_html_from_task(task_path: Path, ws: Path, out_path: Path | None = None,
                          roster_path: str | None = None,
                          no_watermark: bool = False,
                          include_solution: bool = True,
                          students_mode: str = "roster",
                          katex_mode: str = "cdn",
-                         assets_dir: Path | None = None
+                         assets_dir: Path | None = None,
+                         no_measure: bool = False,
                          ) -> tuple[Path, int, int]:
     """CLI 主入口：任务包 + 可选 roster → 自包含 HTML。
 
@@ -430,9 +477,19 @@ def sheet_html_from_task(task_path: Path, ws: Path, out_path: Path | None = None
     blank = 单份空白模板：页眉学籍三空位，与 PWA「显示学生示例」未勾同语义）。
     返回 (输出路径, 学生数, 总页数)。
     """
-    task = load_task(Path(task_path).expanduser().resolve())
+    task_file = Path(task_path).expanduser().resolve()
+    task = load_task(task_file)
     ws = Path(ws).expanduser().resolve()
     kb_dir = ws / "kb"
+    # D107：带答案且缺 layout_result → 自动测量（失败则回退旧网格）
+    before = json.dumps(task.get("layout_result") or {}, sort_keys=True)
+    task = ensure_layout_result(task, ws, include_solution=include_solution,
+                                no_measure=no_measure)
+    if json.dumps(task.get("layout_result") or {}, sort_keys=True) != before:
+        try:
+            task_file.write_text(json.dumps(task, ensure_ascii=False, indent=1), encoding="utf-8")
+        except OSError:
+            pass
     synthetic = False
     blank_mode = False
     students: list[dict] = []

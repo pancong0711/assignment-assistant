@@ -26,6 +26,7 @@ import { gridBodyStyle, gridLineStyles, resolveGrid,
   seedIndex, copyContent, SUMMARY_ID, SUMMARY_CONTENT, TRANSLATION_ID,
   type Taskpad } from './taskpad'
 import type { KbBook, KbKind } from './kb'
+import { renderRich, stripMarkup } from './richdoc'
 
 export interface SheetHtmlStudent {
   name: string
@@ -233,6 +234,11 @@ body {
   border-radius: 2mm; padding: 4mm; text-align: center; }
 .q-solution { color: var(--muted); font-size: 10pt; border-top: 1px dashed #dfe3ea;
   padding-top: 1.5mm; margin-top: auto; }
+/* D105：md+html 答案内的图片/SVG/表格限宽，避免撑破格子 */
+.q-solution img, .q-content img { max-width: 100%; height: auto; }
+.q-solution svg, .q-content svg { max-width: 100%; height: auto; }
+.q-solution table, .q-content table { border-collapse: collapse; max-width: 100%; }
+.q-solution th, .q-solution td, .q-content th, .q-content td { border: 1px solid var(--hairline); padding: 1px 4px; }
 /* 页脚不参与收缩，贴在页内容之后（margin-top:auto 兜到页底）。 */
 .sheet-footer { border-top: 1px solid var(--line); padding-top: 1.5mm; font-size: 10pt;
   color: var(--muted); display: flex; justify-content: space-between; gap: 3mm;
@@ -584,13 +590,16 @@ function cellBodyHtml(cell: SheetHtmlCellView, includeSolution: boolean, indentC
     const contMark = b.cont ? `<span class="q-cont">（题 ${escapeHtml(cell.no.replace(/\.$/, ''))} 续）</span>` : ''
     if (b.kind === 'content') {
       const no = b.cont ? '' : (cell.no ? `${cell.no}  ` : '')
-      parts.push(`<div class="q-content">${contMark}${escapeHtml(no)}${escapeHtml(b.text)}</div>`)
+      // D105：md+html 渲染（白名单净化）；降级为纯文本
+      const body = renderRich(b.text) || escapeHtml(stripMarkup(b.text))
+      parts.push(`<div class="q-content">${contMark}${escapeHtml(no)}${body}</div>`)
     } else if (includeSolution) {
       const scaleStyle = b.scale && b.scale < 1
         ? ` style="display:inline-block;transform:scale(${b.scale});transform-origin:left top;"`
         : ''
+      const body = renderRich(b.text) || escapeHtml(stripMarkup(b.text))
       parts.push(`<div class="q-solution">${contMark}<span class="q-sol-label">参考答案：</span>`
-        + `<span${scaleStyle}>${escapeHtml(b.text)}</span></div>`)
+        + `<span${scaleStyle}>${body}</span></div>`)
     }
   }
   return `<div class="q-body ${indentCls}">${parts.join('\n        ') || '<span class="hint">（空白）</span>'}</div>`
@@ -644,8 +653,8 @@ function pageBlockHtml(pad: Taskpad, items: SheetHtmlItem[], stu: SheetHtmlStude
     </div>`).join('\n    ')
       : items.map((fr) => `<div class="sheet-frame pos-${normalizeFigurePos(pad.layout.figure?.pos)}">
       <div class="q-body indent-${normalizeIndent(pad.layout.indent)}">
-        <div class="q-content">${escapeHtml(fr.no ? `${fr.no}  ` : '')}${escapeHtml(fr.content)}</div>
-        ${(includeSolution && fr.solution) ? `<div class="q-solution">参考答案：${escapeHtml(fr.solution)}</div>` : ''}
+        <div class="q-content">${escapeHtml(fr.no ? `${fr.no}  ` : '')}${renderRich(fr.content) || escapeHtml(fr.content)}</div>
+        ${(includeSolution && fr.solution) ? `<div class="q-solution">参考答案：${renderRich(fr.solution)}</div>` : ''}
       </div>
       ${figHtml(fr.imgPath, figAssets, pad.layout.figure)}
     </div>`).join('\n    ')}

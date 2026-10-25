@@ -147,7 +147,7 @@ def test_sheet_html_uses_effective_solution(tmp_path):
     out = ws / "o.html"
     r = CliRunner().invoke(cli, ["sheet", "html", "--task", str(task),
                                  "--workspace", str(ws), "-o", str(out),
-                                 "--students", "blank"])
+                                 "--students", "blank", "--no-measure"])
     assert r.exit_code == 0, r.output
     html = out.read_text(encoding="utf-8")
     assert "AI 生成的参考答案" in html, "作业纸 HTML 必须用生效版（置顶 AI 答案）"
@@ -162,7 +162,7 @@ def test_sheet_html_uses_latest_when_unpinned(tmp_path):
     out = ws / "o.html"
     r = CliRunner().invoke(cli, ["sheet", "html", "--task", str(task),
                                  "--workspace", str(ws), "-o", str(out),
-                                 "--students", "blank"])
+                                 "--students", "blank", "--no-measure"])
     assert r.exit_code == 0, r.output
     assert "未置顶的 AI 答案" in out.read_text(encoding="utf-8")
 
@@ -173,7 +173,7 @@ def test_sheet_html_falls_back_to_xlsx_without_versions(tmp_path):
     out = ws / "o.html"
     r = CliRunner().invoke(cli, ["sheet", "html", "--task", str(task),
                                  "--workspace", str(ws), "-o", str(out),
-                                 "--students", "blank"])
+                                 "--students", "blank", "--no-measure"])
     assert r.exit_code == 0, r.output
     assert "旧列答案" in out.read_text(encoding="utf-8")
 

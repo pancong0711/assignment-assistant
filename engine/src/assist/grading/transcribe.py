@@ -82,6 +82,21 @@ def group_images(images_dir: Path) -> dict[str, list[Path]]:
     return dict(groups)
 
 
+def _system_prompt() -> str:
+    """D106：按开关返回转录 prompt（SVG 重绘默认关）。
+
+    开关来源（优先级）：环境变量 ASSIST_SVG_REDRAW=1 > 默认关。
+    PWA 端的设置项最终写为环境变量/请求参数由 serve 层注入。
+    """
+    import os
+    try:
+        from .prompts import transcription_prompt
+        on = str(os.environ.get("ASSIST_SVG_REDRAW") or "0") not in ("0", "", "false", "False")
+        return transcription_prompt(svg_redraw=on)
+    except Exception:  # noqa: BLE001
+        return TRANSCRIPTION_PROMPT
+
+
 def transcribe_student(client: LLMClient, images: list[Path], student: str,
                        out_dir: Path, model: str | None = None) -> Path:
     """转录单个学生的一组图片 → transcripts/<student>.json（含 v1 版本号）。"""
@@ -89,7 +104,7 @@ def transcribe_student(client: LLMClient, images: list[Path], student: str,
     for attempt in range(_TRANSCRIBE_ATTEMPTS):
         try:
             raw = client.chat_with_images(
-                system_prompt=TRANSCRIPTION_PROMPT,
+                system_prompt=_system_prompt(),
                 user_text=TRANSCRIBE_USER_TEXT,
                 image_paths=[str(p) for p in images],
                 model=model, temperature=0.1, step="transcription",
@@ -106,10 +121,13 @@ def transcribe_student(client: LLMClient, images: list[Path], student: str,
 
     out_dir.mkdir(parents=True, exist_ok=True)
     out = out_dir / f"{student}.json"
+    # D106：记录每张图的压缩元数据（原图未修改；便于对比转录效果/排查）
+    image_info = list(getattr(client, "last_image_meta", []) or [])
     data.update({
         "student": student,
         "model": model or client.transcription_model,
         "images": [p.name for p in images],
+        "image_info": image_info,
         "version": "assist-engine 0.1.0 (migrated from 2601playwright v0.3.0)",
         "_trans_version": 1,
         "timestamp": time.strftime("%Y-%m-%d %H:%M"),

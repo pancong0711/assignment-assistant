@@ -142,6 +142,35 @@ def snapshot(kb_dir: Path, kinds: list[str] | None = None) -> list[Path]:
     return made
 
 
+# D105：xlsx 的 solution 列降级为「纯文本摘要」（答案真源在 kb/solutions/<qid>.json）
+SOLUTION_COLUMN_NOTE = "solution（摘要，完整答案见 kb/solutions/<id>.json）"
+SUMMARY_LIMIT = 200
+
+
+def summarize_solutions(ws, chapters: dict[str, list[dict]]) -> dict[str, list[dict]]:
+    """把每题的**生效答案**派生为纯文本摘要，回填到 `solution` 列（单向派生）。
+
+    - 答案真源 = `kb/solutions/<qid>.json`（`effective_solution`：置顶版 > 最新版 > xlsx 旧值）
+    - 只写摘要（≤200 字），不会丢失 json 中的完整 md+html
+    - 无版本库时保留 xlsx 原值（兼容旧题库）
+    """
+    from .solutions import effective_solution
+    out: dict[str, list[dict]] = {}
+    for sheet, entries in (chapters or {}).items():
+        rows = []
+        for e in entries:
+            row = dict(e)
+            qid = str(row.get("id") or "")
+            if qid:
+                eff = effective_solution(ws, qid, str(row.get("solution") or ""))
+                summary = str(eff.get("text_plain") or "").strip()
+                if summary:
+                    row["solution"] = summary[:SUMMARY_LIMIT]
+            rows.append(row)
+        out[sheet] = rows
+    return out
+
+
 def write_xlsx(xlsx_path: Path, chapters: dict[str, list[dict]],
                columns: list[str] | None = None) -> Path:
     """把 {"chapXX": [条目,...]} 写回 xlsx（第一行表头 + 数据行）。"""
@@ -150,7 +179,8 @@ def write_xlsx(xlsx_path: Path, chapters: dict[str, list[dict]],
     wb.remove(wb.active)
     for sheet, entries in chapters.items():
         ws = wb.create_sheet(title=sheet)
-        ws.append(columns)
+        # D105：solution 列表头加注（说明这里是摘要，完整答案在 json）
+        ws.append([SOLUTION_COLUMN_NOTE if c == "solution" else c for c in columns])
         for e in entries:
             ws.append([_cell(e, c) for c in columns])
     wb.save(xlsx_path)

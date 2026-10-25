@@ -110,12 +110,22 @@ async function exportAllZip() {
     for (const [kind, bin] of Object.entries(props.getKbBinaries())) {
       if (bin) zip.file(`kb/${kind}.xlsx`, bin)
     }
+    // D105：答案真源在 kb/solutions/，必须随包导出（否则交付出去的作业纸没有答案）
+    try {
+      const { fetchKbSolutionsRaw } = await import('../lib/engineClient')
+      const sols = await fetchKbSolutionsRaw(settings.engineUrl, settings.engineToken)
+      for (const d of sols) {
+        if (d?.qid) zip.file(`kb/solutions/${d.qid}.json`, JSON.stringify(d, null, 1))
+      }
+      if (sols.length) status.value = `已附带 ${sols.length} 份答案版本库（kb/solutions/）。`
+    } catch { /* 引擎离线：跳过，README 已提示 */ }
     const readme = [
       '# 作业纸清单导出（assignment-assistant · 作业纸）',
       '',
       '- tasks/<id>.taskpad.json — 已保存的作业纸（schema 同 docs/04 §1）。',
       '  交付引擎执行：assist sheet make --task tasks/<id>.taskpad.json',
-      '- kb/<kind>.xlsx — 当前浏览器内题库（source of truth，docs/05-D3）。',
+      '- kb/<kind>.xlsx — 题库主数据（题干等）；solution 列为**摘要**。',
+      '- kb/solutions/<qid>.json — 参考答案**真源**（多版本/置顶/md+html，D105）。',
       '',
       'LAN 预览（http://IP）下无法直接写本地目录：请下载本 zip 后解压，',
       '教师手动放回 workspace 的对应目录（tasks/ 与 kb/）。',

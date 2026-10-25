@@ -574,10 +574,13 @@ def sheet_demo(obj, out, orientation, no_watermark, workspace, verbose):
               help="名单口径：roster（缺省，--roster 及合成名单）；sample（合成 学生A/B 2 份模板样例）；blank（单份空白模板：页眉学籍三空位）")
 @click.option("--assets-dir", "assets_dir", default=None,
               help="显式素材目录（水印图/字体）；缺省 workspace 优先，回落 engine/assets（D87）")
+@click.option("--no-measure", is_flag=True,
+              help="D107：不自动测量排版（缺 layout_result 时回退旧网格；测量需 Playwright）")
 @click.option("--workspace", "-w", default=None)
 @click.option("--verbose", "-v", is_flag=True)
 @click.pass_obj
-def sheet_html(obj, task_path, roster_path, out, no_watermark, no_solution, students_mode, katex_mode, assets_dir, workspace, verbose):
+def sheet_html(obj, task_path, roster_path, out, no_watermark, no_solution, students_mode,
+               katex_mode, assets_dir, no_measure, workspace, verbose):
     """按任务包生成整班自包含 HTML（浏览器打印主通道，docs/14 §VB-1/2/3 / 05-D30）。
 
     单文件承载整班多页：每生分页块（page-break-after）、@page A4 横/竖版、
@@ -594,12 +597,59 @@ def sheet_html(obj, task_path, roster_path, out, no_watermark, no_solution, stud
         roster_path=roster_path, no_watermark=no_watermark,
         include_solution=not no_solution, students_mode=students_mode.lower(),
         katex_mode=katex_mode.lower(),
-        assets_dir=Path(assets_dir).expanduser().resolve() if assets_dir else None)
+        assets_dir=Path(assets_dir).expanduser().resolve() if assets_dir else None,
+        no_measure=no_measure)
     click.echo(str(fn))
     click.echo(f"学生 {n_stu} 人 · 页块 {n_pages} 个（浏览器打开后 Ctrl/Cmd+P 打印；"
                "KaTeX 走 CDN，离线时公式按源码降级显示）"
                + ("" if not no_solution else "；本文件不含参考答案（--no-solution）")
                + ("" if students_mode.lower() == "roster" else f"；名单口径 --students {students_mode.lower()}"))
+
+
+@sheet.command("layout")
+@click.option("--task", "task_path", required=True, help="任务包 JSON 路径")
+@click.option("--out", "-o", default=None, help="输出 taskpad JSON 路径（缺省原地更新）")
+@click.option("--workspace", "-w", default=None)
+@click.option("--verbose", "-v", is_flag=True)
+@click.pass_obj
+def sheet_layout(obj, task_path, out, workspace, verbose):
+    """D107：测量参考答案排版并写入 `layout_result`（PWA/CLI 同一算法）。
+
+    使 AI/CLI 全流程可用：kb ai-solve → sheet layout → sheet html / make --teacher。
+    需要 Playwright + Chromium（`playwright install chromium`，或设 ASSIST_CHROMIUM_PATH）。
+    """
+    import json as _json
+    from .paper.layout_measure import LayoutMeasureError, measure_layout
+    ws = _setup(verbose or obj.get("verbose"), workspace)
+    task_file = Path(task_path).expanduser().resolve()
+    task = _json.loads(task_file.read_text(encoding="utf-8"))
+    lay = task.get("layout") or {}
+    orientation = "landscape" if lay.get("orientation") == "landscape" else "portrait"
+    # 取题干与生效答案（按题库 id）
+    from .files.kb_io import read_kb
+    from .files.solutions import effective_solution
+    from .paper.task import resolve_items_with_ids
+    kb_dir = ws / "kb"
+    kb_data = read_kb(kb_dir)
+    base = resolve_items_with_ids(kb_data, task.get("items", []), kb_dir,
+                                  str(lay.get("numbering") or "auto"),
+                                  seed=task.get("random_seed"),
+                                  target_tag=str(task.get("target_tag") or ""))
+    items = []
+    for content, _img, _tag, no, qid in base:
+        eff = effective_solution(ws, str(qid), "") if qid else {"text": ""}
+        items.append({"qid": str(qid), "no": str(no), "content": str(content),
+                      "solution": str(eff.get("text") or "")})
+    try:
+        result = measure_layout(items, orientation=orientation)
+    except LayoutMeasureError as exc:
+        raise click.ClickException(str(exc))
+    task["layout_result"] = result
+    out_path = Path(out).expanduser().resolve() if out else task_file
+    out_path.write_text(_json.dumps(task, ensure_ascii=False, indent=1), encoding="utf-8")
+    click.echo(_json.dumps({"ok": True, "pages": len(result.get("pages") or []),
+                            "warnings": result.get("warnings") or [],
+                            "out": str(out_path)}, ensure_ascii=False, indent=1))
 
 
 @sheet.command("make")

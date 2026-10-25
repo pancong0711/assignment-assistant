@@ -114,6 +114,12 @@ class LLMClient:
             self.model = ""
             self.transcription_model = ""
             self.evaluation_model = ""
+        # D106：图片压缩模式（'auto' 分段压缩 | 'original' 原图直发）
+        import os as _os
+        self.image_mode = str(settings.get("image_mode")
+                              or _os.environ.get("ASSIST_IMAGE_MODE") or "auto")
+        # D106：最近一次多模态调用的图片压缩元数据（供 transcript 记录）
+        self.last_image_meta: list[dict] = []
         # D98：token 用量累计（用于"省 token"度量；provider 不返回 usage 时则为 None）
         self.usage: dict = {"prompt_tokens": 0, "completion_tokens": 0, "total_tokens": 0,
                             "calls": 0, "calls_with_usage": 0}
@@ -293,13 +299,19 @@ class LLMClient:
                          step: str = "transcription") -> str:
         """多模态：图片 base64 data-url + 文本（迁移自 client.chat_with_images）。"""
         content: list[dict] = [{"type": "text", "text": user_text}]
+        # D106：分段压缩（mode='original' 可关闭，便于对比转录效果）；原图永不修改
+        from .imageprep import compress_for_model
+        img_mode = str(getattr(self, "image_mode", "auto") or "auto")
+        self.last_image_meta = []
         for img_path in image_paths:
             path = Path(img_path)
             if not path.exists():
                 logger.warning(f"图片不存在，跳过: {path}")
                 continue
-            b64 = base64.b64encode(path.read_bytes()).decode("utf-8")
-            mime = _MIME.get(path.suffix.lower(), "image/jpeg")
+            data, mime, meta = compress_for_model(path, mode=img_mode)  # type: ignore[arg-type]
+            meta = {**meta, "file": path.name}
+            self.last_image_meta.append(meta)
+            b64 = base64.b64encode(data).decode("utf-8")
             content.append({"type": "image_url",
                             "image_url": {"url": f"data:{mime};base64,{b64}"}})
         data = self.request(

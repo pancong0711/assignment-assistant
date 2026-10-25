@@ -939,7 +939,11 @@ export async function startXxtGradeAi(
   engineAddr: string, token: string | undefined,
   payload: { courseId: string; classId: string; cpi: string; workId: string
     taskpad: Record<string, unknown>; pads?: Record<string, unknown>[]
-    mode?: string; tags?: string[]; limit?: number },
+    mode?: string; tags?: string[]; limit?: number
+    /** D106：图片发送模式（auto=分段压缩 | original=原图，便于对比转录效果） */
+    imageMode?: 'auto' | 'original'
+    /** D106：让 AI 用 SVG 重绘手绘图（默认关） */
+    svgRedraw?: boolean },
 ): Promise<string> {
   const base = normalizeEngineAddr(engineAddr)
   const res = await fetch(engineUrlWithToken(base, '/xxt/grade/ai-run', token), {
@@ -1481,6 +1485,20 @@ export async function fetchKbSolutionIndex(
     return (await getJson2(engineUrlWithToken(base, '/kb/solutions', token))) as KbSolutionIndex
   } catch {
     return { ok: false, effective: {} }
+  }
+}
+
+/** D105：拉取**原始**版本库文档列表（`GET /kb/solutions?raw=1`），供交付包打包。 */
+export async function fetchKbSolutionsRaw(
+  engineAddr: string, token?: string,
+): Promise<Array<SolutionDoc & { qid: string }>> {
+  const base = normalizeEngineAddr(engineAddr)
+  try {
+    const o = (await getJson2(engineUrlWithToken(base, '/kb/solutions?raw=1', token))) as
+      { items?: Array<SolutionDoc & { qid: string }> }
+    return o?.items ?? []
+  } catch {
+    return []
   }
 }
 
