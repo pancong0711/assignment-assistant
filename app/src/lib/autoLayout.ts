@@ -155,20 +155,44 @@ export function contentFingerprint(items: Array<{ qid: string; no: string; conte
   return `fnv1a:${h1.toString(16)}:${s.length}`
 }
 
-/** 逐题切块（题干 + 答案），返回「按顺序的块队列」。 */
+/** 逐题切块（题干 + 答案），返回「按顺序的块队列」。
+ *
+ *  注意：这里的 `cont` **不是**「句子序号 > 0」，而是「是否跨格/跨页」——
+ *  由 `autoLayout` 在装箱时按「该块是否与本题首个块处于同一格」决定。
+ *  否则同一格内每个切分段都会标「（题 N 续）」，造成标注刷屏（D104 修复）。
+ */
 function blocksOfItem(it: { qid: string; no: string; content: string; solution?: string }): LayoutBlock[] {
   const out: LayoutBlock[] = []
   const contentPieces = splitIntoPieces(it.content)
   const solPieces = splitIntoPieces(it.solution ?? '')
-  // 题干：首块带题号，其余为续
-  contentPieces.forEach((t, idx) => out.push({
-    qid: it.qid, no: it.no, kind: 'content', text: t, cont: idx > 0,
+  contentPieces.forEach((t) => out.push({
+    qid: it.qid, no: it.no, kind: 'content', text: t, cont: false,
   }))
-  // 答案：拼到同一个块的队列里（保持顺序）
-  solPieces.forEach((t, idx) => out.push({
-    qid: it.qid, no: it.no, kind: 'solution', text: t, cont: idx > 0,
+  solPieces.forEach((t) => out.push({
+    qid: it.qid, no: it.no, kind: 'solution', text: t, cont: false,
   }))
   return out
+}
+
+/** 按「是否与本题首个块同格」重算 cont：**每次跨格**后的首个块标续。
+ *
+ *  语义（用户拍板 2026-10-25）：标注跟随「跨越虚线」发生 —— 每一格/每一页的开头
+ *  出现一次「（题 N 续）」即可；**同一格内的后续切分段不重复标注**。
+ *  例：答案跨 3 格 → 第 2、3 格各标 1 次（共 2 次），而不是每个切分段都标。
+ */
+function markContByCrossCell(slots: LayoutBlock[][], qid: string, firstSlot: number): void {
+  let prevSlot = firstSlot
+  for (let s = 0; s < slots.length; s++) {
+    const idxOfQid = slots[s].findIndex((b) => b.qid === qid)
+    if (idxOfQid < 0) continue
+    const enteredNewSlot = s !== prevSlot
+    slots[s].forEach((b, i) => {
+      if (b.qid !== qid) return
+      // 进入新格后的第一个该题块 → 标续；其余一律不标
+      b.cont = enteredNewSlot && i === idxOfQid
+    })
+    prevSlot = s
+  }
 }
 
 /**
@@ -194,6 +218,7 @@ export function autoLayout(opts: AutoLayoutOptions): LayoutResult {
 
   for (const it of items) {
     const blocks = blocksOfItem(it)
+    let itemFirstSlot = -1            // 本题首个块所在格（-1 = 尚未放置）
     for (let bi = 0; bi < blocks.length; bi++) {
       const blk = blocks[bi]
       let h = measure(blk.text, blk.kind)
@@ -211,6 +236,7 @@ export function autoLayout(opts: AutoLayoutOptions): LayoutResult {
         // 首块：从当前空槽开始（若被占则顺延）
         if (ensureSlot(slot).length > 0) slot += 1
         ensureSlot(slot).push(blk)
+        itemFirstSlot = slot            // 记住本题起始格（用于判定"跨格"）
         continue
       }
 
@@ -229,6 +255,9 @@ export function autoLayout(opts: AutoLayoutOptions): LayoutResult {
     }
     // R2：一道题结束 → 换格，下一题不接在本格
     if (ensureSlot(slot).length > 0) slot += 1
+    // D104：按**最终槽位**重算 cont —— 只有「跨格/跨页后的第一个块」才标「（题 N 续）」，
+    // 同格内的后续切分段不再重复标注（此前每个 120 字分段都标，导致刷屏）。
+    markContByCrossCell(slots, it.qid, itemFirstSlot)
   }
 
   // 组装页/格（过滤空页 + 连续页号）

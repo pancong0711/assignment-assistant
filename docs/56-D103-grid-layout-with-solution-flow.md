@@ -309,3 +309,77 @@ AI 辅助批阅 → 题库作答，增加文本框让教师输入作答要求（
 | serve | HTTP 端点确实把 `requirement` 转成 `--requirement`（两态：有值/空白） |
 | engine pytest | **527 passed**（新增 D104 7 例） |
 | app | `vue-tsc`/`build` 0 err、selfcheck 全绿 |
+
+## 13. 修复记录（2026-10-25，用户反馈 2）
+
+### 13.1 问题：「（题 N 续）」标注刷屏
+
+用户反馈：续格标注重复太多 —— 应该只在**跨越虚线**（进入下一格 / 下一页）的开头标注，
+而不是每一个换行都标。
+
+### 13.2 根因
+
+`cont` 标记按**切分段**（每 120 字/每句一段）设置：
+
+```ts
+solPieces.forEach((t, idx) => out.push({ ..., cont: idx > 0 }))   // ← 句子序号 > 0 即标
+```
+
+而切分段是"排版单元"，不是"跨格单元"。一格内通常有 5~7 个切分段，于是全部被标注。
+
+实测（格高 300 / 每块 60，一格放 5 块）：
+```
+修复前 page1 cell(0,0): content | solution | solution【续】 | solution【续】 | solution【续】
+```
+
+### 13.3 修复
+
+- `blocksOfItem()` 不再按序号标 `cont`（全部初始化为 false）；
+- 装箱完成后由 `markContByCrossCell()` 按**最终槽位**重算：
+  **每次进入新格/新页后的首个该题块**才标 `cont`。
+
+```ts
+function markContByCrossCell(slots, qid, firstSlot) {
+  let prevSlot = firstSlot
+  for (let s = 0; s < slots.length; s++) {
+    const idx = slots[s].findIndex((b) => b.qid === qid)
+    if (idx < 0) continue
+    const enteredNewSlot = s !== prevSlot
+    slots[s].forEach((b, i) => { if (b.qid === qid) b.cont = enteredNewSlot && i === idx })
+    prevSlot = s
+  }
+}
+```
+
+### 13.4 实测对比（同一场景：答案跨 5 格 / 3 页 / 约 36 个切分段）
+
+| | 标注次数 |
+|---|---|
+| 修复前 | **约 29 处**（每个切分段） |
+| 修复后 | **3 处**（每跨一格一次） |
+
+真实浏览器渲染验证：
+```
+结构： page1 [0,0]q1×7  [1,0]q1续×7
+       page2 [0,0]q1续×7 [1,0]q1续×3
+       page3 [0,0]q2+q2
+标注： ['（题 1 续）', '（题 1 续）', '（题 1 续）']   ← 3 处，只在新格/新页开头
+```
+
+### 13.5 回归防护
+
+`selfcheck-d103-autolayout.mjs` 4d 组升级为三条断言：
+1. 每个跨格后的格**只有首块**标续、其余块不标；
+2. 全篇标注数 **= 跨格次数**（不再固定为 1）；
+3. 跨 3 格 → 标注 **2 次**（每格一次）。
+
+变异验证：把 `cont` 改回"每个分段都标" → 断言立即失败（"第 1 格内的块不得标续"）。
+
+### 13.6 验证
+
+| 项 | 结果 |
+|---|---|
+| engine pytest | **527 passed** |
+| app `vue-tsc` / `build` | **0 error** |
+| app `npm run selfcheck` | **全绿**（111 条，含 4d 组三条断言） |
+| 真实浏览器 | 5 格 / 3 页 / **3 处标注**（修复前约 29 处） |

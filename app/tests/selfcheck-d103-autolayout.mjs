@@ -141,6 +141,57 @@ const res = autoLayout({ geometry, items, measure })
   console.log('4c) 续段按阅读顺序填满同页各格，后续题目顺延 … ok')
 }
 
+/* ---------- 4d) 「（题 N 续）」只在跨格首块标注，不得每段都标 ---------- */
+{
+  // 场景 A：答案填满两格 → 第二格首块标续，格内其余块不标
+  const longSol = '这是较长的答案句子。'.repeat(80)
+  const rA = autoLayout({
+    geometry: { cellW: 478, cellH: 300, rows: 1, cols: 2 },
+    items: [{ qid: 'C1', no: '1.', content: '题干', solution: longSol }],
+    measure: () => 60,
+  })
+  const cellsA = rA.pages.flatMap((p) => p.cells)
+  assert.ok(cellsA.length >= 2, '答案应跨至少 2 格')
+  // 第 1 格：全部不标续
+  assert.ok(cellsA[0].blocks.every((b) => !b.cont), '第 1 格内的块不得标续')
+  // 第 2 格：只有第一个块标续
+  const second = cellsA[1].blocks
+  assert.equal(second[0].cont, true, '跨格后的首块必须标续')
+  assert.ok(second.slice(1).every((b) => !b.cont), '跨格后的其余块不得重复标续')
+  // 全篇总标注数 = 跨格次数（每进入一个新格标 1 次），而不是每个切分段都标
+  const contCount = cellsA.flatMap((c) => c.blocks).filter((b) => b.cont).length
+  assert.equal(contCount, cellsA.length - 1,
+    `续标注数应等于跨格次数（${cellsA.length - 1}），实际 ${contCount}`)
+  // 每个跨格后的格，只有首块标续
+  for (let i = 1; i < cellsA.length; i++) {
+    const blocks = cellsA[i].blocks
+    assert.equal(blocks[0].cont, true, `第 ${i + 1} 格首块必须标续`)
+    assert.ok(blocks.slice(1).every((b) => !b.cont), `第 ${i + 1} 格其余块不得标续`)
+  }
+
+  // 场景 C：跨 3 格 → 标注 2 次（每跨一格标一次）
+  const rC = autoLayout({
+    geometry: { cellW: 478, cellH: 120, rows: 1, cols: 3 },
+    items: [{ qid: 'M1', no: '1.', content: '题干', solution: '很长的答案句子。'.repeat(60) }],
+    measure: () => 60,
+  })
+  const cellsC = rC.pages.flatMap((p) => p.cells)
+  const contC = cellsC.flatMap((c) => c.blocks).filter((b) => b.cont).length
+  assert.ok(cellsC.length >= 3, '应跨至少 3 格')
+  assert.equal(contC, cellsC.length - 1, `跨 ${cellsC.length} 格应标 ${cellsC.length - 1} 次`)
+
+  // 场景 B：短题各占一格 → 不应有任何续标注
+  const rB = autoLayout({
+    geometry: { cellW: 478, cellH: 300, rows: 1, cols: 2 },
+    items: [{ qid: 'S1', no: '1.', content: '题干一', solution: '答案一' },
+            { qid: 'S2', no: '2.', content: '题干二', solution: '答案二' }],
+    measure: () => 60,
+  })
+  const contB = rB.pages.flatMap((p) => p.cells).flatMap((c) => c.blocks).filter((b) => b.cont)
+  assert.equal(contB.length, 0, '短题不应有「（题 N 续）」标注')
+  console.log('4d) 「（题 N 续）」只在跨格首块标注（不再刷屏）… ok')
+}
+
 /* ---------- 5) 页号连续 ---------- */
 {
   const nums = res.pages.map((p) => p.page)
