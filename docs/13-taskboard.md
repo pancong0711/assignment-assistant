@@ -2015,13 +2015,16 @@ Chromium 实测零裁剪、页高自适应、题目不合并（每页从一道�
 | T1 | 回滚 D102：恢复 MxN grid + 全部虚线 + 固定页高 | ✅ |
 | T2 | 新增 `autoLayout.ts`：切分/装箱/续格/降级/指纹 | ✅ |
 | T3 | D102 自检转为**回归哨兵** | ✅ |
-| T4 | 按 `layout_result` 渲染页/格 HTML | 待做 |
-| T5 | PWA 自动重排 | 待做 |
-| T6 | CLI 复用 `layout_result` | 待做 |
-| T7 | 带答案版式降级 UI 提示 | 待做 |
-| T8 | PDF 每页一题 + 续页 | 待做 |
+| T1–T3 | 回滚 D102 / autoLayout 引擎 / 回归哨兵 | ✅ |
+| T4 | 按 `layout_result` 渲染页/格 HTML（续格标注 + 缩放） | ✅ |
+| T5 | PWA 自动重排（离屏测量 + 防抖） | ✅ |
+| T6 | CLI 复用 `layout_result` | ✅ |
+| T7 | 带答案版式降级 UI 提示 | ✅ |
+| T8 | PDF 教师版每页一题 + 完整答案 + 续页 | ✅ |
 
 **用户拍板**：同格不混排；写满续写到**下一页第 1 格**；题目顺延；公式不切；PWA/CLI HTML 一致；PDF 一题一页。
 
-验证：engine **512 passed**；app selfcheck 全绿；横版 1×2 实测恢复两列（508+508px）且竖虚线可见。
+验证：engine **520 passed**；app selfcheck 全绿；横版 1×2 实测恢复两列（508+508px）且竖虚线可见；
+端到端实测 PWA 与 CLI 对同一 layout_result 产物一致（1 页/2 格/4 处续格标注）；
+PDF 教师版 2 题→2 页且含置顶答案、页码正确。
 

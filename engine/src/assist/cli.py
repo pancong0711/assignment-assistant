@@ -602,13 +602,15 @@ def sheet_html(obj, task_path, roster_path, out, no_watermark, no_solution, stud
 @click.option("--roster", "roster_path", default=None, help="点名册 xlsx（缺省找 classes/<class>/roster/）")
 @click.option("--out", "-o", default=None, help="输出目录（缺省 classes/<class>/sheets/out）")
 @click.option("--no-watermark", is_flag=True)
+@click.option("--teacher", "teacher_mode", is_flag=True,
+              help="教师版：每题独占一页并附完整参考答案，答案超长自动续页、后续题目顺延（D103）")
 @click.option("--assets-dir", "assets_dir", default=None,
               help="显式素材目录（水印图/字体）；缺省 workspace 优先，回落 engine/assets（D87）")
 @click.option("--workspace", "-w", default=None)
 @click.option("--verbose", "-v", is_flag=True)
 @click.pass_obj
-def sheet_make(obj, task_path, roster_path, out, no_watermark, assets_dir, workspace, verbose):
-    """按任务包生成每生一份作业纸 PDF（xlsx 名单驱动）。"""
+def sheet_make(obj, task_path, roster_path, out, no_watermark, teacher_mode, assets_dir, workspace, verbose):
+    """按任务包生成每生一份作业纸 PDF（xlsx 名单驱动）；--teacher = 教师版（一题一页+答案）。"""
     from .paper import sheets_from_task
     from .workspace import load_workspace_settings
     ws = _setup(verbose or obj.get("verbose"), workspace)
@@ -619,6 +621,7 @@ def sheet_make(obj, task_path, roster_path, out, no_watermark, assets_dir, works
         roster_path=str(roster_path) if roster_path else None,
         user_cfg=load_workspace_settings(ws),
         assets_dir=assets_dir,
+        teacher_mode=teacher_mode,
     )
     for f in files:
         click.echo(str(f))

@@ -9,6 +9,7 @@
  * 开关状态（includeAnswers/showSamples）挂父级 SheetDesignView，由②③段共享。
  */
 import { computed, ref, watch } from 'vue'
+import { solveGridForSolution } from '../lib/autoLayout'
 import { useKbStore } from '../stores/kb'
 import { useTaskpadStore } from '../stores/taskpad'
 import { useSettingsStore } from '../stores/settings'
@@ -88,6 +89,14 @@ function resetSquareGrid() {
   notify(`已按 N=${pad.current.layout.per_page} 匀好为 ${g.rows}行×${g.cols}列（最接近方阵）`)
 }
 /** D102：行/列数已不参与排版（流式排布），不再做容量校验告警 —— 仅提示历史字段。 */
+/** D103：带参考答案时版式只保留「横版 1×2 / 竖版 2×1」；其他组合自动降级并提示。 */
+const layoutDowngrade = computed(() => {
+  const o = pad.current.layout.orientation
+  const g = gridDisplay.value
+  const d = solveGridForSolution(o === 'landscape' ? 'landscape' : 'portrait', g.rows, g.cols)
+  return d.downgraded ? d : null
+})
+
 const gridWarning = computed(() => {
   const r = Number(gridRows.value); const c = Number(gridCols.value)
   if (!(r >= 1) || !(c >= 1)) return '⚠ 行/列数应为正整数（历史字段，当前不影响排版）。'
@@ -365,6 +374,12 @@ function saveOnly() {
           行/列数保留为历史字段（供排查），不再影响排版高度。
           当前记录 {{ gridDisplay.rows }}×{{ gridDisplay.cols }}。
           <span v-if="gridWarning" class="status-fail">{{ gridWarning }}</span>
+        </p>
+        <p class="hint" v-if="layoutDowngrade" style="border-left:3px solid #d9822b; padding-left:8px">
+          <b>带参考答案时的版式限制（D103）</b>：为保证每题答案完整、可跨格续写，带答案版本只支持
+          <b>横版 1 行 × 2 列</b> 或 <b>竖版 2 行 × 1 列</b>。
+          当前设为 {{ gridDisplay.rows }}×{{ gridDisplay.cols }}，生成带答案版本时将<b>自动按
+          {{ layoutDowngrade.rows }}×{{ layoutDowngrade.cols }}</b> 排版（原版式仍用于学生版/无答案版）。
         </p>
         <p>
           <label class="field">页眉标题：<input type="text" v-model="headTitle" style="width:180px" @change="pad.current.layout.header.title = headTitle" /></label>

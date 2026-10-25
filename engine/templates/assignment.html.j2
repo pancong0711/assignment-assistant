@@ -164,7 +164,26 @@ body {
   </div>
   <div class="sheet-body{% if pg.grid_lines %} divided{% endif %}" data-grid="{{ doc.grid }}" data-order="{{ doc.grid_order }}" data-rows="{{ doc.grid_rows }}" data-cols="{{ doc.grid_cols }}" style="{{ doc.grid_body_style }}">
     {% for ln in pg.grid_lines %}<div class="sf-line {{ ln.dir }}" style="{{ ln.style }}"></div>
-    {% endfor %}{% for fr in pg.frames %}
+    {% endfor %}{% if pg.has_layout %}
+    {#- D103：预排版格渲染（MxN 网格 + 答案续格；虚线仍由 sf-line 绘制） -#}
+    {%- set fig_w = '%.1f'|format(doc.figure.max_w_mm * doc.figure.scale) %}
+    {%- set fig_h = '%.1f'|format(doc.figure.max_h_mm * doc.figure.scale) %}
+    {%- set fig_align = 'flex-end' if doc.figure.pos == 'below-right' else 'flex-start' %}
+    {% for c in pg.cells %}
+    <div class="sheet-frame pos-{{ doc.figure.pos }}" data-cell="{{ c.row }},{{ c.col }}" data-qid="{{ c.qid }}">
+      <div class="q-body indent-{{ doc.indent }}">
+        {% for b in c.blocks %}
+        {%- if b.kind == 'content' %}
+        <div class="q-content">{% if b.cont %}<span class="q-cont">（题 {{ c.no|replace('.', '') }} 续）</span>{% elif c.no %}{{ c.no }}  {% endif %}{{ b.text }}</div>
+        {%- elif doc.include_solution %}
+        <div class="q-solution">{% if b.cont %}<span class="q-cont">（题 {{ c.no|replace('.', '') }} 续）</span>{% endif %}<span class="q-sol-label">参考答案：</span>{% if b.scale and b.scale < 1 %}<span style="display:inline-block;transform:scale({{ b.scale }});transform-origin:left top;">{{ b.text }}</span>{% else %}{{ b.text }}{% endif %}</div>
+        {%- endif %}
+        {% endfor %}
+      </div>
+      {% if c.img_b64 %}<img class="q-img" src="data:{{ c.img_mime }};base64,{{ c.img_b64 }}" style="max-height:{{ fig_h }}mm; max-width:{{ fig_w }}mm; align-self:{{ fig_align }}" alt="题图">{% elif c.img_label %}<div class="q-img-ph" style="max-height:{{ fig_h }}mm; max-width:{{ fig_w }}mm; align-self:{{ fig_align }}">[题图：{{ c.img_label }}]</div>{% endif %}
+    </div>
+    {% endfor %}
+    {%- else %}{% for fr in pg.frames %}
     <div class="sheet-frame pos-{{ doc.figure.pos }}">
       <div class="q-body indent-{{ doc.indent }}">
         <div class="q-content">{% if fr.no %}{{ fr.no }}  {% endif %}{{ fr.content }}{% if fr.tag %} <span class="q-tag">【{{ fr.tag }}】</span>{% endif %}</div>
@@ -176,7 +195,7 @@ body {
       {%- set fig_align = 'flex-end' if doc.figure.pos == 'below-right' else 'flex-start' %}
       {% if fr.img_b64 %}<img class="q-img" src="data:{{ fr.img_mime }};base64,{{ fr.img_b64 }}" style="max-height:{{ fig_h }}mm; max-width:{{ fig_w }}mm; align-self:{{ fig_align }}" alt="题图">{% elif fr.img_label %}<div class="q-img-ph" style="max-height:{{ fig_h }}mm; max-width:{{ fig_w }}mm; align-self:{{ fig_align }}">[题图：{{ fr.img_label }}]</div>{% endif %}
     </div>
-    {% endfor %}
+    {% endfor %}{% endif %}
   </div>
   <div class="sheet-footer">
     <span>{% if doc.footer_text %}{{ doc.footer_text }} · {% endif %}{{ doc.id }}-第 {{ pg.n }}/{{ pg.total }}页</span>

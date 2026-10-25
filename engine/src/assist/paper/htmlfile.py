@@ -268,6 +268,46 @@ def _resolved_ids(kb_data: dict, task: dict) -> list[str]:
     return ids_out
 
 
+def _layout_cells_for_page(layout: dict, page_no: int, frames_by_qid: dict) -> "list[dict] | None":
+    """D103：把 `layout_result` 的某页转成模板可渲染的格视图。
+
+    返回 None 表示该页无排版结果（回退旧 frames 渲染）。
+    每格: {row, col, qid, no, blocks:[{kind,text,cont,scale}], img_b64, img_mime, img_label}
+    """
+    pages = (layout or {}).get("pages") or []
+    pg = next((x for x in pages if int(x.get("page") or 0) == int(page_no)), None)
+    if not pg:
+        return None
+    out = []
+    for c in pg.get("cells") or []:
+        blocks = c.get("blocks") or []
+        if not blocks:
+            continue
+        first = blocks[0]
+        qid = str(first.get("qid") or "")
+        fr = frames_by_qid.get(qid) or {}
+        is_first = not first.get("cont")
+        out.append({
+            "row": int(c.get("row") or 0),
+            "col": int(c.get("col") or 0),
+            "qid": qid,
+            "no": str(first.get("no") or fr.get("no") or ""),
+            "blocks": [{"kind": str(b.get("kind") or "content"),
+                        "text": str(b.get("text") or ""),
+                        "cont": bool(b.get("cont")),
+                        "scale": b.get("scale")} for b in blocks],
+            # 题图只在该题首格渲染
+            "img_b64": fr.get("img_b64") if is_first else None,
+            "img_mime": fr.get("img_mime") if is_first else None,
+            "img_label": fr.get("img_label") if is_first else None,
+        })
+    return out
+
+
+def _layout_page_count(layout: dict) -> int:
+    return len((layout or {}).get("pages") or [])
+
+
 def build_context(task: dict, students: list[dict], kb_dir: Path, ws: Path,
                   assets_dir: Path | None = None, no_watermark: bool = False,
                   date: str | None = None) -> dict:
@@ -309,27 +349,44 @@ def build_context(task: dict, students: list[dict], kb_dir: Path, ws: Path,
         "indent": _normalize_indent(lay.get("indent")),
         "katex_version": KATEX_VERSION,
     }
+    # D103：预排版结果（PWA 产出，CLI 直接复用；无 → 旧网格切片）
+    layout = task.get("layout_result") if isinstance(task.get("layout_result"), dict) else None
+    frames_by_qid = {str(f.get("id") or ""): f for f in frames if f.get("id")}
+    if layout and _layout_page_count(layout) <= 0:
+        layout = None
     stu_out = []
     n_total_pages_total = 0
     for stu in students:
-        pages = [frames[i:i + per_page] for i in range(0, len(frames), per_page)] or [[]]
+        if layout:
+            n_pages = _layout_page_count(layout)
+            pages = [None] * n_pages
+        else:
+            pages = [frames[i:i + per_page] for i in range(0, len(frames), per_page)] or [[]]
         n_total_pages_total += len(pages)
         page_lines = _grid_lines(grid["rows"], grid["cols"])
+        page_dicts = []
+        for i in range(len(pages)):
+            cells = _layout_cells_for_page(layout, i + 1, frames_by_qid) if layout else None
+            page_dicts.append({
+                "n": i + 1, "total": len(pages), "last": False,
+                "grid_lines": page_lines,
+                "frames": [] if layout else pages[i],
+                "cells": cells,
+                "has_layout": bool(layout and cells),
+            })
         stu_out.append({
             "name": str(stu.get("name") or ""),
             "number": str(stu.get("number") or ""),
             "class_display": str(stu.get("class") or doc["class_name"]),
             "tag": str(stu.get("tag") or ""),
-            "pages": [{"n": i + 1, "total": len(pages), "last": False,
-                       "grid_lines": page_lines,
-                       "frames": pg}
-                      for i, pg in enumerate(pages)],
+            "pages": page_dicts,
         })
     # 最后一名学生的最后一页 page-break-after:auto（避免末尾空白页）
     if stu_out:
         stu_out[-1]["pages"][-1]["last"] = True
     logger.info(f"HTML 上下文：{len(stu_out)} 生 × 共 {n_total_pages_total} 页"
-                f"（{orientation} per_page={per_page} grid={grid['rows']}x{grid['cols']} order={grid['order']}）")
+                f"（{orientation} per_page={per_page} grid={grid['rows']}x{grid['cols']} order={grid['order']}"
+                + ("；D103 预排版" if layout else "") + "）")
     return {"doc": doc, "watermark": wm, "students": stu_out}
 
 

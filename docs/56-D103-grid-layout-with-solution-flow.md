@@ -1,7 +1,7 @@
 # D103 任务需求单：恢复 MxN 网格/虚线 + 参考答案跨格续写（教师版）
 
 > 日期：2026-10-24
-> 状态：**T1–T3 已完成并验证；T4–T9 待实施**（分批交付，见 §9）
+> 状态：**T1–T9 全部完成**（2026-10-24/25）
 > 关联：`docs/55-D102-...`（本单**回滚** D102 的"单列流式"布局）、`docs/54-D101`（公式渲染）、
 > `docs/13-D43`（参考答案开关）、`docs/14 §VB`（HTML 打印主通道）、`docs/46-D93`（合成题）
 
@@ -175,3 +175,56 @@ D102 为"答案必须完整"把 `.sheet-body` 从 MxN 等分网格改成单列 f
 | T8 | PDF 通道：每页一题 + 完整答案 + 续页 | `layout.py`（reportlab） |
 
 T2 的引擎与数据结构已就绪，T4–T8 都是在其上接线，无未解决的技术风险。
+
+## 10. 实施记录（第二批：T4–T8，2026-10-25）
+
+### 10.1 变更清单
+
+| # | 内容 | 文件 |
+|---|---|---|
+| T4 | 按 `layout_result` 渲染页/格 HTML：`layoutCellsForPage()`、`cellBodyHtml()`、`SheetHtmlCellView`；`pageBlockHtml` 增 `layoutCells` 分支；续格标注 `（题 N 续）`；缩放样式 | `app/src/lib/sheetHtml.ts` |
+| T5 | PWA 自动重排：`cellGeometry()`（按 A4 与页眉页脚推算格尺寸）、`reflowPad()`（离屏测量 + KaTeX）、防抖 260ms + 序号丢弃过期结果 | `app/src/lib/measureLayout.ts`（新增）、`SheetPreviewSection.vue` |
+| T6 | CLI 复用 `layout_result`：`_layout_cells_for_page()`、按排版页数分页、j2 `pg.has_layout` 分支 | `engine/src/assist/paper/htmlfile.py`、`assignment.html.j2` |
+| T7 | 带答案版式降级提示（横 1×2 / 竖 2×1） | `app/src/views/SheetLayoutView.vue` |
+| T8 | PDF 教师版：`--teacher`、`_question_with_solution_flowables()`、`_teacher_flow()`（一题一页 + 完整答案 + 自动续页 + 页码正确）、`resolve_items_with_ids()`（按**题库 id** 取生效答案） | `engine/src/assist/paper/layout.py`、`task.py`、`cli.py` |
+| T9 | 新增 `test_d103_layout_result.py`（8 例） | `engine/tests/` |
+
+### 10.2 端到端验证
+
+| 项 | 结果 |
+|---|---|
+| 浏览器真实测量 → 排版 → 渲染 | 2 页 / 3 格 / **7 处续格标注** / MxN 网格保留 |
+| **PWA 与 CLI 同 layout_result 一致性** | 均为 **1 页 / 2 格 / 4 处续格标注**、`display:grid` ✅ |
+| PDF 教师版 | 2 题 → **2 页**、含 AI 置顶答案、页码 `第1/2页`/`第2/2页` |
+| PDF 超长答案 | 2000 句 → **自动续页**，内容完整（≥1500 处） |
+| PDF 非教师版 | 行为不变（2 题/页 → 1 页，不含答案） |
+| `--no-solution` + layout_result | 格内不渲染答案（不泄漏） |
+
+### 10.3 修复的 bug（实施中发现）
+
+1. **页号空洞**（1→3）：空页过滤后未重编号 → 排序后连续编号。
+2. **超长段落未切分**：只在换行处切 → 增加「句末标点二次切分 + 超长硬切」（上限 120 字符）。
+3. **同格塞多个块**：初版把续段全塞进同格 → 改为「同题续段可共格；写满才进下一页第 1 格」。
+4. **无 layout 时题目全丢**：`chunks` 初始化成全 `null` → 改为无 layout 时按 per_page 正常切片（回归修复，被 `selfcheck-roster-fig` 抓住）。
+5. **PDF 页码错误**（`第1/1页`）：`n_pages` 仍按 per_page 算 → 教师版按题目数计。
+6. **PDF 取答案用错 id**：用题号 `no` 当题库 id → 新增 `resolve_items_with_ids()` 返回 qid。
+7. **`_teacher_flow` 参数名不匹配**（`figure_indent` vs `indent`）→ 兼容转换。
+8. **`colors` 未导入** → 补 `from reportlab.lib import colors`。
+
+### 10.4 最终验证
+
+| 项 | 结果 |
+|---|---|
+| engine pytest | **520 passed**（新增 D103 8 例） |
+| app `vue-tsc -b` / `vite build` | **0 error** |
+| app `npm run selfcheck` | **全绿** |
+
+### 10.5 使用方式
+
+```bash
+# 教师版 PDF（一题一页 + 完整答案）
+assist sheet make --task <task.json> --teacher
+
+# HTML（带答案）：PWA 自动预排版；CLI 读取 taskpad 里的 layout_result 复用同一排版
+assist sheet html --task <task.json>
+```

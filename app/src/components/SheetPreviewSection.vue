@@ -24,6 +24,8 @@ import {
   type SheetHtmlItem, type SheetHtmlPadInput,
 } from '../lib/sheetHtml'
 import SheetHtmlPreviewModal from './SheetHtmlPreviewModal.vue'
+import { reflowPad, shouldReflow } from '../lib/measureLayout'
+import type { LayoutResult } from '../lib/autoLayout'
 
 const props = defineProps<{ includeAnswers: boolean; showSamples: boolean; includeWatermark: boolean; includePageText: boolean }>()
 const emit = defineEmits<{
@@ -75,6 +77,43 @@ function itemsFor(p: Taskpad): SheetHtmlItem[] {
   return expandPadItems(p, (kind) => kb.book(kind as KbKind), kb.effectiveSolution)
 }
 
+/* ---------- D103：预排版（带答案时自动重排；内容/版式变化即重测） ---------- */
+const layoutResult = ref<LayoutResult | null>(null)
+const layoutMsg = ref('')
+let layoutTimer = 0
+let layoutSeq = 0
+
+/** 自动重排：防抖 260ms（测量较重），并用序号丢弃过期结果。 */
+function scheduleReflow() {
+  clearTimeout(layoutTimer)
+  const seq = ++layoutSeq
+  layoutTimer = window.setTimeout(async () => {
+    const p = pad.current
+    const items = sheetHtmlItems.value
+    if (!shouldReflow(p, includeAnswers.value)) {
+      layoutResult.value = null
+      layoutMsg.value = ''
+      return
+    }
+    try {
+      const r = await reflowPad(p, items)
+      if (seq !== layoutSeq) return                 // 期间又有新变更 → 丢弃
+      layoutResult.value = r ? r.layout : null
+      const warn = r?.layout?.warnings?.length ? `；⚠ ${r.layout.warnings[0]}` : ''
+      layoutMsg.value = r
+        ? `已按「每页最多 ${r.layout.geometry.rows * r.layout.geometry.cols} 格」预排版：${r.layout.pages.length} 页`
+          + (r.downgraded ? '（版式已自动降级）' : '') + warn
+        : ''
+    } catch (e) {
+      if (seq !== layoutSeq) return
+      layoutResult.value = null
+      layoutMsg.value = `预排版失败（已回退旧版式）：${(e as Error).message}`
+    }
+  }, 260)
+}
+
+watch([() => pad.current, sheetHtmlItems, includeAnswers], scheduleReflow, { deep: true, immediate: true })
+
 /* ---------- 模板口径（与 SheetOutputSection 同一函数语义） ---------- */
 function templateStudents(): SheetHtmlPadInput['students'] {
   return showSamples.value ? SYNTHETIC_STUDENTS : [BLANK_STUDENT]
@@ -96,7 +135,11 @@ function templateHtml(inputs: SheetHtmlPadInput[] | SheetHtmlPadInput): string {
 const liveHtml = ref('')
 let liveTimer = 0
 function buildLiveHtml(): string {
-  return templateHtml([{ pad: JSON.parse(JSON.stringify(pad.current)), items: sheetHtmlItems.value }])
+  return templateHtml([{
+    pad: JSON.parse(JSON.stringify(pad.current)),
+    items: sheetHtmlItems.value,
+    layout: layoutResult.value,     // D103：有预排版 → 按格渲染
+  }])
 }
 function scheduleLive() {
   clearTimeout(liveTimer)
@@ -104,7 +147,7 @@ function scheduleLive() {
 }
 const liveKey = computed(() =>
   JSON.stringify([pad.current, sheetHtmlItems.value, includeAnswers.value, showSamples.value,
-    props.includeWatermark, props.includePageText, settings.wmAssets]))
+    props.includeWatermark, props.includePageText, settings.wmAssets, layoutResult.value]))
 watch(liveKey, scheduleLive, { immediate: true })
 
 /* ---------- 弹层预览（清单行/全部连排 & 当前模板细看） ---------- */

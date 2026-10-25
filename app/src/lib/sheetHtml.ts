@@ -47,11 +47,56 @@ export interface SheetHtmlItem {
   /** kb 行 img_path（file 相对路径 hint；PWA 无文件系统 → 打印预览显示占位框） */
   imgPath?: string
   tag?: string
+  /** D103：预排版后的块（有值时按块渲染，不再用 content/solution 整体渲染）。 */
+  blocks?: SheetHtmlBlock[]
+}
+/** D103：预排版结果的结构化视图（与 `autoLayout.LayoutResult` 兼容；仅类型引用，避免循环依赖）。 */
+export interface LayoutLike {
+  v: number
+  contentHash?: string
+  geometry?: { cellW: number; cellH: number; rows: number; cols: number }
+  pages: Array<{ page: number; cells: Array<{ row: number; col: number
+    blocks: Array<{ qid: string; no: string; kind: 'content' | 'solution'; text: string; cont?: boolean; scale?: number }> }> }>
+  warnings?: string[]
+}
+
+/** 把 `layout_result` 的某页转成渲染用的格视图（按 (row,col) 填满整个网格，空格留白）。 */
+export function layoutCellsForPage(
+  layout: LayoutLike | null | undefined, pageNo: number, items: SheetHtmlItem[],
+): SheetHtmlCellView[] | undefined {
+  const pg = layout?.pages?.find((x) => x.page === pageNo)
+  if (!pg) return undefined
+  const byId = new Map(items.map((i) => [i.id, i]))
+  return pg.cells.map((c) => {
+    const first = c.blocks[0]
+    const qid = String(first?.qid ?? '')
+    const item = byId.get(qid)
+    const isFirstPart = !first?.cont
+    return {
+      row: c.row, col: c.col, qid, no: String(first?.no ?? item?.no ?? ''),
+      blocks: c.blocks.map((b) => ({ kind: b.kind, text: b.text, cont: b.cont, scale: b.scale })),
+      // 题图只在该题的**首个**格渲染（续格不重复出图）
+      imgPath: isFirstPart ? item?.imgPath : undefined,
+    }
+  })
+}
+
+/** D103：预排版块（与 autoLayout.LayoutBlock 同构，供渲染层使用）。 */
+export interface SheetHtmlBlock {
+  kind: 'content' | 'solution'
+  text: string
+  /** 续段 → 渲染「（题 N 续）」标注 */
+  cont?: boolean
+  /** 超高行间公式的缩放比例 */
+  scale?: number
 }
 
 export interface SheetHtmlPadInput {
   pad: Taskpad
   items: SheetHtmlItem[]
+  /** D103：预排版结果（自动排版引擎产物）。有值 → 按"页/格"渲染（MxN + 答案续格）；
+   *  无值 → 旧行为（按 per_page 切片，整题铺满）。 */
+  layout?: LayoutLike | null
   /** D43-6 整班分段（班级与标签页 VC-3）/ 模板态覆盖：该包只给这些学生出页；
    *  缺省 = opts.students（再缺省 = SYNTHETIC_STUDENTS）。 */
   students?: SheetHtmlStudent[]
@@ -518,6 +563,39 @@ function katexScript(): string {
 <\/script>`
 }
 
+/* ---------- D103：预排版格渲染（MxN 网格 + 答案续格） ---------- */
+
+/** 一格要渲染的内容（由 layout_result + items 合并而来）。 */
+export interface SheetHtmlCellView {
+  row: number
+  col: number
+  /** 该格的题目 id + 预先切好的块 */
+  qid: string
+  no: string
+  blocks: SheetHtmlBlock[]
+  /** 题图（只在该题首格渲染） */
+  imgPath?: string
+}
+
+/** 渲染一格的内部内容：题干（带题号）/ 答案（带「（题 N 续）」标注）。 */
+function cellBodyHtml(cell: SheetHtmlCellView, includeSolution: boolean, indentCls: string): string {
+  const parts: string[] = []
+  for (const b of cell.blocks) {
+    const contMark = b.cont ? `<span class="q-cont">（题 ${escapeHtml(cell.no.replace(/\.$/, ''))} 续）</span>` : ''
+    if (b.kind === 'content') {
+      const no = b.cont ? '' : (cell.no ? `${cell.no}  ` : '')
+      parts.push(`<div class="q-content">${contMark}${escapeHtml(no)}${escapeHtml(b.text)}</div>`)
+    } else if (includeSolution) {
+      const scaleStyle = b.scale && b.scale < 1
+        ? ` style="display:inline-block;transform:scale(${b.scale});transform-origin:left top;"`
+        : ''
+      parts.push(`<div class="q-solution">${contMark}<span class="q-sol-label">参考答案：</span>`
+        + `<span${scaleStyle}>${escapeHtml(b.text)}</span></div>`)
+    }
+  }
+  return `<div class="q-body ${indentCls}">${parts.join('\n        ') || '<span class="hint">（空白）</span>'}</div>`
+}
+
 /* ---------- 页块构建（与 j2 模板 <section class="sheet-page">… 同构） ---------- */
 
 function pageBlockHtml(pad: Taskpad, items: SheetHtmlItem[], stu: SheetHtmlStudent,
@@ -526,7 +604,9 @@ function pageBlockHtml(pad: Taskpad, items: SheetHtmlItem[], stu: SheetHtmlStude
                        includeSolution = true,
                        includeWatermark = true,
                        includePageText = true,
-                       figAssets?: Record<string, string>): string {
+                       figAssets?: Record<string, string>,
+                       /** D103：预排版结果（有值 → 按格渲染；无 → 旧行为整题铺满） */
+                       layoutCells?: SheetHtmlCellView[]): string {
   const layout = pad.layout
   const orientation = layout.orientation === 'landscape' ? 'landscape' : 'portrait'
   const grid = resolveGrid(layout)
@@ -556,8 +636,13 @@ function pageBlockHtml(pad: Taskpad, items: SheetHtmlItem[], stu: SheetHtmlStude
       <span class="sh-assign">作业：${escapeHtml(pad.id)}</span>
     </div>
   </div>
-  <div class="sheet-body${lines.length ? ' divided' : ''}" data-grid="${grid.rows}x${grid.cols}" data-order="${grid.order}" data-rows="${grid.rows}" data-cols="${grid.cols}" style="${gridBodyStyle(grid.rows, grid.cols, grid.order)}">
-    ${frames}${items.map((fr) => `<div class="sheet-frame pos-${normalizeFigurePos(pad.layout.figure?.pos)}">
+  <div class="sheet-body${lines.length ? ' divided' : ''}" data-grid="${grid.rows}x${grid.cols}" data-order="${grid.order}" data-rows="${grid.rows}" data-cols="${grid.cols}"${layoutCells ? ' data-layout="d103"' : ''} style="${gridBodyStyle(grid.rows, grid.cols, grid.order)}">
+    ${frames}${layoutCells
+      ? layoutCells.map((c) => `<div class="sheet-frame pos-${normalizeFigurePos(pad.layout.figure?.pos)}" data-cell="${c.row},${c.col}" data-qid="${escapeHtml(c.qid)}">
+      ${cellBodyHtml(c, includeSolution, `indent-${normalizeIndent(pad.layout.indent)}`)}
+      ${figHtml(c.imgPath, figAssets, pad.layout.figure)}
+    </div>`).join('\n    ')
+      : items.map((fr) => `<div class="sheet-frame pos-${normalizeFigurePos(pad.layout.figure?.pos)}">
       <div class="q-body indent-${normalizeIndent(pad.layout.indent)}">
         <div class="q-content">${escapeHtml(fr.no ? `${fr.no}  ` : '')}${escapeHtml(fr.content)}</div>
         ${(includeSolution && fr.solution) ? `<div class="q-solution">参考答案：${escapeHtml(fr.solution)}</div>` : ''}
@@ -609,7 +694,9 @@ export function stringifySheetHtml(
   if (continuous) {
     for (let padIdx = 0; padIdx < pads.length; padIdx++) {
       const perPage = resolveGrid(pads[padIdx].pad.layout).perPage
-      const nChunks = Math.max(1, Math.ceil(pads[padIdx].items.length / perPage))
+      // D103：有预排版 → 页数取排版结果（答案续格会产生额外页）
+      const nChunks = pads[padIdx].layout?.pages?.length
+        || Math.max(1, Math.ceil(pads[padIdx].items.length / perPage))
       const stuList = (pads[padIdx].students?.length ? pads[padIdx].students : students) as SheetHtmlStudent[]
       const arr: number[] = []
       for (let si = 0; si < stuList.length; si++) { arr.push(nChunks); totalBlocks += nChunks }
@@ -620,9 +707,13 @@ export function stringifySheetHtml(
   for (let padIdx = 0; padIdx < pads.length; padIdx++) {
     const { pad, items } = pads[padIdx]
     const perPage = resolveGrid(pad.layout).perPage
-    const chunks: SheetHtmlItem[][] = []
-    for (let i = 0; i < items.length; i += perPage) chunks.push(items.slice(i, i + perPage))
-    if (!chunks.length) chunks.push([])
+    // D103：有预排版结果 → 直接用其页数（避免被 per_page 切片整除影响）；否则旧切片
+    const layoutPages = pads[padIdx].layout?.pages?.length ?? 0
+    const nPages = layoutPages || Math.max(1, Math.ceil(items.length / perPage))
+    // D103：无 layout 时按 per_page 切片（旧行为）；有 layout 时仅为占位（每页数量以排版结果为准）
+    const chunks: Array<SheetHtmlItem[] | null> = layoutPages
+      ? Array.from({ length: nPages }, () => null)
+      : Array.from({ length: nPages }, (_, i) => items.slice(i * perPage, (i + 1) * perPage))
     const wm = resolveWmItems(pad, opts.wmAssets, pad.layout.orientation === 'landscape' ? 'landscape' : 'portrait', opts.wmStyles)
     // D43-6 整班分段：每包可带自己的 students 子集（班级与标签页 VC-3 用）
     const stuList: SheetHtmlStudent[] = (pads[padIdx].students?.length
@@ -632,7 +723,7 @@ export function stringifySheetHtml(
     if (!stuList.length) continue
     for (let si = 0; si < stuList.length; si++) {
       const stu = stuList[si]
-      chunks.forEach((chunk, pi) => {
+      chunks.forEach((_chunk, pi) => {
         const veryLast = padIdx === pads.length - 1
           && si === stuList.length - 1 && pi === chunks.length - 1
         // D93-S5：连续页码（跨整班） vs 每生从 1 起
@@ -643,8 +734,10 @@ export function stringifySheetHtml(
           pageN = runPage
           pagesTotal = totalBlocks
         }
-        pageSections.push(pageBlockHtml(pad, chunk, stu, pagesTotal, pageN, veryLast, wm, date,
-          groupName, includeSolution, includeWatermark, includePageText, opts.figAssets))
+        // D103：本页的格视图（有 layout 时按格渲染；否则旧行为整题铺满）
+        const cells = layoutCellsForPage(pads[padIdx].layout, pi + 1, items)
+        pageSections.push(pageBlockHtml(pad, _chunk ?? [], stu, pagesTotal, pageN, veryLast, wm, date,
+          groupName, includeSolution, includeWatermark, includePageText, opts.figAssets, cells))
       })
     }
   }

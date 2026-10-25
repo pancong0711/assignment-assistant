@@ -14,6 +14,7 @@ from pathlib import Path
 
 from loguru import logger
 from PIL import Image as PILImage
+from reportlab.lib import colors
 from reportlab.lib.pagesizes import A4, landscape
 from reportlab.lib.units import mm
 from reportlab.lib.styles import ParagraphStyle
@@ -87,6 +88,59 @@ def _fitted_image(img_path: str, max_w: float, max_h: float,
     im = Image(img_path, width=img_w * ratio, height=img_h * ratio)
     im.hAlign = {"lt": "LEFT", "rt": "RIGHT", "center": "CENTER"}.get(pos, "RIGHT")
     return im
+
+
+def _solution_style():
+    """D103：教师版参考答案样式（灰一点、略小，与题干区分）。"""
+    return ParagraphStyle("assign_solution", fontName=body_font_name(), fontSize=9,
+                          leading=13, textColor=colors.HexColor("#4b5563"),
+                          spaceBefore=4, borderPadding=2)
+
+
+def _question_with_solution_flowables(no: str, content: str, solution: str,
+                                      img_path: str = "", frame=None,
+                                      figure_scale: float = 1.0,
+                                      figure_pos: str = "text-right",
+                                      figure_max_w_mm: float = 45.0,
+                                      figure_max_h_mm: float = 60.0,
+                                      indent: str = "none"):
+    """D103-T8：教师版单题 = 题干（+图）+ 完整参考答案。
+
+    与 HTML 版不同，PDF 不做网格与跨格续写：**一题独占一页**，答案超长时由
+    reportlab 自动续页（Paragraph 原生能力），后续题目自然顺延到新页。
+    """
+    out = []
+    if frame is not None:
+        q = _question_flowable(no, content, img_path, frame, figure_scale, figure_pos,
+                               figure_max_w_mm, figure_max_h_mm, indent)
+        out.extend(q if isinstance(q, list) else [q])
+    else:
+        out.append(_content_paragraph(no, content, indent))
+    sol = str(solution or "").strip()
+    if sol:
+        # 参考答案前缀独立成段落，正文可跨页续排（不切断公式源码）
+        out.append(Paragraph("参考答案：", _solution_style()))
+        for para in sol.split("\n\n"):
+            if para.strip():
+                out.append(Paragraph(para.replace("\n", "<br/>"), _solution_style()))
+    return out
+
+
+def _teacher_flow(items, frame, include_solution: bool = True, **kw):
+    """D103-T8：教师版流 —— 每题一页；答案超长自动续页；题目依次顺延。"""
+    # 调用方可能传 figure_indent（与 _question_flowable 的参数名 indent 不同）
+    if "figure_indent" in kw:
+        kw["indent"] = kw.pop("figure_indent")
+    flow = []
+    for i, item in enumerate(items):
+        content, img_path, _tag, no = item[0], item[1], item[2], item[3]
+        solution = item[4] if len(item) > 4 else ""
+        fl = _question_with_solution_flowables(
+            no, content, solution if include_solution else "", img_path, frame, **kw)
+        flow.extend(fl)
+        if i < len(items) - 1:
+            flow.append(PageBreak())     # 一题一页
+    return flow
 
 
 def _content_paragraph(no: str, content: str, indent: str = "none"):
@@ -286,7 +340,9 @@ def make_pdf(students: list[dict], items_of_student, out_dir: Path,
              figure_indent: str = "none",
              assets_dir_explicit=None,
              watermark_spec: "dict | None" = None,
-             workspace=None) -> list[Path]:
+             workspace=None,
+             include_solution: bool = False,
+             teacher_mode: bool = False) -> list[Path]:
     """students: [{name, number, class}]；items_of_student(i) → [(content, img, tag, no)]。
 
     D61：per_page = 每页题数 N；grid_rows/grid_cols = 显式网格。
@@ -321,7 +377,9 @@ def make_pdf(students: list[dict], items_of_student, out_dir: Path,
         n = normalize_per_page(per_page, orientation)
         g = resolve_grid(orientation, n, grid_rows, grid_cols)
         frames = grid_frames(orientation, n, grid_rows, grid_cols)
-        n_pages = max(1, (len(items) + n - 1) // n)
+        # D103-T8：教师版一题一页（答案超长会再续页），页数至少为题目数
+        n_pages = (max(1, len(items)) if teacher_mode
+                   else max(1, (len(items) + n - 1) // n))
         fn = out_dir / (f"assignment-{str(now.year)[2:]}{now.month:02d}{now.day:02d}"
                         f"-sheet{idx + 1:02d}-{orientation}.pdf")
         doc = BaseDocTemplate(str(fn), pagesize=page_size)
@@ -330,8 +388,15 @@ def make_pdf(students: list[dict], items_of_student, out_dir: Path,
             onPage=_make_onpage(stu, title, notes_prefix, orientation, n_pages,
                                 per_page=n, dividers_ok=g["capacity"] > 1,
                                 grid_rows=grid_rows, grid_cols=grid_cols))])
-        flow = _flow_by_order(items, frames, n, figure_scale, figure_pos,
-                               figure_max_w_mm, figure_max_h_mm, figure_indent)
+        if teacher_mode:
+            # D103-T8：教师版 = 一题一页 + 完整答案（超长自动续页，后续题目顺延）
+            flow = _teacher_flow(items, frames[0], include_solution=include_solution,
+                                 figure_scale=figure_scale, figure_pos=figure_pos,
+                                 figure_max_w_mm=figure_max_w_mm,
+                                 figure_max_h_mm=figure_max_h_mm, figure_indent=figure_indent)
+        else:
+            flow = _flow_by_order(items, frames, n, figure_scale, figure_pos,
+                                  figure_max_w_mm, figure_max_h_mm, figure_indent)
         doc.build(flow)
 
         spec = watermark_spec if isinstance(watermark_spec, dict) else {}
