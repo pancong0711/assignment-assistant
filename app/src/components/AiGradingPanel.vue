@@ -58,6 +58,8 @@ watch(kbKind, () => { kbChap.value = ''; kbIdsSel.value = [] })
 watch(kbChap, () => { kbIdsSel.value = [] })
 // D100-T3/T8：AI 作答默认置顶（生效答案）；取消勾选 = 只追加版本不抢原答案
 const kbPin = ref(true); const kbApply = ref(false)
+// D104：教师额外作答要求（可选）—— 例如「请画出示意图」「输出为 HTML 文档」
+const kbRequirement = ref('')
 const kbSolveMsg = ref('')
 const kbSolving = ref(false)
 async function solveByKb() {
@@ -67,6 +69,7 @@ async function solveByKb() {
     const jobId = await startKbAiSolve(props.engineAddr, props.token, {
       kb: kbKind.value, chap: kbChap.value, ids, model: kbModel.value,
       pin: kbPin.value, apply: kbApply.value,
+      requirement: kbRequirement.value.trim(),
     })
     const tick = async () => {
       try {
@@ -492,6 +495,18 @@ onMounted(async () => { await loadConfig(); await loadWorks(); loadKbCatalog() }
       <label class="field" title="不勾=仅 dry-run 预览将作答哪些题；勾=真正调 LLM 并写回 kb/solutions/">
         <input type="checkbox" v-model="kbApply" /> 真正作答并写回
       </label>
+    </div>
+    <div style="margin:6px 0">
+      <label class="hint" style="display:block; margin:0 0 4px">
+        作答要求（可选，会作为「优先满足」附加到每题 prompt）：
+      </label>
+      <textarea v-model="kbRequirement" rows="3"
+        placeholder="例：请画出示意图；用 LaTeX 公式完整推导；输出为 HTML 文档；按「已知/求/解/答」结构写；计算题保留 3 位有效数字……"
+        style="width:100%; max-width:760px; font-family:inherit; font-size:13px; padding:6px 8px;
+               border:1px solid var(--c-border); border-radius:6px; resize:vertical"></textarea>
+      <div class="hint" style="margin:2px 0 0">
+        留空 = 使用系统默认作答风格（规范完整解答，公式用 $..$ / $$..$$）。
+      </div>
       <button class="btn" :disabled="kbSolving" @click="solveByKb">▶ {{ kbApply ? 'AI 作答并写回' : 'AI 作答（dry-run）' }}</button>
     </div>
     <div class="hint" style="margin:4px 0 0">题目预览：

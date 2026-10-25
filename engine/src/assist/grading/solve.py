@@ -25,12 +25,22 @@ SOLVE_SYSTEM_PROMPT = """你是一位大学物理助教。请对给定题目给�
 5. 只输出解答正文（Markdown），不要寒暄、不要重复题干。"""
 
 
-def build_question_prompt(content: str, related: str = "", qtype: str = "") -> str:
+def build_question_prompt(content: str, related: str = "", qtype: str = "",
+                          extra_requirement: str = "") -> str:
+    """构造单题 prompt。
+
+    D104：`extra_requirement` = 教师在界面里填写的**作答要求**（可选），
+    例如"请画出示意图""输出为 HTML 文档""用表格列出各步"。它被放在最后，
+    并明确标注为"优先满足"，避免被系统提示里的默认风格盖过。
+    """
     parts = [f"题目：{content}"]
     if qtype:
         parts.append(f"题型：{qtype}")
     if related:
         parts.append(f"关联知识点：{related}")
+    req = str(extra_requirement or "").strip()
+    if req:
+        parts.append("\n教师额外作答要求（优先满足）：\n" + req)
     return "\n".join(parts)
 
 
@@ -64,14 +74,16 @@ def _client(ws: Path, model: str = ""):
 
 
 def solve_targets(ws: Path, targets: list[dict], *, model: str = "", apply: bool = False,
-                  pin: bool = True, dry_run: bool = True, concurrency: int = 3) -> dict:
+                  pin: bool = True, dry_run: bool = True, concurrency: int = 3,
+                  requirement: str = "") -> dict:
     """对 targets AI 作答（D98：并发）；apply=False 只预览。返回 {ok, planned, written, results[]}。
 
     D100-T3：`pin=True`（默认）= 作答后置顶为新生效答案（"AI 生成内容默认置顶"）；
     传 False 则只追加版本（等价旧行为，不抢原答案）。
     """
     plans = [{"id": t["id"], "prompt": build_question_prompt(t.get("content", ""),
-                                                             t.get("related", ""), t.get("type", "")),
+                                                             t.get("related", ""), t.get("type", ""),
+                                                             requirement),
               "kb": t.get("kb", ""), "chap": t.get("chap", "")} for t in targets]
     if dry_run and not apply:
         return {"ok": True, "dryRun": True, "planned": len(plans), "plans": plans}

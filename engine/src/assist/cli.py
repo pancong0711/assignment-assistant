@@ -400,10 +400,14 @@ def kb_snapshot(obj, workspace, verbose):
               help="作答后置顶为新生效答案（默认置顶；--no-pin 只追加版本、不抢原答案）")
 @click.option("--apply", is_flag=True, help="真正写回 kb/solutions/（缺省 dry-run 只预览）")
 @click.option("--concurrency", default=3, type=int, show_default=True, help="并发题数")
+@click.option("--requirement", "requirement", default="",
+              help="教师额外作答要求（可选，如「请画出示意图」「输出为 HTML 文档」）；"
+                   "会作为「优先满足」附加到每题 prompt")
 @click.option("--workspace", "-w", default=None)
 @click.option("--verbose", "-v", is_flag=True)
 @click.pass_obj
-def kb_ai_solve(obj, kb_kind, chap, ids, model, pin, apply, concurrency, workspace, verbose):
+def kb_ai_solve(obj, kb_kind, chap, ids, model, pin, apply, concurrency, requirement,
+                workspace, verbose):
     """D89-N5/D100：对题库题目做 AI 作答（**不覆盖**原答案，新增版本并默认置顶；默认 dry-run）。"""
     from .grading import solve as solve_mod
     ws = _setup(verbose or obj.get("verbose"), workspace)
@@ -412,7 +416,8 @@ def kb_ai_solve(obj, kb_kind, chap, ids, model, pin, apply, concurrency, workspa
     if not targets:
         raise click.ClickException("未选中任何题目（检查 --kb-kind/--chap/--ids）")
     res = solve_mod.solve_targets(ws, targets, model=model, apply=apply, pin=pin,
-                                  dry_run=True, concurrency=concurrency)
+                                  dry_run=True, concurrency=concurrency,
+                                  requirement=requirement)
     if res.get("dryRun"):
         click.echo(json.dumps({"dryRun": True, "planned": res["planned"],
                                "ids": [p["id"] for p in res.get("plans", [])]},

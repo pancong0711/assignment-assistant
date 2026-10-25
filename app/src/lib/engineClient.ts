@@ -1506,7 +1506,9 @@ export async function mutateKbSolution(
 /** POST /kb/ai-solve：题库题目 AI 作答（返回 job_id；dry-run 也走 job 流）。 */
 export async function startKbAiSolve(
   engineAddr: string, token: string | undefined,
-  payload: { kb?: string; chap?: string; ids?: string[]; model?: string; pin?: boolean; apply?: boolean },
+  payload: { kb?: string; chap?: string; ids?: string[]; model?: string; pin?: boolean; apply?: boolean
+    /** D104：教师额外作答要求（如「请画出示意图」「输出为 HTML」） */
+    requirement?: string },
 ): Promise<string> {
   const base = normalizeEngineAddr(engineAddr)
   const res = await fetch(engineUrlWithToken(base, '/kb/ai-solve', token), {

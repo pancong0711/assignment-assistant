@@ -222,8 +222,9 @@ export function autoLayout(opts: AutoLayoutOptions): LayoutResult {
         cur.push(blk)                       // 同题续段可共格（不算"混排"：仍是同一题）
         continue
       }
-      // R3：写满 → 续写到「下一页第 1 格」
-      slot = Math.max(slot + 1, (Math.floor(slot / perPage) + 1) * perPage)
+      // R3：写满 → 续写到「**下一格**」（按阅读顺序：同一页内后续格 → 下一页第 1 格）。
+      // 注意：不能直接跳"下一页第 1 格"，否则续段会全挤在每页左上角、其它格空着（D103 修复）。
+      slot += 1
       ensureSlot(slot).push(blk)
     }
     // R2：一道题结束 → 换格，下一题不接在本格

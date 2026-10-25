@@ -1195,6 +1195,9 @@ class Handler(BaseHTTPRequestHandler):
                 args += ["--ids", ",".join(str(i) for i in ids)]
             if payload.get("model"):
                 args += ["--model", str(payload.get("model"))]
+            # D104：教师额外作答要求（如"画示意图""输出 HTML"）→ CLI --requirement
+            if str(payload.get("requirement") or "").strip():
+                args += ["--requirement", str(payload.get("requirement"))]
             # D100-T3：AI 作答默认置顶（生效答案）；显式 pin=false 才保持"不抢原答案"。
             if payload.get("pin", True) is False:
                 args += ["--no-pin"]

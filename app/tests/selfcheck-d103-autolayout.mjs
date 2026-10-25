@@ -116,6 +116,31 @@ const res = autoLayout({ geometry, items, measure })
   console.log('4b) 短题也严格同格不混排（每题独占一格）… ok')
 }
 
+/* ---------- 4c) 续段按阅读顺序填满同页各格（不得全挤在左上角） ---------- */
+{
+  // 复现用户反馈：2x2 横版，超长答案曾全部续写在每页左上角、其它格空着
+  const veryLong = { qid: 'L1', no: '1.', content: '题干', solution: '长答案。'.repeat(400) }
+  const next = { qid: 'L2', no: '2.', content: '题干二', solution: '答案二' }
+  const r4 = autoLayout({
+    geometry: { cellW: 478, cellH: 300, rows: 2, cols: 2 },
+    items: [veryLong, next], measure: () => 100,
+  })
+  const page1 = r4.pages[0]
+  assert.ok(page1.cells.length >= 3,
+    `第 1 页应尽量填满多格（实际 ${page1.cells.length} 格）：续段不得只写左上角`)
+  // 第 1 页（除最后一格）的格都应有内容
+  assert.ok(page1.cells.filter((c) => c.blocks.length > 0).length >= 3)
+  // 续段必须覆盖多个不同 (row,col)，而不是同一个格
+  const positions = new Set(page1.cells.map((c) => `${c.row},${c.col}`))
+  assert.ok(positions.size >= 3, `续段分散在多个格，实际 ${[...positions].join('|')}`)
+  // 后续题目必须排在这些续段之后（不能插队）
+  const flat = r4.pages.flatMap((p) => p.cells.flatMap((c) => c.blocks.map((b) => b.qid)))
+  const firstL2 = flat.indexOf('L2')
+  const lastL1 = flat.lastIndexOf('L1')
+  assert.ok(firstL2 > lastL1, '后续题目必须在答案续段之后（顺延）')
+  console.log('4c) 续段按阅读顺序填满同页各格，后续题目顺延 … ok')
+}
+
 /* ---------- 5) 页号连续 ---------- */
 {
   const nums = res.pages.map((p) => p.page)
