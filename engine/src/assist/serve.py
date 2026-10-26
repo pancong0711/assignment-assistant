@@ -1203,6 +1203,9 @@ class Handler(BaseHTTPRequestHandler):
             # D104：教师额外作答要求（如"画示意图""输出 HTML"）→ CLI --requirement
             if str(payload.get("requirement") or "").strip():
                 args += ["--requirement", str(payload.get("requirement"))]
+            # D108：提示词模板（优先于 requirement）
+            if str(payload.get("requirementTemplate") or "").strip():
+                args += ["--requirement-template", str(payload.get("requirementTemplate"))]
             # D100-T3：AI 作答默认置顶（生效答案）；显式 pin=false 才保持"不抢原答案"。
             if payload.get("pin", True) is False:
                 args += ["--no-pin"]
@@ -1225,6 +1228,32 @@ class Handler(BaseHTTPRequestHandler):
                                                    "chap": payload.get("chap") or "",
                                                    "apply": apply})
             self._json({"ok": True, "job_id": job_id})
+            return
+        if u.path == "/prompts/ai-solve":
+            # D108：save / delete / set_default
+            payload: dict = {}
+            try:
+                length = int(self.headers.get("Content-Length") or 0)
+                if length:
+                    payload = json.loads(self.rfile.read(length).decode("utf-8")) or {}
+            except Exception as exc:  # noqa: BLE001
+                self._json({"ok": False, "error": f"bad json: {exc}"}, 400)
+                return
+            from .files import prompts as P
+            ws_ = Path(self.ws).resolve()
+            action = str(payload.get("action") or "save")
+            if action == "delete":
+                rep = P.delete_template(ws_, str(payload.get("id") or ""))
+            elif action == "set_default":
+                rep = P.set_default(ws_, str(payload.get("id") or ""))
+            else:
+                rep = P.save_template(ws_, pid=str(payload.get("id") or ""),
+                                      name=str(payload.get("name") or ""),
+                                      text=str(payload.get("text") or ""),
+                                      make_default=bool(payload.get("default")))
+            rep["items"] = P.list_templates(ws_)
+            rep["default"] = (P.default_template(ws_) or {}).get("id", "")
+            self._json(rep, 200 if rep.get("ok") else 400)
             return
         if u.path == "/kb/solution":
             payload: dict = {}
@@ -2043,6 +2072,12 @@ class Handler(BaseHTTPRequestHandler):
             else:
                 self._json({"ok": True, "effective": sol.effective_map(ws_),
                             "digest": sol.solutions_digest(ws_)})
+        elif u.path == "/prompts/ai-solve":
+            # D108：提示词模板库（PWA 下拉/默认/删除）
+            from .files import prompts as P
+            ws_ = Path(self.ws).resolve()
+            self._json({"ok": True, "items": P.list_templates(ws_),
+                        "default": (P.default_template(ws_) or {}).get("id", "")})
         elif u.path == "/kb/catalog":
             from .files.kb_io import catalog as _catalog
             q = urllib.parse.parse_qs(u.query)

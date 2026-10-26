@@ -13,6 +13,7 @@ import {
   fetchXxtReviewIndex, fetchXxtReviewStudents, postLlmProvider, postXxtClassMap,
   startXxtGradeAi, startXxtGradeUpload,
   startKbAiSolve, fetchKbCatalog, renderReportsFromDrafts,
+  fetchPromptTemplates, mutatePromptTemplate, type PromptTemplate,
 } from '../lib/engineClient'
 
 const props = defineProps<{ engineAddr: string; token?: string }>()
@@ -63,6 +64,96 @@ watch(kbChap, () => { kbIdsSel.value = [] })
 const kbPin = ref(true); const kbApply = ref(false)
 // D104：教师额外作答要求（可选）—— 例如「请画出示意图」「输出为 HTML 文档」
 const kbRequirement = ref('')
+/* D108：提示词模板库（保存/默认/删除；存储于 <ws>/prompts/ai-solve/，CLI 可复用） */
+const promptTemplates = ref<PromptTemplate[]>([])
+const promptSel = ref('')
+const promptBusy = ref(false)
+const promptMsg = ref('')
+const promptIsBuiltin = computed(() =>
+  !!promptTemplates.value.find((t) => t.id === promptSel.value)?.builtin)
+const promptIsDefault = computed(() =>
+  !!promptTemplates.value.find((t) => t.id === promptSel.value)?.default)
+
+async function loadPromptTemplates(autoPickDefault = true) {
+  const r = await fetchPromptTemplates(props.engineAddr, props.token)
+  promptTemplates.value = r.items || []
+  if (autoPickDefault) {
+    const def = r.default || promptTemplates.value.find((t) => t.default)?.id || ''
+    if (def) {
+      promptSel.value = def
+      const t = promptTemplates.value.find((x) => x.id === def)
+      if (t) kbRequirement.value = t.text
+    }
+  }
+}
+/** 切换模板 → 把模板文本载入文本框（可继续临时修改）。 */
+function pickPromptTemplate() {
+  const t = promptTemplates.value.find((x) => x.id === promptSel.value)
+  if (t) {
+    kbRequirement.value = t.text
+    promptMsg.value = `已载入「${t.name}」${t.builtin ? '（内置）' : ''}`
+  }
+}
+/** 保存：覆盖当前模板（内置也可改内容）；无选中则新建。 */
+async function savePromptTemplate() {
+  const text = kbRequirement.value.trim()
+  if (!text) { promptMsg.value = '内容为空，未保存'; return }
+  const cur = promptTemplates.value.find((x) => x.id === promptSel.value)
+  const isNew = !cur
+  const id = isNew ? window.prompt('新模板 id（字母数字开头，可含 _ . -）')?.trim() : cur!.id
+  if (!id) return
+  const name = isNew ? (window.prompt('模板名称', id) || id) : cur!.name
+  promptBusy.value = true
+  const r = await mutatePromptTemplate(props.engineAddr, props.token, {
+    action: 'save', id, name, text,
+  })
+  promptBusy.value = false
+  if (!r.ok) { promptMsg.value = r.error || '保存失败（引擎离线？）'; return }
+  promptTemplates.value = r.items || []
+  promptSel.value = id
+  promptMsg.value = isNew ? `已新建模板「${name}」` : `已保存「${name}」`
+}
+/** 另存为新模板（内置模板编辑后想保留原版时用）。 */
+async function savePromptAsNew() {
+  const text = kbRequirement.value.trim()
+  if (!text) { promptMsg.value = '内容为空，未保存'; return }
+  const id = window.prompt('新模板 id（字母数字开头，可含 _ . -）')?.trim()
+  if (!id) return
+  const name = window.prompt('模板名称', id) || id
+  promptBusy.value = true
+  const r = await mutatePromptTemplate(props.engineAddr, props.token,
+    { action: 'save', id, name, text })
+  promptBusy.value = false
+  if (!r.ok) { promptMsg.value = r.error || '保存失败'; return }
+  promptTemplates.value = r.items || []
+  promptSel.value = id
+  promptMsg.value = `已另存为新模板「${name}」`
+}
+async function deletePromptTemplate() {
+  if (!promptSel.value) return
+  if (promptIsBuiltin.value) { promptMsg.value = '内置模板不可删除（可「另存为新模板」后编辑）'; return }
+  if (!window.confirm(`删除模板「${promptSel.value}」？`)) return
+  promptBusy.value = true
+  const r = await mutatePromptTemplate(props.engineAddr, props.token,
+    { action: 'delete', id: promptSel.value })
+  promptBusy.value = false
+  if (!r.ok) { promptMsg.value = r.error || '删除失败'; return }
+  promptTemplates.value = r.items || []
+  promptSel.value = r.default || ''
+  const t = promptTemplates.value.find((x) => x.id === promptSel.value)
+  kbRequirement.value = t ? t.text : ''
+  promptMsg.value = '已删除'
+}
+async function setPromptDefault() {
+  if (!promptSel.value) return
+  promptBusy.value = true
+  const r = await mutatePromptTemplate(props.engineAddr, props.token,
+    { action: 'set_default', id: promptSel.value })
+  promptBusy.value = false
+  if (!r.ok) { promptMsg.value = r.error || '设置默认失败'; return }
+  promptTemplates.value = r.items || []
+  promptMsg.value = `已把「${promptSel.value}」设为默认模板`
+}
 const kbSolveMsg = ref('')
 const kbSolving = ref(false)
 async function solveByKb() {
@@ -73,6 +164,7 @@ async function solveByKb() {
       kb: kbKind.value, chap: kbChap.value, ids, model: kbModel.value,
       pin: kbPin.value, apply: kbApply.value,
       requirement: kbRequirement.value.trim(),
+      requirementTemplate: promptSel.value,   // D108：模板优先于单次输入
     })
     const tick = async () => {
       try {
@@ -330,7 +422,7 @@ async function uploadAll(force: boolean) {
   } catch (e) { busy.value = false; msg.value = `启动失败：${String(e)}` }
 }
 
-onMounted(async () => { await loadConfig(); await loadWorks(); loadKbCatalog() })
+onMounted(async () => { await loadConfig(); await loadWorks(); loadKbCatalog(); void loadPromptTemplates() })
 </script>
 
 <template>
@@ -526,8 +618,26 @@ onMounted(async () => { await loadConfig(); await loadWorks(); loadKbCatalog() }
       </label>
     </div>
     <div style="margin:6px 0">
+      <!-- D108：提示词模板库 -->
+      <div style="display:flex; gap:6px; align-items:center; flex-wrap:wrap; margin-bottom:4px">
+        <label class="hint" style="margin:0">提示词模板：</label>
+        <select v-model="promptSel" @change="pickPromptTemplate" style="min-width:220px">
+          <option value="">（不使用模板 / 单次输入）</option>
+          <option v-for="t in promptTemplates" :key="t.id" :value="t.id">
+            {{ t.default ? '★ ' : '' }}{{ t.name }}{{ t.builtin ? '（内置）' : '' }}
+          </option>
+        </select>
+        <button class="btn small" :disabled="promptBusy || !promptSel || promptIsDefault"
+                title="下次打开面板自动载入该模板" @click="setPromptDefault">设为默认</button>
+        <button class="btn small" :disabled="promptBusy || !kbRequirement.trim()"
+                title="保存到当前模板（覆盖其内容）" @click="savePromptTemplate">💾 保存</button>
+        <button class="btn small" :disabled="promptBusy || !kbRequirement.trim()"
+                title="另存为一个新模板（内置模板改完想留原版时用这个）" @click="savePromptAsNew">＋ 另存为</button>
+        <button class="btn small" :disabled="promptBusy || !promptSel || promptIsBuiltin"
+                title="内置模板不可删除" @click="deletePromptTemplate">🗑 删除</button>
+      </div>
       <label class="hint" style="display:block; margin:0 0 4px">
-        作答要求（可选，会作为「优先满足」附加到每题 prompt）：
+        作答要求（会作为「优先满足」附加到每题 prompt；选中模板会载入其内容，可再临时修改，直接点「AI 作答」即生效）：
       </label>
       <textarea v-model="kbRequirement" rows="3"
         placeholder="例：请画出示意图；用 LaTeX 公式完整推导；输出为 HTML 文档；按「已知/求/解/答」结构写；计算题保留 3 位有效数字……"
@@ -535,6 +645,9 @@ onMounted(async () => { await loadConfig(); await loadWorks(); loadKbCatalog() }
                border:1px solid var(--c-border); border-radius:6px; resize:vertical"></textarea>
       <div class="hint" style="margin:2px 0 0">
         留空 = 使用系统默认作答风格（规范完整解答，公式用 $..$ / $$..$$）。
+        模板保存在 <code>&lt;workspace&gt;/prompts/ai-solve/</code>，<b>CLI/AI 同样可用</b>
+        （<code>assist prompt list</code> / <code>kb ai-solve --requirement-template &lt;id&gt;</code>）。
+        <span v-if="promptMsg" style="color:var(--c-primary)">｜{{ promptMsg }}</span>
       </div>
       <button class="btn" :disabled="kbSolving" @click="solveByKb">▶ {{ kbApply ? 'AI 作答并写回' : 'AI 作答（dry-run）' }}</button>
     </div>

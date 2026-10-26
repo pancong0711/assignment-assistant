@@ -403,11 +403,13 @@ def kb_snapshot(obj, workspace, verbose):
 @click.option("--requirement", "requirement", default="",
               help="教师额外作答要求（可选，如「请画出示意图」「输出为 HTML 文档」）；"
                    "会作为「优先满足」附加到每题 prompt")
+@click.option("--requirement-template", "requirement_template", default="",
+              help="D108：套用提示词模板（id）；优先于 --requirement，见 assist prompt list")
 @click.option("--workspace", "-w", default=None)
 @click.option("--verbose", "-v", is_flag=True)
 @click.pass_obj
 def kb_ai_solve(obj, kb_kind, chap, ids, model, pin, apply, concurrency, requirement,
-                workspace, verbose):
+                requirement_template, workspace, verbose):
     """D89-N5/D100：对题库题目做 AI 作答（**不覆盖**原答案，新增版本并默认置顶；默认 dry-run）。"""
     from .grading import solve as solve_mod
     ws = _setup(verbose or obj.get("verbose"), workspace)
@@ -415,9 +417,12 @@ def kb_ai_solve(obj, kb_kind, chap, ids, model, pin, apply, concurrency, require
     targets = solve_mod.list_targets(ws, kb_kind, chap, id_list)
     if not targets:
         raise click.ClickException("未选中任何题目（检查 --kb-kind/--chap/--ids）")
+    # D108：模板优先；无模板则用单次输入
+    from .files.prompts import requirement_text
+    req_text = requirement_text(ws, requirement_template, requirement)
     res = solve_mod.solve_targets(ws, targets, model=model, apply=apply, pin=pin,
                                   dry_run=True, concurrency=concurrency,
-                                  requirement=requirement)
+                                  requirement=req_text)
     if res.get("dryRun"):
         click.echo(json.dumps({"dryRun": True, "planned": res["planned"],
                                "ids": [p["id"] for p in res.get("plans", [])]},
@@ -515,6 +520,75 @@ def kb_solution_rm(obj, qid, version_id, workspace, verbose):
     click.echo(json.dumps(res, ensure_ascii=False, indent=2))
     if not res.get("ok"):
         raise click.ClickException(res.get("error") or "删除失败")
+
+
+@cli.group("prompt", help="D108：AI 作答要求「提示词模板」库（保存/默认/删除）")
+def prompt_grp():
+    pass
+
+
+@prompt_grp.command("list")
+@click.option("--workspace", "-w", default=None)
+@click.option("--verbose", "-v", is_flag=True)
+@click.pass_obj
+def prompt_list(obj, workspace, verbose):
+    """列出全部提示词模板（JSON）。"""
+    from .files import prompts as P
+    ws = _setup(verbose or obj.get("verbose"), workspace)
+    click.echo(json.dumps({"ok": True, "items": P.list_templates(ws),
+                           "default": (P.default_template(ws) or {}).get("id", "")},
+                          ensure_ascii=False, indent=1))
+
+
+@prompt_grp.command("save")
+@click.option("--id", "pid", required=True, help="模板 id（字母数字开头，可含 _ . -）")
+@click.option("--name", default="", help="显示名称")
+@click.option("--text", default=None, help="模板内容（或 --file）")
+@click.option("--file", "file_", default=None, help="从文件读模板内容")
+@click.option("--default", "make_default", is_flag=True, help="同时设为默认模板")
+@click.option("--workspace", "-w", default=None)
+@click.option("--verbose", "-v", is_flag=True)
+@click.pass_obj
+def prompt_save(obj, pid, name, text, file_, make_default, workspace, verbose):
+    """新建/更新提示词模板。"""
+    from .files import prompts as P
+    ws = _setup(verbose or obj.get("verbose"), workspace)
+    body = text if text is not None else (
+        Path(file_).expanduser().read_text(encoding="utf-8") if file_ else "")
+    res = P.save_template(ws, pid=pid, name=name, text=body, make_default=make_default)
+    click.echo(json.dumps(res, ensure_ascii=False, indent=1))
+    if not res.get("ok"):
+        raise click.ClickException(res.get("error") or "保存失败")
+
+
+@prompt_grp.command("delete")
+@click.option("--id", "pid", required=True)
+@click.option("--workspace", "-w", default=None)
+@click.option("--verbose", "-v", is_flag=True)
+@click.pass_obj
+def prompt_delete(obj, pid, workspace, verbose):
+    """删除提示词模板（内置模板不可删）。"""
+    from .files import prompts as P
+    ws = _setup(verbose or obj.get("verbose"), workspace)
+    res = P.delete_template(ws, pid)
+    click.echo(json.dumps(res, ensure_ascii=False, indent=1))
+    if not res.get("ok"):
+        raise click.ClickException(res.get("error") or "删除失败")
+
+
+@prompt_grp.command("use")
+@click.option("--id", "pid", required=True)
+@click.option("--workspace", "-w", default=None)
+@click.option("--verbose", "-v", is_flag=True)
+@click.pass_obj
+def prompt_use(obj, pid, workspace, verbose):
+    """把某模板设为默认。"""
+    from .files import prompts as P
+    ws = _setup(verbose or obj.get("verbose"), workspace)
+    res = P.set_default(ws, pid)
+    click.echo(json.dumps(res, ensure_ascii=False, indent=1))
+    if not res.get("ok"):
+        raise click.ClickException(res.get("error") or "设置默认失败")
 
 
 @cli.group(help="作业纸生成（竖版/横版 A4）")

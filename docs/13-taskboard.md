@@ -2059,3 +2059,17 @@ PDF 教师版 2 题→2 页且含置顶答案、页码正确。
 
 验证：engine **571 passed**；app selfcheck 全绿；真实浏览器实测三项均正确。
 
+## D108 · AI 作答要求提示词模板库（2026-10-25）
+
+| # | 内容 | 状态 |
+|---|---|---|
+| T1 | `<ws>/prompts/ai-solve/*.json` CRUD + 默认互斥 + 5 条内置 + 校验 | ✅ |
+| T2 | `assist prompt list/save/delete/use`；`kb ai-solve --requirement-template` | ✅ |
+| T3 | serve `GET/POST /prompts/ai-solve` | ✅ |
+| T4 | PWA 下拉/设为默认/保存/另存为/删除 | ✅ |
+
+**用户拍板**：存 workspace（CLI/AI 可复用）；「勾选」= 设为默认（单选，不叠加）；
+内置 5 条且不可删可复制；临时修改直接生效不强制保存；单模板 ≤2000 字。
+
+验证：engine **586 passed**；app selfcheck 全绿；端到端实测默认互斥/内置保护生效。
+

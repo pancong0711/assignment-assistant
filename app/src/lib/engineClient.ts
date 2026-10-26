@@ -1526,7 +1526,9 @@ export async function startKbAiSolve(
   engineAddr: string, token: string | undefined,
   payload: { kb?: string; chap?: string; ids?: string[]; model?: string; pin?: boolean; apply?: boolean
     /** D104：教师额外作答要求（如「请画出示意图」「输出为 HTML」） */
-    requirement?: string },
+    requirement?: string
+    /** D108：提示词模板 id（优先于 requirement） */
+    requirementTemplate?: string },
 ): Promise<string> {
   const base = normalizeEngineAddr(engineAddr)
   const res = await fetch(engineUrlWithToken(base, '/kb/ai-solve', token), {
@@ -1541,6 +1543,43 @@ export async function startKbAiSolve(
   const o = (await res.json()) as { ok?: boolean; job_id?: string; error?: string }
   if (!o?.ok || !o.job_id) throw new Error(o?.error || '未返回 job_id')
   return o.job_id
+}
+
+/* ---------------- D108：AI 作答要求提示词模板 ---------------- */
+
+export interface PromptTemplate {
+  id: string; name: string; text: string
+  default?: boolean; builtin?: boolean; updatedAt?: string
+}
+
+/** GET /prompts/ai-solve：列出模板库 + 默认模板 id。 */
+export async function fetchPromptTemplates(
+  engineAddr: string, token?: string,
+): Promise<{ ok?: boolean; items?: PromptTemplate[]; default?: string }> {
+  const base = normalizeEngineAddr(engineAddr)
+  try {
+    return (await getJson2(engineUrlWithToken(base, '/prompts/ai-solve', token))) as
+      { ok?: boolean; items?: PromptTemplate[]; default?: string }
+  } catch {
+    return { ok: false, items: [] }
+  }
+}
+
+/** POST /prompts/ai-solve：保存/删除/设为默认。 */
+export async function mutatePromptTemplate(
+  engineAddr: string, token: string | undefined,
+  payload: { action?: 'save' | 'delete' | 'set_default'; id: string
+    name?: string; text?: string; default?: boolean },
+): Promise<{ ok?: boolean; error?: string; items?: PromptTemplate[]; default?: string }> {
+  const base = normalizeEngineAddr(engineAddr)
+  const res = await fetch(engineUrlWithToken(base, '/prompts/ai-solve', token), {
+    method: 'POST', headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(payload),
+  })
+  const o = (await res.json().catch(() => ({}))) as
+    { ok?: boolean; error?: string; items?: PromptTemplate[]; default?: string }
+  if (!res.ok && !o?.error) throw new Error(`HTTP ${res.status}`)
+  return o
 }
 
 /* ---------------- D90：LLM Playground ---------------- */
