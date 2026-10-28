@@ -21,9 +21,11 @@ const props = defineProps<{ engineAddr: string; token?: string }>()
 const taskpadStore = useTaskpadStore()
 const kbStore = useKbStore()
 import { usePackStore } from '../stores/packs'
+import { useRosterStore } from '../stores/roster'
 import PlaygroundPanel from './PlaygroundPanel.vue'
 import StudentReviewModal from './StudentReviewModal.vue'
 const packStore = usePackStore()
+const rosterStore = useRosterStore()
 
 const msg = ref('')
 /* D106：转录图片发送模式 + SVG 重绘（默认关） */
@@ -283,11 +285,69 @@ const workKey = ref(''); const padId = ref(''); const packId = ref(''); const mo
 const tagsSel = ref<string[]>([]); const limit = ref(0)
 const reviewOpen = ref(false); const reviewIndex = ref(0)
 function openReview(i: number) { reviewIndex.value = i; reviewOpen.value = true }
-/** D92-R4：当前作业学生 tag 集合（去重，按出现顺序）。 */
+/** D116：tags 下拉的可选项 = 本地 roster 里学生已打的 tag ∪ 当前作业包内各作业纸的 target_tag。
+ *
+ *  旧实现从 `students`（学习通批阅列表）里找 `tag`，但学习通**不提供**分层 tag
+ *  （`xxt/preview.py`、`xxt/review.py` 里根本没有 tag 的概念）→ 下拉恒为空。
+ *  分层是本机维护的信息：学生在「班级与标签」打 tag，作业纸用 `target_tag` 绑定分层。
+ */
+const rosterTags = computed<string[]>(() => {
+  const dir = curWorkDir.value
+  const out: string[] = []
+  const push = (t: string) => { const v = String(t || '').trim(); if (v && !out.includes(v)) out.push(v) }
+  if (!dir) {
+    // 未建立 classId→classDir 映射时，退回"所有班级"的 tag（只用于展示可选值）
+    for (const cid of rosterStore.classOrder || []) {
+      for (const stu of rosterStore.classes[cid]?.students || []) push(stu.tag)
+    }
+    return out
+  }
+  // classDir 形如 "classes/classA"；roster 班级的 id 是内部 id、name 是显示名。
+  // 依次尝试：整体相等 → 目录最后一段与 name/id 相等 → 名称互相包含。
+  const tail = dir.split('/').filter(Boolean).pop() || dir
+  const list = rosterStore.classList || []
+  const cls = list.find((c) => c.id === dir || c.name === dir)
+    || list.find((c) => c.id === tail || c.name === tail)
+    || list.find((c) => dir.includes(c.name) || c.name.includes(tail))
+  for (const stu of (cls ? rosterStore.classes[cls.id]?.students : []) || []) push(stu.tag)
+  return out
+})
+
+/** 当前作业包（或单张作业纸）绑定的 target_tag。 */
+const padTags = computed<string[]>(() => {
+  const out: string[] = []
+  const push = (t: string) => { const v = String(t || '').trim(); if (v && !out.includes(v)) out.push(v) }
+  const list = packId.value ? packPads.value : pads.value.filter((p) => p.id === padId.value)
+  for (const p of list) push((p as { tag?: string }).tag || '')
+  return out
+})
+
 const tagOptions = computed<string[]>(() => {
-  const seen: string[] = []
-  for (const s of students.value) { const t = (s.tag || '').trim(); if (t && !seen.includes(t)) seen.push(t) }
-  return seen
+  const out: string[] = []
+  for (const t of rosterTags.value) if (!out.includes(t)) out.push(t)
+  for (const t of padTags.value) if (!out.includes(t)) out.push(t)
+  return out
+})
+
+/** D116-C：tags 为空时的可操作提示（而不是静默空着）。 */
+const tagHint = computed<string>(() => {
+  if (tagOptions.value.length) return ''
+  if (!rosterStudentsTagged.value) {
+    return '未找到任何分层 tag：请先到「班级与标签」给学生打 tag'
+      + (curWorkDir.value ? `（当前班级目录：${curWorkDir.value}）` : '（或先在设置里关联学习通班级 → 本地班级目录）')
+      + '；不选 tag = 批阅全部学生，但未打 tag 的学生不会关联到题目。'
+  }
+  return ''
+})
+
+/** roster 里当前班级是否至少有一个学生打了 tag。 */
+const rosterStudentsTagged = computed<boolean>(() => rosterTags.value.length > 0)
+
+/** 学习通作业 → 本地班级目录（classMap / 手动关联）。 */
+const curWorkDir = computed<string>(() => {
+  const w = curWork.value
+  if (!w) return ''
+  return classMap.value[`${w.courseId}:${w.classId}`] || classDir.value[`${w.courseId}:${w.classId}`] || ''
 })
 
 /* ④ 逐生审核 */
@@ -350,8 +410,8 @@ async function loadStudents() {
       name: String(s.name || ''), key: String(s.workAnswerId || s.name || ''),
       tag: String(s.tag || ''),
     }))
-    // 默认全选当前作业的 tag 集合（新作业加载时重置）
-    tagsSel.value = [...tagOptions.value]
+    // D116：tag 选项来自本地 roster + 作业纸 target_tag，可能晚于本函数就绪；
+    // 由下面的 watch(tagOptions) 负责"首次就绪时默认全选"。
   } catch (e) { msg.value = `读取学生/草稿失败：${String(e)}` }
 }
 function classDirFor(w: { courseId: string; classId: string }): string {
@@ -492,6 +552,18 @@ async function uploadAll(force: boolean) {
   } catch (e) { busy.value = false; msg.value = `启动失败：${String(e)}` }
 }
 
+/** D116：tagOptions 就绪后**默认全选**（用户手动清空过则尊重其选择）。
+ *  注意必须放在所有相关 computed（curWork/packPads/tagOptions）**定义之后**：
+ *  `immediate: true` 会立刻求值，放前面会触发 TDZ（Cannot access before initialization）。 */
+let tagAutoSelectDone = false
+watch(tagOptions, (opts) => {
+  if (tagAutoSelectDone || !opts.length) return
+  tagAutoSelectDone = true
+  if (!tagsSel.value.length) tagsSel.value = [...opts]
+}, { immediate: true })
+/** 切换作业/作业包时允许重新自动全选一次。 */
+watch([workKey, packId, padId], () => { tagAutoSelectDone = false }, { flush: 'post' })
+
 onMounted(async () => { await loadConfig(); await loadWorks(); loadKbCatalog(); void loadPromptTemplates() })
 </script>
 
@@ -581,14 +653,25 @@ onMounted(async () => { await loadConfig(); await loadWorks(); loadKbCatalog(); 
           <option value="brute">brute-force（先自己作答再比对）</option>
         </select>
       </label>
-      <label class="field" title="按当前作业学生 tag 集合多选；默认全选">
+      <label class="field" title="分层 tag 多选：来自「班级与标签」里学生打的 tag + 当前作业纸绑定的 target_tag。不选 = 批阅全部学生">
         tags
         <select v-model="tagsSel" multiple style="min-width:150px; min-height:56px">
           <option v-for="t in tagOptions" :key="t" :value="t">{{ t }}</option>
         </select>
         <button class="btn small" type="button" @click="tagsSel = [...tagOptions]">全选</button>
+        <button class="btn small" type="button" :disabled="!tagsSel.length" @click="tagsSel = []">清空</button>
       </label>
       <label class="field">限前 <input v-model.number="limit" type="number" min="0" style="width:70px" /> 名</label>
+      <!-- D116-C：tags 为空时给出可操作提示（不再静默空着） -->
+      <p class="hint" v-if="tagHint" style="margin:4px 0 0; color:#7a5c00">
+        ⚠ {{ tagHint }}
+      </p>
+      <p class="hint" v-else-if="!tagsSel.length" style="margin:4px 0 0">
+        未选 tag = <b>批阅全部学生</b>；但只有打了 tag 的学生才能关联到对应作业纸的题目。
+      </p>
+      <p class="hint" v-else style="margin:4px 0 0">
+        将只批阅 tag ∈ <code>{{ tagsSel.join('、') }}</code> 的学生。
+      </p>
     <!-- D106：转录设置（图片压缩 / SVG 重绘） -->
     <div class="card" style="margin:8px 0; padding:8px 10px; border-left:3px solid var(--c-border)">
       <div style="font-weight:600; margin-bottom:4px; font-size:13px">转录设置</div>
