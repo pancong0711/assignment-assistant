@@ -10,6 +10,7 @@ import { autoLayout, solveGridForSolution, type LayoutResult } from './autoLayou
 import { renderMathIn } from './katexRender'
 import { resolveGrid, type Taskpad } from './taskpad'
 import type { SheetHtmlItem } from './sheetHtml'
+import { renderRich } from './richdoc'
 
 /** 格内可用尺寸（px）：A4 纵向 296mm / 横向 209mm，扣除页边距与题框内边距后的近似值。 */
 const MM_PER_PX = 25.4 / 96
@@ -40,9 +41,21 @@ function createProbe(cellW: number): HTMLDivElement {
   el.setAttribute('data-d103-probe', '1')
   el.style.cssText = [
     'position:absolute', 'left:-10000px', 'top:0', `width:${cellW}px`,
-    'font-size:10pt', 'line-height:1.5', 'white-space:pre-wrap', 'word-break:break-word',
+    'font-size:10pt', 'line-height:1.8', 'word-break:break-word',
     'visibility:hidden', 'pointer-events:none',
   ].join(';')
+  // D113：与真实 .q-solution/.q-content 的富内容限宽一致，否则 <svg>/表格/图片
+  // 量出来的高度与实拍不符（探针会把图当文字排）。
+  const style = document.createElement('style')
+  style.setAttribute('data-d113-probe-style', '1')
+  style.textContent = `
+    [data-d103-probe] img, [data-d103-probe] svg { max-width:100%; height:auto; }
+    [data-d103-probe] table { border-collapse:collapse; max-width:100%; }
+    [data-d103-probe] th, [data-d103-probe] td { border:1px solid #ccc; padding:1px 4px; }
+    [data-d103-probe] p { margin: 0 0 .6em; }
+    [data-d103-probe] .katex-display { margin: .4em 0; }
+  `
+  document.head.appendChild(style)
   document.body.appendChild(el)
   return el
 }
@@ -55,8 +68,22 @@ async function makeMeasure(cellW: number): Promise<{ measure: (t: string, k: 'co
     const key = `${kind}::${text}`
     const hit = cache.get(key)
     if (hit !== undefined) return hit
-    probe.style.fontSize = kind === 'content' ? '11.5pt' : '10pt'
-    probe.textContent = text
+    // 与真实样式逐项对齐：.q-content{font-size:11.5pt;line-height:1.8}
+    //                     .q-solution{font-size:10pt;padding-top:1.5mm}
+    if (kind === 'content') {
+      probe.style.fontSize = '11.5pt'
+      probe.style.lineHeight = '1.8'
+      probe.style.paddingTop = '0'
+    } else {
+      probe.style.fontSize = '10pt'
+      probe.style.lineHeight = '1.5'
+      probe.style.paddingTop = '1.5mm'
+    }
+    // D113 关键修复：必须先把 Markdown+HTML 渲染成 HTML 再注入。
+    // 旧实现 `probe.textContent = text` 把 `<svg>`/`<table>` 当纯文本 → 探针内
+    // svg 数恒为 0，图完全不占高度；实测同一答案少算 474px（2922 vs 3396），
+    // 排版据此把内容塞进放不下的格子 → 图被挤出可视区（用户报"空了一片"）。
+    probe.innerHTML = renderRich(text)
     // 公式渲染（同步；renderMathIn 是异步的，这里直接调 auto-render 以获得同步高度）
     const fn = (window as unknown as { renderMathInElement?: (e: Element, o: unknown) => void }).renderMathInElement
     if (fn) {
@@ -71,11 +98,17 @@ async function makeMeasure(cellW: number): Promise<{ measure: (t: string, k: 'co
       } catch { /* 降级：按纯文本高度 */ }
     }
     const h = probe.getBoundingClientRect().height
-    probe.textContent = ''
+    probe.innerHTML = ''
     cache.set(key, h)
     return h
   }
-  return { measure, dispose: () => probe.remove() }
+  return {
+    measure,
+    dispose: () => {
+      probe.remove()
+      document.querySelectorAll('style[data-d113-probe-style]').forEach((n) => n.remove())
+    },
+  }
 }
 
 export interface ReflowResult { layout: LayoutResult; downgraded: boolean }

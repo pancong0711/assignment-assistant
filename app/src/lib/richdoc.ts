@@ -87,24 +87,31 @@ function sanitizeWithoutDom(html: string): string {
 /** 受保护的公式片段（避免 markdown-it 把 \( \[ 当转义吃掉，或把 _ * 当强调）。 */
 const MATH_PLACEHOLDER = 'D105MATHPLACEHOLDER'
 
-/** 把公式片段抽出占位，避免被 Markdown 规则改写；渲染后再还原。 */
+/** 把公式片段抽出占位，避免被 Markdown 规则改写；渲染后再还原。
+ *
+ *  D113：行间公式（$$..$$ / \[..\]）与行内公式（\(..\) / $..$）**分开处理**：
+ *  - 行间公式占位前后**强制补空行** → 独立成 Markdown 段落；
+ *    否则 `breaks:true` 会把它和正文挤进同一个 <p> 并插入 <br>，
+ *    定界符被拆到多个文本节点 → KaTeX auto-render 匹配不到 → 整块显示成源码；
+ *  - 行内公式原位替换，**保持行内语义**。
+ *  与引擎 `richdoc._protect_math` 同口径（parity 自检护航）。
+ */
 function protectMath(src: string): { text: string; math: string[] } {
   const math: string[] = []
-  // 顺序要求：先长后短（$$ 先于 $、\[ 先于 \(）；
-  // 注意：markdown-it 会把 \[ 当转义序列 → 必须先摘出来
-  const patterns = [
-    /\$\$[\s\S]*?\$\$/g,
-    /\\\[[\s\S]*?\\\]/g,
-    /\\\([\s\S]*?\\\)/g,
-    /\$(?:\\.|[^$\\])+\$/g,
-  ]
+  const push = (m: string): string => {
+    const idx = math.length
+    math.push(m)
+    return `${MATH_PLACEHOLDER}${idx}END`
+  }
+  // 顺序要求：先长后短（$$ 先于 $、\[ 先于 \(）
+  const displayPatterns = [/\$\$[\s\S]*?\$\$/g, /\\\[[\s\S]*?\\\]/g]
+  const inlinePatterns = [/\\\([\s\S]*?\\\)/g, /\$(?:\\.|[^$\\])+\$/g]
   let out = src
-  for (const re of patterns) {
-    out = out.replace(re, (m) => {
-      const idx = math.length
-      math.push(m)
-      return `${MATH_PLACEHOLDER}${idx}END`
-    })
+  for (const re of displayPatterns) {
+    out = out.replace(re, (m) => `\n\n${push(m)}\n\n`)
+  }
+  for (const re of inlinePatterns) {
+    out = out.replace(re, (m) => push(m))
   }
   return { text: out, math }
 }

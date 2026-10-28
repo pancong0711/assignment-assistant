@@ -101,16 +101,26 @@ def _sanitize(html_text: str) -> str:
 _MATH_PLACEHOLDER = "D105MATHPLACEHOLDER"
 _MATH_END = "END"
 
-_MATH_PATTERNS = [
+# D113：行间公式（$$..$$ / \[..\]）与行内公式（\(..\) / $..$）分开处理。
+# 行间公式必须在 Markdown 层**独立成段**，否则会被 nl2br 与正文挤进同一个 <p>，
+# 插入的 <br> 把定界符拆到多个文本节点 → KaTeX 的 auto-render 匹配不到
+# → 公式整块显示成 LaTeX 源码（用户报"部分公式显示为 latex 语句"）。
+_DISPLAY_MATH_PATTERNS = [
     re.compile(r"\$\$[\s\S]*?\$\$"),
     re.compile(r"\\\[[\s\S]*?\\\]"),
+]
+_INLINE_MATH_PATTERNS = [
     re.compile(r"\\\([\s\S]*?\\\)"),
     re.compile(r"\$(?:\\.|[^$\\])+\$"),
 ]
 
 
 def _protect_math(src: str) -> tuple[str, list[str]]:
-    """把公式片段抽出占位，避免 Markdown 把 \\( \\[ 当转义吃掉（D105 修复）。"""
+    """把公式片段抽出占位，避免 Markdown 把 \\( \\[ 当转义吃掉（D105 修复）。
+
+    D113：行间公式占位**前后强制补空行**，使其成为独立 Markdown 段落；
+    行内公式保持原位（不得破坏"行内仍是行内"的语义）。
+    """
     math: list[str] = []
 
     def _sub(m: "re.Match[str]") -> str:
@@ -118,7 +128,16 @@ def _protect_math(src: str) -> tuple[str, list[str]]:
         return f"{_MATH_PLACEHOLDER}{len(math) - 1}{_MATH_END}"
 
     out = src
-    for pat in _MATH_PATTERNS:
+    # 1) 行间公式：先抽，并强制独立成段
+    def _sub_display(m: "re.Match[str]") -> str:
+        idx = len(math)
+        math.append(m.group(0))
+        return f"\n\n{_MATH_PLACEHOLDER}{idx}{_MATH_END}\n\n"
+
+    for pat in _DISPLAY_MATH_PATTERNS:
+        out = pat.sub(_sub_display, out)
+    # 2) 行内公式：原位替换（不加空行）
+    for pat in _INLINE_MATH_PATTERNS:
         out = pat.sub(_sub, out)
     return out, math
 

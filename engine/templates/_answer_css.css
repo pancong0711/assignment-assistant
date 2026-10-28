@@ -1,0 +1,48 @@
+/* D113 参考答案样式（与 app/src/lib/answerHtml.ts 的 ANSWER_CSS 同构） */
+@page { size: A4 portrait; margin: 16mm 14mm; }
+html, body { margin: 0; padding: 0; }
+body {
+  font-family: "Noto Sans SC", "Microsoft YaHei", "Source Han Sans SC", system-ui, sans-serif;
+  color: #1f2937; font-size: 10.5pt; line-height: 1.75; background: #fff;
+}
+.answer-doc { max-width: 210mm; margin: 0 auto; }
+.answer-doc-head {
+  font-size: 12pt; font-weight: 700; color: #2456c4;
+  border-bottom: 1px solid #c3cad6; padding-bottom: 3mm; margin-bottom: 6mm;
+}
+.answer-section-title {
+  font-size: 11pt; font-weight: 700; color: #2456c4;
+  background: #eef2ff; border-left: 3px solid #2456c4;
+  padding: 2mm 3mm; margin: 0 0 4mm;
+}
+/* 一题一卡片 */
+.answer-card {
+  break-inside: avoid; page-break-inside: avoid;
+  margin: 0 0 6mm;
+}
+/* 一题排完 → 新题另起一页 */
+.answer-card + .answer-card { break-before: page; page-break-before: always; }
+/* D113：超高题（单题 > 一整页）必须允许内部拆分，否则 break-inside:avoid 会把整张卡片
+   推到下一页，导致上一页只剩标题（实测首题 2493px / 页高 1002px → p1 空白）。
+   拆分是"题内跨页"，仍不与其它题交错（新题始终 break-before:page）。 */
+.answer-card { break-inside: auto; page-break-inside: auto; }
+/* 题内块级元素尽量不拆（公式/图/表格保持完整） */
+.answer-sol p, .answer-sol table, .answer-sol pre,
+.answer-sol .katex-display, .answer-sol svg, .answer-sol img {
+  break-inside: avoid; page-break-inside: avoid;
+}
+.answer-no { font-weight: 700; color: #2456c4; font-size: 11pt; margin: 0 0 2mm; }
+.answer-q {
+  color: #374151; font-size: 10pt; background: #f8fafc;
+  border-left: 3px solid #cbd5e1; padding: 2mm 3mm; margin: 0 0 3mm;
+}
+.answer-sol { color: #111827; }
+.answer-sol p { margin: 0 0 .7em; }
+.answer-sol img, .answer-sol svg { max-width: 100%; height: auto; }
+.answer-sol table { border-collapse: collapse; max-width: 100%; margin: .5em 0; }
+.answer-sol th, .answer-sol td { border: 1px solid #c3cad6; padding: 2px 6px; }
+.answer-sol pre { background: #f5f7fa; padding: 2mm 3mm; border-radius: 4px; overflow-x: auto; }
+/* R7：行间公式突出显示（行内公式不受影响） */
+.answer-sol .katex-display { margin: .8em 0; padding: .3em 0; }
+.answer-empty { color: #6b7280; font-style: italic; }
+@media print { .answer-doc { margin: 0; } }

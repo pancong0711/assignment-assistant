@@ -1,0 +1,157 @@
+<svg viewBox="0 0 200 150" xmlns="http://www.w3.org/2000/svg">
+  <circle cx="100" cy="75" r="50" stroke="black" fill="none" stroke-width="1"/>
+  <circle cx="100" cy="75" r="25" stroke="black" fill="none" stroke-width="1"/>
+  <text x="93" y="79" font-size="12" fill="black">I</text>
+</svg>
+
+取球心为原点，径向单位矢量为 \(\hat{\mathbf r}\)，无穷远处电势为零，\(\varepsilon_0\) 为真空介电常数。由球对称性，可用高斯定理求电场；球面对称电荷在其内部产生的场为零，在外部等效为集中于球心的点电荷。
+
+**(1) 三个区域的电场分布**
+
+作半径为 \(r\) 的同心高斯球面，包围电荷量为 \(Q_{\rm in}\)，有
+\[
+\oint \mathbf E\cdot d\mathbf S=\frac{Q_{\rm in}}{\varepsilon_0},
+\qquad
+E_r=\frac{Q_{\rm in}}{4\pi\varepsilon_0 r^2}.
+\]
+
+因此
+$$
+\mathbf E(r)=
+\begin{cases}
+0, & r<R,\\[4pt]
+\dfrac{q}{4\pi\varepsilon_0 r^2}\hat{\mathbf r}, & R<r<2R,\\[8pt]
+\dfrac{q+2q}{4\pi\varepsilon_0 r^2}\hat{\mathbf r}
+=\dfrac{3q}{4\pi\varepsilon_0 r^2}\hat{\mathbf r}, & r>2R.
+\end{cases}
+$$
+若 \(q>0\)，上述非零电场沿径向向外；若 \(q<0\)，则沿径向向内。球面 \(r=R,\;2R\) 处为电荷面分布，电场有跃变。
+
+**(2) 三个区域的电势分布**
+
+由
+\[
+V(r)=\int_r^\infty E_r\,dr
+\]
+分段积分，并利用 \(V(\infty)=0\)。
+
+当 \(r>2R\) 时，
+\[
+V(r)=\int_r^\infty \frac{3q}{4\pi\varepsilon_0 x^2}\,dx
+=\frac{3q}{4\pi\varepsilon_0 r}.
+\]
+
+当 \(R<r<2R\) 时，
+\[
+V(r)=\int_r^{2R}\frac{q}{4\pi\varepsilon_0 x^2}\,dx
++\frac{3q}{4\pi\varepsilon_0(2R)}
+=\frac{q}{4\pi\varepsilon_0}\left(\frac1r+\frac1R\right).
+\]
+
+当 \(r<R\) 时，内部无电场变化，故
+\[
+V(r)=V(R)=\frac{2q}{4\pi\varepsilon_0 R}.
+\]
+
+所以
+$$
+V(r)=
+\begin{cases}
+\dfrac{2q}{4\pi\varepsilon_0 R}, & r<R,\\[8pt]
+\dfrac{q}{4\pi\varepsilon_0}\left(\dfrac1r+\dfrac1R\right), 
+& R<r<2R,\\[10pt]
+\dfrac{3q}{4\pi\varepsilon_0 r}, & r>2R.
+\end{cases}
+$$
+电势在 \(r=R\) 和 \(r=2R\) 处连续。
+
+**(3) 将试探电荷 \(q_0\) 从内球面移到外球面时电场力所做的功**
+
+静电场力做功与路径无关，只与初末电势有关：
+\[
+W_{\rm 电}
+=q_0\big[V(R)-V(2R)\big].
+\]
+由上面电势表达式，
+\[
+V(R)=\frac{q}{4\pi\varepsilon_0}\left(\frac1R+\frac1R\right)
+=\frac{2q}{4\pi\varepsilon_0 R},
+\]
+\[
+V(2R)=\frac{3q}{4\pi\varepsilon_0(2R)}
+=\frac{3q}{8\pi\varepsilon_0 R}.
+\]
+因此
+\[
+W_{\rm 电}
+=q_0\left(
+\frac{2q}{4\pi\varepsilon_0 R}
+-\frac{3q}{8\pi\varepsilon_0 R}
+\right)
+=\frac{q q_0}{8\pi\varepsilon_0 R}.
+\]
+即
+\[
+\boxed{W_{\rm 电}=\frac{q q_0}{8\pi\varepsilon_0 R}}
+\]
+单位为焦耳（\(\mathrm J\)）。若 \(q q_0>0\)，从内球面移到外球面时电场力做正功；若 \(q q_0<0\)，则做负功。
+示意图（同轴圆柱面截面，$\hat{\mathbf r}$ 指向轴外）：
+
+<svg viewBox="0 0 200 150" xmlns="http://www.w3.org/2000/svg">
+  <circle cx="80" cy="75" r="25" stroke="black" fill="none" stroke-width="1.5"/>
+  <circle cx="80" cy="75" r="55" stroke="black" fill="none" stroke-width="1.5"/>
+  <line x1="80" y1="75" x2="135" y2="75" stroke="black"/>
+  <polygon points="135,75 127,71 127,79" stroke="black" fill="none"/>
+  <text x="95" y="70" font-size="10" fill="black" stroke="none">r</text>
+</svg>
+
+取径向单位矢量 $\hat{\mathbf r}$ 指向轴外，面密度按代数值处理。由轴对称性，高斯面取半径 $r$、长 $L$ 的同轴圆柱面。
+
+**(1) 电场强度分布**
+
+当 $r<R_1$：
+$$
+Q_{\rm enc}=0,\qquad \mathbf E=0.
+$$
+
+当 $R_1<r<R_2$：
+$$
+2\pi rL\,E_r=\frac{\sigma_1 2\pi R_1L}{\varepsilon_0}
+\Rightarrow
+\mathbf E=\frac{\sigma_1R_1}{\varepsilon_0 r}\hat{\mathbf r}.
+$$
+
+当 $r>R_2$：
+$$
+2\pi rL\,E_r=\frac{(\sigma_1 2\pi R_1+\sigma_2 2\pi R_2)L}{\varepsilon_0}
+\Rightarrow
+\mathbf E=\frac{\sigma_1R_1+\sigma_2R_2}{\varepsilon_0 r}\hat{\mathbf r}.
+$$
+
+因此
+$$
+\mathbf E(r)=
+\begin{cases}
+0, & r<R_1,\\[4pt]
+\dfrac{\sigma_1R_1}{\varepsilon_0 r}\hat{\mathbf r}, & R_1<r<R_2,\\[8pt]
+\dfrac{\sigma_1R_1+\sigma_2R_2}{\varepsilon_0 r}\hat{\mathbf r}, & r>R_2.
+\end{cases}
+$$
+柱面处电场发生突变。
+
+**(2) 取 $V(R_2)=0$ 时的电势分布**
+
+由
+$$
+V(r)-V(R_2)=-\int_{R_2}^{r}E_r(r')\,dr'
+$$
+得分段结果：
+$$
+V(r)=
+\begin{cases}
+\dfrac{\sigma_1R_1}{\varepsilon_0}\ln\dfrac{R_2}{R_1}, & r\le R_1,\\[10pt]
+\dfrac{\sigma_1R_1}{\varepsilon_0}\ln\dfrac{R_2}{r}, & R_1<r<R_2,\\[10pt]
+-\dfrac{\sigma_1R_1+\sigma_2R_2}{\varepsilon_0}\ln\dfrac{r}{R_2}, & r\ge R_2.
+\end{cases}
+$$
+在 $r=R_2$ 处 $V=0$；$r<R_1$ 内电场为零，故电势为常数。

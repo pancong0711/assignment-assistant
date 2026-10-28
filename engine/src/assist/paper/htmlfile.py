@@ -565,6 +565,60 @@ def sheet_html_from_task(task_path: Path, ws: Path, out_path: Path | None = None
     return out, len(students), n_pages
 
 
+def render_answer_html(task: dict, ws: Path, *, include_content: bool = True,
+                       include_no: bool = True, one_page_per_question: bool = True,
+                       title: str = "", katex_mode: str = "local") -> str:
+    """D113：生成「参考答案」独立文档（竖版单列 · 一题一页起步）。
+
+    与 PWA `app/src/lib/answerHtml.ts` 同构（同一套 CSS/结构/公式语义），
+    CLI `assist sheet answers` 与 PWA「参考答案预览」共用本函数，保证版面一致。
+
+    - `one_page_per_question=True` → 新题另起一页；`False` → 连排；
+    - 题级切分：只在题与题之间分页，绝不切公式/图；
+    - 公式语义：行内公式保持行内、行间公式独立成行（R7）。
+    """
+    from .richdoc import render_rich
+    from ..files.kb_io import read_kb
+    from ..files.solutions import effective_solution
+
+    ws_p = Path(ws).resolve()
+    kb_dir = ws_p / "kb"
+    kb_data = read_kb(kb_dir)
+    numbering = str((task.get("layout") or {}).get("numbering") or "auto")
+    frames = expand_items_html(task, kb_dir, numbering=numbering, ws=ws_p)
+    refs = _resolved_items_ref(kb_data, task)
+    items = []
+    for i, fr in enumerate(frames):
+        kind, cname = (refs[i][0], refs[i][1]) if i < len(refs) else ("", "")
+        qid = str(fr.get("id") or "")
+        fallback = str(fr.get("solution") or "")
+        eff = (effective_solution(ws_p, qid, fallback, kb=kind, chap=cname)
+               if qid else {"text": fallback})
+        items.append({
+            "id": qid,
+            "no": str(fr.get("no") or ""),
+            "content_html": render_rich(str(fr.get("content") or "")),
+            "solution_html": render_rich(str(eff.get("text") or fallback)),
+        })
+    css = ""
+    for d in template_dirs():
+        f = d / "_answer_css.css"
+        if f.exists():
+            css = f.read_text(encoding="utf-8")
+            break
+    tpl = _env().get_template("answer.html.j2")
+    return tpl.render(doc={
+        "title": title or str(task.get("id") or "参考答案"),
+        "answer_css": css,
+        "include_no": include_no,
+        "include_content": include_content,
+        "one_page_per_question": one_page_per_question,
+        "sections": [{"title": "", "questions": items}],
+        "katex_mode": katex_mode,
+        "katex_version": "0.16.4",
+    })
+
+
 def taskpad_json_hint(task: dict) -> str:
     """CLI 提示行（D1 超集：同一任务包可走 PDF/HTML 双通道）。"""
     return json.dumps({"id": task.get("id")}, ensure_ascii=False)

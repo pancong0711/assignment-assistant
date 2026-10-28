@@ -14,6 +14,7 @@ import SheetLayoutView from './SheetLayoutView.vue'
 import SheetContentView from './SheetContentView.vue'
 import SheetPreviewSection from '../components/SheetPreviewSection.vue'
 import SheetOutputSection from '../components/SheetOutputSection.vue'
+import AnswerPreviewSection from '../components/AnswerPreviewSection.vue'
 import { useKbStore } from '../stores/kb'
 import { useTaskpadStore } from '../stores/taskpad'
 import { useSettingsStore } from '../stores/settings'
@@ -138,6 +139,11 @@ onMounted(() => { /* 通知中心占位（各段经 notify 上抛 pageStatus） 
         @update:include-page-text="includePageText = $event"
         @notify="(m) => { pageStatus = String(m) }"
       />
+    </div>
+
+    <!-- D113-R2：参考答案预览（独立功能区，位于作业纸预览区下方） -->
+    <div class="design-block" id="answer-preview-block">
+      <AnswerPreviewSection @notify="(m) => { pageStatus = String(m) }" />
     </div>
 
     <div class="design-block" id="output-block">

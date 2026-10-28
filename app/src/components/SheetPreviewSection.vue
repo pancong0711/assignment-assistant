@@ -29,7 +29,6 @@ import type { LayoutResult } from '../lib/autoLayout'
 
 const props = defineProps<{ includeAnswers: boolean; showSamples: boolean; includeWatermark: boolean; includePageText: boolean }>()
 const emit = defineEmits<{
-  (e: 'update:includeAnswers', v: boolean): void
   (e: 'update:showSamples', v: boolean): void
   (e: 'update:includeWatermark', v: boolean): void
   (e: 'update:includePageText', v: boolean): void
@@ -42,12 +41,11 @@ const settings = useSettingsStore()
 const packStore = usePackStore()
 const status = ref('')
 
-const includeAnswers = computed(() => props.includeAnswers)
+/** D113-R1：作业纸预览 = 给学生设计用，**固定不含参考答案**。
+ *  参考答案改由「参考答案预览」区（AnswerPreviewSection）单独提供。
+ *  保留 props.includeAnswers 仅为兼容父级传参，预览内部一律按 false 处理。 */
+const includeAnswers = computed(() => false)
 const showSamples = computed(() => props.showSamples)
-const includeAnswersModel = computed({
-  get: () => props.includeAnswers,
-  set: (v: boolean) => emit('update:includeAnswers', v),
-})
 const showSamplesModel = computed({
   get: () => props.showSamples,
   set: (v: boolean) => emit('update:showSamples', v),
@@ -283,12 +281,11 @@ function removeFromLibrary(id: string) {
 </script>
 
 <template>
-  <div class="card" id="preview" style="flex:1 1 520px; min-width:440px">
+  <!-- D113-R4：改为横向整行单列（原 flex:1 1 520px 会与同级卡片并排，
+     出现"俄罗斯方块"式的多列观感）；与其它选项卡的整行栏一致。 -->
+  <div class="card" id="preview" style="width:100%; min-width:0">
     <h2>③ 模板预览（同一 HTML 打印模板 · iframe 实时 · D43-3）</h2>
     <p>
-      <label class="field" title="D43-6：勾选后预览/打印/下载包含『参考答案：…』行">
-        <input type="checkbox" v-model="includeAnswersModel" /> 显示参考答案
-      </label>
       <label class="field" title="D43-6：勾选后按合成 学生A/B 预览 2 份；不勾 = 页眉学籍三空位、1 份空白模板">
         <input type="checkbox" v-model="showSamplesModel" /> 显示学生示例
       </label>

@@ -689,6 +689,55 @@ def sheet_demo(obj, out, orientation, no_watermark, workspace, verbose):
         click.echo(str(f))
 
 
+@sheet.command("answers")
+@click.option("--task", "task_path", required=True, help="任务包（作业纸）JSON 路径")
+@click.option("--out", "-o", default=None, help="输出 html 路径（缺省 <workspace>/answers-<taskpad id>.html）")
+@click.option("--title", default="", help="文档标题（缺省取任务包 id）")
+@click.option("--no-content", is_flag=True, help="不显示题干（只出题号 + 答案，更紧凑）")
+@click.option("--no-no", is_flag=True, help="不显示题号")
+@click.option("--no-page-break", is_flag=True,
+              help="连排（默认每题另起一页：一题排完 → 新题另起一页）")
+@click.option("--katex", "katex_mode", default="local", type=click.Choice(["cdn", "local"], case_sensitive=False),
+              help="公式资源引用：local（缺省，../katex/ 相对引用）或 cdn")
+@click.option("--workspace", "-w", default=None)
+@click.option("--verbose", "-v", is_flag=True)
+@click.pass_obj
+def sheet_answers(obj, task_path, out, title, no_content, no_no, no_page_break,
+                  katex_mode, workspace, verbose):
+    """D113：生成「参考答案」独立文档（竖版单列 · 一题一页起步）。
+
+    与 PWA「参考答案预览」同构（同一套 CSS/结构/公式语义）：
+    - 只有竖版单列；一题答案排完 → 新题另起一页（`--no-page-break` 可改为连排）；
+    - 单题超过一整页时自然跨页，但不与其它题答案交错；
+    - 题级切分：只在题与题之间分页，绝不切公式/图；
+    - 行内公式保持行内，行间公式独立成行并突出显示。
+
+    示例：assist sheet answers --task my.taskpad.json -o answers.html
+    """
+    from .paper.htmlfile import render_answer_html
+    from .paper.task import load_task
+    ws = _setup(verbose or obj.get("verbose"), Path(workspace) if workspace else None)
+    task_file = Path(task_path).expanduser().resolve()
+    if not task_file.is_file():
+        raise click.ClickException(f"任务包不存在：{task_file}")
+    task = load_task(task_file)
+    html = render_answer_html(
+        task, ws,
+        include_content=not no_content,
+        include_no=not no_no,
+        one_page_per_question=not no_page_break,
+        title=title,
+        katex_mode=str(katex_mode).lower(),
+    )
+    out_path = (Path(out).expanduser().resolve() if out
+                else ws / f"answers-{str(task.get('id') or 'task')}.html")
+    out_path.parent.mkdir(parents=True, exist_ok=True)
+    out_path.write_text(html, encoding="utf-8")
+    n = html.count('class="answer-card"')
+    click.echo(f"参考答案 → {out_path}（{n} 题；"
+               + ("一题一页" if not no_page_break else "连排") + "）")
+
+
 @sheet.command("html")
 @click.option("--task", "task_path", required=True, help="任务包 JSON 路径")
 @click.option("--roster", "roster_path", default=None,

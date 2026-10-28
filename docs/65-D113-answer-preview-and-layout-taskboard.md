@@ -1,7 +1,7 @@
 # D113 任务需求单：参考答案独立预览区 + 作业纸预览改单列 + 两个渲染缺陷修复
 
 > 日期：2026-10-28
-> 状态：**已确认并开始执行（2026-10-28 用户第三次拍板：按推荐全量执行）**
+> 状态：**已执行完成（2026-10-28）**；验证 see §9
 > 关联：`docs/64-D112`（预览渲染）、`docs/56-D103`（网格与答案续写）、`docs/62-D110`（答案作用域）、`docs/63-D111`（题号全局唯一）
 > 用户原话要点：作业纸预览不再显示参考答案；参考答案单独做预览（同在「作业纸设计」选项卡、位于作业纸预览区下方）；
 > 两者可分别打印；参考答案排版「竖版单列」（后经 Q9 确认不做横板双列）；作业纸预览区改为横向整行单列；
@@ -267,3 +267,47 @@ R1 让预览/打印不含答案，但**之前可能有人用"含答案"打印教
 `\begin{cases}` 本身不是问题；此前 D112-R6 修的"行间公式与正文同 `<p>`"是另一种情形（单换行导致）。
 
 > 因此本需求的 **R5 是解决该类"预览异常"的关键项**，且修好后需用**这段真实源码**做回归基准。
+
+---
+
+## 9. 实施记录（已完成）
+
+### 9.1 落地内容
+
+| 条目 | 实现 |
+|---|---|
+| R1 | `SheetPreviewSection` 移除「显示参考答案」勾选框；`includeAnswers` 内部固定 `false`（作业纸预览/打印/下载均不含答案） |
+| R2 | 新增 `app/src/components/AnswerPreviewSection.vue`：独立 iframe(560px) + 弹窗细看 + 独立打印/下载；两个入口（当前作业纸 / 当前作业包全部） |
+| R3 | 新增 `app/src/lib/answerHtml.ts` + `engine/templates/answer.html.j2` + `_answer_css.css`：竖版单列、一题一卡、`break-before: page` 新题另起一页 |
+| R4 | `SheetPreviewSection` 根节点 `flex:1 1 520px` → `width:100%`（横向整行单列） |
+| R5 | `measureLayout.ts`：探针 `textContent` → **`renderRich` + `innerHTML`**，并逐项对齐 `.q-content/.q-solution` 的字号/行高/svg 限宽 |
+| R6 | `richdoc._protect_math`（引擎+PWA）：**行间公式占位前后强制补空行**独立成段；行内公式原位替换 |
+| R7 | 公式语义自检：行内/行间两类定界符均保留，行间由 KaTeX 生成 `.katex-display` |
+| R8 | 新增 CLI `assist sheet answers --task ... [-o out] [--no-content] [--no-no] [--no-page-break] [--katex local|cdn]`，复用同一模板 |
+| D1/D2/D4/D5 | 全包预览按作业纸分节（节标题含 id + tag）；两个独立打印按钮；范围限当前作业包 |
+
+### 9.2 执行中**发现并修复**的问题
+
+| # | 问题 | 说明 |
+|---|---|---|
+| N1 | 超高题导致**首页只剩标题**（空白页） | `break-inside: avoid` 遇上 2493px 的题（页高 1002px）会把整卡推到下一页。改为卡片 `break-inside: auto`（允许题内跨页），**题间隔离靠 `break-before: page`**，并对公式/图/表格/段落加 `break-inside: avoid` 保完整。实测：6 页（有空白页）→ 5 页（无空白页） |
+| N2 | 探针仅改 `innerHTML` 仍差 56px | 探针行高 1.5 vs `.q-content` 1.8、缺少 `.q-solution` padding-top。改为按 kind 逐项对齐 |
+| N3 | Jinja 模板 `sec.items` 与字典方法冲突 | 改键名 `items` → `questions` |
+| N4 | `_resolved_items_ref` 返回三元组 | 参考答案渲染误按二元解包 → 修正 |
+
+### 9.3 验证
+
+| 项 | 结果 |
+|---|---|
+| engine pytest | **626 passed**（新增 `test_d113_answer_preview.py` 9 例，含用户真实长答案 fixture） |
+| app `vue-tsc -b` / `npm run build` | 0 error |
+| app `npm run selfcheck` | 全绿（新增 `selfcheck-d113-answer-preview.mjs`） |
+| CLI 端到端（用户真实答案） | 2 卡片 / 47 公式（18 行间 + 29 行内）/ 0 错误 / 2 个 SVG 227px；PDF **5 页无空白页**，首题 p1 起、第 2 题 p5 另起页 |
+| PWA 真实界面（Playwright） | 参考答案区 2 卡片 / 46 公式 / 0 错误 / 2 SVG（300px）/ iframe 560px；作业纸预览**已无「显示参考答案」勾选框**、宽度 1240px 占满整行 |
+| 脱敏检查 | 通过 |
+
+### 9.4 与"横板双列"的关系（Q9 说明）
+
+用户问"LaTeX 分栏不是很成熟吗" —— 是，但那是**排版引擎原生能力**；HTML 的 `column-count`
+只在固定高度容器内分栏，实测 12 题只排出 10 题、其余被裁，无法与浏览器分页衔接。
+故按 Q9 只做竖版单列（本记录 R3），不引入横板双列。

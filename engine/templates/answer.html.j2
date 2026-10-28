@@ -1,0 +1,90 @@
+{#
+  D113：参考答案独立打印模板（竖版单列 · 一题一页起步）
+  ------------------------------------------------------------------
+  与 PWA `app/src/lib/answerHtml.ts` **同构**（parity 自检护航）：
+  - 只有竖版单列（Q9：不做横板双列）；
+  - 一题一卡；`.answer-card + .answer-card { break-before: page }` → 新题另起一页（Q7）；
+  - 单题超高时 `break-inside: auto` 自然跨页，但不与其它题交错；
+  - 题级切分：只在题与题之间分页，绝不切公式/图。
+  公式渲染：`\(..\)`/`$..$` 行内保持行内；`\[..\]`/`$$..$$` 独立成行并突出（R7）。
+#}
+<!doctype html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>{{ doc.title }}</title>
+{% if doc.katex_mode == 'local' -%}
+<link rel="stylesheet" href="../katex/katex.min.css">
+<script defer src="../katex/katex.min.js"></script>
+<script defer src="../katex/contrib/auto-render.min.js"></script>
+{%- else -%}
+<link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/katex@{{ doc.katex_version }}/dist/katex.min.css">
+<script defer src="https://cdn.jsdelivr.net/npm/katex@{{ doc.katex_version }}/dist/katex.min.js"></script>
+<script defer src="https://cdn.jsdelivr.net/npm/katex@{{ doc.katex_version }}/dist/contrib/auto-render.min.js"></script>
+{%- endif %}
+<style>
+{{ doc.answer_css|safe }}
+{%- if not doc.one_page_per_question %}
+.answer-card + .answer-card { break-before: auto; page-break-before: auto; }
+{%- endif %}
+</style>
+</head>
+<body>
+<div class="answer-doc">
+  <div class="answer-doc-head">{{ doc.title }}</div>
+{% for sec in doc.sections %}
+  {%- if sec.title %}
+  <p class="answer-section-title">{{ sec.title }}</p>
+  {%- endif %}
+  {%- for it in sec.questions %}
+  <section class="answer-card" data-qid="{{ it.id }}">
+    {%- if doc.include_no and it.no %}
+    <p class="answer-no">{{ it.no }}</p>
+    {%- endif %}
+    {%- if doc.include_content and it.content_html %}
+    <div class="answer-q">{{ it.content_html|safe }}</div>
+    {%- endif %}
+    <div class="answer-sol">{{ it.solution_html|safe if it.solution_html else '<span class="answer-empty">（本题暂无参考答案）</span>'|safe }}</div>
+  </section>
+  {%- endfor %}
+{% endfor %}
+{%- if not doc.sections %}
+  <p class="answer-empty">（尚未选题：参考答案为空）</p>
+{%- endif %}
+</div>
+<script>
+/* KaTeX 渲染（幂等；与作业纸模板/answerHtml.ts 同一定界符顺序）。
+   R7：行内公式保持行内，行间公式由 KaTeX 自动生成 .katex-display（块级、突出）。 */
+(function () {
+  var opts = {
+    delimiters: [
+      { left: '$$', right: '$$', display: true },
+      { left: '\\[', right: '\\]', display: true },
+      { left: '$', right: '$', display: false },
+      { left: '\\(', right: '\\)', display: false }
+    ],
+    throwOnError: false
+  };
+  function render() {
+    document.querySelectorAll('.answer-sol, .answer-q').forEach(function (el) {
+      if (el.getAttribute('data-katex-done') === '1') return;
+      try {
+        window.renderMathInElement(el, opts);
+        el.setAttribute('data-katex-done', '1');
+      } catch (e) { /* 降级：保留源码 */ }
+    });
+  }
+  var tries = 0;
+  function waitReady() {
+    if (typeof window.renderMathInElement === 'function') { render(); return; }
+    if (++tries > 50) return;
+    setTimeout(waitReady, 100);
+  }
+  if (document.readyState === 'loading') document.addEventListener('DOMContentLoaded', waitReady);
+  else waitReady();
+  window.addEventListener('load', render);
+})();
+</script>
+</body>
+</html>
