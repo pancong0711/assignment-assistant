@@ -141,8 +141,10 @@ def test_teacher_pdf_one_question_per_page_with_solution(tmp_path):
     from assist.paper.task import sheets_from_task
 
     ws = tmp_path / "ws"; _mk_ws(ws)
-    sol.add_version(ws, "q1", "AI 置顶答案正文", source="ai")
-    sol.pin_version(ws, "q1", "v1")
+    # D111：题库 id 全局唯一 → chap04-q1
+    sol.add_version(ws, "chap04-q1", "AI 置顶答案正文", source="ai",
+                    kb="problems", chap="chap04")
+    sol.pin_version(ws, "chap04-q1", "v1", kb="problems", chap="chap04")
     task = json.loads(_task(ws).read_text(encoding="utf-8"))
     task["layout"] = {"orientation": "portrait", "per_page": 2}
     task.pop("layout_result", None)
@@ -168,7 +170,9 @@ def test_teacher_pdf_long_solution_continues_pages(tmp_path):
     ws = tmp_path / "ws"; _mk_ws(ws)
     long_sol = "很长的解答。" * 2000   # 足够长以触发续页
     from assist.files import solutions as sol
-    sol.add_version(ws, "q1", long_sol, source="ai"); sol.pin_version(ws, "q1", "v1")
+    sol.add_version(ws, "chap04-q1", long_sol, source="ai",
+                    kb="problems", chap="chap04")
+    sol.pin_version(ws, "chap04-q1", "v1", kb="problems", chap="chap04")
     task = json.loads(_task(ws).read_text(encoding="utf-8"))
     task["layout"] = {"orientation": "portrait", "per_page": 2}
     task["items"][0]["ids"] = ["q1"]

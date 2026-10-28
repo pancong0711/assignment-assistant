@@ -23,9 +23,10 @@ def _mk_kb(ws: Path):
 def test_list_targets_all_and_filtered(tmp_path):
     ws = tmp_path / "ws"; _mk_kb(ws)
     all_t = solve.list_targets(ws, "problems")
-    assert [t["id"] for t in all_t] == ["c1", "c2"]
+    # D111：题库 id 全局唯一（章节前缀）；ids 传裸题号也能命中
+    assert [t["id"] for t in all_t] == ["chap04-c1", "chap04-c2"]
     one = solve.list_targets(ws, "problems", "chap04", ["c2"])
-    assert [t["id"] for t in one] == ["c2"] and one[0]["related"] == "热力学"
+    assert [t["id"] for t in one] == ["chap04-c2"] and one[0]["related"] == "热力学"
 
 
 def test_solve_dry_run(tmp_path):
@@ -35,14 +36,14 @@ def test_solve_dry_run(tmp_path):
     assert res["dryRun"] is True and res["planned"] == 1
     assert "求质点速度" in res["plans"][0]["prompt"]
     # dry-run 不调 LLM、不写文件
-    assert not (ws / "kb" / "solutions" / "c1.json").exists()
+    assert not list((ws / "kb" / "solutions").glob("*.json"))
 
 
 def test_solve_apply_uses_stub_client(tmp_path, monkeypatch):
     """用桩替换 _client，验证「不覆盖 + 标 ai+model + 追加版本」。"""
     ws = tmp_path / "ws"; _mk_kb(ws)
     # 已有原答案版本（human）
-    sol.add_version(ws, "c1", "原答案", source="human")
+    sol.add_version(ws, "chap04-c1", "原答案", source="human", kb="problems", chap="chap04")
 
     class _Stub:
         def chat(self, **kw):
@@ -52,7 +53,8 @@ def test_solve_apply_uses_stub_client(tmp_path, monkeypatch):
     targets = solve.list_targets(ws, "problems", "chap04", ["c1"])
     res = solve.solve_targets(ws, targets, model="stub-model", apply=True, pin=False, dry_run=False)
     assert res["written"] == 1
-    d = sol.read_solutions(ws, "c1")
+    # D110：答案按 (kb, chap, qid) 作用域存/取
+    d = sol.read_solutions(ws, "chap04-c1", kb="problems", chap="chap04")
     assert [v["source"] for v in d["versions"]] == ["human", "ai"]
     ai = d["versions"][1]
     assert ai["model"] == "stub-model" and ai["at"] and ai["pinned"] is False
@@ -62,15 +64,15 @@ def test_solve_apply_uses_stub_client(tmp_path, monkeypatch):
 
 def test_solve_apply_pin(tmp_path, monkeypatch):
     ws = tmp_path / "ws"; _mk_kb(ws)
-    sol.add_version(ws, "c1", "原答案", source="human")
+    sol.add_version(ws, "chap04-c1", "原答案", source="human", kb="problems", chap="chap04")
     class _Stub:
         def chat(self, **kw): return "新解"
     monkeypatch.setattr(solve, "_client", lambda ws_, model="": (_Stub(), "m"))
     targets = solve.list_targets(ws, "problems", "chap04", ["c1"])
     solve.solve_targets(ws, targets, model="m", apply=True, pin=True, dry_run=False)
-    d = sol.read_solutions(ws, "c1")
+    d = sol.read_solutions(ws, "chap04-c1", kb="problems", chap="chap04")
     assert d["versions"][-1]["pinned"] is True and d["versions"][0]["pinned"] is False
-    assert sol.effective_solution(ws, "c1")["text"] == "新解"
+    assert sol.effective_solution(ws, "chap04-c1", kb="problems", chap="chap04")["text"] == "新解"
 
 
 # ---------------- CLI（dry-run，不调 LLM） ----------------

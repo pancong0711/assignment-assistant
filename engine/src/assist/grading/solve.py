@@ -45,17 +45,23 @@ def build_question_prompt(content: str, related: str = "", qtype: str = "",
 
 
 def list_targets(ws: Path, kb: str, chap: str = "", ids: "list[str] | None" = None) -> list[dict]:
-    """从题库取待作答题目：[{id, content, related, type, chap, kb}]。"""
+    """从题库取待作答题目：[{id, content, related, type, chap, kb}]。
+
+    D110：`chap` 为空且 `ids` 为空 = **整个题库**（调用方务必先确认；
+    CLI 要求 `--all`，serve 要求显式 `all: true`）。
+    """
     from ..files.kb_io import read_kb
     kb_data = read_kb(Path(ws) / "kb")
     chapters = kb_data.get(kb, {})
-    want = {str(i) for i in (ids or [])}
+    from ..paper.task import item_id_matches
+    want = [str(i) for i in (ids or [])]
     out: list[dict] = []
     chaps = {chap: chapters.get(chap, [])} if chap else chapters
     for cname, entries in chaps.items():
         for e in entries:
             qid = str(e.get("id") or "")
-            if not qid or (want and qid not in want):
+            # D111：ids 可能是裸题号或全局 id
+            if not qid or (want and not item_id_matches(str(cname), want, qid)):
                 continue
             out.append({"id": qid, "content": str(e.get("content") or ""),
                         "related": str(e.get("related") or ""), "type": str(e.get("type") or ""),

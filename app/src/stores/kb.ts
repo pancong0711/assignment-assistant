@@ -6,7 +6,7 @@ import {
 import { readKbXlsx, writeKbXlsx } from '../lib/kbXlsx'
 import { downloadData, pickDirectory, writeFileInDir } from '../lib/fsAccess'
 import { demoBooks } from '../demo/demoData'
-import { fetchKbSolutionIndex, type KbSolutionEntry } from '../lib/engineClient'
+import { fetchKbSolutionIndex, solutionScopeKey, type KbSolutionEntry } from '../lib/engineClient'
 import { pickEffectiveSolution, type SolutionLike } from '../lib/sheetHtml'
 
 /** 题库 store：浏览器内存中的 kb（xlsx = source of truth，docs/05-D3）。
@@ -97,6 +97,8 @@ export const useKbStore = defineStore('kb', {
      *  来源 = 引擎 `GET /kb/solutions`（批量）；引擎离线时为空 → 全部回落 xlsx `solution` 列。
      *  不持久化（每次刷新重拉，避免 xlsx 与版本库长期漂移）。 */
     solIndex: {} as Record<string, KbSolutionEntry>,
+    /** D110：按 `kb__chap__qid` 精确索引（跨章同号题的正确答案；优先于 solIndex）。 */
+    solIndexByKey: {} as Record<string, KbSolutionEntry>,
     /** D100-T6：索引刷新次数（预览 computed 依赖它 → AI 作答完成后能立即重算）。 */
     solutionsRev: 0,
     /** 索引最近一次成功/失败的状态文案（供设置/题库页展示）。 */
@@ -114,18 +116,29 @@ export const useKbStore = defineStore('kb', {
     },
     /** D100-T6：生效答案解析器（供 `expandPadItems` 注入）。
      *  pinned 版 > 最新版 > xlsx `solution` 列 fallback，语义同引擎 `effective_solution`。 */
-    effectiveSolution(state): (qid: string, fallback: string) => SolutionLike {
-      return (qid, fallback) => {
+    effectiveSolution(state): (qid: string, fallback: string,
+                                scope?: { kb?: string; chap?: string }) => SolutionLike {
+      return (qid, fallback, scope) => {
         // 批量索引条目本身已是"生效版"（引擎 effective_solution 同语义）；
         // pickEffectiveSolution 对扁平条目会补全 version（field=id）并保留 from/pinned。
+        // D110：先按 (kb, chap, qid) 精确命中，再回落按 qid 的旧索引
+        // （旧索引在跨章同号时带 ambiguous 标记，此时不应盲用）。
+        const key = solutionScopeKey(qid, scope?.kb, scope?.chap)
+        const scoped = state.solIndexByKey[key]
+        if (scoped && String(scoped.text ?? '').trim()) return pickEffectiveSolution(scoped, fallback)
         const hit = state.solIndex[String(qid)]
-        if (hit && String(hit.text ?? '').trim()) return pickEffectiveSolution(hit, fallback)
+        if (hit && String(hit.text ?? '').trim() && !hit.ambiguous) {
+          return pickEffectiveSolution(hit, fallback)
+        }
         return pickEffectiveSolution(null, fallback)
       }
     },
-    /** 某题是否已有版本库记录（题库表格摘要用）。 */
-    solutionOf(state): (qid: string) => KbSolutionEntry | undefined {
-      return (qid) => state.solIndex[String(qid)]
+    /** 某题是否已有版本库记录（题库表格摘要用）。D110：可按作用域精确查。 */
+    solutionOf(state): (qid: string, scope?: { kb?: string; chap?: string }) => KbSolutionEntry | undefined {
+      return (qid, scope) => {
+        const key = solutionScopeKey(qid, scope?.kb, scope?.chap)
+        return state.solIndexByKey[key] ?? state.solIndex[String(qid)]
+      }
     },
     /** 全库题目的扁平索引（供设计器选题） */
     allRows(state): Array<{ kind: KbKind; chap: string; row: KbRow }> {
@@ -299,6 +312,7 @@ export const useKbStore = defineStore('kb', {
       const r = await fetchKbSolutionIndex(settings.engineUrl, settings.engineToken)
       const eff = r.effective ?? {}
       this.solIndex = eff
+      this.solIndexByKey = r.effectiveByKey ?? {}
       this.solutionsRev += 1
       const ok = r.ok !== false && !!r.effective
       this.solutionsMsg = ok

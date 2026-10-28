@@ -39,6 +39,20 @@ function setLabel(itemIdx: number, id: string, value: string) {
   if (v) labels[id] = v
   else delete labels[id]
 }
+/** D109：从作业纸中移除单个题号（保留其它题；分组空了再清掉该分组）。
+ *  场景：某题预览异常时，先移除再重新"加入作业纸"以触发重排。 */
+function removeQuestion(itemIdx: number, id: string) {
+  const it = pad.current.items[itemIdx]
+  if (!it) return
+  const i = it.ids.indexOf(id)
+  if (i < 0) return
+  if (it.ids.length === 1) {
+    if (!window.confirm(`移除「${id}」后该组已无题目，将同时删除这一组。继续？`)) return
+  }
+  pad.removeId(itemIdx, i)
+  if (it.labels) delete it.labels[id]      // 编号覆盖也一并清掉，避免重新加入时串号
+  if (it.ids.length === 0) pad.removeItem(itemIdx)
+}
 
 const selectedIds = ref<string[]>([])
 const itemTag = ref('')
@@ -228,12 +242,16 @@ async function downloadBatchZip() {
             <button class="btn small" style="margin-left:2px" :disabled="idx === pad.current.items.length - 1" @click="pad.moveItem(idx, 1)">↓</button>
             <button class="btn small" style="margin-left:6px" @click="pad.removeItem(idx)">移除</button>
             <details style="margin-left:18px">
-              <summary class="hint">题号顺序（{{ it.ids.join('、') }}）</summary>
+              <summary class="hint" style="cursor:pointer">
+                题目明细：排序 / 编号 / 单题移除（{{ it.ids.join('、') }}）
+              </summary>
               <div style="margin:4px 0">
                 <span v-for="(id, i) in it.ids" :key="id" style="display:inline-block; margin:2px 6px 2px 0; white-space:nowrap">
                   {{ id }}
-                  <button class="btn small" :disabled="i === 0" @click="pad.moveId(idx, i, -1)">↑</button>
-                  <button class="btn small" :disabled="i === it.ids.length - 1" @click="pad.moveId(idx, i, 1)">↓</button>
+                  <button class="btn small" :disabled="i === 0" title="上移" @click="pad.moveId(idx, i, -1)">↑</button>
+                  <button class="btn small" :disabled="i === it.ids.length - 1" title="下移" @click="pad.moveId(idx, i, 1)">↓</button>
+                  <button class="btn small" title="从作业纸移除这道题（不删题库原题）"
+                          @click="removeQuestion(idx, id)">✕</button>
                   <input type="text" placeholder="编号(可空)" style="width:64px; margin-left:4px"
                          :value="itemLabels(idx)[id] ?? ''"
                          @change="setLabel(idx, id, ($event.target as HTMLInputElement).value)" />

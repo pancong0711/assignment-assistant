@@ -1,6 +1,6 @@
 import * as XLSX from 'xlsx'
 import {
-  KB_COLUMNS, KB_COLUMN_WIDTHS, KB_KIND_LABELS,
+  KB_COLUMNS, KB_COLUMN_WIDTHS, KB_KIND_LABELS, scopeQuestionId,
   type KbBook, type KbChapter, type KbKind, type KbRow,
 } from './kb'
 
@@ -24,7 +24,8 @@ export async function readKbXlsx(source: Blob | ArrayBuffer, kind: KbKind): Prom
     const sheet = wb.Sheets[name]
     const raw = XLSX.utils.sheet_to_json<Record<string, unknown>>(sheet, { defval: '' })
     const rows: KbRow[] = raw.map((r) => ({
-      id: str(r.id), content: str(r.content), img_path: str(r.img_path),
+      // D111：题号全局唯一（自动 `<chap>-` 前缀；幂等）
+      id: scopeQuestionId(name, str(r.id)), content: str(r.content), img_path: str(r.img_path),
       page: str(r.page), related: str(r.related), type: str(r.type),
       solution: str(r.solution), note: str(r.note),
     }))

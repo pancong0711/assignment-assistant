@@ -1452,16 +1452,33 @@ export interface SolutionDoc {
   ok?: boolean; error?: string
 }
 
-/** GET /kb/solutions/<qid>：读某题全部答案版本。 */
+/** GET /kb/solutions/<qid>：读某题全部答案版本。
+ *  D110：带上 `kb`/`chap`，避免不同章节的同号题（chap04/c1 vs chap05/c1）读到同一份答案。 */
 export async function fetchKbSolutions(
   engineAddr: string, token: string | undefined, qid: string,
+  scope: { kb?: string; chap?: string } = {},
 ): Promise<SolutionDoc> {
   const base = normalizeEngineAddr(engineAddr)
+  const qs = new URLSearchParams()
+  if (scope.kb) qs.set('kb', scope.kb)
+  if (scope.chap) qs.set('chap', scope.chap)
+  const path = `/kb/solutions/${encodeURIComponent(qid)}${qs.toString() ? `?${qs}` : ''}`
   try {
-    return (await getJson2(engineUrlWithToken(base, `/kb/solutions/${encodeURIComponent(qid)}`, token))) as SolutionDoc
+    return (await getJson2(engineUrlWithToken(base, path, token))) as SolutionDoc
   } catch {
     return { qid, versions: [] }
   }
+}
+
+/** D110：作用域键（与引擎 `solutions.scope_id` 同口径）：`kb__chap__qid`。 */
+export function solutionScopeKey(qid: string, kb?: string, chap?: string): string {
+  const clean = (v?: string) => String(v ?? '').trim().replace(/[\/]/g, '-').replace(/__+/g, '_')
+  const q = clean(qid)
+  const k = clean(kb)
+  const c = clean(chap)
+  if (k && c) return `${k}__${c}__${q}`
+  if (k) return `${k}__${q}`
+  return q
 }
 
 /** D100-T2：`GET /kb/solutions`（无 qid）→ 全库生效答案索引 {qid: {text,source,version,from,...}}。
@@ -1471,9 +1488,17 @@ export interface KbSolutionEntry extends SolutionVersion {
   id: string
   version?: string; from?: string; pinned?: boolean
   n_versions?: number; ai_versions?: number
+  /** D110：同一 qid 出现在多章时，按 qid 的旧索引只有一条且被标记 ambiguous。 */
+  ambiguous?: boolean
+  /** D110：作用域回填（来自版本库文档）。 */
+  qid?: string; kb?: string; chap?: string
 }
 export interface KbSolutionIndex {
-  ok?: boolean; effective?: Record<string, KbSolutionEntry>
+  ok?: boolean
+  /** 按 qid（兼容旧数据；跨章同号时只有一条且 `ambiguous=true`） */
+  effective?: Record<string, KbSolutionEntry>
+  /** D110：按 `kb__chap__qid` 精确索引（优先使用） */
+  effectiveByKey?: Record<string, KbSolutionEntry>
   digest?: number; error?: string
 }
 
@@ -1484,7 +1509,7 @@ export async function fetchKbSolutionIndex(
   try {
     return (await getJson2(engineUrlWithToken(base, '/kb/solutions', token))) as KbSolutionIndex
   } catch {
-    return { ok: false, effective: {} }
+    return { ok: false, effective: {}, effectiveByKey: {} }
   }
 }
 
@@ -1528,7 +1553,9 @@ export async function startKbAiSolve(
     /** D104：教师额外作答要求（如「请画出示意图」「输出为 HTML」） */
     requirement?: string
     /** D108：提示词模板 id（优先于 requirement） */
-    requirementTemplate?: string },
+    requirementTemplate?: string
+    /** D110：显式确认「整库作答」（未给 chap/ids 时必须为 true，否则引擎 400） */
+    all?: boolean },
 ): Promise<string> {
   const base = normalizeEngineAddr(engineAddr)
   const res = await fetch(engineUrlWithToken(base, '/kb/ai-solve', token), {
@@ -1572,13 +1599,19 @@ export async function mutatePromptTemplate(
     name?: string; text?: string; default?: boolean },
 ): Promise<{ ok?: boolean; error?: string; items?: PromptTemplate[]; default?: string }> {
   const base = normalizeEngineAddr(engineAddr)
-  const res = await fetch(engineUrlWithToken(base, '/prompts/ai-solve', token), {
-    method: 'POST', headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify(payload),
-  })
+  let res: Response
+  try {
+    res = await fetch(engineUrlWithToken(base, '/prompts/ai-solve', token), {
+      method: 'POST', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(payload),
+    })
+  } catch {
+    // 引擎未启动/被防火墙拦截：给出可操作提示，而不是裸 "Failed to fetch"
+    return { ok: false, error: `引擎未连接（${base}），请先启动 assist serve 后重试` }
+  }
   const o = (await res.json().catch(() => ({}))) as
     { ok?: boolean; error?: string; items?: PromptTemplate[]; default?: string }
-  if (!res.ok && !o?.error) throw new Error(`HTTP ${res.status}`)
+  if (!res.ok && !o?.error) return { ok: false, error: `HTTP ${res.status}` }
   return o
 }
 

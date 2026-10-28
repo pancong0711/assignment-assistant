@@ -105,8 +105,9 @@ def _mk_ws(ws: Path, answer: str) -> None:
     sh.append(["id", "content", "img_path", "page", "related", "type", "solution", "note"])
     sh.append(["c1", "求速度", "", 1, "", "计算", "", ""])
     wb.save(kb / "problems.xlsx")
-    sol.add_version(ws, "c1", answer, source="ai")
-    sol.pin_version(ws, "c1", "v1")
+    # D111：读入题库后 id 自动带章节前缀
+    sol.add_version(ws, "chap04-c1", answer, source="ai")
+    sol.pin_version(ws, "chap04-c1", "v1")
 
 
 def test_sheet_html_renders_svg_and_table(tmp_path):
@@ -123,7 +124,9 @@ def test_sheet_html_renders_svg_and_table(tmp_path):
                                  "--workspace", str(ws), "-o", str(out), "--students", "blank", "--no-measure"])
     assert r.exit_code == 0, r.output
     h = out.read_text(encoding="utf-8")
-    assert "<svg viewBox=\"0 0 100 50\">" in h
+    # D109：viewBox 保留，并按比例补上内联尺寸（无尺寸的 svg 会被撑满容器）
+    assert '<svg viewBox="0 0 100 50"' in h
+    assert 'width="' in h.split('<svg', 1)[1].split('>', 1)[0]
     assert "<table>" in h
     assert "<line x1=\"0\"" in h
     assert r"\frac" not in h or "$v=2t$" in h      # 公式源码保留（KaTeX 前端渲染）
@@ -148,8 +151,9 @@ def test_sheet_html_does_not_leak_script(tmp_path):
 def test_summarize_solutions_column(tmp_path):
     from assist.files.kb_io import summarize_solutions
     ws = tmp_path / "ws"
-    sol.add_version(ws, "c1", "完整答案 " + "细节。" * 100, source="ai")
-    sol.pin_version(ws, "c1", "v1")
+    # D111：sheet 名即章节前缀来源，答案按 `chap1-c1` 命中
+    sol.add_version(ws, "chap1-c1", "完整答案 " + "细节。" * 100, source="ai", chap="chap1")
+    sol.pin_version(ws, "chap1-c1", "v1", chap="chap1")
     out = summarize_solutions(ws, {"chap1": [{"id": "c1", "content": "题", "solution": "旧值"}]})
     s = out["chap1"][0]["solution"]
     assert s != "旧值", "应回填生效答案摘要"
@@ -215,3 +219,52 @@ def test_grading_prompt_uses_plain_text(tmp_path):
     sol_text = qs[0]["solution"]
     assert "<svg" not in sol_text, "prompt 不得包含 SVG"
     assert "答案正文" in sol_text
+
+
+# ---------------- D109：SVG 完整性 / 尺寸 / LaTeX 不切割 ----------------
+
+def test_svg_multiline_not_broken_by_nl2br():
+    """nl2br 不能往 <svg> 内部塞 <br>（否则浏览器解析出 0 个图元 = 空白框）。"""
+    from assist.paper.richdoc import render_rich
+    md = ('解：\n\n<svg viewBox="0 0 200 150" xmlns="http://www.w3.org/2000/svg">\n'
+          '  <rect x="10" y="10" width="80" height="40" stroke="black" fill="none"/>\n'
+          '  <text x="30" y="35">m</text>\n</svg>\n\n结论。')
+    out = render_rich(md)
+    svg = out[out.index("<svg"): out.index("</svg>")]
+    assert "<br" not in svg.lower(), f"svg 内部不应有 <br>：{svg}"
+    assert "<rect" in svg and "<text" in svg
+    # 块级 svg 不应被包进 <p>（浏览器会自动闭合 <p>，图元跑到框外）
+    assert "<p><svg" not in out
+
+
+def test_svg_gets_intrinsic_size_when_missing():
+    """无 width/height 的 svg 会被撑满容器 → 必须补按 viewBox 比例的尺寸。"""
+    from assist.paper.richdoc import render_rich
+    md = '<svg viewBox="0 0 200 150" xmlns="http://www.w3.org/2000/svg">\n<circle cx="5" cy="5" r="3"/>\n</svg>'
+    out = render_rich(md)
+    assert 'width="60.0mm"' in out and 'height="45.0mm"' in out
+
+
+def test_svg_existing_size_untouched():
+    from assist.paper.richdoc import render_rich
+    md = '<svg viewBox="0 0 200 150" width="30" height="20" xmlns="http://www.w3.org/2000/svg"><rect width="5" height="5"/></svg>'
+    out = render_rich(md)
+    assert 'width="30"' in out and '60.0mm' not in out
+
+
+def test_inline_svg_inside_paragraph_kept():
+    from assist.paper.richdoc import render_rich
+    md = ('受力如图 <svg viewBox="0 0 100 60" xmlns="http://www.w3.org/2000/svg">\n'
+          '<line x1="0" y1="0" x2="50" y2="50" stroke="black"/>\n</svg> 所示，$F=ma$。')
+    out = render_rich(md)
+    svg = out[out.index("<svg"): out.index("</svg>")]
+    assert "<br" not in svg.lower() and "<line" in svg
+
+
+def test_svg_prompt_asks_for_nearby_placement():
+    """内置「含示意图」模板必须明确要求就近摆放，而不是堆到末尾。"""
+    from assist.files import prompts as P
+    tpl = next(t for t in P.BUILTIN if t["id"] == "with-svg")
+    assert "紧跟" in tpl["text"]
+    assert "不要" in tpl["text"] and "末尾" in tpl["text"]
+    assert "width=" in tpl["text"]

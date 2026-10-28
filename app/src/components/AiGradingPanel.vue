@@ -15,6 +15,7 @@ import {
   startKbAiSolve, fetchKbCatalog, renderReportsFromDrafts,
   fetchPromptTemplates, mutatePromptTemplate, type PromptTemplate,
 } from '../lib/engineClient'
+import { normalizePromptId, suggestPromptId, PROMPT_ID_HINT } from '../lib/promptId'
 
 const props = defineProps<{ engineAddr: string; token?: string }>()
 const taskpadStore = useTaskpadStore()
@@ -77,6 +78,11 @@ const promptIsDefault = computed(() =>
 async function loadPromptTemplates(autoPickDefault = true) {
   const r = await fetchPromptTemplates(props.engineAddr, props.token)
   promptTemplates.value = r.items || []
+  if (!promptTemplates.value.length) {
+    // 引擎离线时列表为空：明确提示，否则用户以为"没有模板可选"
+    promptMsg.value = '模板库读取失败（引擎离线或未启动？）'
+    return
+  }
   if (autoPickDefault) {
     const def = r.default || promptTemplates.value.find((t) => t.default)?.id || ''
     if (def) {
@@ -94,40 +100,85 @@ function pickPromptTemplate() {
     promptMsg.value = `已载入「${t.name}」${t.builtin ? '（内置）' : ''}`
   }
 }
+/* D108-FIX：模板 id 归一化/建议值逻辑见 lib/promptId.ts（与引擎 _ID_RE 一致，可单测）。 */
+/** 弹窗询问新模板 id：预填建议值，归一化后校验；返回 null 表示取消。 */
+function askPromptId(name: string): string | null {
+  const raw = window.prompt(
+    `新模板 id（${PROMPT_ID_HINT}）\n同时用作文件名，保存后不可改。`,
+    suggestPromptId(name, promptTemplates.value.map((t) => t.id)),
+  )
+  if (raw === null) return null
+  const id = normalizePromptId(raw)
+  if (!id) {
+    promptMsg.value = `模板 id 不合法：${raw.trim() || '（空）'}（${PROMPT_ID_HINT}）`
+    return null
+  }
+  return id
+}
+
 /** 保存：覆盖当前模板（内置也可改内容）；无选中则新建。 */
 async function savePromptTemplate() {
   const text = kbRequirement.value.trim()
   if (!text) { promptMsg.value = '内容为空，未保存'; return }
   const cur = promptTemplates.value.find((x) => x.id === promptSel.value)
   const isNew = !cur
-  const id = isNew ? window.prompt('新模板 id（字母数字开头，可含 _ . -）')?.trim() : cur!.id
-  if (!id) return
-  const name = isNew ? (window.prompt('模板名称', id) || id) : cur!.name
+  if (isNew) {
+    const name = window.prompt('模板名称', '我的作答要求')
+    if (name === null) return
+    const id = askPromptId(name)
+    if (!id) return
+    await doSavePrompt(id, name.trim() || id, text, true)
+    return
+  }
+  const id = cur!.id
+  const name = cur!.name
+  await doSavePrompt(id, name, text, false)
+}
+
+/** 统一的保存动作：写库 → 刷新列表 → 选中该模板。 */
+async function doSavePrompt(id: string, name: string, text: string, isNew: boolean) {
   promptBusy.value = true
-  const r = await mutatePromptTemplate(props.engineAddr, props.token, {
-    action: 'save', id, name, text,
-  })
-  promptBusy.value = false
-  if (!r.ok) { promptMsg.value = r.error || '保存失败（引擎离线？）'; return }
-  promptTemplates.value = r.items || []
-  promptSel.value = id
-  promptMsg.value = isNew ? `已新建模板「${name}」` : `已保存「${name}」`
+  try {
+    const r = await mutatePromptTemplate(props.engineAddr, props.token, {
+      action: 'save', id, name, text,
+    })
+    if (!r.ok) { promptMsg.value = r.error || '保存失败（引擎离线？）'; return }
+    promptTemplates.value = r.items || []
+    promptSel.value = id
+    promptMsg.value = isNew ? `已新建模板「${name}」` : `已保存「${name}」`
+  } catch (e) {
+    promptMsg.value = `保存失败：${String((e as Error).message || e)}`
+  } finally {
+    promptBusy.value = false
+  }
 }
 /** 另存为新模板（内置模板编辑后想保留原版时用）。 */
 async function savePromptAsNew() {
   const text = kbRequirement.value.trim()
   if (!text) { promptMsg.value = '内容为空，未保存'; return }
-  const id = window.prompt('新模板 id（字母数字开头，可含 _ . -）')?.trim()
+  const curName = promptTemplates.value.find((x) => x.id === promptSel.value)?.name || ''
+  const name = window.prompt('新模板名称', curName ? `${curName}（副本）` : '')
+  if (name === null) return
+  const id = askPromptId(name)
   if (!id) return
-  const name = window.prompt('模板名称', id) || id
+  // 另存为不应静默覆盖已有模板（save 是 upsert 语义）
+  if (promptTemplates.value.some((t) => t.id === id)) {
+    promptMsg.value = `模板 id「${id}」已存在，请换一个（另存为不会覆盖已有模板）`
+    return
+  }
   promptBusy.value = true
-  const r = await mutatePromptTemplate(props.engineAddr, props.token,
-    { action: 'save', id, name, text })
-  promptBusy.value = false
-  if (!r.ok) { promptMsg.value = r.error || '保存失败'; return }
-  promptTemplates.value = r.items || []
-  promptSel.value = id
-  promptMsg.value = `已另存为新模板「${name}」`
+  try {
+    const r = await mutatePromptTemplate(props.engineAddr, props.token,
+      { action: 'save', id, name: name.trim() || id, text })
+    if (!r.ok) { promptMsg.value = r.error || '保存失败'; return }
+    promptTemplates.value = r.items || []
+    promptSel.value = id
+    promptMsg.value = `已另存为新模板「${name.trim() || id}」`
+  } catch (e) {
+    promptMsg.value = `另存失败：${String((e as Error).message || e)}`
+  } finally {
+    promptBusy.value = false
+  }
 }
 async function deletePromptTemplate() {
   if (!promptSel.value) return
@@ -157,12 +208,31 @@ async function setPromptDefault() {
 const kbSolveMsg = ref('')
 const kbSolving = ref(false)
 async function solveByKb() {
+  const ids = [...kbIdsSel.value]
+  // D110：空选择不再被静默当成"整章/整库"。范围越界必须先显式确认，
+  // 否则用户以为只答一两题，实际把整库参考答案都刷新了（且是置顶生效答案）。
+  if (!ids.length) {
+    if (!kbChap.value) {
+      if (!window.confirm(
+        `未选择章节，也未勾选题号 → 将对 **整个「${kbKind.value}」题库** 作答`
+        + (kbApply.value ? '（并写回/置顶生效答案）' : '（dry-run 预览）') + '。\n'
+        + '题量可能很大且耗时长。确定继续？',
+      )) return
+    } else {
+      const n = kbIdList.value.length
+      if (!window.confirm(
+        `未勾选题号 → 将对整章「${kbChap.value}」（${n} 题）作答`
+        + (kbApply.value ? '（并写回/置顶生效答案）' : '（dry-run 预览）') + '。\n确定继续？',
+      )) return
+    }
+  }
   kbSolving.value = true; kbSolveMsg.value = '正在启动题库 AI 作答……'
   try {
-    const ids = [...kbIdsSel.value]
     const jobId = await startKbAiSolve(props.engineAddr, props.token, {
       kb: kbKind.value, chap: kbChap.value, ids, model: kbModel.value,
       pin: kbPin.value, apply: kbApply.value,
+      // 真正的"整库"仅在显式确认后下发
+      all: !ids.length && !kbChap.value,
       requirement: kbRequirement.value.trim(),
       requirementTemplate: promptSel.value,   // D108：模板优先于单次输入
     })

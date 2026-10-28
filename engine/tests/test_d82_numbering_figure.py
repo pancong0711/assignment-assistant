@@ -69,7 +69,8 @@ def test_resolve_items_id_numbering_and_labels(tmp_path: Path):
               "ids": ["demo-04-1", "demo-04-2"], "tag": "distinguish",
               "labels": {"demo-04-2": "(二)"}}]
     out = resolve_items(data, items, kb_dir, "id")
-    assert [x[3] for x in out] == ["demo-04-1", "(二)"]
+    # D111：题库 id 已全局唯一（chap04- 前缀）；numbering=id 显示该全局 id
+    assert [x[3] for x in out] == ["chap04-demo-04-1", "(二)"]
 
 
 def test_resolve_items_auto_with_label_keeps_seq(tmp_path: Path):

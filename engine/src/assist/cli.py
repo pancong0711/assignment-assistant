@@ -379,6 +379,46 @@ def kb_write(obj, input_path, kind, workspace, verbose):
         click.echo(str(out))
 
 
+@kb.command("normalize")
+@click.option("--write", "do_write", is_flag=True,
+              help="把补齐后的题号写回 xlsx（默认只报告）")
+@click.option("--workspace", "-w", default=None)
+@click.option("--verbose", "-v", is_flag=True)
+@click.pass_obj
+def kb_normalize(obj, do_write, workspace, verbose):
+    """D111：题库题号全局唯一化（自动加章节前缀 `<chap>-<id>`）。
+
+    默认只报告（dry-run）：列出将要改名的题号与冲突；加 --write 才落盘
+    （写前自动 kb/.history 快照，保留单元格样式）。
+    """
+    from .files import read_kb, snapshot as snap
+    from .files import write_chapters_preserving
+    from .files.kb_io import find_duplicate_ids, normalize_question_ids
+    ws = _setup(verbose or obj.get("verbose"), workspace)
+    kb_dir = _kb_dir(ws)
+    workbook = read_kb(kb_dir)          # 读入已自动补前缀（内存态）
+    report = {"ok": True, "write": do_write, "kinds": {}}
+    total_changed = 0
+    for kind, chapters in workbook.items():
+        dups = find_duplicate_ids(chapters)
+        changed = sum(1 for c in chapters.values() for e in c
+                      if str(e.get("id") or "") != str(e.get("id") or "").strip())
+        sample = [str(e.get("id")) for c in list(chapters.values())[:1] for e in c[:5]]
+        report["kinds"][kind] = {"chapters": len(chapters),
+                                 "duplicates": dups, "sample_ids": sample}
+        total_changed += len(dups)
+        if dups:
+            continue
+        if do_write:
+            snap(kb_dir, [kind])
+            write_chapters_preserving(kb_dir / f"{kind}.xlsx", chapters)
+    report["conflicts"] = total_changed
+    click.echo(json.dumps(report, ensure_ascii=False, indent=1))
+    if total_changed:
+        raise click.ClickException(
+            f"{total_changed} 个题号在加章节前缀后仍然重复，请人工处理后再运行")
+
+
 @kb.command("snapshot")
 @click.option("--workspace", "-w", default=None)
 @click.option("--verbose", "-v", is_flag=True)
@@ -405,15 +445,24 @@ def kb_snapshot(obj, workspace, verbose):
                    "会作为「优先满足」附加到每题 prompt")
 @click.option("--requirement-template", "requirement_template", default="",
               help="D108：套用提示词模板（id）；优先于 --requirement，见 assist prompt list")
+@click.option("--all", "all_questions", is_flag=True,
+              help="D110：显式确认「整库作答」。未给 --chap 且未给 --ids 时必须加此开关，"
+                   "避免空选择被误解成整库而误刷全库答案")
 @click.option("--workspace", "-w", default=None)
 @click.option("--verbose", "-v", is_flag=True)
 @click.pass_obj
 def kb_ai_solve(obj, kb_kind, chap, ids, model, pin, apply, concurrency, requirement,
-                requirement_template, workspace, verbose):
+                requirement_template, all_questions, workspace, verbose):
     """D89-N5/D100：对题库题目做 AI 作答（**不覆盖**原答案，新增版本并默认置顶；默认 dry-run）。"""
     from .grading import solve as solve_mod
     ws = _setup(verbose or obj.get("verbose"), workspace)
     id_list = [x.strip() for x in str(ids).split(",") if x.strip()]
+    # D110：防"误刷全库"——完全没有限定范围时必须显式 --all。
+    # 此前 --ids 为空且 --chap 为空 = 整个题库，一次误点即可覆盖整库答案。
+    if not id_list and not str(chap or "").strip() and not all_questions:
+        raise click.ClickException(
+            "未指定范围：请用 --chap 指定章节、或 --ids 指定题号；"
+            "确实要对**整个题库**作答请显式加 --all")
     targets = solve_mod.list_targets(ws, kb_kind, chap, id_list)
     if not targets:
         raise click.ClickException("未选中任何题目（检查 --kb-kind/--chap/--ids）")
@@ -454,14 +503,16 @@ def kb_solution():
 
 @kb_solution.command("list")
 @click.option("--qid", default=None, help="指定题目 id；缺省列出全部")
+@click.option("--kb", default="", help="D110：题库 kind（与 --chap 一起精确识别跨章同号题）")
+@click.option("--chap", default="", help="D110：章节名（sheet 名）")
 @click.option("--workspace", "-w", default=None)
 @click.option("--verbose", "-v", is_flag=True)
 @click.pass_obj
-def kb_solution_list(obj, qid, workspace, verbose):
+def kb_solution_list(obj, qid, kb, chap, workspace, verbose):
     """列出题目答案版本库（JSON）。"""
     from .files import solutions as sol
     ws = _setup(verbose or obj.get("verbose"), workspace)
-    data = sol.read_solutions(ws, qid) if qid else {"items": sol.list_solutions(ws)}
+    data = sol.read_solutions(ws, qid, kb=kb, chap=chap) if qid else {"items": sol.list_solutions(ws)}
     click.echo(json.dumps(data or {"ok": False, "error": f"无版本库：{qid}"},
                           ensure_ascii=False, indent=2))
 
@@ -493,14 +544,16 @@ def kb_solution_add(obj, qid, text, file_, source, model, kb, chap, pin, workspa
 @kb_solution.command("pin")
 @click.option("--qid", required=True)
 @click.option("--version", "version_id", required=True)
+@click.option("--kb", default="", help="D110：题库 kind（配合 --chap 精确定位跨章同号题）")
+@click.option("--chap", default="", help="D110：章节名")
 @click.option("--workspace", "-w", default=None)
 @click.option("--verbose", "-v", is_flag=True)
 @click.pass_obj
-def kb_solution_pin(obj, qid, version_id, workspace, verbose):
+def kb_solution_pin(obj, qid, version_id, kb, chap, workspace, verbose):
     """把某版本置顶（设为生效答案，其余取消置顶）。"""
     from .files import solutions as sol
     ws = _setup(verbose or obj.get("verbose"), workspace)
-    res = sol.pin_version(ws, qid, version_id)
+    res = sol.pin_version(ws, qid, version_id, kb=kb, chap=chap)
     click.echo(json.dumps(res, ensure_ascii=False, indent=2))
     if not res.get("ok"):
         raise click.ClickException(res.get("error") or "置顶失败")
@@ -509,14 +562,16 @@ def kb_solution_pin(obj, qid, version_id, workspace, verbose):
 @kb_solution.command("rm")
 @click.option("--qid", required=True)
 @click.option("--version", "version_id", required=True)
+@click.option("--kb", default="", help="D110：题库 kind（配合 --chap 精确定位跨章同号题）")
+@click.option("--chap", default="", help="D110：章节名")
 @click.option("--workspace", "-w", default=None)
 @click.option("--verbose", "-v", is_flag=True)
 @click.pass_obj
-def kb_solution_rm(obj, qid, version_id, workspace, verbose):
+def kb_solution_rm(obj, qid, version_id, kb, chap, workspace, verbose):
     """删除某版本。"""
     from .files import solutions as sol
     ws = _setup(verbose or obj.get("verbose"), workspace)
-    res = sol.remove_version(ws, qid, version_id)
+    res = sol.remove_version(ws, qid, version_id, kb=kb, chap=chap)
     click.echo(json.dumps(res, ensure_ascii=False, indent=2))
     if not res.get("ok"):
         raise click.ClickException(res.get("error") or "删除失败")

@@ -62,7 +62,10 @@ def _questions_of(task: dict, ws=None) -> list[dict]:
         fallback = str(it.get("solution") or "")
         # D89-N3：有 ws 且有 qid → 实时读最新置顶版
         # D105：批阅 prompt 用**纯文本**（text_plain），避免 md+html/SVG 浪费 token
-        eff = effective_solution(ws, qid, fallback) if (ws and qid) else {}
+        # D110：带上 kb/chap，避免跨章同号取到别的章的答案
+        eff = (effective_solution(ws, qid, fallback,
+                                  kb=str(it.get("kb") or ""), chap=str(it.get("chap") or ""))
+               if (ws and qid) else {})
         sol = str(eff.get("text_plain") or eff.get("text") or fallback)
         out.append({"no": str(it.get("no") or ""), "content": str(it.get("content") or ""),
                     "solution": sol,

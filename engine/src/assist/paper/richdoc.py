@@ -131,6 +131,90 @@ def _restore_math(html_text: str, math: list[str]) -> str:
     return re.sub(rf"{_MATH_PLACEHOLDER}(\d+){_MATH_END}", _sub, html_text)
 
 
+_BLOCK_PLACEHOLDER = "D109HTMLBLOCKPLACEHOLDER"
+_BLOCK_END = "END"
+
+# D109：多行内联 HTML/SVG 必须先整体抽出占位，否则 nl2br 会往 <svg> 内部塞 <br>，
+# 浏览器解析出的 <svg> 就变成 0 个图元（空白框），后面的图元文本反而漏到正文外面。
+_BLOCK_PATTERNS = [
+    re.compile(r"<svg\b[\s\S]*?</svg\s*>", re.IGNORECASE),
+    re.compile(r"<table\b[\s\S]*?</table\s*>", re.IGNORECASE),
+    re.compile(r"<pre\b[\s\S]*?</pre\s*>", re.IGNORECASE),
+    re.compile(r"<blockquote\b[\s\S]*?</blockquote\s*>", re.IGNORECASE),
+]
+
+
+def _protect_html_blocks(src: str) -> tuple[str, list[str]]:
+    """把跨行 HTML 块（svg/table/pre/blockquote）抽出占位，免受 nl2br 破坏（D109）。
+
+    单行块不处理（不含换行时 nl2br 不会插入 `<br>`，且保留原文更利于 Markdown 判定块级）。
+    """
+    blocks: list[str] = []
+
+    def _sub(m: "re.Match[str]") -> str:
+        text = m.group(0)
+        if "\n" not in text:
+            return text
+        blocks.append(text)
+        return f"{_BLOCK_PLACEHOLDER}{len(blocks) - 1}{_BLOCK_END}"
+
+    out = src
+    for pat in _BLOCK_PATTERNS:
+        out = pat.sub(_sub, out)
+    return out, blocks
+
+
+_SVG_TAG_RE = re.compile(r"<svg\b([^>]*)>", re.IGNORECASE)
+
+
+def _normalize_svg_size(html_text: str) -> str:
+    """给无 width/height 的 `<svg>` 补上按 viewBox 比例的内联尺寸（D109）。
+
+    没有 width/height 时，浏览器会让 `<svg>` 撑满容器（实测 684×513px 的巨型图），
+    示意图因此被放大到变形、并挤占整格。这里按 viewBox 宽高比算出「最大宽 100%、
+    最大高 60mm」的等价尺寸，保持原比例且不溢出。
+    """
+    def _sub(m: "re.Match[str]") -> str:
+        attrs = m.group(1)
+        if re.search(r"\bwidth\s*=", attrs, re.I) and re.search(r"\bheight\s*=", attrs, re.I):
+            return m.group(0)
+        vb = re.search(r"\bviewbox\s*=\s*[\"']\s*[\d.+-]+[\s,]+[\d.+-]+[\s,]+([\d.+-]+)[\s,]+([\d.+-]+)",
+                       attrs, re.I)
+        if not vb:
+            return m.group(0)
+        try:
+            w, h = float(vb.group(1)), float(vb.group(2))
+        except ValueError:
+            return m.group(0)
+        if w <= 0 or h <= 0:
+            return m.group(0)
+        # 以「高不超过 45mm」为主约束，宽按比例推，并限制在格宽内
+        max_h = 45.0
+        width_mm = min(80.0, max_h * w / h)
+        height_mm = width_mm * h / w
+        # 注意：bleach 白名单不含 style，这里只用 width/height 属性；
+        # 溢出由模板里的 `.q-solution svg { max-width:100%; height:auto }` 兜底。
+        return f'<svg{attrs} width="{width_mm:.1f}mm" height="{height_mm:.1f}mm">'
+
+    return _SVG_TAG_RE.sub(_sub, html_text)
+
+
+def _restore_html_blocks(html_text: str, blocks: list[str]) -> str:
+    """占位还原。
+
+    注意：Markdown 可能把独占一行的占位包成 `<p>…</p>`；块级元素（svg/table/pre/
+    blockquote）不能待在 `<p>` 里（浏览器会自动闭合 `<p>`，造成图元跑到框外），
+    所以还原时把「整段就是一个占位的 `<p>`」替换成块本身。
+    """
+    def _sub(m: "re.Match[str]") -> str:
+        idx = int(m.group(1))
+        return blocks[idx] if 0 <= idx < len(blocks) else m.group(0)
+
+    out = re.sub(rf"<p>\s*{_BLOCK_PLACEHOLDER}(\d+){_BLOCK_END}\s*</p>",
+                 _sub, html_text)
+    return re.sub(rf"{_BLOCK_PLACEHOLDER}(\d+){_BLOCK_END}", _sub, out)
+
+
 def _md_to_html(md_text: str) -> str:
     """Markdown → HTML（表格/围栏代码/换行），失败则按段落转义降级。"""
     try:
@@ -168,8 +252,14 @@ def render_rich(text: str) -> str:
     src = str(text or "")
     if not src.strip():
         return ""
-    guarded, math = _protect_math(_drop_dangerous_blocks(src))
-    return _sanitize(_restore_math(_md_to_html(guarded), math))
+    guarded = _drop_dangerous_blocks(src)
+    # 顺序：先抽 HTML 块（含 svg），再抽公式占位（公式可能在 svg/text 里，但两者互不嵌套于换行场景）
+    guarded, blocks = _protect_html_blocks(guarded)
+    guarded, math = _protect_math(guarded)
+    html = _md_to_html(guarded)
+    html = _restore_math(html, math)
+    html = _restore_html_blocks(html, blocks)
+    return _sanitize(_normalize_svg_size(html))
 
 
 def render_rich_inline(text: str) -> str:

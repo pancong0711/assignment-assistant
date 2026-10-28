@@ -6,11 +6,28 @@ var __export = (target, all) => {
 
 // ../app/src/lib/autoLayout.ts
 var DISPLAY_MATH_RE = /(\$\$[\s\S]*?\$\$|\\\[[\s\S]*?\\\])/g;
+var HTML_BLOCK_RE = /<svg\b[\s\S]*?<\/svg\s*>|<table\b[\s\S]*?<\/table\s*>|<pre\b[\s\S]*?<\/pre\s*>/gi;
 var MAX_PIECE_CHARS = 120;
+var INLINE_MATH_RE = /(\$\$[\s\S]*?\$\$|\\\[[\s\S]*?\\\]|\\\([\s\S]*?\\\)|\$(?:\\.|[^$\\])+\$)/g;
+function atomizeMath(text3) {
+  return text3.split(INLINE_MATH_RE).filter((x) => x !== "");
+}
+function isMathAtom(s) {
+  return /^\$\$[\s\S]*\$\$$/.test(s) || /^\\\[[\s\S]*\\\]$/.test(s) || /^\\\([\s\S]*\\\)$/.test(s) || /^\$(?:\\.|[^$\\])+\$$/.test(s);
+}
 function splitLongParagraph(para, limit = MAX_PIECE_CHARS) {
   if (para.length <= limit) return [para];
   const out = [];
-  const sentences = para.split(/(?<=[。！？；.!?;])\s*/).filter((x) => x.trim());
+  const sentences = [];
+  for (const atom of atomizeMath(para)) {
+    if (isMathAtom(atom)) {
+      sentences.push(atom);
+      continue;
+    }
+    const parts = atom.split(/(?<=[。！？；.!?;])\s*/).filter((x) => x.trim());
+    if (!parts.length && atom) sentences.push(atom);
+    else sentences.push(...parts);
+  }
   let buf = "";
   for (const snt of sentences) {
     if (!buf) {
@@ -31,11 +48,50 @@ function splitLongParagraph(para, limit = MAX_PIECE_CHARS) {
       final.push(piece);
       continue;
     }
-    for (let i = 0; i < piece.length; i += limit) final.push(piece.slice(i, i + limit));
+    const atoms = atomizeMath(piece);
+    let acc = "";
+    const flush = () => {
+      if (acc) {
+        final.push(acc);
+        acc = "";
+      }
+    };
+    for (const atom of atoms) {
+      if (isMathAtom(atom)) {
+        if (acc.length + atom.length > limit) flush();
+        acc += atom;
+        if (acc.length >= limit) flush();
+        continue;
+      }
+      let rest = atom;
+      while (rest.length) {
+        const room = limit - acc.length;
+        if (room <= 0) {
+          flush();
+          continue;
+        }
+        acc += rest.slice(0, room);
+        rest = rest.slice(room);
+        if (acc.length >= limit) flush();
+      }
+    }
+    flush();
   }
   return final;
 }
-function splitIntoPieces(text3) {
+function splitKeepingHtmlBlocks(text3) {
+  const out = [];
+  let last = 0;
+  for (const m of text3.matchAll(HTML_BLOCK_RE)) {
+    const idx = m.index ?? 0;
+    out.push(...splitIgnoreHtml(text3.slice(last, idx)));
+    out.push(m[0]);
+    last = idx + m[0].length;
+  }
+  out.push(...splitIgnoreHtml(text3.slice(last)));
+  return out.filter((x) => x !== "");
+}
+function splitIgnoreHtml(text3) {
   const src = String(text3 ?? "");
   if (!src.trim()) return [];
   const out = [];
@@ -57,6 +113,11 @@ function splitIntoPieces(text3) {
     }
   }
   return out;
+}
+function splitIntoPieces(text3) {
+  const src = String(text3 ?? "");
+  if (!src.trim()) return [];
+  return splitKeepingHtmlBlocks(src);
 }
 function contentFingerprint(items) {
   const s = JSON.stringify(items.map((i) => [i.qid, i.no, i.content, i.solution ?? ""]));

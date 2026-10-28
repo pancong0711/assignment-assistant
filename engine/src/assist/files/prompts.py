@@ -21,7 +21,10 @@ PROMPTS_DIR = "prompts"
 SUBDIR = "ai-solve"
 MAX_TEXT_LEN = 2000
 MAX_NAME_LEN = 60
-_ID_RE = re.compile(r"^[A-Za-z0-9][A-Za-z0-9_.-]{0,63}$")
+# id 同时是 `<id>.json` 文件名：允许中文（与 grading/items.py 的 id 规则一致），
+# 但禁止路径分隔符/空白/控制字符，且不得以 "." 开头（避免隐藏文件与 ".."）。
+_ID_RE = re.compile(r"^[0-9A-Za-z_\u4e00-\u9fff][0-9A-Za-z_\-\u4e00-\u9fff.]{0,63}$")
+ID_HINT = "模板 id 需为 1..64 位，以字母/数字/中文/下划线开头，可含 _ . -（不能含空格或路径分隔符）"
 
 # 内置模板（首次访问时落盘；用户可复制但不可删）
 BUILTIN: list[dict] = [
@@ -42,11 +45,15 @@ BUILTIN: list[dict] = [
         "name": "含示意图（几何/受力题）",
         "text": (
             "在标准完整解答的基础上，**必须给出示意图**：\n"
-            "1. 需要图示时，直接内联 <svg viewBox=\"0 0 200 150\" xmlns=\"http://www.w3.org/2000/svg\">；\n"
-            "2. 只用 line/rect/circle/ellipse/polyline/polygon/path/text 基本图元；\n"
-            "3. 黑白线稿（stroke=\"black\" fill=\"none\"），最多 20 个图元；\n"
-            "4. 不要引用任何外部资源（禁止 <image>、href、外链 URL）；\n"
-            "5. 公式仍用 LaTeX：行内 $...$、行间 $$...$$。"
+            "1. 位置：**紧跟「受力分析 / 过程分析 / 几何关系」那一段之后**，"
+            "让图与文字指代一致；**不要**统一堆到答案末尾；确有多个过程时可在各自段落就近配置；\n"
+            "2. 写法：单行内联 <svg viewBox=\"0 0 200 150\" width=\"60mm\" height=\"45mm\" "
+            "xmlns=\"http://www.w3.org/2000/svg\">…</svg>，并**另起一段**、前后各留一个空行；\n"
+            "3. 只用 line/rect/circle/ellipse/polyline/polygon/path/text 基本图元；\n"
+            "4. 黑白线稿（stroke=\"black\" fill=\"none\"），最多 20 个图元，"
+            "文字标注用 <text x=… y=… font-size=\"10\">F</text>；\n"
+            "5. 不要引用任何外部资源（禁止 <image>、href、外链 URL）；\n"
+            "6. 公式仍用 LaTeX：行内 $...$、行间 $$...$$；图内不要写 LaTeX。"
         ),
         "default": False,
     },
@@ -181,8 +188,10 @@ def save_template(ws, *, pid: str, name: str, text: str,
                   make_default: bool = False, overwrite_builtin_text: bool = True) -> dict:
     """新建或更新模板（含校验）。"""
     sid = str(pid or "").strip()
+    if not sid:
+        return {"ok": False, "error": f"缺少模板 id：{ID_HINT}"}
     if not _ID_RE.match(sid):
-        return {"ok": False, "error": "模板 id 非法（1..64 位，字母数字开头，可含 _ . -）"}
+        return {"ok": False, "error": f"{ID_HINT}：{sid!r}"}
     nm = str(name or "").strip()[:MAX_NAME_LEN]
     body = str(text or "").strip()
     if not body:
@@ -211,14 +220,19 @@ def save_template(ws, *, pid: str, name: str, text: str,
 
 def delete_template(ws, pid: str) -> dict:
     """删除模板；内置模板不可删。"""
-    tpl = get_template(ws, pid)
+    sid = str(pid or "").strip()
+    if not sid:
+        return {"ok": False, "error": "缺少模板 id（未选中要删除的模板）"}
+    if not _ID_RE.match(sid):
+        return {"ok": False, "error": f"{ID_HINT}：{sid!r}"}
+    tpl = get_template(ws, sid)
     if not tpl:
-        return {"ok": False, "error": f"模板不存在：{pid}"}
+        return {"ok": False, "error": f"模板不存在：{sid}"}
     if tpl.get("builtin"):
-        return {"ok": False, "error": f"内置模板不可删除（可复制为新模板后编辑）：{pid}"}
-    p = _path(ws, pid)
+        return {"ok": False, "error": f"内置模板不可删除（可「另存为新模板」后编辑）：{sid}"}
+    p = _path(ws, sid)
     if not p:
-        return {"ok": False, "error": "模板 id 非法"}
+        return {"ok": False, "error": f"{ID_HINT}：{sid!r}"}
     was_default = bool(tpl.get("default"))
     p.unlink(missing_ok=True)
     if was_default:
@@ -231,18 +245,23 @@ def delete_template(ws, pid: str) -> dict:
 
 
 def set_default(ws, pid: str) -> dict:
-    tpl = get_template(ws, pid)
+    sid = str(pid or "").strip()
+    if not sid:
+        return {"ok": False, "error": "缺少模板 id（未选中要设为默认的模板）"}
+    if not _ID_RE.match(sid):
+        return {"ok": False, "error": f"{ID_HINT}：{sid!r}"}
+    tpl = get_template(ws, sid)
     if not tpl:
-        return {"ok": False, "error": f"模板不存在：{pid}"}
-    p = _path(ws, pid)
+        return {"ok": False, "error": f"模板不存在：{sid}"}
+    p = _path(ws, sid)
     assert p is not None
     d = dict(tpl)
     d["default"] = True
     d["updatedAt"] = time.strftime("%Y-%m-%d %H:%M:%S")
     from ..filelock import atomic_write_text
     atomic_write_text(p, json.dumps(d, ensure_ascii=False, indent=1))
-    _clear_other_defaults(ws, pid)
-    return {"ok": True, "default": pid}
+    _clear_other_defaults(ws, sid)
+    return {"ok": True, "default": sid}
 
 
 def requirement_text(ws, template_id: str = "", fallback: str = "") -> str:

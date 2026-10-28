@@ -31,7 +31,8 @@ def test_kb_export_respects_workspace_and_fmt(tmp_path):
     out = ws / "kb" / "export" / "problems.json"
     assert out.is_file()
     data = json.loads(out.read_text(encoding="utf-8"))
-    assert data["chap01"][0]["id"] == "q1"
+    # D111：读出的题号自动带章节前缀
+    assert data["chap01"][0]["id"] == "chap01-q1"
     # 非法格式被显式拒绝（而非静默忽略）
     r2 = CliRunner().invoke(cli, ["kb", "export", "--fmt", "csv", "-w", str(ws)])
     assert r2.exit_code != 0

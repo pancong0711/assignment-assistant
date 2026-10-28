@@ -57,6 +57,41 @@ export interface KbRow {
   note: string
 }
 
+/* ---------------- D111：题库题号全局唯一（自动章节前缀） ----------------
+ * 背景：题号只在**章内**唯一（真实题库里 `01` 在 9 个章节重复），导致答案版本库
+ * 按 qid 存储时跨章串味、批阅报告错配。约定题库 id = `<chap>-<原id>`（如 chap04-01）。
+ * 与引擎 `files/kb_io.scope_question_id` **同一语义**（parity 自检护航）。 */
+
+/** 片段安全化：去掉路径分隔符/控制字符（与引擎 safe_id_part 同口径）。 */
+export function safeIdPart(v: string): string {
+  return String(v ?? '').trim().replace(/[\\/:*?"<>|\x00-\x1f]/g, '-').trim()
+}
+
+/** `<chap>` + 原始题号 → 全局唯一 id（幂等：已带本章前缀则原样返回）。 */
+export function scopeQuestionId(chap: string, qid: string): string {
+  const q = safeIdPart(qid)
+  if (!q) return ''
+  const c = safeIdPart(chap)
+  if (!c) return q
+  const head = `${c}-`
+  if (q === c || q.startsWith(head)) return q
+  return `${head}${q}`
+}
+
+/** 找出加前缀后仍重复的 id（应视为数据错误）。
+ *  计数口径：**出现次数**，因此同一 sheet 内重复（`[a,a]`）与跨 sheet 撞名都能检出。 */
+export function findDuplicateIds(chapters: Array<{ name: string; rows: KbRow[] }>): Record<string, string[]> {
+  const seen: Record<string, string[]> = {}
+  for (const ch of chapters) {
+    for (const r of ch.rows) {
+      const id = scopeQuestionId(ch.name, r.id)
+      if (!id) continue
+      ;(seen[id] ||= []).push(ch.name)
+    }
+  }
+  return Object.fromEntries(Object.entries(seen).filter(([, v]) => v.length > 1))
+}
+
 /** 一个文件 = 一种 kind；一个 sheet = 一章 */
 export interface KbChapter {
   /** sheet 名，如 chap10 */

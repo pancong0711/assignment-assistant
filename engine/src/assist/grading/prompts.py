@@ -253,7 +253,9 @@ SVG_REDRAW_INSTRUCTION = """
 
 补充要求（手绘图重绘）：
 如果学生有手绘示意图/受力图/电路图，请用**内联 SVG** 重绘并插入 markdown：
-- 用 <svg viewBox="0 0 200 150" xmlns="http://www.w3.org/2000/svg"> 包裹；
+- 用 <svg viewBox="0 0 200 150" width="60mm" height="45mm" xmlns="http://www.w3.org/2000/svg"> 包裹；
+- **就近插入**：图放在描述该图的那段文字之后，不要统一追加到末尾；
+- 另起一段（前后各留一个空行），保证按 Markdown 段落渲染；
 - 只用 line/rect/circle/ellipse/polyline/polygon/path/text 这些基本图元；
 - 黑白线稿（stroke="black" fill="none"），最多 20 个图元，不要用样式表；
 - 不要引用任何外部资源（不要 <image>、不要 href）；

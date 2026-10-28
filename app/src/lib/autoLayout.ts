@@ -72,18 +72,45 @@ export interface LayoutResult {
 
 /* ---------------- 切分 ---------------- */
 
-/** 行间公式（`$$..$$` 或 `\[..\]`）作为不可切原子。 */
+/** 行间公式（`$$..$$` 或 `\[..\]`）与内联 HTML 块（svg/table/pre）作为不可切原子。 */
 const DISPLAY_MATH_RE = /(\$\$[\s\S]*?\$\$|\\\[[\s\S]*?\\\])/g
+/** D109：多行 `<svg>`/`<table>`/`<pre>` 必须整体成块；被拆散的 `<svg>` 在浏览器里
+ *  会解析成 0 个图元（空白框），剩余图元文本则漏到正文外。 */
+const HTML_BLOCK_RE = /<svg\b[\s\S]*?<\/svg\s*>|<table\b[\s\S]*?<\/table\s*>|<pre\b[\s\S]*?<\/pre\s*>/gi
 
 /** 单个块的建议字符上限：超过则继续按句子切（避免一个巨型块整题独占多页）。 */
 const MAX_PIECE_CHARS = 120
 
-/** 在「句子边界」把长段落再切开（公式已在此之前被剥离为原子块）。 */
+/**
+ * D109：把 `$..$` / `\(..\)` 也视为不可切原子，绝不在公式中间下刀。
+ * 此前硬切会产出 `$h =` + `\frac{v_0^2}{2g}$` 这类残片：前一段是未闭合的 `$`，
+ * KaTeX 无法渲染 → 显示成源码，后一段内容从预览里"消失"（用户报的"在 latex 处截断"）。
+ */
+const INLINE_MATH_RE = /(\$\$[\s\S]*?\$\$|\\\[[\s\S]*?\\\]|\\\([\s\S]*?\\\)|\$(?:\\.|[^$\\])+\$)/g
+
+/** 拆成「公式 / 纯文本」交替片段（公式为原子）。 */
+function atomizeMath(text: string): string[] {
+  return text.split(INLINE_MATH_RE).filter((x) => x !== '')
+}
+
+/** 是否为不可切的公式原子。 */
+function isMathAtom(s: string): boolean {
+  return /^\$\$[\s\S]*\$\$$/.test(s) || /^\\\[[\s\S]*\\\]$/.test(s)
+    || /^\\\([\s\S]*\\\)$/.test(s) || /^\$(?:\\.|[^$\\])+\$$/.test(s)
+}
+
+/** 在「句子边界」把长段落再切开（公式已是原子，不会被切断）。 */
 function splitLongParagraph(para: string, limit = MAX_PIECE_CHARS): string[] {
   if (para.length <= limit) return [para]
   const out: string[] = []
-  // 以中文句末/分号/英文句点为界，保留标点
-  const sentences = para.split(/(?<=[。！？；.!?;])\s*/).filter((x) => x.trim())
+  // 先把句子切出来，但**公式整体作为一句**参与打包，避免把公式当句子拆开
+  const sentences: string[] = []
+  for (const atom of atomizeMath(para)) {
+    if (isMathAtom(atom)) { sentences.push(atom); continue }
+    const parts = atom.split(/(?<=[。！？；.!?;])\s*/).filter((x) => x.trim())
+    if (!parts.length && atom) sentences.push(atom)
+    else sentences.push(...parts)
+  }
   let buf = ''
   for (const snt of sentences) {
     if (!buf) { buf = snt; continue }
@@ -91,17 +118,53 @@ function splitLongParagraph(para: string, limit = MAX_PIECE_CHARS): string[] {
     out.push(buf); buf = snt
   }
   if (buf) out.push(buf)
-  // 极端长句（无标点）：按字符硬切
+  // 极端长句（无标点）：按字符切，但**跳过公式原子**（公式宁可超出上限也不切开）
   const final: string[] = []
   for (const piece of out.length ? out : [para]) {
     if (piece.length <= limit) { final.push(piece); continue }
-    for (let i = 0; i < piece.length; i += limit) final.push(piece.slice(i, i + limit))
+    const atoms = atomizeMath(piece)
+    let acc = ''
+    const flush = () => { if (acc) { final.push(acc); acc = '' } }
+    for (const atom of atoms) {
+      if (isMathAtom(atom)) {
+        // 公式超限但整体保留：先收尾已有文本，再单独成块
+        if (acc.length + atom.length > limit) flush()
+        acc += atom
+        if (acc.length >= limit) flush()
+        continue
+      }
+      // 纯文本：逐段裁到剩余额度
+      let rest = atom
+      while (rest.length) {
+        const room = limit - acc.length
+        if (room <= 0) { flush(); continue }
+        acc += rest.slice(0, room)
+        rest = rest.slice(room)
+        if (acc.length >= limit) flush()
+      }
+    }
+    flush()
   }
   return final
 }
 
 /** 把一段文本切成「可独立成块」的片段：段落边界优先，行间公式整体保留。 */
-export function splitIntoPieces(text: string): string[] {
+/** D109：先抽多行 HTML 块（svg/table/pre）为原子，再按公式/段落切。 */
+function splitKeepingHtmlBlocks(text: string): string[] {
+  const out: string[] = []
+  let last = 0
+  for (const m of text.matchAll(HTML_BLOCK_RE)) {
+    const idx = m.index ?? 0
+    out.push(...splitIgnoreHtml(text.slice(last, idx)))
+    out.push(m[0])                        // 整个 SVG/表格：一块，绝不拆
+    last = idx + m[0].length
+  }
+  out.push(...splitIgnoreHtml(text.slice(last)))
+  return out.filter((x) => x !== '')
+}
+
+/** 原切分逻辑（不含 SVG 块保护），供 splitKeepingHtmlBlocks 复用。 */
+function splitIgnoreHtml(text: string): string[] {
   const src = String(text ?? '')
   if (!src.trim()) return []
   const out: string[] = []
@@ -125,6 +188,13 @@ export function splitIntoPieces(text: string): string[] {
     }
   }
   return out
+}
+
+/** 把一段文本切成「可独立成块」的片段：SVG/表格整块优先，其次段落，行间公式整体保留。 */
+export function splitIntoPieces(text: string): string[] {
+  const src = String(text ?? '')
+  if (!src.trim()) return []
+  return splitKeepingHtmlBlocks(src)
 }
 
 /* ---------------- 测量接口（浏览器注入） ---------------- */

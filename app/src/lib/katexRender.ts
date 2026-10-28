@@ -26,7 +26,8 @@ export const KATEX_OPTS = { delimiters: KATEX_DELIMITERS as unknown as
 
 /** 已渲染标记属性（幂等依据）。 */
 export const KATEX_DONE_ATTR = 'data-katex-done'
-/** 原始文本快照属性（force 重渲染前用于还原，避免在 KaTeX DOM 上二次渲染）。 */
+/** 原始 HTML 快照属性（force 重渲染前据此还原，避免在 KaTeX DOM 上二次渲染）。
+ *  D111：必须存 **innerHTML**（含标签），不能只存 textContent，否则会丢示意图/表格。 */
 export const KATEX_SRC_ATTR = 'data-katex-src'
 
 let katexLoad: Promise<boolean> | null = null
@@ -79,16 +80,18 @@ export async function renderMathIn(el: Element | null | undefined, force = false
     .renderMathInElement
   if (typeof fn !== 'function') return false
   try {
-    // 重渲染前恢复"原始文本"，避免在已渲染 DOM 上二次渲染导致公式重复/嵌套。
-    // KaTeX 只替换文本节点，故用 textContent 还原最快且不会丢题干/答案正文。
+    // D111：重渲染前用 **innerHTML** 还原，绝不能用 textContent。
+    // 旧实现 `el.textContent = original` 会把"文本快照"写回元素，
+    // 直接抹掉全部标签结构：<svg> 消失（→"未见示意图"）、表格塌成一行、
+    // KaTeX 生成的 MathML+HTML 双份文本被拼在一起（→ "F=maF=ma"，看着像文字截断/重复）。
     if (force && el.hasAttribute(KATEX_DONE_ATTR)) {
       const original = el.getAttribute(KATEX_SRC_ATTR)
-      if (original !== null) el.textContent = original
+      if (original !== null) el.innerHTML = original
     }
-    const src = el.textContent ?? ''
+    const src = el.innerHTML
     fn(el, KATEX_OPTS)
     el.setAttribute(KATEX_DONE_ATTR, '1')
-    el.setAttribute(KATEX_SRC_ATTR, src)   // 记住原始文本，供下次 force 重渲染还原
+    el.setAttribute(KATEX_SRC_ATTR, src)   // 记住原始 **HTML**，供下次 force 重渲染还原
     return true
   } catch {
     return false

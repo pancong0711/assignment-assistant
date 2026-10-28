@@ -43,11 +43,16 @@ async function openSolution(row: { id: string; content: string; solution: string
   solPick.value = ''
   solMsg.value = ''
   solBusy.value = true
-  const doc = await fetchKbSolutions(settings.engineUrl, settings.engineToken, row.id)
+  // D110：先给作用域兜底（当前 kind/章节），再取版本库 —— 跨章同号必须带作用域，
+  // 否则每个章节的 c1 都会读到同一份答案。
+  solKb.value = activeKind.value
+  solChap.value = activeChap.value
+  const doc = await fetchKbSolutions(settings.engineUrl, settings.engineToken, row.id,
+    { kb: activeKind.value, chap: activeChap.value })
   solVersions.value = doc.versions ?? []
   solOnline.value = !!doc.versions
-  solKb.value = doc.kb || ''
-  solChap.value = doc.chap || ''
+  solKb.value = doc.kb || activeKind.value
+  solChap.value = doc.chap || activeChap.value
   solBusy.value = false
 }
 function closeSolution() { solOpen.value = false }
@@ -94,7 +99,8 @@ async function saveDraft(pin: boolean) {
   const added = r.added
   if (pin && added) {
     const rp = await mutateKbSolution(settings.engineUrl, settings.engineToken,
-      { action: 'pin', qid: solQid.value, version: added.id })
+      { action: 'pin', qid: solQid.value, version: added.id,
+        kb: solKb.value, chap: solChap.value })
     if (rp.ok && rp.solutions) solVersions.value = rp.solutions.versions ?? []
   }
   solEditing.value = false
@@ -136,7 +142,8 @@ async function solAdd(fromXlsx: boolean) {
 async function solPin(v: SolutionVersion) {
   solBusy.value = true
   const r = await mutateKbSolution(settings.engineUrl, settings.engineToken,
-    { action: 'pin', qid: solQid.value, version: v.id })
+    { action: 'pin', qid: solQid.value, version: v.id,
+      kb: solKb.value, chap: solChap.value })
   solBusy.value = false
   if (r.ok && r.solutions) {
     solVersions.value = r.solutions.versions ?? []
@@ -147,7 +154,8 @@ async function solPin(v: SolutionVersion) {
 async function solRm(v: SolutionVersion) {
   solBusy.value = true
   const r = await mutateKbSolution(settings.engineUrl, settings.engineToken,
-    { action: 'rm', qid: solQid.value, version: v.id })
+    { action: 'rm', qid: solQid.value, version: v.id,
+      kb: solKb.value, chap: solChap.value })
   solBusy.value = false
   if (r.ok && r.solutions) {
     solVersions.value = r.solutions.versions ?? []
@@ -164,7 +172,8 @@ const solCells = computed<Record<string, SolCellView>>(() => {
   void kb.solutionsRev                       // 索引刷新 → 重新计算
   const out: Record<string, SolCellView> = {}
   for (const r of visibleRows.value) {
-    const eff = kb.effectiveSolution(String(r.id), r.solution || '')
+    const eff = kb.effectiveSolution(String(r.id), r.solution || '',
+      { kb: activeKind.value, chap: activeChap.value })
     const full = String(eff.text || '')
     const ver = String(eff.version || '')
     const who = eff.source === 'ai' ? 'AI' : (eff.source ? '人工' : '')
@@ -178,7 +187,7 @@ const solCells = computed<Record<string, SolCellView>>(() => {
       text: full ? `${full.slice(0, 14)}${full.length > 14 ? '…' : ''}` : '（空）',
       full: full || String(r.solution || ''),
       badge,
-      hasVersions: !!kb.solutionOf(String(r.id)),
+      hasVersions: !!kb.solutionOf(String(r.id), { kb: activeKind.value, chap: activeChap.value }),
     }
   }
   return out

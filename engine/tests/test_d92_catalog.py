@@ -31,7 +31,8 @@ def test_catalog_structure(tmp_path):
     probs = next(k for k in c["kinds"] if k["kind"] == "problems")
     ch = probs["chapters"][0]
     assert ch["chap"] == "chap04" and ch["count"] == 2
-    assert [i["id"] for i in ch["ids"]] == ["c1", "c2"]
+    # D111：catalog 暴露的 id 为全局唯一 id（含章节前缀）
+    assert [i["id"] for i in ch["ids"]] == ["chap04-c1", "chap04-c2"]
     assert "求速度" in ch["ids"][0]["content"]
 
 

@@ -47,22 +47,28 @@ def expand_items(ws: Path, task: dict) -> list[dict]:
         ids = spec.get("ids")
         tag = spec.get("tag", spec.get("kb", "problems"))
         chapters = kb_data.get(kind, {})
-        entries = list(chapters.get(chap, [])) if chap else \
-            [e for chs in chapters.values() for e in chs]
+        # D110：保留 (chap, entry) 配对，答案按作用域取，避免跨章同号串答案
+        pairs = ([(chap, chapters.get(chap, []))] if chap
+                 else list(chapters.items()))
         if ids:
-            entries = [e for e in entries if str(e.get("id")) in {str(i) for i in ids}]
-        for e in entries:
-            idx += 1
-            img = e.get("img_path")
-            if img and not str(img).startswith("/"):
-                img = str(kb_dir / str(img))
-            qid = str(e.get("id") or "")
-            fallback = str(e.get("solution", "") or "")
-            eff = effective_solution(ws, qid, fallback) if qid else {"text": fallback}
-            # D105：批阅 prompt 用纯文本（text_plain），md+html 仅用于显示
-            sol_text = str(eff.get("text_plain") or eff.get("text") or fallback)
-            out.append({"序号": idx, "content": e.get("content", ""),
-                        "solution": sol_text, "tag": tag, "img": img})
+            from ..paper.task import item_id_matches
+            want = [str(i) for i in ids]
+            pairs = [(c, [e for e in es if item_id_matches(str(c), want, e.get("id"))])
+                     for c, es in pairs]
+        for cname, entries in pairs:
+            for e in entries:
+                idx += 1
+                img = e.get("img_path")
+                if img and not str(img).startswith("/"):
+                    img = str(kb_dir / str(img))
+                qid = str(e.get("id") or "")
+                fallback = str(e.get("solution", "") or "")
+                eff = (effective_solution(ws, qid, fallback, kb=kind, chap=cname)
+                       if qid else {"text": fallback})
+                # D105：批阅 prompt 用纯文本（text_plain），md+html 仅用于显示
+                sol_text = str(eff.get("text_plain") or eff.get("text") or fallback)
+                out.append({"序号": idx, "content": e.get("content", ""),
+                            "solution": sol_text, "tag": tag, "img": img})
     if not out:
         logger.warning("任务包未选中任何题目")
     return out

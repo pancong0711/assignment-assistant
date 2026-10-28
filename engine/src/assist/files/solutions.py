@@ -24,6 +24,12 @@ from loguru import logger
 SOLUTIONS_DIR = "solutions"
 _QID_RE = re.compile(r"^[^\\/:*?\"<>|]{1,120}$")
 
+# D110：题号在不同章节会重复（如 chap04/c1 与 chap05/c1），而答案文件原先只按 qid 命名，
+# 导致两章的 c1 写进同一个 c1.json、互相覆盖/串答案。
+# 现改为 `<kb>__<chap>__<qid>.json`（三段都做文件名安全化），并保留旧 `<qid>.json`
+# 作为「无章节上下文」的兼容读取（旧数据/CLI 只给 qid 时仍可读）。
+_SCOPE_SEP = "__"
+
 
 def solutions_dir(ws) -> Path:
     d = Path(ws).resolve() / "kb" / SOLUTIONS_DIR
@@ -38,20 +44,81 @@ def _safe_qid(qid: str) -> str:
     return q
 
 
-def _path(ws, qid: str) -> "Path | None":
-    sid = _safe_qid(qid)
+def _safe_part(v: str) -> str:
+    """kb/chap 片段：去掉路径分隔符与 _SCOPE_SEP，避免拼出歧义文件名。"""
+    t = str(v or "").strip()
+    if not t:
+        return ""
+    t = re.sub(r"[\\/]", "-", t)
+    while _SCOPE_SEP in t:
+        t = t.replace(_SCOPE_SEP, "_")
+    return t.strip(".") if t.strip(".") else ""
+
+
+def scope_id(kb: str = "", chap: str = "", qid: str = "") -> str:
+    """把 (kb, chap, qid) 归一成一个「作用域 id」。
+
+    - 有 kb+chap：`kb__chap__qid`（唯一，避免跨章撞名）；
+    - 缺 chap 但有 kb：`kb__qid`；
+    - 都没有：`qid`（旧兼容）。
+    """
+    q = _safe_qid(qid)
+    if not q:
+        return ""
+    k, c = _safe_part(kb), _safe_part(chap)
+    if k and c:
+        return f"{k}{_SCOPE_SEP}{c}{_SCOPE_SEP}{q}"
+    if k:
+        return f"{k}{_SCOPE_SEP}{q}"
+    return q
+
+
+def _path(ws, qid: str, kb: str = "", chap: str = "") -> "Path | None":
+    sid = scope_id(kb, chap, qid)
     return solutions_dir(ws) / f"{sid}.json" if sid else None
 
 
-def read_solutions(ws, qid: str) -> "dict | None":
-    p = _path(ws, qid)
-    if not p or not p.is_file():
-        return None
+def _candidate_paths(ws, qid: str, kb: str = "", chap: str = "") -> list[Path]:
+    """读取时按优先级返回候选文件：精确作用域 → 只带 kb → 旧 qid。"""
+    out: list[Path] = []
+    for sid in (scope_id(kb, chap, qid), scope_id(kb, "", qid), scope_id("", "", qid)):
+        if not sid:
+            continue
+        p = solutions_dir(ws) / f"{sid}.json"
+        if p not in out:
+            out.append(p)
+    return out
+
+
+def _mark_migrated(legacy: Path, target: Path) -> None:
+    """把旧文件标记为已迁移到 target（保留内容以便回滚，但读取时跳过）。"""
     try:
-        d = json.loads(p.read_text(encoding="utf-8"))
-        return d if isinstance(d, dict) else None
+        d = json.loads(legacy.read_text(encoding="utf-8"))
+        if not isinstance(d, dict):
+            return
+        d["migratedTo"] = str(target)
+        from ..filelock import atomic_write_text
+        atomic_write_text(legacy, json.dumps(d, ensure_ascii=False, indent=1))
+        logger.info(f"答案版本库已迁移：{legacy.name} → {target.name}")
     except Exception:  # noqa: BLE001
-        return None
+        pass
+
+
+def read_solutions(ws, qid: str, kb: str = "", chap: str = "") -> "dict | None":
+    """读取某题的版本库。
+
+    D110：先找「精确作用域」文件（kb__chap__qid），再回落 kb__qid / 旧 qid.json。
+    """
+    for p in _candidate_paths(ws, qid, kb, chap):
+        if not p.is_file():
+            continue
+        try:
+            d = json.loads(p.read_text(encoding="utf-8"))
+        except Exception:  # noqa: BLE001
+            continue
+        if isinstance(d, dict) and not d.get("migratedTo"):
+            return d
+    return None
 
 
 def _next_version_id(versions: list[dict]) -> str:
@@ -108,14 +175,17 @@ def list_solutions(ws) -> list[dict]:
     return out
 
 
-def save_solutions(ws, qid: str, data: dict) -> dict:
-    p = _path(ws, qid)
+def save_solutions(ws, qid: str, data: dict, kb: str = "", chap: str = "") -> dict:
+    kb = str(kb or data.get("kb") or "")
+    chap = str(chap or data.get("chap") or "")
+    p = _path(ws, qid, kb, chap)
     if not p:
         return {"ok": False, "error": "题目 id 非法（1..120 字符，不含路径分隔符）"}
     payload = _normalize({**data, "qid": str(qid)})
     from ..filelock import atomic_write_text
     atomic_write_text(p, json.dumps(payload, ensure_ascii=False, indent=1))
-    return {"ok": True, "solutions": payload, "file": str(p)}
+    return {"ok": True, "solutions": payload, "file": str(p),
+            "scope": scope_id(kb, chap, qid)}
 
 
 def add_version(ws, qid: str, text: str, *, source: str = "ai", model: str = "",
@@ -129,13 +199,20 @@ def add_version(ws, qid: str, text: str, *, source: str = "ai", model: str = "",
     """
     if not str(text or "").strip():
         return {"ok": False, "error": "答案内容为空"}
-    path = _path(ws, qid)
+    path = _path(ws, qid, kb, chap)
     if not path:
         return {"ok": False, "error": "题目 id 非法（1..120 字符，不含路径分隔符）"}
     # AI 批量作答可能并行写同一题：整段读-改-写锁内，避免版本号撞车/丢版本。
     from ..filelock import locked
     with locked(path):
-        cur = read_solutions(ws, qid) or {"qid": str(qid), "kb": kb, "chap": chap, "versions": []}
+        cur = read_solutions(ws, qid, kb, chap) or {"qid": str(qid), "kb": kb, "chap": chap, "versions": []}
+        # D110：若命中的是**旧的无章节文件**（或上一级 kb-only 文件），本次写入会落到
+        # 更精确的作用域文件。此时把旧文件标记为「已迁移」，避免它继续作为
+        # 其它章节的兜底答案被读到（那正是"跨章答案相同"的成因之一）。
+        legacy = next((p for p in _candidate_paths(ws, qid, kb, chap)
+                       if p.is_file() and p != path), None)
+        if legacy is not None and (kb or chap):
+            _mark_migrated(legacy, path)
         cur.setdefault("versions", [])
         vid = _next_version_id(cur["versions"])
         if pin_if_unpinned and not any(v.get("pinned") for v in cur["versions"]):
@@ -147,23 +224,25 @@ def add_version(ws, qid: str, text: str, *, source: str = "ai", model: str = "",
             for v in cur["versions"]:
                 v["pinned"] = False
         cur["versions"].append(entry)
-        if kb and not cur.get("kb"):
+        # D110：kb/chap 为准入参数（作答时已知上下文），不再"仅当为空才写"——
+        # 否则旧文件里残留的 chap 会让跨章写入串味。
+        if kb:
             cur["kb"] = kb
-        if chap and not cur.get("chap"):
+        if chap:
             cur["chap"] = chap
-        res = save_solutions(ws, qid, cur)
+        res = save_solutions(ws, qid, cur, kb=kb, chap=chap)
     if res.get("ok"):
         res["added"] = entry
     return res
 
 
-def pin_version(ws, qid: str, version_id: str) -> dict:
-    path = _path(ws, qid)
+def pin_version(ws, qid: str, version_id: str, kb: str = "", chap: str = "") -> dict:
+    path = _path(ws, qid, kb, chap)
     if not path:
         return {"ok": False, "error": "题目 id 非法"}
     from ..filelock import locked
     with locked(path):
-        cur = read_solutions(ws, qid)
+        cur = read_solutions(ws, qid, kb, chap)
         if not cur:
             return {"ok": False, "error": f"题目无版本库：{qid}"}
         found = False
@@ -173,23 +252,23 @@ def pin_version(ws, qid: str, version_id: str) -> dict:
             found = found or want
         if not found:
             return {"ok": False, "error": f"版本不存在：{version_id}"}
-        return save_solutions(ws, qid, cur)
+        return save_solutions(ws, qid, cur, kb=kb, chap=chap)
 
 
-def remove_version(ws, qid: str, version_id: str) -> dict:
-    path = _path(ws, qid)
+def remove_version(ws, qid: str, version_id: str, kb: str = "", chap: str = "") -> dict:
+    path = _path(ws, qid, kb, chap)
     if not path:
         return {"ok": False, "error": "题目 id 非法"}
     from ..filelock import locked
     with locked(path):
-        cur = read_solutions(ws, qid)
+        cur = read_solutions(ws, qid, kb, chap)
         if not cur:
             return {"ok": False, "error": f"题目无版本库：{qid}"}
         before = len(cur.get("versions", []))
         cur["versions"] = [v for v in cur.get("versions", []) if str(v.get("id")) != str(version_id)]
         if len(cur["versions"]) == before:
             return {"ok": False, "error": f"版本不存在：{version_id}"}
-        return save_solutions(ws, qid, cur)
+        return save_solutions(ws, qid, cur, kb=kb, chap=chap)
 
 
 def _effective_of(doc: "dict | None", fallback: str = "") -> dict:
@@ -216,21 +295,38 @@ def _effective_of(doc: "dict | None", fallback: str = "") -> dict:
             "from": "xlsx", "n_versions": 0, "ai_versions": 0}
 
 
-def effective_solution(ws, qid: str, fallback: str = "") -> dict:
+def effective_solution(ws, qid: str, fallback: str = "",
+                       kb: str = "", chap: str = "") -> dict:
     """生效答案（实时读）：pinned 版 > 最新版 > xlsx fallback（旧数据兼容）。
+
+    D110：`kb`/`chap` 用于消除跨章同号（chap04/c1 vs chap05/c1）；
+    不传则回落旧行为（只按 qid 找 `<qid>.json`）。
 
     返回 {text, source, model, at, version, from, n_versions, ai_versions}
     （from ∈ pinned|latest|fallback|xlsx）。
     """
-    return _effective_of(read_solutions(ws, qid), fallback)
+    return _effective_of(read_solutions(ws, qid, kb, chap), fallback)
 
 
 def effective_map(ws) -> dict:
-    """**批量**生效答案索引：{qid: effective_solution(...)}（无 fallback）。
+    """**批量**生效答案索引（无 fallback），按 qid 索引（向后兼容旧前端）。
 
-    D100-T1：供 PWA 一次拉全库（`GET /kb/solutions`）与 `assist sheet html` 出图共用，
-    避免逐题读盘；语义与 `effective_solution` 逐条一致（同一 `_effective_of`）。
+    D110：同一 qid 出现在多章时，只有第一条保留答案内容，其余标记
+    `ambiguous=True`，避免前端把 A 章的答案显示到 B 章。
+    需要精确定位请用 `effective_by_key()`。
     """
+    by_qid: dict = {}
+    for eff in effective_by_key(ws).values():
+        qid = eff["qid"]
+        if qid in by_qid:
+            by_qid[qid] = {**by_qid[qid], "ambiguous": True}
+            continue
+        by_qid[qid] = eff
+    return by_qid
+
+
+def effective_by_key(ws) -> dict:
+    """D110：精确索引 `{"kb__chap__qid": eff}`（PWA/CLI 按章节取答案的首选）。"""
     out: dict = {}
     for d in list_solutions(ws):
         qid = str(d.get("qid") or "").strip()
@@ -240,7 +336,10 @@ def effective_map(ws) -> dict:
         if not str(eff.get("text") or "").strip():
             continue
         eff["id"] = eff.get("version") or ""
-        out[qid] = eff
+        eff["qid"] = qid
+        eff["kb"] = str(d.get("kb") or "")
+        eff["chap"] = str(d.get("chap") or "")
+        out[scope_id(eff["kb"], eff["chap"], qid)] = eff
     return out
 
 

@@ -89,8 +89,8 @@ def test_effective_map_digest_changes(tmp_path):
 def test_solve_apply_default_pins(tmp_path, monkeypatch):
     """D100-T3：`solve_targets` 默认 pin=True —— AI 作答即成为生效答案。"""
     ws = tmp_path / "ws"; _mk_kb(ws)
-    sol.add_version(ws, "c1", "原答案", source="human")
-    sol.pin_version(ws, "c1", "v1")
+    sol.add_version(ws, "chap04-c1", "原答案", source="human", kb="problems", chap="chap04")
+    sol.pin_version(ws, "chap04-c1", "v1", kb="problems", chap="chap04")
 
     class _Stub:
         def chat(self, **kw): return "AI 新解"
@@ -98,16 +98,16 @@ def test_solve_apply_default_pins(tmp_path, monkeypatch):
     monkeypatch.setattr(solve, "_client", lambda ws_, model="": (_Stub(), "m"))
     targets = solve.list_targets(ws, "problems", "chap04", ["c1"])
     solve.solve_targets(ws, targets, model="m", apply=True, dry_run=False)   # 不传 pin
-    d = sol.read_solutions(ws, "c1")
+    d = sol.read_solutions(ws, "chap04-c1", kb="problems", chap="chap04")
     assert d["versions"][-1]["pinned"] is True, "AI 作答默认应置顶"
     assert d["versions"][0]["pinned"] is False, "旧版取消置顶但仍在库"
-    assert sol.effective_solution(ws, "c1")["text"] == "AI 新解"
+    assert sol.effective_solution(ws, "chap04-c1", kb="problems", chap="chap04")["text"] == "AI 新解"
 
 
 def test_solve_apply_no_pin_keeps_original(tmp_path, monkeypatch):
     ws = tmp_path / "ws"; _mk_kb(ws)
-    sol.add_version(ws, "c1", "原答案", source="human")
-    sol.pin_version(ws, "c1", "v1")
+    sol.add_version(ws, "chap04-c1", "原答案", source="human", kb="problems", chap="chap04")
+    sol.pin_version(ws, "chap04-c1", "v1", kb="problems", chap="chap04")
 
     class _Stub:
         def chat(self, **kw): return "AI 新解"
@@ -115,7 +115,7 @@ def test_solve_apply_no_pin_keeps_original(tmp_path, monkeypatch):
     monkeypatch.setattr(solve, "_client", lambda ws_, model="": (_Stub(), "m"))
     targets = solve.list_targets(ws, "problems", "chap04", ["c1"])
     solve.solve_targets(ws, targets, model="m", apply=True, pin=False, dry_run=False)
-    assert sol.effective_solution(ws, "c1")["text"] == "原答案"
+    assert sol.effective_solution(ws, "chap04-c1", kb="problems", chap="chap04")["text"] == "原答案"
 
 
 def test_add_version_pin_if_unpinned(tmp_path):
@@ -142,8 +142,9 @@ def test_cli_ai_solve_pin_flags(tmp_path):
 def test_sheet_html_uses_effective_solution(tmp_path):
     ws = tmp_path / "ws"; _mk_kb(ws)
     task = _mk_task(ws)
-    sol.add_version(ws, "c1", "AI 生成的参考答案", source="ai", model="m")
-    sol.pin_version(ws, "c1", "v1")
+    sol.add_version(ws, "chap04-c1", "AI 生成的参考答案", source="ai", model="m",
+                    kb="problems", chap="chap04")
+    sol.pin_version(ws, "chap04-c1", "v1", kb="problems", chap="chap04")
     out = ws / "o.html"
     r = CliRunner().invoke(cli, ["sheet", "html", "--task", str(task),
                                  "--workspace", str(ws), "-o", str(out),
@@ -158,7 +159,8 @@ def test_sheet_html_uses_latest_when_unpinned(tmp_path):
     """回归：未置顶（latest）也生效——AI 作答后即使忘点置顶也要能看到。"""
     ws = tmp_path / "ws"; _mk_kb(ws)
     task = _mk_task(ws)
-    sol.add_version(ws, "c1", "未置顶的 AI 答案", source="ai")
+    sol.add_version(ws, "chap04-c1", "未置顶的 AI 答案", source="ai",
+                    kb="problems", chap="chap04")
     out = ws / "o.html"
     r = CliRunner().invoke(cli, ["sheet", "html", "--task", str(task),
                                  "--workspace", str(ws), "-o", str(out),

@@ -26,6 +26,7 @@ import { gridBodyStyle, gridLineStyles, resolveGrid,
   seedIndex, copyContent, SUMMARY_ID, SUMMARY_CONTENT, TRANSLATION_ID,
   type Taskpad } from './taskpad'
 import type { KbBook, KbKind } from './kb'
+import { scopeQuestionId } from './kb'
 import { renderRich, renderRichInline, stripMarkup } from './richdoc'
 
 export interface SheetHtmlStudent {
@@ -232,7 +233,12 @@ body {
 .q-img { max-width: 100%; max-height: 52mm; object-fit: contain; align-self: flex-start; }
 .q-img-ph { color: var(--muted); font-size: 10pt; font-style: italic; border: 1px dashed var(--hairline);
   border-radius: 2mm; padding: 4mm; text-align: center; }
-.q-solution { color: var(--muted); font-size: 10pt; border-top: 1px dashed #dfe3ea;
+/* D111：虚线只在「一道题的答案首次出现」时画一次；续段/q-solution-cont 不再重复画，
+   否则连续多格答案会出现一排平行虚线。 */
+.q-solution { color: var(--muted); font-size: 10pt;
+  padding-top: 1.5mm; margin-top: auto; }
+.q-solution.q-sol-first { border-top: 1px dashed #dfe3ea; }
+.q-solution-cont { margin-top: 0; padding-top: 0.5mm; }
   padding-top: 1.5mm; margin-top: auto; }
 /* D105：md+html 答案内的图片/SVG/表格限宽，避免撑破格子 */
 .q-solution img, .q-content img { max-width: 100%; height: auto; }
@@ -603,7 +609,9 @@ function cellBodyHtml(cell: SheetHtmlCellView, includeSolution: boolean, indentC
       // （此前每个切分段都重复一次，与「题 N 续」曾出现的问题同源）
       const isFirstSol = !parts.some((x) => x.includes('q-solution'))
       const label = isFirstSol ? '<span class="q-sol-label">参考答案：</span>' : ''
-      parts.push(`<div class="q-solution">${contMark}${label}`
+      // D111：只有本条答案的**首个**块画顶部虚线；续段用 -cont 类，避免一排平行虚线
+      const solCls = isFirstSol ? 'q-solution q-sol-first' : 'q-solution q-solution-cont'
+      parts.push(`<div class="${solCls}">${contMark}${label}`
         + `<span${scaleStyle}>${body}</span></div>`)
     }
   }
@@ -935,7 +943,8 @@ export function pickEffectiveSolution(
 
 /** 生效答案解析器（注入点）：qid + xlsx 列 fallback → {text, from, version, ...}。
  *  PWA 侧由 kb store 提供（版本库索引 → 回退 xlsx 列）；缺省（不传）时等价旧行为。 */
-export type SolutionResolver = (qid: string, fallback: string) => SolutionLike
+export type SolutionResolver = (qid: string, fallback: string,
+  scope?: { kb?: string; chap?: string }) => SolutionLike
 
 /** 缺省解析器：只读 xlsx 列（引擎离线 / 未接线时的保守回落，与 D100 前行为一致）。 */
 export const xlsxOnlySolutions: SolutionResolver = (_qid, fallback) => pickEffectiveSolution(null, fallback)
@@ -962,19 +971,25 @@ export function expandPadItems(
     const chap = bookOf(item.kb as KbKind)?.chapters.find((c) => c.name === item.chap)
     const tag = String(item.tag || '')
     for (const id of item.ids) {
-      const r = chap?.rows.find((x) => x.id === id)
+      // D111：历史作业纸存的是**裸题号**，而题库 row.id 现在是 `chap-前缀` 全局 id。
+      // 用 scopeQuestionId 归一后再比，两种写法都能命中。
+      const wantId = scopeQuestionId(item.chap, String(id))
+      const r = chap?.rows.find((x) => x.id === wantId || x.id === id)
       if (!r) continue
       seq += 1
-      const label = item.labels?.[id] || item.labels?.[String(id)] || ''
+      // labels 可能以裸 id 或全局 id 为键
+      const label = item.labels?.[r.id] ?? item.labels?.[String(id)] ?? ''
       // D93-copy：抄写题有 page → 改写题干
       const isCopy = item.kb === 'copy' || tag === 'copy'
       const content = (isCopy && r.page) ? copyContent(r.page, r.content, id) : r.content
       // D100-T5：生效答案（版本库置顶/最新版优先；引擎离线回落 xlsx solution 列）
-      const eff = solOf(String(id), r.solution || '')
-      out.push({ id, no: label || (auto ? `${seq}.` : id), content, solution: eff.text || r.solution,
+      // D110：带上 (kb, chap) 作用域，跨章同号题各取各的答案
+      const eff = solOf(String(r.id), r.solution || '', { kb: item.kb, chap: item.chap })
+      out.push({ id: r.id, no: label || (auto ? `${seq}.` : r.id), content,
+                 solution: eff.text || r.solution,
                  solutionFrom: eff.from, solutionVersion: eff.version || '',
                  solutionSource: eff.source || '', imgPath: r.img_path, tag })
-      seen.add(id)
+      seen.add(r.id)
     }
     // D93-summary：该 tag 命中 → 追加 1 道（除非已手工加过 id=summary）
     if (tag === 'summary' && !seen.has(SUMMARY_ID)) {

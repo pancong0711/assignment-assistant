@@ -116,12 +116,29 @@ function restoreMath(html: string, math: string[]): string {
   })
 }
 
+/** D109：给无 width/height 的 `<svg>` 补按 viewBox 比例的内联尺寸。
+ *  否则浏览器会让 `<svg>` 撑满容器（实测 684×513px），示意图被放大变形并挤占整格。
+ *  与引擎 `richdoc._normalize_svg_size` 同口径（PWA/CLI 一致）。 */
+export function normalizeSvgSize(html: string): string {
+  return String(html ?? '').replace(/<svg\b([^>]*)>/gi, (whole: string, attrs: string) => {
+    if (/\bwidth\s*=/i.test(attrs) && /\bheight\s*=/i.test(attrs)) return whole
+    const vb = attrs.match(/\bviewbox\s*=\s*["']\s*[\d.+-]+[\s,]+[\d.+-]+[\s,]+([\d.+-]+)[\s,]+([\d.+-]+)/i)
+    if (!vb) return whole
+    const w = Number(vb[1]); const h = Number(vb[2])
+    if (!(w > 0) || !(h > 0)) return whole
+    const maxH = 45                                  // mm：与引擎一致
+    const widthMm = Math.min(80, maxH * w / h)
+    const heightMm = widthMm * h / w
+    return `<svg${attrs} width="${widthMm.toFixed(1)}mm" height="${heightMm.toFixed(1)}mm">`
+  })
+}
+
 /** Markdown + HTML 白名单 → 安全 HTML。 */
 export function renderRich(text: string): string {
   const src = String(text ?? '')
   if (!src.trim()) return ''
   const { text: guarded, math } = protectMath(dropDangerousBlocks(src))
-  const parsed = restoreMath(mdParser().render(guarded), math)
+  const parsed = normalizeSvgSize(restoreMath(mdParser().render(guarded), math))
   // 无 DOM（Node/SSR）时 DOMPurify 无 sanitize → 走保守兜底
   if (typeof (DOMPurify as unknown as { sanitize?: unknown }).sanitize !== 'function') {
     return sanitizeWithoutDom(parsed)

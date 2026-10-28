@@ -82,8 +82,9 @@ def test_expand_items_reads_latest_pinned(tmp_path):
     sh.append(["c1", "题目", "-", 1, "-", "计算", "旧列答案", ""])
     wb.save(ws / "kb" / "problems.xlsx")
     # 版本库：追加 AI 版并 pin
-    sol.add_version(ws, "c1", "AI 新答案", source="ai", model="qwen-max")
-    sol.pin_version(ws, "c1", "v1")
+    # D111：题库 id 全局唯一 → chap04-c1
+    sol.add_version(ws, "chap04-c1", "AI 新答案", source="ai", model="qwen-max")
+    sol.pin_version(ws, "chap04-c1", "v1")
     from assist.grading.flow import expand_items
     items = expand_items(ws, {"items": [{"kb": "problems", "chap": "chap04", "ids": ["c1"], "tag": "t"}]})
     assert items[0]["solution"] == "AI 新答案", "应实时读置顶版而非 xlsx 旧列"

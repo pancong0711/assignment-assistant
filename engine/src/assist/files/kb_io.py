@@ -7,6 +7,7 @@
 """
 
 import json
+import re
 import shutil
 from datetime import datetime
 from pathlib import Path
@@ -15,6 +16,79 @@ from loguru import logger
 from openpyxl import Workbook, load_workbook
 
 COLUMNS = ["id", "content", "img_path", "page", "related", "type", "solution", "note"]
+
+# ---------------- D111：题库题号全局唯一（自动章节前缀） ----------------
+# 背景：题号只在**章内**唯一（真实题库里 `01` 在 9 个章节重复），导致
+# ①答案版本库按 qid 存储时跨章串味；②批阅报告按 qid 关联会错配。
+# 现约定：题库 id = `<chap>-<原id>`（如 chap04-01），读入即自动补齐（幂等）。
+_ID_PREFIX_RE = re.compile(r"^[0-9A-Za-z_\-\u4e00-\u9fff.]+$")
+_SCOPE_PREFIX_SEP = "-"
+
+
+def safe_id_part(v: str) -> str:
+    """id/章节名片段的文件名安全化（去掉路径分隔符与控制字符）。"""
+    t = str(v or "").strip()
+    t = re.sub(r"[\\/:*?\"<>|\x00-\x1f]", "-", t)
+    return t.strip() or ""
+
+
+def scope_question_id(chap: str, qid: str) -> str:
+    """把 `<chap>` + 原始题号拼成全局唯一 id（幂等）。
+
+    - 已带本章前缀（`chap04-01` 且 chap=chap04）→ 原样返回；
+    - 空题号 → 返回空（由调用方跳过）；
+    - 其它 → `<safe(chap)>-<原id>`。
+
+    幂等性很重要：读写往返多次不会变成 `chap04-chap04-01`。
+    """
+    q = safe_id_part(qid)
+    if not q:
+        return ""
+    c = safe_id_part(chap)
+    if not c:
+        return q
+    head = f"{c}{_SCOPE_PREFIX_SEP}"
+    if q == c or q.startswith(head):
+        return q
+    return f"{head}{q}"
+
+
+def find_duplicate_ids(chapters: dict[str, list[dict]]) -> dict[str, list[str]]:
+    """返回 `{id: [chap, ...]}`：**加前缀后**仍重复的 id（应视为数据错误）。"""
+    seen: dict[str, list[str]] = {}
+    for cname, entries in (chapters or {}).items():
+        for e in entries or []:
+            qid = scope_question_id(cname, str((e or {}).get("id") or ""))
+            if not qid:
+                continue
+            # 计数（append 不去重）：同一 sheet 内重复也能被检出
+            seen.setdefault(qid, []).append(cname)
+    return {k: v for k, v in seen.items() if len(v) > 1}
+
+
+def normalize_question_ids(chapters: dict[str, list[dict]],
+                           *, with_report: bool = False):
+    """就地给每个条目补章节前缀（幂等）。返回 (chapters, changed) 或含 report。
+
+    `changed` 列表形如 `[{"chap","old","new"}]`，供 CLI/UI 展示"已自动加前缀"。
+    """
+    changed: list[dict] = []
+    out: dict[str, list[dict]] = {}
+    for cname, entries in (chapters or {}).items():
+        rows = []
+        for e in entries or []:
+            row = dict(e or {})
+            old = str(row.get("id") or "").strip()
+            new = scope_question_id(cname, old)
+            if new:
+                row["id"] = new
+                if new != old:
+                    changed.append({"chap": cname, "old": old, "new": new})
+            rows.append(row)
+        out[cname] = rows
+    if with_report:
+        return out, {"changed": changed, "duplicates": find_duplicate_ids(out)}
+    return out, changed
 
 EMPTY = ("", None)
 
@@ -59,6 +133,10 @@ def read_xlsx(xlsx_path: Path, kb_dir: Path) -> dict[str, list[dict]]:
         if entries:
             result[sheet_name] = entries
     wb.close()
+    # D111：题库 id 全局唯一（自动章节前缀）；幂等，已带前缀不变
+    result, _changed = normalize_question_ids(result)
+    if _changed:
+        logger.debug(f"{xlsx_path.name}: 已为 {len(_changed)} 个题号补章节前缀")
     return result
 
 
@@ -120,6 +198,13 @@ def read_kb(kb_dir: Path) -> dict[str, dict[str, list[dict]]]:
     for kind, fn in examples.items():
         if kind not in out:
             out[kind] = read_translation(fn, kb_dir) if kind == "translation" else read_xlsx(fn, kb_dir)
+    # D111：加前缀后仍撞号 → 数据错误，明确告警（不静默改名，避免错配答案/报告）
+    for kind, chapters in out.items():
+        dups = find_duplicate_ids(chapters)
+        if dups:
+            sample = ", ".join(f"{qid}@{'/'.join(ch)}" for qid, ch in list(dups.items())[:5])
+            logger.warning(f"题库 {kind} 存在重复题号（{len(dups)} 个）：{sample}；"
+                           f"请用 `assist kb normalize` 检查")
     return out
 
 
@@ -160,9 +245,13 @@ def summarize_solutions(ws, chapters: dict[str, list[dict]]) -> dict[str, list[d
         rows = []
         for e in entries:
             row = dict(e)
-            qid = str(row.get("id") or "")
+            # D111：传入的 chapters 可能是尚未规范化的裸 id，这里补前缀保证命中
+            qid = scope_question_id(sheet, str(row.get("id") or ""))
             if qid:
-                eff = effective_solution(ws, qid, str(row.get("solution") or ""))
+                row["id"] = qid
+                # 作用域用 sheet 名兜底（kb kind 在调用方未知时为空即可，
+                # 精确作用域文件命中不了会自动回落到裸 id 文件）
+                eff = effective_solution(ws, qid, str(row.get("solution") or ""), chap=sheet)
                 summary = str(eff.get("text_plain") or "").strip()
                 if summary:
                     row["solution"] = summary[:SUMMARY_LIMIT]

@@ -19,6 +19,11 @@ const TAB_GUIDES: { tab: string; items: string[] }[] = [
   { tab: '题库编辑器', items: [
     'xlsx 读入 / 编辑 / 写回（引擎在线时 /kb/write 样式保留；否则 FSA / 下载降级）',
     '列结构兼容 docs/05-D3（id/content/img_path/page/related/type/solution/note）',
+    '题号全局唯一（D111）：读入自动加章节前缀 `<章>-<原id>`（如 chap04-01）；已带前缀不重复加。'
+      + '这样不同章节的同号题（旧数据里 01/02 常跨章重复）各用各的参考答案，不会串味',
+    '历史作业纸里的裸题号仍可用（按 item.chap 自动匹配），无需手工迁移；'
+      + '要让 xlsx 落盘也带前缀，运行 `assist kb normalize --write`（先 `assist kb normalize` 看报告）',
+    '参考答案版本库按全局题号存储；预览里的 KaTeX 重渲染会保留示意图/表格（D110/D111）',
   ]},
   { tab: '作业纸版式', items: [
     '竖/横 A4、页眉页脚、水印 items、作业纸导出/清单',

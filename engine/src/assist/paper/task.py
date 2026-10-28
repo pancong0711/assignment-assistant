@@ -18,6 +18,25 @@ def load_task(task_path: Path) -> dict:
     return json.loads(Path(task_path).read_text(encoding="utf-8"))
 
 
+def item_id_matches(chap: str, want, entry_id: str) -> bool:
+    """D111：任务包 `ids` 可能存裸题号（历史）或全局 id（`chap04-01`）。
+
+    判定：`want == entry_id` 或 `scope_question_id(chap, want) == entry_id`。
+    这样历史作业纸（裸 id）与新数据（带前缀）都能命中，无需用户先迁移。
+    """
+    from ..files.kb_io import scope_question_id
+    e = str(entry_id or "").strip()
+    if not e:
+        return False
+    for w in want:
+        ws = str(w or "").strip()
+        if not ws:
+            continue
+        if ws == e or scope_question_id(chap, ws) == e:
+            return True
+    return False
+
+
 def resolve_items(kb_data: dict, task_items: list[dict], kb_dir: Path,
                   numbering: str = "auto", seed: int | None = None,
                   target_tag: str = "") -> list[tuple]:
@@ -57,12 +76,19 @@ def resolve_items(kb_data: dict, task_items: list[dict], kb_dir: Path,
         else:
             entries = [e for chs in chapters.values() for e in chs]
         if ids:
-            entries = [e for e in entries if str(e.get("id")) in {str(i) for i in ids}]
+            # D111：兼容裸题号与带前缀 id
+            entries = [e for e in entries if item_id_matches(chap or "", ids, e.get("id"))]
         for e in entries:
             seq += 1
             raw_id = e.get("id")
             qid = str(raw_id) if raw_id not in (None, "") else str(seq)
-            no = str(labels.get(qid) or "")
+            # labels 可能以裸 id 或全局 id 为键，两种都查
+            label_key = qid
+            if not labels.get(label_key) and chap:
+                bare = qid[len(str(chap)) + 1:] if str(qid).startswith(f"{chap}-") else qid
+                if labels.get(bare):
+                    label_key = bare
+            no = str(labels.get(label_key) or "")
             if not no:
                 no = qid if numbering == "id" else f"{seq}."
             img = e.get("img_path")
@@ -136,12 +162,19 @@ def resolve_items_with_ids(kb_data: dict, task_items: list[dict], kb_dir: Path,
         entries = (list(chapters.get(chap, [])) if chap
                    else [e for chs in chapters.values() for e in chs])
         if ids:
-            entries = [e for e in entries if str(e.get("id")) in {str(i) for i in ids}]
+            # D111：兼容裸题号与带前缀 id
+            entries = [e for e in entries if item_id_matches(chap or "", ids, e.get("id"))]
         for e in entries:
             seq += 1
             raw_id = e.get("id")
             qid = str(raw_id) if raw_id not in (None, "") else str(seq)
-            no = str(labels.get(qid) or "")
+            # labels 可能以裸 id 或全局 id 为键，两种都查
+            label_key = qid
+            if not labels.get(label_key) and chap:
+                bare = qid[len(str(chap)) + 1:] if str(qid).startswith(f"{chap}-") else qid
+                if labels.get(bare):
+                    label_key = bare
+            no = str(labels.get(label_key) or "")
             if not no:
                 no = qid if numbering == "id" else f"{seq}."
             content = str(e.get("content") or "")
@@ -188,8 +221,12 @@ def sheets_from_task(task_path: Path, ws: Path, out_dir: Path | None = None,
                                       seed=task.get("random_seed"),
                                       target_tag=str(task.get("target_tag") or ""))
         items = []
-        for content, img, tag, no, qid in base:
-            eff = effective_solution(ws, str(qid), "") if qid else {"text": ""}
+        # D110：按 (kb, chap, qid) 作用域取答案（跨章同号不再串答案）
+        refs = _resolved_refs(kb_data, task.get("items", []))
+        for i, (content, img, tag, no, qid) in enumerate(base):
+            kind, cname = refs[i] if i < len(refs) else ("", "")
+            eff = (effective_solution(ws, str(qid), "", kb=kind, chap=cname)
+                   if qid else {"text": ""})
             items.append((content, img, tag, no, str(eff.get("text") or "")))
     else:
         items = resolve_items(kb_data, task.get("items", []), kb_dir,
@@ -260,3 +297,23 @@ def roster_fn_exists(fn: Path) -> bool:
 
 def out_dir_mkdir(out: Path):
     Path(out).mkdir(parents=True, exist_ok=True)
+
+def _resolved_refs(kb_data: dict, item_specs) -> list[tuple]:
+    """与 resolve_items 同序的 `(kb, chap)` 列表（D110：供按作用域取答案）。"""
+    out: list[tuple] = []
+    for spec in item_specs or []:
+        if not isinstance(spec, dict):
+            continue
+        kind = spec.get("kb", "problems")
+        chap = spec.get("chap")
+        want = [str(i) for i in (spec.get("ids") or [])]
+        chapters = kb_data.get(kind, {})
+        pairs = [(chap, chapters.get(chap, []))] if chap else list(chapters.items())
+        for cname, entries in pairs:
+            for e in entries:
+                qid = str(e.get("id") or "")
+                # D111：兼容裸题号（历史任务包）与全局 id
+                if want and not item_id_matches(str(cname), want, qid):
+                    continue
+                out.append((kind, str(cname)))
+    return out

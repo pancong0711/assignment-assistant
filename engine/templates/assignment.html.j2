@@ -94,7 +94,12 @@ body {
 .q-img { max-width: 100%; max-height: {{ doc.figure.max_h_mm }}mm; object-fit: contain; align-self: flex-start; }
 .q-img-ph { color: var(--muted); font-size: 10pt; font-style: italic; border: 1px dashed var(--hairline);
   border-radius: 2mm; padding: 4mm; text-align: center; }
-.q-solution { color: var(--muted); font-size: 10pt; border-top: 1px dashed #dfe3ea;
+/* D111：虚线只在「一道题的答案首次出现」时画一次；续段/q-solution-cont 不再重复画，
+   否则连续多格答案会出现一排平行虚线。 */
+.q-solution { color: var(--muted); font-size: 10pt;
+  padding-top: 1.5mm; margin-top: auto; }
+.q-solution.q-sol-first { border-top: 1px dashed #dfe3ea; }
+.q-solution-cont { margin-top: 0; padding-top: 0.5mm; }
   padding-top: 1.5mm; margin-top: auto; }
 /* D105：md+html 答案内的图片/SVG/表格限宽，避免撑破格子 */
 .q-solution img, .q-content img { max-width: 100%; height: auto; }
@@ -181,7 +186,7 @@ body {
         {%- if b.kind == 'content' %}
         <div class="q-content">{% if b.cont %}<span class="q-cont">（题 {{ c.no|replace('.', '') }} 续）</span>{% elif c.no %}{{ c.no }}  {% endif %}{{ b.html_inline|safe if b.html_inline else b.text }}</div>
         {%- elif doc.include_solution %}
-        <div class="q-solution">{% if b.cont %}<span class="q-cont">（题 {{ c.no|replace('.', '') }} 续）</span>{% endif %}{% if b.show_sol_label %}<span class="q-sol-label">参考答案：</span>{% endif %}{% if b.scale and b.scale < 1 %}<span style="display:inline-block;transform:scale({{ b.scale }});transform-origin:left top;">{{ b.html|safe if b.html else b.text }}</span>{% else %}{{ b.html|safe if b.html else b.text }}{% endif %}</div>
+        <div class="q-solution{% if b.show_sol_label %} q-sol-first{% else %} q-solution-cont{% endif %}">{% if b.cont %}<span class="q-cont">（题 {{ c.no|replace('.', '') }} 续）</span>{% endif %}{% if b.show_sol_label %}<span class="q-sol-label">参考答案：</span>{% endif %}{% if b.scale and b.scale < 1 %}<span style="display:inline-block;transform:scale({{ b.scale }});transform-origin:left top;">{{ b.html|safe if b.html else b.text }}</span>{% else %}{{ b.html|safe if b.html else b.text }}{% endif %}</div>
         {%- endif %}
         {% endfor %}
       </div>

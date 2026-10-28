@@ -55,6 +55,13 @@ export const useTaskpadStore = defineStore('taskpad', {
       const arr = this.current.items
       ;[arr[idx], arr[j]] = [arr[j], arr[idx]]
     },
+    /** D109：从分组中移除**单个题号**（不是移除整张作业纸）。
+     *  用途：某题预览异常（如公式/图被排版截断）时先摘掉、再重新加回以触发重排。 */
+    removeId(itemIdx: number, idIdx: number) {
+      const item = this.current.items[itemIdx]
+      if (!item || idIdx < 0 || idIdx >= item.ids.length) return
+      item.ids.splice(idIdx, 1)
+    },
     /** D82-B：分组内题号顺序上移/下移 */
     moveId(itemIdx: number, idIdx: number, dir: -1 | 1) {
       const item = this.current.items[itemIdx]

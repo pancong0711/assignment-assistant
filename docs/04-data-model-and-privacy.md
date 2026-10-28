@@ -14,7 +14,8 @@
     fig/                           # 题图（xlsx 中 img_path 为相对路径引用）
     export/                        # 引擎导出的 JSON 副本（交换/AI阅读/diff 基准）
     examples/                      # 合成示例（唯一允许入库的部分）
-    solutions/                     # D89：题目答案多版本 <qid>.json（AI 作答/多模型/置顶，追加不覆盖）
+    solutions/                     # D89：题目答案多版本 <kb>__<chap>__<qid>.json（AI 作答/多模型/置顶，追加不覆盖）
+                                   #     D110 加作用域文件名；D111 起 qid 本身已全局唯一（<chap>-<原id>）
   classes/                         # 所有 班级×学期 目录并列放这里（05-D6）
     2025S2-大学物理-化工25/
       roster/                      # 点名册/成绩/分组结果
@@ -90,11 +91,19 @@
 - AI 辅助批阅 ③区可选**作业包**（多作业纸按 tag 自动匹配学生）；
 - CLI：`assist pack list|show|save|delete`；serve：`GET /packs`、`GET /pack/<id>`、`POST /pack`。
 
-### 答案多版本 `<ws>/kb/solutions/<qid>.json`
+### 题号（qid）契约：全局唯一（D111）
+
+- 题库 xlsx 的 `id` 列 = **全局唯一**题号，格式 `<章>-<原id>`（如 `chap04-01`）；
+- **读入即自动补前缀**（幂等：已带本章前缀不再加）；`assist kb normalize [--write]` 可落盘；
+- 历史作业纸 `items[].ids` 里的**裸题号**仍可用（按 `item.chap` 归一匹配），无需手工迁移；
+- 加前缀后仍冲突（同 sheet 重复等）→ 报错要求人工处理，**不静默改名**；
+- 理由：旧数据里 `01` 在 9 个章节重复，导致答案版本库串味、批阅报告错配（详见 `docs/63-D111`）。
+
+### 答案多版本 `<ws>/kb/solutions/<kb>__<chap>__<qid>.json`
 
 ```jsonc
 {
-  "qid": "chap04-1", "kb": "problems", "chap": "chap04",
+  "qid": "chap04-01", "kb": "problems", "chap": "chap04",
   "versions": [
     { "id": "v1", "text": "...", "source": "human", "model": "", "at": "...", "pinned": false },
     { "id": "v2", "text": "...", "source": "ai", "model": "qwen-max", "at": "...", "pinned": true }
@@ -103,10 +112,13 @@
 ```
 
 - **追加不覆盖**；`pinned` 至多一个 = 生效答案（"最新置顶版"）；无版本文件回落 xlsx `solution` 列（兼容旧数据）；
+- **文件名带作用域**（D110）：`problems__chap04__chap04-01.json`，避免跨章同号互相覆盖；
+  读取按「精确作用域 → 只带 kb → 旧 `<qid>.json`」逐级回落（D111 已使 qid 唯一，回落仅为兼容旧数据）；
 - 作业包/批阅**实时读最新置顶版**（`flow.expand_items` / `inputs._questions_of` 经 `effective_solution`）；
 - 题库编辑器 solution 单元格为**预览键** → 弹窗（题+答案，多版本勾选/置顶）；
 - AI 作答（AI 辅助批阅 ⑦区 / CLI `kb ai-solve` / `POST /kb/ai-solve`）：**不覆盖**、新增版本、标 source=ai + model + 时间戳；
-- CLI：`assist kb solution list|add|pin|rm`；serve：`GET /kb/solutions[/<qid>]`、`POST /kb/solution`。
+- CLI：`assist kb solution list|add|pin|rm [--kb --chap]`；serve：`GET /kb/solutions[/<qid>]?kb=&chap=`、`POST /kb/solution`；
+- 批量索引：`GET /kb/solutions` 返回 `effective`（按 qid，跨章同号时标 `ambiguous`）与 `effectiveByKey`（`kb__chap__qid`，精确）。
 
 ## D94：点名册顺序契约（保序 merge） + 视图排序
 

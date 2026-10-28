@@ -65,8 +65,34 @@ def test_empty_text_rejected(tmp_path):
 
 
 def test_illegal_id_rejected(tmp_path):
-    for bad in ["", "../x", "a/b", "-x"]:
+    for bad in ["", "../x", "a/b", "-x", ".hidden", "my template"]:
         assert P.save_template(tmp_path, pid=bad, name="n", text="t")["ok"] is False
+
+
+def test_chinese_id_allowed(tmp_path):
+    """D108-FIX：id 允许中文（与 grading/items.py 一致），中文名不该被当成非法 id。"""
+    r = P.save_template(tmp_path, pid="我的模板", name="我的模板", text="请画出示意图")
+    assert r["ok"] is True and r["template"]["id"] == "我的模板"
+    assert P.get_template(tmp_path, "我的模板")["text"] == "请画出示意图"
+    assert any(t["id"] == "我的模板" for t in P.list_templates(tmp_path))
+    assert P.set_default(tmp_path, "我的模板")["ok"] is True
+    assert P.delete_template(tmp_path, "我的模板")["ok"] is True
+
+
+def test_error_message_is_actionable(tmp_path):
+    """非法 id 的报错要说明规则并回显输入，而不是一句「模板 id 非法」。"""
+    r = P.save_template(tmp_path, pid="my template", name="n", text="t")
+    assert r["ok"] is False
+    assert "my template" in r["error"] and "64" in r["error"]
+    empty = P.save_template(tmp_path, pid="", name="n", text="t")
+    assert empty["ok"] is False and "缺少模板 id" in empty["error"]
+
+
+def test_delete_and_set_default_missing_id_messages(tmp_path):
+    assert "缺少模板 id" in P.delete_template(tmp_path, "")["error"]
+    assert "缺少模板 id" in P.set_default(tmp_path, "")["error"]
+    assert "模板不存在" in P.delete_template(tmp_path, "nope")["error"]
+    assert "模板不存在" in P.set_default(tmp_path, "nope")["error"]
 
 
 def test_save_overwrites_builtin_text_keeps_builtin_flag(tmp_path):

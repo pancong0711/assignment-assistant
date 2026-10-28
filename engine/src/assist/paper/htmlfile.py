@@ -214,23 +214,29 @@ def expand_items_html(task: dict, kb_dir: Path, numbering: str = "auto",
     from ..files.solutions import effective_solution
     from .task import resolve_items
     kb_data = read_kb(kb_dir)
-    # 参考答案按题库 id 建索引（resolve_items 返回 4 元组不含 solution，与 PDF 同契约）
+    # 参考答案按 (kb, chap, id) 建索引（D110：题号在跨章会重复，只按 qid 会串答案）
+    # resolve_items 返回 4 元组不含 solution，与 PDF 同契约。
+    sol_by_key: dict[str, str] = {}
     sol_by_id: dict[str, str] = {}
-    for chapters in kb_data.values():
-        for entries in chapters.values():
+    for kind, chapters in kb_data.items():
+        for cname, entries in chapters.items():
             for e in entries:
                 qid = str(e.get("id") or "")
-                if qid:
-                    fallback = str(e.get("solution") or "")
-                    eff = effective_solution(ws, qid, fallback) if ws is not None else {"text": fallback}
-                    sol_by_id[qid] = str(eff.get("text") or fallback)
+                if not qid:
+                    continue
+                fallback = str(e.get("solution") or "")
+                eff = (effective_solution(ws, qid, fallback, kb=kind, chap=cname)
+                       if ws is not None else {"text": fallback})
+                text = str(eff.get("text") or fallback)
+                sol_by_key[f"{kind}\x00{cname}\x00{qid}"] = text
+                sol_by_id.setdefault(qid, text)
     out: list[dict] = []
     # 用带序号的展开（auto/id/labels 与 PDF/PWA 同口径）
-    qid_seq = _resolved_ids(kb_data, task)
+    ref_seq = _resolved_items_ref(kb_data, task)
     resolved = resolve_items(kb_data, task.get("items", []), kb_dir, numbering,
                              seed=task.get("random_seed"),
                              target_tag=str(task.get("target_tag") or ""))
-    for (content, img, tag, no), qid in zip(resolved, qid_seq):
+    for (content, img, tag, no), (kb_kind, chap_name, qid) in zip(resolved, ref_seq):
         img_hint = str(img) if img else ""
         b64 = mime = None
         if img_hint and Path(img_hint).exists():
@@ -239,9 +245,14 @@ def expand_items_html(task: dict, kb_dir: Path, numbering: str = "auto",
                 b64, mime = got
             else:
                 img_hint = ""
-        out.append({"id": str(qid), "no": str(no or ""), "tag": str(tag or ""),
+        # D110：优先用 (kb, chap, qid) 精确定位答案，避免跨章同号串味
+        qid_s = str(qid or "")
+        sol_text = sol_by_key.get(f"{kb_kind}\x00{chap_name}\x00{qid_s}")
+        if sol_text is None:
+            sol_text = sol_by_id.get(qid_s, "")
+        out.append({"id": qid_s, "no": str(no or ""), "tag": str(tag or ""),
                     "content": str(content or ""),
-                    "solution": sol_by_id.get(str(qid), ""),
+                    "solution": sol_text,
                     "img_b64": b64, "img_mime": mime,
                     "img_label": "" if (b64 or not img_hint) else img_hint})
     if not out:
@@ -249,23 +260,35 @@ def expand_items_html(task: dict, kb_dir: Path, numbering: str = "auto",
     return out
 
 
-def _resolved_ids(kb_data: dict, task: dict) -> list[str]:
-    """与 resolve_items 同序的题库 id 列表（供模板携带 id 列 + 参考答案索引）。"""
-    # resolve_items 返回 4 元组不含 id，这里按相同过滤逻辑重算 id 序列
-    ids_out: list[str] = []
+def _resolved_items_ref(kb_data: dict, task: dict) -> list[tuple]:
+    """与 resolve_items 同序的 `(kb, chap, id)` 列表（D110：答案按作用域取，避免跨章同号）。
+
+    D111：`ids` 可能是裸题号（历史作业纸）或全局 id（`chap04-01`），
+    统一走 `item_id_matches` 判定，避免加前缀后历史任务包整包失配。
+    """
+    from .task import item_id_matches
+    out: list[tuple] = []
     for spec in task.get("items", []):
         kind = spec.get("kb", "problems")
         chap = spec.get("chap")
-        want = {str(i) for i in (spec.get("ids") or [])}
+        want = [str(i) for i in (spec.get("ids") or [])]
         chapters = kb_data.get(kind, {})
-        entries = list(chapters.get(chap, [])) if chap else \
-            [e for chs in chapters.values() for e in chs]
-        if want:
-            entries = [e for e in entries if str(e.get("id")) in want]
-        for e in entries:
-            ids_out.append(str(e.get("id") or ""))
-    # 兜底：长度不符时用空串补齐/截断（保持 zip 安全）
-    return ids_out
+        if chap:
+            pairs = [(chap, chapters.get(chap, []))]
+        else:
+            pairs = list(chapters.items())
+        for cname, entries in pairs:
+            for e in entries:
+                qid = str(e.get("id") or "")
+                if want and not item_id_matches(str(cname), want, qid):
+                    continue
+                out.append((kind, str(cname), qid))
+    return out
+
+
+def _resolved_ids(kb_data: dict, task: dict) -> list[str]:
+    """与 resolve_items 同序的题库 id 列表（保留旧签名，供其它调用方使用）。"""
+    return [qid for _k, _c, qid in _resolved_items_ref(kb_data, task)]
 
 
 def _layout_cells_for_page(layout: dict, page_no: int, frames_by_qid: dict) -> "list[dict] | None":

@@ -1192,12 +1192,22 @@ class Handler(BaseHTTPRequestHandler):
                 return
             # 默认 dry-run；apply=true 才真跑并写回 kb/solutions/
             apply = bool(payload.get("apply"))
-            args = ["kb", "ai-solve", "--kb-kind", str(payload.get("kb") or "problems")]
-            if payload.get("chap"):
-                args += ["--chap", str(payload.get("chap"))]
             ids = payload.get("ids")
-            if isinstance(ids, list) and ids:
-                args += ["--ids", ",".join(str(i) for i in ids)]
+            ids = [str(i) for i in ids] if isinstance(ids, list) else []
+            chap_ = str(payload.get("chap") or "").strip()
+            # D110：没有任何范围的请求不再默默升级为"整库作答"。
+            if not ids and not chap_ and payload.get("all") is not True:
+                self._json({"ok": False,
+                            "error": "未指定范围（章节/题号）。请选择章节或题号；"
+                                     "整库作答需显式 all=true"}, 400)
+                return
+            args = ["kb", "ai-solve", "--kb-kind", str(payload.get("kb") or "problems")]
+            if chap_:
+                args += ["--chap", chap_]
+            if ids:
+                args += ["--ids", ",".join(ids)]
+            elif payload.get("all") is True:
+                args += ["--all"]
             if payload.get("model"):
                 args += ["--model", str(payload.get("model"))]
             # D104：教师额外作答要求（如"画示意图""输出 HTML"）→ CLI --requirement
@@ -1267,22 +1277,23 @@ class Handler(BaseHTTPRequestHandler):
             from .files import solutions as sol
             ws = Path(self.ws).resolve()
             action = str(payload.get("action") or "add")
+            qid = str(payload.get("qid") or "")
+            kb = str(payload.get("kb") or "")
+            chap = str(payload.get("chap") or "")
             if action == "pin":
-                rep = sol.pin_version(ws, str(payload.get("qid") or ""),
-                                      str(payload.get("version") or ""))
+                rep = sol.pin_version(ws, qid, str(payload.get("version") or ""),
+                                      kb=kb, chap=chap)
             elif action == "rm":
-                rep = sol.remove_version(ws, str(payload.get("qid") or ""),
-                                         str(payload.get("version") or ""))
+                rep = sol.remove_version(ws, qid, str(payload.get("version") or ""),
+                                         kb=kb, chap=chap)
             else:
-                rep = sol.add_version(ws, str(payload.get("qid") or ""),
-                                      str(payload.get("text") or ""),
+                rep = sol.add_version(ws, qid, str(payload.get("text") or ""),
                                       source=str(payload.get("source") or "ai"),
                                       model=str(payload.get("model") or ""),
-                                      kb=str(payload.get("kb") or ""),
-                                      chap=str(payload.get("chap") or ""),
+                                      kb=kb, chap=chap,
                                       pin=bool(payload.get("pin")))
-            if rep.get("ok") and payload.get("qid"):
-                rep["solutions"] = sol.read_solutions(ws, str(payload.get("qid")))
+            if rep.get("ok") and qid:
+                rep["solutions"] = sol.read_solutions(ws, qid, kb=kb, chap=chap)
             self._json(rep, 200 if rep.get("ok") else 400)
             return
         if u.path == "/pack":
@@ -2059,7 +2070,10 @@ class Handler(BaseHTTPRequestHandler):
         elif u.path.startswith("/kb/solutions/"):
             from .files import solutions as sol
             qid = urllib.parse.unquote(u.path[len("/kb/solutions/"):])
-            d = sol.read_solutions(Path(self.ws).resolve(), qid)
+            q = urllib.parse.parse_qs(u.query)
+            kb = (q.get("kb") or [""])[0]
+            chap = (q.get("chap") or [""])[0]
+            d = sol.read_solutions(Path(self.ws).resolve(), qid, kb=kb, chap=chap)
             self._json(d or {"ok": False, "error": f"无版本库：{qid}"}, 200 if d else 404)
         elif u.path == "/kb/solutions":
             # D100-T2：批量生效答案索引 {qid: {text, source, version, from, ...}}，
@@ -2070,7 +2084,9 @@ class Handler(BaseHTTPRequestHandler):
             if q.get("raw", ["0"])[0] == "1":
                 self._json({"ok": True, "items": sol.list_solutions(ws_)})
             else:
+                # D110：effective（按 qid，兼容旧前端）+ effectiveByKey（按 kb__chap__qid，精确）
                 self._json({"ok": True, "effective": sol.effective_map(ws_),
+                            "effectiveByKey": sol.effective_by_key(ws_),
                             "digest": sol.solutions_digest(ws_)})
         elif u.path == "/prompts/ai-solve":
             # D108：提示词模板库（PWA 下拉/默认/删除）
