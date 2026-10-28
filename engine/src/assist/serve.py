@@ -689,6 +689,43 @@ class Handler(BaseHTTPRequestHandler):
             self.send_header("Access-Control-Max-Age", "600")
         self.end_headers()
 
+    def _grade_preflight(self, cid: str, kid: str, work: str, task_id: str,
+                         pad_path: Path, pads_dir: str = "",
+                         ) -> "tuple[dict, int] | None":
+        """D118：AI 批阅启动前的输入体检。
+
+        只检查"有没有学生作答图"这一条**最常见且不可自动修复**的前提：
+        学习通下载的作答图落在 `<ws>/grading/<class>/<work>/images/`（或 review 目录），
+        若一张都没有，转录步必然无从下手。此前会一路跑到 `group_images()` 才抛
+        `FileNotFoundError: [WinError 3] ...\\images`，教师只看到堆栈。
+        """
+        try:
+            import json as _json
+            from .grading import inputs as _inputs
+            from .xxt import classmap
+            ws = Path(self.ws).resolve()
+            task = _json.loads(pad_path.read_text(encoding="utf-8"))
+            resolved = classmap.resolve_class_dir(ws, cid, kid, str(task.get("class") or ""))
+            class_dir = resolved.get("classDir") or str(task.get("class_dir") or "classes")
+            tasks_dir = Path(pads_dir).expanduser().resolve() if pads_dir else None
+            plan = _inputs.build_plan(ws, task_id=task_id, class_dir=class_dir,
+                                      class_id=kid, work_id=work,
+                                      mode="optimized", tags=[], tasks_dir=tasks_dir)
+            summ = _inputs.plan_summary(plan)
+            if summ.get("students") and not summ.get("withImages"):
+                return ({"ok": False,
+                         "error": ("没有任何学生有作答图，AI 批阅无法开始。"
+                                   "请先到「作业预览-学习通」对该作业点「⬇ 下载作答/批语」，"
+                                   "再回到本页重试。"),
+                         "detail": {"students": summ.get("students"),
+                                    "withImages": 0,
+                                    "hint": "下载后作答图落在 <workspace>/grading/<班级>/<作业>/images/"},
+                         "hint": "下载作答图"}, 400)
+            return None
+        except Exception:  # noqa: BLE001 —— 体检失败不阻断（交给正式流程报错）
+            logger.warning("grade preflight 跳过（异常，不影响正式流程）", exc_info=True)
+            return None
+
     def do_POST(self):
         u = urllib.parse.urlparse(self.path)
         qs = urllib.parse.parse_qs(u.query)
@@ -1414,6 +1451,15 @@ class Handler(BaseHTTPRequestHandler):
                 args += ["--tags", ",".join(tags) if isinstance(tags, list) else str(tags)]
             if payload.get("limit"):
                 args += ["--limit", str(int(payload.get("limit")))]
+            # D118：启动前先装配 plan 做**前置体检**——没有任何学生作答图时直接给可读错误，
+            # 而不是等引擎跑到转录步才抛 FileNotFoundError（Windows 上表现为 WinError 3）。
+            pads_dir_arg = ""
+            if "--pads-dir" in args:
+                pads_dir_arg = args[args.index("--pads-dir") + 1]
+            pre = self._grade_preflight(cid, kid, work, task_id, pad_path, pads_dir_arg)
+            if pre is not None:
+                self._json(pre[0], pre[1])
+                return
             home = _xxt_home(); env = _xxt_env(home); cwd = str(_ws())
             # D106：图片压缩模式与 SVG 重绘开关（PWA 设置 → 环境变量）
             if str(payload.get("imageMode") or "") == "original":

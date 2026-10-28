@@ -24,6 +24,14 @@ from .evaluate import evaluate_student
 from .report import generate_global_report, generate_report, generate_summary_xlsx
 from .transcribe import group_images, transcribe_student
 
+
+class GradingInputError(RuntimeError):
+    """D118：批阅输入不满足前提（如 plan 模式下没有任何学生作答图）。
+
+    与 RuntimeNotFoundError（评估前置产物缺失）区分：本类是**输入侧**问题，
+    CLI/serve 应把它作为"可读的业务错误"呈现，而不是异常堆栈。
+    """
+
 STEPS = ["download", "transcribe", "evaluate", "report", "upload"]
 
 
@@ -141,10 +149,22 @@ def _run_transcribe(ctx: dict, client, transcripts_dir: Path) -> list[Path]:
     from .transcribe import transcribe_batch
 
     model = (ctx["task"].get("grade", {}).get("models", {}) or {}).get("transcription")
-    plan_groups = _plan_student_images(ctx) if ctx.get("plan") else {}
-    if plan_groups:
-        groups = plan_groups
-        logger.info(f"[转录] plan 模式：{len(groups)} 名学生")
+    plan = ctx.get("plan") or {}
+    # D118：plan 模式下"一名学生都没图片"是**明确的可诊断状态**（通常是还没在学习通
+    # 下载作答图），不能静默退回 `images_dir` 去 iterdir 一个不存在的目录
+    # （Windows 上会抛 [WinError 3] …\images）。
+    if plan:
+        plan_groups = _plan_student_images(ctx)
+        if plan_groups:
+            groups = plan_groups
+            logger.info(f"[转录] plan 模式：{len(groups)} 名学生")
+        else:
+            n_stu = len(plan.get("students") or [])
+            msg = (f"plan 模式下没有任何学生图片（名单 {n_stu} 人，0 人有图）："
+                   f"请先在「作业预览-学习通」下载学生作答图，再重跑 AI 批阅。"
+                   f"（批阅下载目录：{ctx.get('images_dir')}）")
+            logger.error(msg)
+            raise GradingInputError(msg)
     else:
         images_dir: Path = ctx["images_dir"]
         groups = group_images(images_dir)

@@ -1620,7 +1620,12 @@ def grade(obj, task_path, pads_dir, images_dir, rerun, xxt_class, work_id, plan_
         kwargs["plan"] = plan
         if mode:
             kwargs["mode"] = mode
-    rec = run_step(tp, ws, rerun, **kwargs) if rerun else run_task(tp, ws, **kwargs)
+    # D118：输入侧问题（如"没有任何学生作答图"）应给可读错误，而不是 FileNotFoundError 堆栈
+    from .grading.flow import GradingInputError
+    try:
+        rec = run_step(tp, ws, rerun, **kwargs) if rerun else run_task(tp, ws, **kwargs)
+    except GradingInputError as exc:
+        raise click.ClickException(str(exc)) from None
     click.echo(f"完成 run_id={rec['run_id']} steps={rec['steps_done']}\n产物目录={rec['bucket']}")
     usage = rec.get("usage") or {}
     if usage.get("total"):

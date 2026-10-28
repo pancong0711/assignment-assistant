@@ -73,10 +73,19 @@ def student_from_filename(fn: Path) -> str:
 
 
 def group_images(images_dir: Path) -> dict[str, list[Path]]:
-    """把目录里的图片按学生名分组（文件名前缀相同即同一学生）。"""
+    """把目录里的图片按学生名分组（文件名前缀相同即同一学生）。
+
+    D118：目录不存在时返回空字典（此前直接 iterdir() 会抛 FileNotFoundError；
+    Windows 上教师没放图片就会看到 WinError 3「系统找不到指定的路径 ...images」）。
+    是否"该报错"由调用方决定（缺图片应是可读提示，而非异常堆栈）。
+    """
     exts = (".png", ".jpg", ".jpeg", ".webp")
     groups: dict[str, list[Path]] = defaultdict(list)
-    for f in sorted(Path(images_dir).iterdir()):
+    d = Path(images_dir)
+    if not d.is_dir():
+        logger.warning(f"图片目录不存在，按空处理：{d}")
+        return {}
+    for f in sorted(d.iterdir()):
         if f.is_file() and f.suffix.lower() in exts:
             groups[student_from_filename(f)].append(f)
     return dict(groups)
