@@ -13,10 +13,11 @@ import { computed, nextTick, ref, watch } from 'vue'
 import { useKbStore } from '../stores/kb'
 import { useTaskpadStore } from '../stores/taskpad'
 import { usePackStore } from '../stores/packs'
-import { expandPadItems, buildSelfContainedHtml } from '../lib/sheetHtml'
+import { expandPadItems, fetchSelfContainedKatex } from '../lib/sheetHtml'
 import { parseTaskpad, type Taskpad } from '../lib/taskpad'
 import type { KbKind } from '../lib/kb'
-import { buildAnswerHtml, answerItemsOf, type AnswerSection, type AnswerItem } from '../lib/answerHtml'
+import { buildAnswerHtml, answerItemsOf, type AnswerSection, type AnswerItem,
+  type AnswerHtmlOptions } from '../lib/answerHtml'
 import SheetHtmlPreviewModal from './SheetHtmlPreviewModal.vue'
 import { downloadData } from '../lib/fsAccess'
 
@@ -67,7 +68,7 @@ const docTitle = computed(() =>
 
 const empty = computed(() => sections.value.every((s) => s.items.length === 0))
 
-function html(opts: { katex?: 'relative' | 'raw'; katexRaw?: { css: string; js: string; autoRender: string } } = {}): string {
+function html(opts: { katex?: 'relative' | 'raw'; katexRaw?: AnswerHtmlOptions['katexRaw'] } = {}): string {
   return buildAnswerHtml(sections.value, {
     includeContent: includeContent.value,
     includeNo: includeNo.value,
@@ -89,6 +90,7 @@ function printAnswers(): void {
 
 async function downloadAnswers(): Promise<void> {
   try {
+    // 复用 sheetHtml 的自包含 KaTeX 拉取（内联 css + katex.min.js + auto-render，字体 dataURL）
     const assets = await fetchSelfContainedKatex()
     const out = html({ katex: 'raw', katexRaw: assets })
     downloadData(out, `answers-${new Date().toISOString().slice(0, 10)}.html`, 'text/html')
@@ -96,17 +98,6 @@ async function downloadAnswers(): Promise<void> {
   } catch (e) {
     emit('notify', `下载失败：${String((e as Error).message || e)}`)
   }
-}
-
-/** 拉取自包含 KaTeX 资源（与作业纸下载复用同一实现）。 */
-async function fetchSelfContainedKatex(): Promise<{ css: string; js: string; autoRender: string }> {
-  const htmlSample = await buildSelfContainedHtml([], { katex: 'raw' })
-  const grab = (tag: string): string => {
-    const re = new RegExp(`<${tag}[^>]*>([\\s\\S]*?)</${tag}>`, 'i')
-    const m = htmlSample.match(re)
-    return m ? m[1] : ''
-  }
-  return { css: grab('style'), js: '', autoRender: '' }
 }
 
 /* ---------- 弹窗细看 ---------- */

@@ -721,6 +721,9 @@ def sheet_answers(obj, task_path, out, title, no_content, no_no, no_page_break,
     if not task_file.is_file():
         raise click.ClickException(f"任务包不存在：{task_file}")
     task = load_task(task_file)
+    # 先定输出路径，再据此计算 KaTeX 相对引用
+    out_path = (Path(out).expanduser().resolve() if out
+                else ws / "sheets" / "html" / f"answers-{str(task.get('id') or 'task')}.html")
     html = render_answer_html(
         task, ws,
         include_content=not no_content,
@@ -728,9 +731,8 @@ def sheet_answers(obj, task_path, out, title, no_content, no_no, no_page_break,
         one_page_per_question=not no_page_break,
         title=title,
         katex_mode=str(katex_mode).lower(),
+        out_path=out_path,
     )
-    out_path = (Path(out).expanduser().resolve() if out
-                else ws / f"answers-{str(task.get('id') or 'task')}.html")
     out_path.parent.mkdir(parents=True, exist_ok=True)
     out_path.write_text(html, encoding="utf-8")
     n = html.count('class="answer-card"')

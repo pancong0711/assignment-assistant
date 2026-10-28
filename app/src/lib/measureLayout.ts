@@ -35,6 +35,28 @@ export function cellGeometry(orientation: 'portrait' | 'landscape'): { cellW: nu
   }
 }
 
+/** D113：探针样式只注入一次（模块级单例）。
+ *  旧实现每次 createProbe 都 append 一个 <style>，而 dispose 用
+ *  `querySelectorAll('style[data-d113-probe-style]').forEach(remove)` 全删 ——
+ *  reflowPad 可能并发（防抖 watcher），一个调用结束会把另一个仍在用的样式删掉，
+ *  导致后续测量退回"未限宽"状态（高度失真）。 */
+let probeStyleInjected = false
+function ensureProbeStyle(): void {
+  if (probeStyleInjected || typeof document === 'undefined') return
+  if (document.querySelector('style[data-d113-probe-style]')) { probeStyleInjected = true; return }
+  const style = document.createElement('style')
+  style.setAttribute('data-d113-probe-style', '1')
+  style.textContent = `
+    [data-d103-probe] img, [data-d103-probe] svg { max-width:100%; height:auto; }
+    [data-d103-probe] table { border-collapse:collapse; max-width:100%; }
+    [data-d103-probe] th, [data-d103-probe] td { border:1px solid #ccc; padding:1px 4px; }
+    [data-d103-probe] p { margin: 0 0 .6em; }
+    [data-d103-probe] .katex-display { margin: .4em 0; }
+  `
+  document.head.appendChild(style)
+  probeStyleInjected = true
+}
+
 /** 创建离屏测量容器（宽度 = 格内宽，样式对齐 .q-content/.q-solution）。 */
 function createProbe(cellW: number): HTMLDivElement {
   const el = document.createElement('div')
@@ -46,16 +68,7 @@ function createProbe(cellW: number): HTMLDivElement {
   ].join(';')
   // D113：与真实 .q-solution/.q-content 的富内容限宽一致，否则 <svg>/表格/图片
   // 量出来的高度与实拍不符（探针会把图当文字排）。
-  const style = document.createElement('style')
-  style.setAttribute('data-d113-probe-style', '1')
-  style.textContent = `
-    [data-d103-probe] img, [data-d103-probe] svg { max-width:100%; height:auto; }
-    [data-d103-probe] table { border-collapse:collapse; max-width:100%; }
-    [data-d103-probe] th, [data-d103-probe] td { border:1px solid #ccc; padding:1px 4px; }
-    [data-d103-probe] p { margin: 0 0 .6em; }
-    [data-d103-probe] .katex-display { margin: .4em 0; }
-  `
-  document.head.appendChild(style)
+  ensureProbeStyle()
   document.body.appendChild(el)
   return el
 }
@@ -104,10 +117,8 @@ async function makeMeasure(cellW: number): Promise<{ measure: (t: string, k: 'co
   }
   return {
     measure,
-    dispose: () => {
-      probe.remove()
-      document.querySelectorAll('style[data-d113-probe-style]').forEach((n) => n.remove())
-    },
+    // 只移除本探针；共享 <style> 常驻（见 ensureProbeStyle），避免并发互删
+    dispose: () => { probe.remove() },
   }
 }
 

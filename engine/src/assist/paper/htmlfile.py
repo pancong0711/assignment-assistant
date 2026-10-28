@@ -15,6 +15,7 @@ app/src/lib/sheetHtml.ts（D1 超集铁律：CLI 与 PWA 输出同一模板/同�
 
 import base64
 import json
+import os
 from datetime import datetime
 from pathlib import Path
 
@@ -567,7 +568,8 @@ def sheet_html_from_task(task_path: Path, ws: Path, out_path: Path | None = None
 
 def render_answer_html(task: dict, ws: Path, *, include_content: bool = True,
                        include_no: bool = True, one_page_per_question: bool = True,
-                       title: str = "", katex_mode: str = "local") -> str:
+                       title: str = "", katex_mode: str = "local",
+                       out_path: "Path | None" = None) -> str:
     """D113：生成「参考答案」独立文档（竖版单列 · 一题一页起步）。
 
     与 PWA `app/src/lib/answerHtml.ts` 同构（同一套 CSS/结构/公式语义），
@@ -606,10 +608,21 @@ def render_answer_html(task: dict, ws: Path, *, include_content: bool = True,
         if f.exists():
             css = f.read_text(encoding="utf-8")
             break
+    # D113：local 模式下 KaTeX 装在 <ws>/sheets/katex/；按**实际输出目录**算相对路径，
+    # 否则教师用 -o 指定任意位置时 `../katex/` 会指错（公式退化成源码）。
+    katex_href = "../katex/"
+    if out_path is not None:
+        try:
+            target = (ws_p / "sheets" / "katex").resolve()
+            rel = os.path.relpath(target, Path(out_path).expanduser().resolve().parent)
+            katex_href = rel.replace(os.sep, "/") + "/"
+        except Exception:  # noqa: BLE001
+            pass
     tpl = _env().get_template("answer.html.j2")
     return tpl.render(doc={
         "title": title or str(task.get("id") or "参考答案"),
         "answer_css": css,
+        "katex_href": katex_href,
         "include_no": include_no,
         "include_content": include_content,
         "one_page_per_question": one_page_per_question,

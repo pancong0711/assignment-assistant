@@ -147,10 +147,12 @@ onMounted(() => { /* 通知中心占位（各段经 notify 上抛 pageStatus） 
     </div>
 
     <div class="design-block" id="output-block">
+      <!-- D113-R1：作业纸输出固定**不含**参考答案（学生版口径）。
+           需要答案请用上方「参考答案预览」区单独打印/导出。 -->
       <SheetOutputSection
         :current-input="currentInput"
         :template-students="templateStudents"
-        :include-answers="includeAnswers"
+        :include-answers="false"
         :show-samples="showSamples"
         :include-watermark="includeWatermark"
         :include-page-text="includePageText"

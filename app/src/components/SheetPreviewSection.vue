@@ -27,7 +27,8 @@ import SheetHtmlPreviewModal from './SheetHtmlPreviewModal.vue'
 import { reflowPad, shouldReflow } from '../lib/measureLayout'
 import type { LayoutResult } from '../lib/autoLayout'
 
-const props = defineProps<{ includeAnswers: boolean; showSamples: boolean; includeWatermark: boolean; includePageText: boolean }>()
+/** D113-R1：作业纸预览固定不含答案，`includeAnswers` 仅为兼容父级传参（已无开关）。 */
+const props = defineProps<{ includeAnswers?: boolean; showSamples: boolean; includeWatermark: boolean; includePageText: boolean }>()
 const emit = defineEmits<{
   (e: 'update:showSamples', v: boolean): void
   (e: 'update:includeWatermark', v: boolean): void
@@ -41,10 +42,9 @@ const settings = useSettingsStore()
 const packStore = usePackStore()
 const status = ref('')
 
-/** D113-R1：作业纸预览 = 给学生设计用，**固定不含参考答案**。
- *  参考答案改由「参考答案预览」区（AnswerPreviewSection）单独提供。
- *  保留 props.includeAnswers 仅为兼容父级传参，预览内部一律按 false 处理。 */
-const includeAnswers = computed(() => false)
+/** D113-R1：作业纸预览 = 给学生设计用，**固定不含参考答案**（常量）。
+ *  参考答案改由「参考答案预览」区（AnswerPreviewSection）单独提供。 */
+const INCLUDE_ANSWERS = false
 const showSamples = computed(() => props.showSamples)
 const showSamplesModel = computed({
   get: () => props.showSamples,
@@ -88,7 +88,7 @@ function scheduleReflow() {
   layoutTimer = window.setTimeout(async () => {
     const p = pad.current
     const items = sheetHtmlItems.value
-    if (!shouldReflow(p, includeAnswers.value)) {
+    if (!shouldReflow(p, INCLUDE_ANSWERS)) {
       layoutResult.value = null
       layoutMsg.value = ''
       return
@@ -110,22 +110,26 @@ function scheduleReflow() {
   }, 260)
 }
 
-watch([() => pad.current, sheetHtmlItems, includeAnswers], scheduleReflow, { deep: true, immediate: true })
+watch([() => pad.current, sheetHtmlItems], scheduleReflow, { deep: true, immediate: true })
 
 /* ---------- 模板口径（与 SheetOutputSection 同一函数语义） ---------- */
 function templateStudents(): SheetHtmlPadInput['students'] {
   return showSamples.value ? SYNTHETIC_STUDENTS : [BLANK_STUDENT]
 }
-function templateHtml(inputs: SheetHtmlPadInput[] | SheetHtmlPadInput): string {
+function templateHtml(
+  inputs: SheetHtmlPadInput[] | SheetHtmlPadInput,
+  extra: Partial<Parameters<typeof stringifySheetHtml>[1]> = {},
+): string {
   return stringifySheetHtml(inputs, {
     students: templateStudents(),
-    includeSolution: includeAnswers.value,
+    includeSolution: INCLUDE_ANSWERS,
     includeWatermark: props.includeWatermark,
     includePageText: props.includePageText,
     wmAssets: settings.wmAssets,
     wmStyles: settings.wmStyles,
     figAssets: settings.figAssets,
     katex: 'relative',
+    ...extra,
   })
 }
 
@@ -144,7 +148,7 @@ function scheduleLive() {
   liveTimer = window.setTimeout(() => { liveHtml.value = buildLiveHtml() }, 180)
 }
 const liveKey = computed(() =>
-  JSON.stringify([pad.current, sheetHtmlItems.value, includeAnswers.value, showSamples.value,
+  JSON.stringify([pad.current, sheetHtmlItems.value, showSamples.value,
     props.includeWatermark, props.includePageText, settings.wmAssets, layoutResult.value]))
 watch(liveKey, scheduleLive, { immediate: true })
 
@@ -167,7 +171,7 @@ async function downloadOverlayHtml() {
     const inputs = JSON.parse(overlayInputsKey.value) as SheetHtmlPadInput[]
     const html = await buildSelfContainedHtml(inputs, {
       students: templateStudents(),
-      includeSolution: includeAnswers.value,
+      includeSolution: INCLUDE_ANSWERS,
       includeWatermark: props.includeWatermark,
       includePageText: props.includePageText,
       wmAssets: settings.wmAssets,
@@ -175,7 +179,7 @@ async function downloadOverlayHtml() {
       figAssets: settings.figAssets,
     })
     downloadData(html, `sheet-preview-${new Date().toISOString().slice(0, 10)}.html`, 'text/html')
-    notify(`已下载自包含 HTML（ KaTeX 内联，离线可开；${includeAnswers.value ? '含' : '不含'}参考答案 · ${showSamples.value ? '示例 2 份' : '空白 1 份'}）。`)
+    notify(`已下载自包含 HTML（ KaTeX 内联，离线可开；不含参考答案 · ${showSamples.value ? '示例 2 份' : '空白 1 份'}）。`)
   } catch (e) {
     notify(`下载 HTML 失败：${(e as Error).message}`)
   }
@@ -188,7 +192,7 @@ function previewPad(id: string) {
   try {
     const p = parseTaskpad(JSON.parse(entry.json))
     openPreview([{ pad: p, items: itemsFor(p) }], `作业纸预览 · ${id}`)
-    status.value = `已打开 ${id} 预览（同一 HTML 模板；${includeAnswers.value ? '含' : '不含'}参考答案 · ${showSamples.value ? '示例 2 份' : '空白 1 份'}）。`
+    status.value = `已打开 ${id} 预览（同一 HTML 模板；不含参考答案 · ${showSamples.value ? '示例 2 份' : '空白 1 份'}）。`
     notify(status.value)
   } catch (e) {
     status.value = `作业纸 ${id} 预览失败（JSON 损坏）：${(e as Error).message}`
@@ -199,16 +203,30 @@ function previewPad(id: string) {
 /** 全部清单作业纸连排预览（模板态） */
 function previewAllPads() {
   const sources: SheetHtmlPadInput[] = []
+  const sectionTitles: Array<{ title: string; subtitle?: string }> = []
   let bad = 0
+  // D113-D1：只取**当前作业包内**的作业纸（与清单一致），并按作业纸分节
+  const allow = packStore.currentId
+    ? new Set(packStore.currentPadRefs.map((r) => r.padId))
+    : null
   for (const s of pad.saved) {
+    if (allow && !allow.has(s.id)) continue
     try {
       const p = parseTaskpad(JSON.parse(s.json))
       sources.push({ pad: p, items: itemsFor(p) })
+      sectionTitles.push({
+        title: `作业纸：${p.id}`,
+        subtitle: p.target_tag ? `目标 tag：${p.target_tag}` : undefined,
+      })
     } catch { bad++ }
   }
   if (!sources.length) { status.value = '清单为空或全部 JSON 损坏：无可预览作业纸。'; notify(status.value); return }
-  openPreview(sources, `全部作业纸连排预览 · ${sources.length} 份`)
-  status.value = `已连排预览 ${sources.length} 份作业纸（多包不分页；@page 方向取第一份${bad ? `；${bad} 份 JSON 损坏已跳过` : ''}）。`
+  // D113-D1：每份前插入标题页 + 页码各自从 1 起（避免多张纸的页码/页眉混在一起分不清归属）
+  overlayInputsKey.value = JSON.stringify(sources)
+  overlayHtml.value = templateHtml(sources, { sectionTitles, resetPagePerSection: true })
+  overlayTitle.value = `全部作业纸预览（分节）· ${sources.length} 份`
+  showHtmlOverlay.value = true
+  status.value = `已分节预览 ${sources.length} 份作业纸（每份前有标题页、页码各自从 1 起${bad ? `；${bad} 份 JSON 损坏已跳过` : ''}）。`
   notify(status.value)
 }
 

@@ -311,3 +311,36 @@ R1 让预览/打印不含答案，但**之前可能有人用"含答案"打印教
 用户问"LaTeX 分栏不是很成熟吗" —— 是，但那是**排版引擎原生能力**；HTML 的 `column-count`
 只在固定高度容器内分栏，实测 12 题只排出 10 题、其余被裁，无法与浏览器分页衔接。
 故按 Q9 只做竖版单列（本记录 R3），不引入横板双列。
+
+---
+
+## 10. 复审与补漏（2026-10-28 第二次）
+
+用户要求「补上全部作业纸分节预览 + 检查是否执行完全/有无漏洞」。
+
+### 10.1 补上 D1（全部作业纸分节预览）
+
+- `sheetHtml.ts` 新增选项 `sectionTitles` / `resetPagePerSection`：
+  多份作业纸连排时**每份前插入分节标题页**（含 id + 目标 tag），并把该份页码重置为从 1 起；
+- `SheetPreviewSection.previewAllPads()` 改为按**当前作业包**取作业纸并传分节标题；
+- 实测：2 份作业纸 → 分节标题页 2 张 + 内容页 2 张，标题正确、页码各自从 1 起。
+
+### 10.2 复审发现并修复的 4 个漏洞
+
+| # | 漏洞 | 影响 | 修复 |
+|---|---|---|---|
+| V1 | **自包含下载缺 KaTeX 脚本**：`AnswerPreviewSection.fetchSelfContainedKatex()` 里 `js` / `autoRender` 恒为空串（还自己拼正则从样例 HTML 抠 `<style>`），且字段名与 `KaTeXAssets`（`katexJs`/`autoRenderJs`）不符 | 下载的参考答案 HTML **离线打开公式全是源码** | 复用 `sheetHtml.fetchSelfContainedKatex()`；`AnswerHtmlOptions.katexRaw` 类型对齐 `KaTeXAssets` |
+| V2 | **探针样式并发互删**：`createProbe` 每次 append 一个 `<style>`，`dispose` 用 `querySelectorAll(...).forEach(remove)` 全删 | `reflowPad` 可并发（防抖 watcher）→ 一个调用结束会删掉另一个仍在用的样式，后续测量退回"未限宽"、高度失真 | 改为模块级单例 `ensureProbeStyle()`（只注入一次）；`dispose` 只移除本探针 |
+| V3 | **④输出段仍按 `includeAnswers` 出答案** | 与 R1「作业纸=学生版」矛盾：作业纸导出仍可能带答案 | `SheetDesignView` 中 `SheetOutputSection` 固定 `:include-answers="false"`；`SheetPreviewSection` 内改为常量 `INCLUDE_ANSWERS = false`，避免"看起来可切换"的假象 |
+| V4 | **CLI `answers` 的 KaTeX 相对路径写死 `../katex/`** | `local` 模式默认输出在 workspace 根时指向 workspace 外 → 公式退化成源码 | 默认输出改到 `<ws>/sheets/html/`（与作业纸一致）；并按**实际输出目录**动态计算 `katex_href` |
+
+### 10.3 验证（第二次）
+
+| 项 | 结果 |
+|---|---|
+| engine pytest | **629 passed**（新增 3 例：CLI 默认输出位置、KaTeX 相对路径随输出目录、真实 fixture 行内/行间分类） |
+| app `vue-tsc -b` / `npm run build` | 0 error |
+| app `npm run selfcheck` | 全绿（d113 自检补充：探针单例、自包含含 KaTeX、作业纸固定不含答案、分节标题页 4 项哨兵） |
+| 离线渲染（Playwright `offline=true`，`file://`） | 下载的参考答案 HTML：**2 卡片 / 46 公式 / 0 错误 / 2 SVG（300px）** —— 自包含生效 |
+| 真实界面 | 作业纸预览**不含「参考答案」**、宽度 1240px 整行；分节标题页 2 张 + 内容页 2 张 |
+| 脱敏检查 | 通过 |

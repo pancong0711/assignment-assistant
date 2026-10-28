@@ -126,3 +126,50 @@ def test_cli_sheet_answers_no_content(tmp_path):
     assert r.exit_code == 0, r.output
     html = out.read_text(encoding="utf-8")
     assert 'class="answer-q"' not in html, "--no-content 不应输出题干"
+
+
+# ---------------- 执行后审查补充（D113 复审发现的问题） ----------------
+
+def test_cli_answers_default_out_under_sheets_html(tmp_path):
+    """local KaTeX 装在 <ws>/sheets/katex/，默认输出必须落在 <ws>/sheets/html/，
+    否则 `../katex/` 相对路径指错 → 公式显示成源码。"""
+    ws = _mk_ws(tmp_path, "答案 $x=1$")
+    r = CliRunner().invoke(cli, ["sheet", "answers", "--task", str(ws / "task.json"), "-w", str(ws)])
+    assert r.exit_code == 0, r.output
+    out = ws / "sheets" / "html" / "answers-d113.html"
+    assert out.is_file(), f"默认输出应在 sheets/html/：{r.output}"
+    html = out.read_text(encoding="utf-8")
+    assert 'href="../katex/katex.min.css"' in html
+
+
+def test_cli_answers_katex_href_follows_output_dir(tmp_path):
+    """用 -o 输出到其它目录时，KaTeX 相对路径必须按实际位置计算（不能固定 ../katex/）。"""
+    ws = _mk_ws(tmp_path, "答案 $x=1$")
+    deep = ws / "classes" / "classA" / "sheets" / "html"
+    deep.mkdir(parents=True, exist_ok=True)
+    out = deep / "a.html"
+    r = CliRunner().invoke(cli, ["sheet", "answers", "--task", str(ws / "task.json"),
+                                 "-w", str(ws), "-o", str(out)])
+    assert r.exit_code == 0, r.output
+    html = out.read_text(encoding="utf-8")
+    # classes/classA/sheets/html → ../../../sheets/katex/ ... 至少不能是错的 "../katex/"
+    assert "katex.min.css" in html
+    import re
+    href = re.search(r'href="([^"]*katex\.min\.css)"', html).group(1)
+    expect = (ws / "sheets" / "html").resolve().parent  # 反推：相对路径应指向 ws/sheets/katex
+    resolved = (out.parent / href).resolve()
+    assert resolved == (ws / "sheets" / "katex" / "katex.min.css").resolve(), (
+        f"KaTeX 相对路径指错：{href} → {resolved}")
+
+
+def test_user_fixture_inline_and_display_math_classified():
+    """R7：用户真实答案里行内/行间必须分类正确（行间 # = 8 个 $$ + 行间 \\[）。"""
+    import re
+    md = FIXTURE.read_text(encoding="utf-8").strip()
+    out = render_rich(md)
+    # 行内公式不得被塞进独立 <p> 独占一段（允许与正文同段）
+    assert "取球心为原点" in out
+    # 行间公式应独立成段：每个 \n\[\n 之前必须是 </p> 或换段边界
+    assert not re.search(r"<br\s*/?>\s*\\\[", out), "存在行间公式与正文同段"
+    # svg 完整
+    assert out.count("<svg") == 2

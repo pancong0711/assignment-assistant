@@ -132,6 +132,12 @@ export interface SheetHtmlOptions {
   continuousPage?: boolean
   /** D43-7 页码大字水印开关：false = 「第 N 页」大字不画（图层不受影响）；缺省 true。 */
   includePageText?: boolean
+  /** D113-D1：多份作业纸连排时，**每份前插入分节标题页**（作业纸 id / 目标 tag），
+   *  并把该份的页码重置为从 1 起（避免多张纸页码连成一串分不清归属）。
+   *  缺省 false = 旧行为（纯连排）。 */
+  sectionTitles?: Array<{ title: string; subtitle?: string }>
+  /** D113-D1：配合 sectionTitles —— 每份作业纸页码各自从 1 起（缺省 true 当 sectionTitles 存在）。 */
+  resetPagePerSection?: boolean
   /** KaTeX 资源模式（见文件头注释）：'cdn' 缺省 | 'relative' 同源 | 'raw' 内联 */
   katex?: 'relative' | 'cdn' | 'raw'
   /** katex='raw' 时由 fetchSelfContainedKatex() 注入的完整资源 */
@@ -195,6 +201,11 @@ body {
   box-shadow: 0 2px 10px rgba(31, 41, 55, 0.18);
   -webkit-print-color-adjust: exact; print-color-adjust: exact;
 }
+/* D113-D1：多份作业纸连排时的分节标题页（每份一张，标明 id/目标 tag） */
+.section-title-page { display: flex; align-items: center; justify-content: center; }
+.section-title-box { text-align: center; }
+.section-title-main { font-size: 20pt; font-weight: 700; color: var(--accent, #2456c4); margin-bottom: 4mm; }
+.section-title-sub { font-size: 11pt; color: var(--muted, #6b7280); }
 .sheet-page.landscape { width: 297mm; height: 209mm; }
 .sheet-header { border-bottom: 2px solid var(--line); text-align: center; font-weight: 700; padding-bottom: 2mm; }
 .sh-title { font-size: 16pt; }
@@ -726,8 +737,22 @@ export function stringifySheetHtml(
     }
   }
   let runPage = 0
+  const sectionTitles = opts.sectionTitles ?? []
+  const resetPerSection = opts.resetPagePerSection ?? (sectionTitles.length > 0)
   for (let padIdx = 0; padIdx < pads.length; padIdx++) {
     const { pad, items } = pads[padIdx]
+    // D113-D1：每份作业纸前插入分节标题页（避免多张纸连排后分不清归属）
+    const sec = sectionTitles[padIdx]
+    if (sec) {
+      pageSections.push(
+        `<section class="sheet-page section-title-page" data-section="${escapeHtml(String(padIdx + 1))}">`
+        + `<div class="section-title-box">`
+        + `<div class="section-title-main">${escapeHtml(sec.title || '')}</div>`
+        + (sec.subtitle ? `<div class="section-title-sub">${escapeHtml(sec.subtitle)}</div>` : '')
+        + `</div></section>`,
+      )
+      if (resetPerSection) runPage = 0
+    }
     const perPage = resolveGrid(pad.layout).perPage
     // D103：有预排版结果 → 直接用其页数（避免被 per_page 切片整除影响）；否则旧切片
     const layoutPages = pads[padIdx].layout?.pages?.length ?? 0

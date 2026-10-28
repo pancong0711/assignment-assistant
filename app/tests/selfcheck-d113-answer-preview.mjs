@@ -87,5 +87,39 @@ assert.ok(!/\.answer-card \+ \.answer-card \{ break-before: auto/.test(html),
   }
 }
 
-console.log('OK d113-answer-preview：探针 innerHTML · 行间独立成段 · 行内保持行内 · '
-  + '一题一卡/一题一页 · 超高题可跨页 · PWA 与引擎 CSS 同构')
+/* ---- 复审补充：探针 style 并发安全 ---- */
+{
+  const src = readFileSync(resolve(appDir, 'src/lib/measureLayout.ts'), 'utf-8')
+  const code = src.replace(/\/\*[\s\S]*?\*\//g, '')
+  assert.ok(/let probeStyleInjected = false/.test(code),
+    '探针样式应为模块级单例（并发 reflowPad 时不能重复注入）')
+  assert.ok(!/dispose: \(\) => \{[^}]*querySelectorAll\('style\[data-d113-probe-style\]'\)/.test(code),
+    'dispose 不得删除共享 <style>（并发调用会互删）')
+}
+
+/* ---- 复审补充：自包含下载必须带 KaTeX 脚本（否则离线公式退化成源码） ---- */
+{
+  const src = readFileSync(resolve(appDir, 'src/lib/answerHtml.ts'), 'utf-8')
+  assert.ok(/opts\.katexRaw\.katexJs/.test(src), 'katex=raw 必须内联 katex.min.js')
+  assert.ok(/opts\.katexRaw\.autoRenderJs/.test(src), 'katex=raw 必须内联 auto-render')
+}
+
+/* ---- 复审补充：作业纸预览/输出固定不含答案（R1） ---- */
+{
+  const prev = readFileSync(resolve(appDir, 'src/components/SheetPreviewSection.vue'), 'utf-8')
+  assert.ok(/const INCLUDE_ANSWERS = false/.test(prev), '作业纸预览应固定不含答案')
+  assert.ok(!/v-model="includeAnswersModel"/.test(prev), '不应残留「显示参考答案」勾选框')
+  const design = readFileSync(resolve(appDir, 'src/views/SheetDesignView.vue'), 'utf-8')
+  assert.ok(/:include-answers="false"/.test(design), '作业纸输出段应固定不含答案')
+}
+
+/* ---- 复审补充：多份作业纸分节标题页（D1） ---- */
+{
+  const src = readFileSync(resolve(appDir, 'src/lib/sheetHtml.ts'), 'utf-8')
+  assert.ok(/section-title-page/.test(src), '应支持分节标题页')
+  assert.ok(/sectionTitles/.test(src), '应支持 sectionTitles 选项')
+}
+
+console.log('OK d113-answer-preview：探针 innerHTML/单例样式 · 行间独立成段 · 行内保持行内 · '
+  + '一题一卡/一题一页 · 超高题可跨页 · 自包含含 KaTeX · 作业纸固定不含答案 · 分节标题页 · '
+  + 'PWA 与引擎 CSS 同构')

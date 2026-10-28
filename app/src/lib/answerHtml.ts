@@ -43,7 +43,7 @@ export interface AnswerHtmlOptions {
   onePagePerQuestion?: boolean
   /** KaTeX 资源模式：relative = 同源自托管（PWA iframe）；raw = 内联自包含（下载/打印）。 */
   katex?: 'relative' | 'raw'
-  katexRaw?: { css: string; js: string; autoRender: string }
+  katexRaw?: { css: string; katexJs: string; autoRenderJs: string }
 }
 
 function esc(s: string): string {
@@ -108,8 +108,8 @@ export const ANSWER_CSS = `
 function katexHead(opts: AnswerHtmlOptions): string {
   if (opts.katex === 'raw' && opts.katexRaw) {
     return `<style>${opts.katexRaw.css}</style>
-<script>${opts.katexRaw.js}</script>
-<script>${opts.katexRaw.autoRender}</script>`
+<script>${opts.katexRaw.katexJs}</script>
+<script>${opts.katexRaw.autoRenderJs}</script>`
   }
   return `<link rel="stylesheet" href="./katex/katex.min.css">
 <script defer src="./katex/katex.min.js"></script>
