@@ -443,7 +443,12 @@ function addChapter() {
       <div class="modal" style="max-width:640px; width:92vw; max-height:84vh; overflow:auto">
         <h3 style="margin-top:0">题目与答案 · <code>{{ solQid }}</code></h3>
         <p class="hint" style="margin:0 0 6px">题目内容：</p>
-        <div ref="solContentEl" class="sol-math" style="border:1px solid var(--c-border); border-radius:6px; padding:8px; white-space:pre-wrap; margin-bottom:10px">{{ solContent || '（无题干）' }}</div>
+        <!-- D112：题干可能含公式/图片，按 md+html 渲染（此前纯文本插值 → 公式显示源码） -->
+        <div ref="solContentEl" class="sol-math"
+             style="border:1px solid var(--c-border); border-radius:6px; padding:8px; margin-bottom:10px">
+          <div v-if="solContent" v-html="renderRich(solContent)"></div>
+          <span v-else class="hint">（无题干）</span>
+        </div>
 
         <p class="hint" style="margin:0 0 4px">
           答案版本（勾选查看；★=生效/置顶）；
@@ -468,7 +473,12 @@ function addChapter() {
           <template v-if="solShown">
             <div v-html="renderRich(solShown.text) || '<span class=&quot;hint&quot;>（空）</span>'"></div>
           </template>
-          <span v-else-if="solFallback">{{ solFallback }}<br><span class="hint">（题库 solution 旧列；可「收编为 v1」纳入版本库）</span></span>
+          <template v-else-if="solFallback">
+            <!-- D112：旧列同样是 md+html（含 $..$ / 内联 <svg>），必须渲染而不是原样输出源码。
+                 此前用 {{ solFallback }} 纯文本插值 → 图不显示、公式显示成 \(x\)。 -->
+            <div v-html="renderRich(solFallback)"></div>
+            <span class="hint">（题库 solution 旧列；可「收编为 v1」纳入版本库）</span>
+          </template>
           <span v-else class="hint">（暂无答案）</span>
         </div>
         <!-- D105：编辑态（源码 + 实时预览） -->
