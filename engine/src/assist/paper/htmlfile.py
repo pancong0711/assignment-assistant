@@ -596,10 +596,18 @@ def render_answer_html(task: dict, ws: Path, *, include_content: bool = True,
         fallback = str(fr.get("solution") or "")
         eff = (effective_solution(ws_p, qid, fallback, kb=kind, chap=cname)
                if qid else {"text": fallback})
+        # D115：题图（expand_items_html 已把可读文件转成 base64；否则给占位）
+        fig_html = ""
+        if fr.get("img_b64"):
+            fig_html = (f'<img class="answer-fig" alt="题图" '
+                        f'src="data:{fr.get("img_mime") or "image/png"};base64,{fr["img_b64"]}">')
+        elif fr.get("img_label"):
+            fig_html = f'<div class="answer-fig-ph">[题图：{fr["img_label"]}]</div>'
         items.append({
             "id": qid,
             "no": str(fr.get("no") or ""),
             "content_html": render_rich(str(fr.get("content") or "")),
+            "fig_html": fig_html,
             "solution_html": render_rich(str(eff.get("text") or fallback)),
         })
     css = ""

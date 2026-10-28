@@ -87,6 +87,21 @@ assert.ok(!/\.answer-card \+ \.answer-card \{ break-before: auto/.test(html),
   }
 }
 
+/* ---- D115：参考答案必须带题目插图 ---- */
+{
+  const src = readFileSync(resolve(appDir, 'src/lib/answerHtml.ts'), 'utf-8')
+  assert.ok(/imgPath\?: string/.test(src), 'AnswerItem 应带 imgPath')
+  assert.ok(/imgPath: it\.imgPath/.test(src), 'answerItemsOf 不得丢弃 imgPath')
+  assert.ok(/figAssets\?: Record<string, string>/.test(src), '应支持 figAssets 素材库')
+  assert.ok(/class="answer-fig"/.test(src), '应输出真图 <img>')
+  assert.ok(/answer-fig-ph/.test(src), '未命中时应输出占位框')
+  const comp = readFileSync(resolve(appDir, 'src/components/AnswerPreviewSection.vue'), 'utf-8')
+  assert.ok(/figAssets: settings\.figAssets/.test(comp), '组件应传入 figAssets')
+  const css = readFileSync(resolve(appDir, 'src/styles.css'), 'utf-8')
+  assert.ok(/\.sol-math svg \{ max-width: 100%/.test(css),
+    'D115：题库编辑器 .sol-math 必须有 svg 限宽（此前无任何样式）')
+}
+
 /* ---- 复审补充：探针 style 并发安全 ---- */
 {
   const src = readFileSync(resolve(appDir, 'src/lib/measureLayout.ts'), 'utf-8')

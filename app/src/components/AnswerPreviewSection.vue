@@ -13,6 +13,7 @@ import { computed, nextTick, ref, watch } from 'vue'
 import { useKbStore } from '../stores/kb'
 import { useTaskpadStore } from '../stores/taskpad'
 import { usePackStore } from '../stores/packs'
+import { useSettingsStore } from '../stores/settings'
 import { expandPadItems, fetchSelfContainedKatex } from '../lib/sheetHtml'
 import { parseTaskpad, type Taskpad } from '../lib/taskpad'
 import type { KbKind } from '../lib/kb'
@@ -26,6 +27,7 @@ const emit = defineEmits<{ (e: 'notify', msg: string): void }>()
 const kb = useKbStore()
 const pad = useTaskpadStore()
 const packStore = usePackStore()
+const settings = useSettingsStore()
 
 const scope = ref<'current' | 'pack'>('current')
 const includeContent = ref(true)
@@ -73,6 +75,8 @@ function html(opts: { katex?: 'relative' | 'raw'; katexRaw?: AnswerHtmlOptions['
     includeContent: includeContent.value,
     includeNo: includeNo.value,
     onePagePerQuestion: onePagePerQuestion.value,
+    // D115：题目插图（浏览器素材库 basename → dataURL）
+    figAssets: settings.figAssets,
     docTitle: docTitle.value,
     ...opts,
   })

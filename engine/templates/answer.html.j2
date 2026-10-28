@@ -25,6 +25,10 @@
 {%- endif %}
 <style>
 {{ doc.answer_css|safe }}
+/* D115：题目插图 */
+.answer-q .answer-fig { display:block; max-width:100%; height:auto; margin:2mm 0 0; }
+.answer-q .answer-fig-ph { display:inline-block; margin:2mm 0 0; padding:1mm 2mm;
+  border:1px dashed #c3cad6; border-radius:3px; color:#6b7280; font-size:9pt; font-style:italic; }
 {%- if not doc.one_page_per_question %}
 .answer-card + .answer-card { break-before: auto; page-break-before: auto; }
 {%- endif %}
@@ -42,8 +46,8 @@
     {%- if doc.include_no and it.no %}
     <p class="answer-no">{{ it.no }}</p>
     {%- endif %}
-    {%- if doc.include_content and it.content_html %}
-    <div class="answer-q">{{ it.content_html|safe }}</div>
+    {%- if doc.include_content and (it.content_html or it.fig_html) %}
+    <div class="answer-q">{{ it.content_html|safe }}{{ it.fig_html|safe }}</div>
     {%- endif %}
     <div class="answer-sol">{{ it.solution_html|safe if it.solution_html else '<span class="answer-empty">（本题暂无参考答案）</span>'|safe }}</div>
   </section>

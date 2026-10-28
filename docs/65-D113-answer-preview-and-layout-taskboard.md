@@ -344,3 +344,40 @@ R1 让预览/打印不含答案，但**之前可能有人用"含答案"打印教
 | 离线渲染（Playwright `offline=true`，`file://`） | 下载的参考答案 HTML：**2 卡片 / 46 公式 / 0 错误 / 2 SVG（300px）** —— 自包含生效 |
 | 真实界面 | 作业纸预览**不含「参考答案」**、宽度 1240px 整行；分节标题页 2 张 + 内容页 2 张 |
 | 脱敏检查 | 通过 |
+
+---
+
+## 11. D115 追加修复：参考答案缺题目/插图 + 预览容器样式缺失
+
+用户反馈：「参考答案预览里应该显示**题目和插图**，目前没有，只有答案内容；参考答案里的示意图仍然不能正常预览，题库编辑器里也看不到。」
+
+### 11.1 复现与定位
+
+| # | 现象 | 根因 | 实测证据 |
+|---|---|---|---|
+| 1 | 参考答案区**没有题目**的插图 | `answerHtml.answerItemsOf()` 只挑了 `id/no/content/solution/tag`，**`imgPath` 被丢弃**；且参考答案模板从未输出过题图 | Playwright：`qHasImg=false`、`qHasPlaceholder=false` |
+| 2 | 参考答案里的**示意图看不到**（用户侧） | 渲染链路本身正常（`render_rich` 输出含 `<svg>`、浏览器实测 300×150 / 11 个图元）；但**题库编辑器预览容器 `.sol-math` 没有任何 CSS**（无 `svg{max-width}`），SVG 无 width/height 时高度靠容器猜，易塌陷/撑爆 | 编辑器弹窗内 `attrW=null` |
+| 3 | 可能的第三个来源 | xlsx `solution` 列是**摘要**（`strip_markup` 把图换成 ` [图] ` 并截断 200 字），用它做预览必然丢图 | `render_rich(summary)` 无 `<svg>` |
+
+**结论**：用户给的这段答案本身**能在 app 里正常显示**（附截图验证：题干 + 题图 + 答案示意图 + 7 个公式全部正常）。问题出在「题图没被带过去」和「预览容器缺样式」两处。
+
+### 11.2 修复
+
+| 修复 | 文件 |
+|---|---|
+| `AnswerItem` 增加 `imgPath`；`answerItemsOf()` 透传（不再丢弃） | `app/src/lib/answerHtml.ts` |
+| 新增 `figHtml()`：素材库命中 → `<img class="answer-fig">`；未命中 → `[题图：…]` 占位（与作业纸同口径） | 同上 |
+| `AnswerHtmlOptions.figAssets`；`AnswerPreviewSection` 传入 `settings.figAssets` | 同上 + 组件 |
+| 引擎侧 `render_answer_html` 输出 `fig_html`（`img_b64` 内嵌 / `img_label` 占位） | `engine/src/assist/paper/htmlfile.py` + `answer.html.j2` |
+| **`.sol-math` 补样式**：`img/svg{max-width:100%;height:auto}`、table 边框、`p` 间距 | `app/src/styles.css` |
+| 题图 CSS（`.answer-fig` / `.answer-fig-ph`） | `answerHtml.ts` + `_answer_css` |
+
+### 11.3 验证
+
+| 项 | 结果 |
+|---|---|
+| engine pytest | **631 passed**（新增 2 例：题图内嵌、缺图占位） |
+| app selfcheck | 全绿（d113 自检补 5 项哨兵：imgPath 透传、figAssets、answer-fig/ph、`.sol-math svg` 限宽） |
+| PWA 实测（用户这段答案） | 题干 ✓ · 题图 `data:image/png;base64,…` ✓ · 答案示意图 300px/11 图元 ✓ · 7 公式 ✓ · 0 错误 |
+| CLI 实测 | `answer-fig` 内嵌 base64 成功 |
+| 脱敏 | 通过 |

@@ -173,3 +173,43 @@ def test_user_fixture_inline_and_display_math_classified():
     assert not re.search(r"<br\s*/?>\s*\\\[", out), "存在行间公式与正文同段"
     # svg 完整
     assert out.count("<svg") == 2
+
+
+# ---------------- D115：参考答案必须显示题目插图 ----------------
+
+def test_answer_html_includes_figure(tmp_path):
+    """D115：参考答案预览必须带题目插图（base64 内嵌），此前被丢弃。"""
+    from PIL import Image
+    ws = _mk_ws(tmp_path, "答案 $x=1$")
+    (ws / "kb" / "fig").mkdir(parents=True, exist_ok=True)
+    Image.new("RGB", (40, 30), (240, 242, 246)).save(ws / "kb" / "fig" / "fig1.png")
+    # 给第一题挂题图
+    from openpyxl import load_workbook
+    p = ws / "kb" / "problems.xlsx"
+    wb = load_workbook(p); sh = wb["chap04"]
+    sh.append(["c3", "带图题", "fig/fig1.png", 1, "", "计算", "", ""])
+    wb.save(p)
+    task = json.loads((ws / "task.json").read_text(encoding="utf-8"))
+    task["items"] = [{"kb": "problems", "chap": "chap04", "ids": ["c3"], "tag": "t"}]
+    (ws / "task.json").write_text(json.dumps(task, ensure_ascii=False), encoding="utf-8")
+    sol.add_version(ws, "chap04-c3", "带图题的答案", source="ai",
+                    kb="problems", chap="chap04", pin=True)
+    html = render_answer_html(task, ws)
+    assert 'class="answer-fig"' in html, "参考答案必须内嵌题图"
+    assert "data:image/png;base64," in html
+
+
+def test_answer_html_figure_placeholder_when_missing(tmp_path):
+    """题图文件读不到时给占位框（与作业纸一致，不静默消失）。"""
+    ws = _mk_ws(tmp_path, "答案 $x=1$")
+    from openpyxl import load_workbook
+    p = ws / "kb" / "problems.xlsx"
+    wb = load_workbook(p); sh = wb["chap04"]
+    sh.append(["c4", "缺图题", "fig/not-exist.png", 1, "", "计算", "", ""])
+    wb.save(p)
+    task = json.loads((ws / "task.json").read_text(encoding="utf-8"))
+    task["items"] = [{"kb": "problems", "chap": "chap04", "ids": ["c4"], "tag": "t"}]
+    (ws / "task.json").write_text(json.dumps(task, ensure_ascii=False), encoding="utf-8")
+    sol.add_version(ws, "chap04-c4", "答案", source="ai", kb="problems", chap="chap04", pin=True)
+    html = render_answer_html(task, ws)
+    assert "answer-fig-ph" in html and "fig/not-exist.png" in html

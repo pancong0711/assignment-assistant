@@ -81,6 +81,15 @@ body {
 .card h3 { margin: 14px 0 8px; font-size: 14px; }
 .card p.hint { color: var(--c-muted); font-size: 13px; margin: 4px 0 10px; line-height: 1.6; }
 
+/* D115：题库编辑器答案/题干预览容器（.sol-math）此前无任何样式 →
+   内联 <svg> 无 width/height 时按容器猜高度，可能塌陷或撑破。
+   与作业纸 .q-solution 同口径限宽。 */
+.sol-math img, .sol-math svg { max-width: 100%; height: auto; }
+.sol-math table { border-collapse: collapse; max-width: 100%; }
+.sol-math th, .sol-math td { border: 1px solid var(--c-border); padding: 2px 6px; }
+.sol-math p { margin: 0 0 .6em; }
+.sol-math pre { overflow-x: auto; }
+
 button.btn {
   border: 1px solid var(--c-border);
   background: var(--c-card);

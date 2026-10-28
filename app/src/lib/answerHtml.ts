@@ -24,6 +24,8 @@ export interface AnswerItem {
   content?: string
   solution?: string
   tag?: string
+  /** 题库行 img_path（题图 hint，如 fig/fig1.png）。 */
+  imgPath?: string
 }
 
 export interface AnswerSection {
@@ -41,6 +43,9 @@ export interface AnswerHtmlOptions {
   docTitle?: string
   /** 一题一页起步（默认 true）：一题排完 → 新题另起一页。false = 连排。 */
   onePagePerQuestion?: boolean
+  /** B3/D46-5：题图素材库（basename → dataURL）。命中 → 真图；未命中 → 占位框。
+   *  D115：参考答案预览必须显示题目插图，与作业纸同口径。 */
+  figAssets?: Record<string, string>
   /** KaTeX 资源模式：relative = 同源自托管（PWA iframe）；raw = 内联自包含（下载/打印）。 */
   katex?: 'relative' | 'raw'
   katexRaw?: { css: string; katexJs: string; autoRenderJs: string }
@@ -95,6 +100,13 @@ export const ANSWER_CSS = `
   .answer-sol { color: #111827; }
   .answer-sol p { margin: 0 0 .7em; }
   .answer-sol img, .answer-sol svg { max-width: 100%; height: auto; }
+  /* D115：题目插图（题干后） */
+  .answer-q .answer-fig { display: block; max-width: 100%; height: auto; margin: 2mm 0 0; }
+  .answer-q .answer-fig-ph {
+    display: inline-block; margin: 2mm 0 0; padding: 1mm 2mm;
+    border: 1px dashed #c3cad6; border-radius: 3px;
+    color: #6b7280; font-size: 9pt; font-style: italic;
+  }
   .answer-sol table { border-collapse: collapse; max-width: 100%; margin: .5em 0; }
   .answer-sol th, .answer-sol td { border: 1px solid #c3cad6; padding: 2px 6px; }
   .answer-sol pre { background: #f5f7fa; padding: 2mm 3mm; border-radius: 4px; overflow-x: auto; }
@@ -151,6 +163,21 @@ function katexScript(): string {
 </script>`
 }
 
+/** D115：题图 HTML（与作业纸 `.q-img` 同语义）。
+ *  - `imgPath` 有值且 `figAssets` 命中 basename → 真图 `<img>`；
+ *  - 未命中 → 占位框 `[题图：xxx]`（PWA 无文件系统时的降级，与作业纸一致）。
+ */
+function figHtml(imgPath: string | undefined, figAssets?: Record<string, string>): string {
+  const hint = String(imgPath ?? '').trim()
+  if (!hint) return ''
+  const base = hint.split('/').pop() ?? hint
+  const hit = figAssets?.[base]
+  if (hit) {
+    return `<img class="answer-fig" src="${esc(hit)}" alt="题图：${esc(base)}">`
+  }
+  return `<div class="answer-fig-ph">[题图：${esc(hint)}]</div>`
+}
+
 /** 单题卡片 HTML。 */
 function cardHtml(it: AnswerItem, opts: AnswerHtmlOptions): string {
   const showNo = opts.includeNo !== false
@@ -160,7 +187,9 @@ function cardHtml(it: AnswerItem, opts: AnswerHtmlOptions): string {
   const q = renderRich(String(it.content || ''))
   const parts: string[] = [`<section class="answer-card" data-qid="${esc(it.id)}">`]
   if (showNo && no) parts.push(`<p class="answer-no">${esc(no)}</p>`)
-  if (showQ && q) parts.push(`<div class="answer-q">${q}</div>`)
+  // D115：题干 + 题图（插图像作业纸一样跟在题干后面）
+  const fig = showQ ? figHtml(it.imgPath, opts.figAssets) : ''
+  if (showQ && (q || fig)) parts.push(`<div class="answer-q">${q}${fig}</div>`)
   parts.push(`<div class="answer-sol">${sol || '<span class="answer-empty">（本题暂无参考答案）</span>'}</div>`)
   parts.push('</section>')
   return parts.join('\n')
@@ -197,7 +226,8 @@ ${katexScript()}
 
 /** 由作业纸 items 构造参考答案条目（保持 items 顺序；题号沿用作业纸口径）。 */
 export function answerItemsOf(
-  items: Array<{ id: string; no?: string; content?: string; solution?: string; tag?: string }>,
+  items: Array<{ id: string; no?: string; content?: string; solution?: string; tag?: string
+    imgPath?: string }>,
 ): AnswerItem[] {
   return items.map((it) => ({
     id: String(it.id ?? ''),
@@ -205,5 +235,7 @@ export function answerItemsOf(
     content: it.content,
     solution: it.solution,
     tag: it.tag,
+    // D115：题图必须带过来（此前被丢弃 → 参考答案区看不到题目插图）
+    imgPath: it.imgPath,
   }))
 }
