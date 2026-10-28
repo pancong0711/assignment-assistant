@@ -124,9 +124,17 @@ def _protect_math(src: str) -> tuple[str, list[str]]:
 
 
 def _restore_math(html_text: str, math: list[str]) -> str:
+    """把公式占位还原成原文（D112 修复）。
+
+    坑：公式里的 `<`（如 `$R_1<R_2$`）还原时若不转义，会被后续 bleach/DOMPurify
+    当成标签开头，`<R_2$),单位长度…` 整段被丢弃 → **答案在 `$R_1` 后被截断**。
+    因此还原前先做 HTML 转义（KaTeX 读文本节点时会自动 unescape，公式不受影响）。
+    """
     def _sub(m: "re.Match[str]") -> str:
         idx = int(m.group(1))
-        return math[idx] if 0 <= idx < len(math) else m.group(0)
+        if not 0 <= idx < len(math):
+            return m.group(0)
+        return _html.escape(math[idx], quote=False)
 
     return re.sub(rf"{_MATH_PLACEHOLDER}(\d+){_MATH_END}", _sub, html_text)
 

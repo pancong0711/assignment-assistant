@@ -110,9 +110,17 @@ function protectMath(src: string): { text: string; math: string[] } {
 }
 
 /** 还原公式占位（在 markdown 渲染后、净化前）。 */
+/** 与引擎 `richdoc._restore_math` 同口径的 HTML 转义。
+ *  D112：公式里的 `<`（如 `$R_1<R_2$`）若不转义还原，会被 DOMPurify 当标签开头，
+ *  `<R_2$),单位长度…` 整段被丢弃 → 答案在 `$R_1` 后被截断。 */
+function escapeForHtml(s: string): string {
+  return s.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;')
+}
+
 function restoreMath(html: string, math: string[]): string {
   return html.replace(new RegExp(MATH_PLACEHOLDER + '(\\d+)END', 'g'), (_m, i: string) => {
-    return math[Number(i)] ?? ''
+    const v = math[Number(i)]
+    return v === undefined ? '' : escapeForHtml(v)
   })
 }
 

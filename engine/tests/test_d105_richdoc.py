@@ -268,3 +268,49 @@ def test_svg_prompt_asks_for_nearby_placement():
     assert "紧跟" in tpl["text"]
     assert "不要" in tpl["text"] and "末尾" in tpl["text"]
     assert "width=" in tpl["text"]
+
+
+# ---------------- D112：公式里的 < 导致答案被截断 ----------------
+
+def test_inline_math_with_lt_not_truncated():
+    """`$R_1<R_2$` 还原时若不转义，bleach 会把 `<R_2$),…` 当标签丢弃 → 答案截断。"""
+    from assist.paper.richdoc import render_rich
+    src = ("两个带有等量异号电荷的无限长同轴圆柱面,半径分别为$R_1$和$R_2$($R_1<R_2$),"
+           "单位长度上的电荷为$\\lambda$。求离轴线为$r$($R_1<r<R_2$)处的电场强度，并画出示意图。")
+    out = render_rich(src)
+    # 关键：结尾必须还在
+    assert "并画出示意图" in out, f"答案被截断：{out}"
+    assert "处的电场强度" in out
+    # 公式保留（< 需转义为 &lt;，否则会被当标签）
+    assert "$R_1&lt;R_2$" in out
+    assert "$R_1&lt;r&lt;R_2$" in out
+    assert "$\\lambda$" in out
+    # 不得出现裸 <（除标签本身）
+    import re
+    assert not re.search(r"<(?![a-zA-Z/!])", out), f"存在裸 < ：{out}"
+
+
+def test_display_math_with_lt_not_truncated():
+    from assist.paper.richdoc import render_rich
+    src = "条件为\n\\[\nR_1<r<R_2\n\\]\n这就是结论。"
+    out = render_rich(src)
+    assert "这就是结论" in out
+    assert "R_1&lt;r&lt;R_2" in out
+
+
+def test_math_with_ampersand_escaped():
+    """`&` 也必须转义，否则会被当实体开头。"""
+    from assist.paper.richdoc import render_rich
+    out = render_rich("条件 $a&b$ 结束")
+    assert "结束" in out
+    assert "a&amp;b" in out
+
+
+def test_math_lt_rendering_keeps_svg_after():
+    """公式里的 < 不应影响后续 <svg> 渲染。"""
+    from assist.paper.richdoc import render_rich
+    src = ("半径 $R_1<R_2$ 如图所示：\n\n"
+           '<svg viewBox="0 0 10 10"><line x1="0" y1="0" x2="5" y2="5"/></svg>\n\n完毕。')
+    out = render_rich(src)
+    assert "<svg" in out and "<line" in out
+    assert "完毕" in out
