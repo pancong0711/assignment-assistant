@@ -1,0 +1,15 @@
+<!doctype html><meta charset="utf-8"><body>
+<script src=".richdoc.dp.iife.js"></script>
+<script>
+const SRC = '<svg viewBox="0 0 200 150" xmlns="http://www.w3.org/2000/svg" width="60mm" height="45mm"><circle cx="100" cy="75" r="35" stroke="black" fill="none"/></svg>';
+// 复刻 richdoc.ts 的配置，逐项对比
+const ALLOWED_TAGS = ['svg','g','path','line','rect','circle','ellipse','polygon','polyline','text','tspan','defs','marker','title','desc','p'];
+const ATTRS = ['class','title','alt','src','width','height','viewBox','viewbox','xmlns','d','fill','stroke','stroke-width','cx','cy','r','x','y'];
+function t(name, opts) {
+  try { const o = R.renderRich(SRC); } catch(e) {}
+  return name;
+}
+// 直接用 DOMPurify：从模块里拿不到实例，改测 RenderRich 在 4 种配置下的差异
+// 方案：改 richdoc 的配置需要重新打包；这里用 window 上暴露的 DOMPurify（如果有）
+console.log('DP on window:', typeof window.DOMPurify);
+</script></body>

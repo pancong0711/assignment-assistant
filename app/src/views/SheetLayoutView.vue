@@ -349,9 +349,10 @@ function saveOnly() {
       <p class="hint" v-if="status">{{ status }}</p>
     </div>
 
-    <div style="display:flex; gap:16px; align-items:flex-start; flex-wrap:wrap">
+    <!-- D117-R4：改为整行单列堆叠（原 flex 多列并排，因各栏高度不一致产生大量留白） -->
+    <div style="display:flex; flex-direction:column; gap:16px; align-items:stretch">
       <!-- ============ 版式 / 页眉页脚 / 作业纸头部（grade/打印/导出已迁出） ============ -->
-      <div class="card" style="flex:0 0 380px; min-width:320px">
+      <div class="card" style="width:100%; min-width:0">
         <h2>版式 / 页眉页脚 / 作业纸头部</h2>
         <p>
           <label class="field"><input type="radio" name="orient" :checked="pad.current.layout.orientation === 'portrait'" @change="setOrientation('portrait')" />竖版 A4</label>
@@ -436,7 +437,7 @@ function saveOnly() {
       </div>
 
       <!-- ============ 水印编辑器（不变） ============ -->
-      <div class="card" style="flex:0 0 380px; min-width:320px">
+      <div class="card" style="width:100%; min-width:0">
         <h2>水印编辑器（命名样式库 / items 列表，0..N 图层）</h2>
         <p>
           <label class="field"><input type="checkbox" v-model="pad.current.watermark.enabled" /> 启用水印（每生唯一标识由 engine 打印时注入）</label>

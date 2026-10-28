@@ -1,0 +1,11 @@
+<!doctype html><meta charset="utf-8"><body><div id="t"></div>
+<script src=".richdoc.dp.iife.js"></script>
+<script>
+const SRC = '示意图：\n\n<svg viewBox="0 0 200 150" xmlns="http://www.w3.org/2000/svg">\n  <circle cx="100" cy="75" r="35" stroke="black" fill="none"/>\n</svg>';
+const out = R.renderRich(SRC);
+document.getElementById('t').innerHTML = out;
+const s = document.querySelector('#t svg');
+console.log('RENDERED:', out);
+console.log('ATTRS:', s ? JSON.stringify(s.getAttributeNames()) : 'NO SVG');
+console.log('SIZE:', s ? JSON.stringify({w:Math.round(s.getBoundingClientRect().width),h:Math.round(s.getBoundingClientRect().height)}) : '-');
+</script></body>

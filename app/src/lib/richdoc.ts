@@ -158,16 +158,36 @@ export function renderRich(text: string): string {
   if (typeof (DOMPurify as unknown as { sanitize?: unknown }).sanitize !== 'function') {
     return sanitizeWithoutDom(parsed)
   }
-  return DOMPurify.sanitize(parsed, {
-    ALLOWED_TAGS,
-    ALLOWED_ATTR: ALLOWED_ATTRS,
-    ALLOW_DATA_ATTR: false,
-    ALLOWED_URI_REGEXP: DATA_IMG_RE,   // 只放行 data:image
-    FORBID_TAGS: ['foreignObject', 'use', 'image', 'script', 'style', 'iframe', 'object', 'embed', 'form', 'input'],
-    FORBID_ATTR: ['href', 'xlink:href', 'srcset'],
-    // 允许 svg（DOMPurify 默认支持）
-    USE_PROFILES: { html: true, svg: true, svgFilters: false, mathMl: false },
+  // D117 关键修复：**不要**用 ALLOWED_URI_REGEXP。
+  // 它是**全局**生效的：DOMPurify 会对所有属性值跑该正则，不只 src/href。
+  // 于是 `viewBox="0 0 200 150"`、`width="60mm"`、`cx="100"` 等都不匹配
+  // `data:image/...` → 被当成非法 URI **全部剥掉**，SVG 变成空壳：
+  //     <svg viewBox=... width=...><circle cx=.../></svg>
+  //   → <svg xmlns="..."><circle></circle></svg>
+  // 浏览器里就是"一片空白"（引擎侧 bleach 的 protocols 只查 URI 属性，故 CLI 正常）。
+  // 改为用 hook **只校验 src**，其余属性交给 ALLOWED_ATTR 白名单。
+  const previousHook = (DOMPurify as unknown as { hooks?: unknown }).hooks
+  void previousHook
+  DOMPurify.addHook('uponSanitizeAttribute', (_node: unknown, data: {
+    attrName?: string; attrValue?: string; keepAttr?: boolean }) => {
+    if (String(data.attrName || '').toLowerCase() === 'src') {
+      if (!DATA_IMG_RE.test(String(data.attrValue || '').trim())) data.keepAttr = false
+    }
   })
+  try {
+    return DOMPurify.sanitize(parsed, {
+      ALLOWED_TAGS,
+      ALLOWED_ATTR: ALLOWED_ATTRS,
+      ALLOW_DATA_ATTR: false,
+      // 注意：此处**不能**设置 ALLOWED_URI_REGEXP（见上）
+      FORBID_TAGS: ['foreignObject', 'use', 'image', 'script', 'style', 'iframe', 'object', 'embed', 'form', 'input'],
+      FORBID_ATTR: ['href', 'xlink:href', 'srcset'],
+      // 允许 svg（DOMPurify 默认支持）
+      USE_PROFILES: { html: true, svg: true, svgFilters: false, mathMl: false },
+    })
+  } finally {
+    DOMPurify.removeAllHooks()
+  }
 }
 
 /** 属性级的 data:image 校验（DOMPurify 的 URI 正则在 img src 上再兜一层）。 */

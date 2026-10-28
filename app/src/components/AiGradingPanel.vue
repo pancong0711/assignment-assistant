@@ -352,6 +352,8 @@ const curWorkDir = computed<string>(() => {
 
 /* ④ 逐生审核 */
 const students = ref<Array<{ name: string; key: string; tag?: string }>>([])
+/** D117：学生清单加载中（供逐生审核空态提示） */
+const studentsLoading = ref(false)
 const drafts = ref<Record<string, any>>({})
 
 // D89：优先按"作业包"选择（一次分层作业的全部作业纸）；包内每张按 tag 自动匹配学生
@@ -399,7 +401,8 @@ async function loadWorks() {
 }
 async function loadStudents() {
   const w = curWork.value
-  if (!w) { students.value = []; return }
+  if (!w) { students.value = []; drafts.value = {}; return }
+  studentsLoading.value = true
   try {
     const [st, dr] = await Promise.all([
       fetchXxtReviewStudents(props.engineAddr, props.token, w.classId, w.workId),
@@ -413,6 +416,7 @@ async function loadStudents() {
     // D116：tag 选项来自本地 roster + 作业纸 target_tag，可能晚于本函数就绪；
     // 由下面的 watch(tagOptions) 负责"首次就绪时默认全选"。
   } catch (e) { msg.value = `读取学生/草稿失败：${String(e)}` }
+  finally { studentsLoading.value = false }
 }
 function classDirFor(w: { courseId: string; classId: string }): string {
   return classMap.value[`${w.courseId}:${w.classId}`] || classDir.value[`${w.courseId}:${w.classId}`] || ''
@@ -564,7 +568,19 @@ watch(tagOptions, (opts) => {
 /** 切换作业/作业包时允许重新自动全选一次。 */
 watch([workKey, packId, padId], () => { tagAutoSelectDone = false }, { flush: 'post' })
 
-onMounted(async () => { await loadConfig(); await loadWorks(); loadKbCatalog(); void loadPromptTemplates() })
+/** D117：作业选择变化就加载学生清单 + 草稿。
+ *  旧实现只有下拉 `@change="loadStudents()"`，而 `loadWorks()` 是**代码自动赋值** workKey，
+ *  不会触发 change 事件 → 进页面/批阅完成后「逐生审核」永远显示"无学生清单"、没有「审核」按钮。 */
+watch(workKey, (k) => { if (k) void loadStudents(); else { students.value = []; drafts.value = {} } }, { flush: 'post' })
+
+onMounted(async () => {
+  await loadConfig()
+  await loadWorks()
+  // D117：自动选中的作业同样要拉学生/草稿（否则「逐生审核」空白）
+  if (workKey.value) void loadStudents()
+  loadKbCatalog()
+  void loadPromptTemplates()
+})
 </script>
 
 <template>
@@ -718,7 +734,13 @@ onMounted(async () => { await loadConfig(); await loadWorks(); loadKbCatalog(); 
         </tr>
       </tbody>
     </table>
-    <p v-else class="hint">（未选作业或该作业无学生清单）</p>
+    <p v-else class="hint">
+      <template v-if="!curWork">未选择作业：先在 ③ 区选「作业」。</template>
+      <template v-else-if="studentsLoading">正在读取学生清单…</template>
+      <template v-else>该作业暂无学生清单（引擎可能离线，或该作业还没在「作业预览-学习通」下载作答）。
+        <button class="btn small" type="button" style="margin-left:6px" @click="loadStudents()">重新读取</button>
+      </template>
+    </p>
 
     <h3 style="margin-top:14px">⑤ 报告 / ⑥ 上传全部</h3>
     <div style="display:flex; gap:8px; align-items:center; flex-wrap:wrap">

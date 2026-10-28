@@ -197,8 +197,9 @@ async function downloadBatchZip() {
       <p class="hint" v-if="status">{{ status }}</p>
     </div>
 
-    <div style="display:flex; gap:16px; align-items:flex-start; flex-wrap:wrap">
-      <div class="card" style="flex:0 0 400px; min-width:340px">
+    <!-- D117-R4：整行单列堆叠（原多列并排导致高度不齐、留白多） -->
+    <div style="display:flex; flex-direction:column; gap:16px; align-items:stretch">
+      <div class="card" style="width:100%; min-width:0">
         <h2>① 选题（kind / 章 / 题）</h2>
         <p>
           <label class="field">kind：
@@ -279,7 +280,7 @@ async function downloadBatchZip() {
         <p class="hint" v-else>尚未选题：选完题（或绑定显式 target_tag）后这里显示引擎绑定的 tag。</p>
       </div>
 
-      <div class="card" style="flex:1 1 500px; min-width:420px">
+      <div class="card" style="width:100%; min-width:0">
         <h2>变体编排（D23 · 整班分层作业纸，docs/05-D23 / 12-B3.5）</h2>
         <p class="hint">
           每份包绑定一个目标 tag，整班分层生成时引擎按学生 tag 选用对应包；
