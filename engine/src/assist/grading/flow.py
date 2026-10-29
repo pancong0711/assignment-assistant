@@ -217,8 +217,19 @@ def _run_transcribe(ctx: dict, client, transcripts_dir: Path) -> list[Path]:
         if not it.get("ok"):
             _diag(ctx, step="transcribe", student=it.get("id"), error=it.get("error"),
                   images=it.get("images") or [])
-    if report.get("failed"):
-        logger.warning(f"[转录] {report['failed']}/{report['total']} 名学生失败（已标记，继续后续步骤）")
+    failed_n = int(report.get("failed") or 0)
+    if failed_n:
+        names = [str(it.get("id") or "") for it in (report.get("items") or [])
+                 if not it.get("ok")][:5]
+        detail = "；".join(sorted({str(it.get("error") or "")[:120]
+                                  for it in (report.get("items") or []) if not it.get("ok")}))[:300]
+        msg = (f"转录有 {failed_n}/{report.get('total')} 名学生失败（{'、'.join(names)}"
+               + ("…" if failed_n > 5 else "") + f"）：{detail}")
+        if not ctx.get("allow_partial"):
+            # D125：默认**中止**——带着残缺数据跑评阅只会产出错误的报告
+            raise GradingInputError(
+                msg + "。请先修复上述错误后重跑，或加 `--allow-partial` 明知残缺仍继续。")
+        logger.warning(f"[转录] {msg}（--allow-partial：继续后续步骤）")
     return [Path(it["out"]) for it in (report.get("items") or []) if it.get("ok") and it.get("out")]
 
 
@@ -274,7 +285,7 @@ def _run_report(ctx: dict, reports_dir: Path) -> list[Path]:
 
 def run_task(task_path: Path, ws: Path, images_dir: Path | None = None,
              rerun: str | None = None, plan: "dict | None" = None,
-             mode: str = "", class_dir: str = "") -> dict:
+             mode: str = "", class_dir: str = "", allow_partial: bool = False) -> dict:
     """任务包 grade 节驱动的执行入口。
 
     Args:
@@ -333,6 +344,8 @@ def run_task(task_path: Path, ws: Path, images_dir: Path | None = None,
         "diag": base / "diagnostics.jsonl",
         "report_kind": (plan or {}).get("reportKind") or "ai",
         "concurrency": int((grade_cfg.get("concurrency") or 3)),
+        # D125：转录部分失败是否继续（默认 False = 中止）
+        "allow_partial": bool(allow_partial),
     }
     if plan:
         students = (plan.get("students") or [])

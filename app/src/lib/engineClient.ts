@@ -951,7 +951,11 @@ export async function startXxtGradeAi(
     /** D106：图片发送模式（auto=分段压缩 | original=原图，便于对比转录效果） */
     imageMode?: 'auto' | 'original'
     /** D106：让 AI 用 SVG 重绘手绘图（默认关） */
-    svgRedraw?: boolean },
+    svgRedraw?: boolean
+    /** D125：分步批阅 —— 本次只跑这些步骤（如 ['transcribe'] / ['transcribe','evaluate']） */
+    steps?: string[]
+    /** D125：转录有学生失败时仍继续（默认中止） */
+    allowPartial?: boolean },
 ): Promise<string> {
   const base = normalizeEngineAddr(engineAddr)
   const res = await fetch(engineUrlWithToken(base, '/xxt/grade/ai-run', token), {
@@ -1790,6 +1794,21 @@ export async function mutatePromptTemplate(
   const o = (await res.json().catch(() => ({}))) as
     { ok?: boolean; error?: string; items?: PromptTemplate[]; default?: string }
   if (!res.ok && !o?.error) return { ok: false, error: `HTTP ${res.status}` }
+  return o
+}
+
+/** D125：按段测试 LLM 配置（转录=多模态 / 评阅=纯文本）。 */
+export async function testLlmStages(
+  engineAddr: string, token: string | undefined, stage: 'both' | 'transcription' | 'evaluation' = 'both',
+): Promise<{ ok?: boolean; results?: Array<Record<string, unknown>>; error?: string }> {
+  const base = normalizeEngineAddr(engineAddr)
+  const res = await fetch(engineUrlWithToken(base, '/llm/test', token), {
+    method: 'POST', headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ stage }),
+  })
+  const o = (await res.json().catch(() => ({}))) as
+    { ok?: boolean; results?: Array<Record<string, unknown>>; error?: string }
+  if (!res.ok && !o?.error) throw new Error(`HTTP ${res.status}`)
   return o
 }
 

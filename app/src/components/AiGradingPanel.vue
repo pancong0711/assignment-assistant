@@ -13,7 +13,7 @@ import {
   fetchXxtReviewIndex, fetchXxtReviewStudents, postLlmProvider, postXxtClassMap,
   startXxtGradeAi, startXxtGradeUpload,
   startKbAiSolve, fetchKbCatalog, renderReportsFromDrafts,
-  fetchPromptTemplates, mutatePromptTemplate, type PromptTemplate,
+  fetchPromptTemplates, mutatePromptTemplate, testLlmStages, type PromptTemplate,
 } from '../lib/engineClient'
 import { normalizePromptId, suggestPromptId, PROMPT_ID_HINT } from '../lib/promptId'
 
@@ -490,7 +490,8 @@ async function saveStage(stage: 'transcription' | 'evaluation') {
   await loadConfig()
 }
 function stopPoll() { if (pollTimer !== undefined) { window.clearTimeout(pollTimer); pollTimer = undefined } }
-async function startAi() {
+/** D125：分步批阅 —— steps 为空 = 完整流程（transcribe,evaluate,report）。 */
+async function startAi(steps?: string[]) {
   const w = curWork.value
   if (!w) { msg.value = '请选择作业（需先在「作业预览-学习通」下载作答/批语）'; return }
   // D89：优先用作业包（多张作业纸，按 tag 匹配）；否则退回单张作业纸
@@ -515,6 +516,7 @@ async function startAi() {
       limit: Number(limit.value) || 0,
       imageMode: imageMode.value,      // D106
       svgRedraw: svgRedraw.value,      // D106
+      ...(steps && steps.length ? { steps } : {}),   // D125：分步批阅
     })
     stopPoll()
     const tick = async () => {
@@ -535,6 +537,23 @@ async function startAi() {
     void tick()
   } catch (e) { busy.value = false; progress.value = `启动失败：${String(e)}` }
 }
+/** D125：按段测试 LLM 配置（能在正式批阅前发现 base_url/key/model 错配）。 */
+async function testLlm() {
+  busy.value = true; progress.value = '正在按段测试 LLM 配置（转录=多模态 / 评阅=纯文本）……'
+  try {
+    const r = await testLlmStages(props.engineAddr, props.token, 'both')
+    const lines = (r.results || []).map((x: any) => {
+      const tag = x.stage === 'transcription' ? '转录' : '评阅'
+      return x.ok
+        ? `✅ ${tag}：${x.provider || '-'} / ${x.model} @ ${x.base_url}（${x.ms}ms）`
+        : `❌ ${tag}：${x.provider || '-'} / ${x.model} @ ${x.base_url}｜${String(x.error || '').slice(0, 160)}`
+    })
+    progress.value = lines.join('\n') || (r.error || '（无结果）')
+  } catch (e) {
+    progress.value = `测试失败：${String((e as Error).message || e)}`
+  } finally { busy.value = false }
+}
+
 async function renderReports() {
   const w = curWork.value
   if (!w) { msg.value = '请选择作业'; return }
@@ -753,7 +772,17 @@ onMounted(async () => {
         仅建议几何/受力/电路类题目开启：会增加耗时与输出 token，且 AI 可能画得不准确，请人工核对。
       </p>
     </div>
-      <button class="btn" :disabled="busy" @click="startAi">▶ 开始 AI 批阅</button>
+      <!-- D125：分步批阅 —— 转录最慢最贵，先单独跑通再往下 -->
+      <button class="btn small" :disabled="busy" title="按段测试 LLM 配置（能立刻发现 base_url/key/model 错配）"
+              @click="testLlm">🔍 测试配置</button>
+      <button class="btn small" :disabled="busy" title="只跑转录（发送作答图 → 得到文字转录）"
+              @click="startAi(['transcribe'])">① 仅转录</button>
+      <button class="btn small" :disabled="busy" title="只跑评阅（要求已有转录产物）"
+              @click="startAi(['evaluate'])">② 仅评阅</button>
+      <button class="btn small" :disabled="busy" title="转录 + 评阅，不生成报告"
+              @click="startAi(['transcribe', 'evaluate'])">③ 转录+评阅</button>
+      <button class="btn" :disabled="busy" title="完整流程：转录 → 评阅 → 报告"
+              @click="startAi()">▶ ④ 完整批阅</button>
     </div>
     <p v-if="progress" class="hint" style="margin-top:6px">{{ progress }}</p>
 

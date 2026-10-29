@@ -62,24 +62,58 @@ def load_llm_settings(ws: Path) -> dict:
     return llm
 
 
+def _llm_raw(ws: Path) -> dict:
+    """读原始 settings.local.json 的 llm 段（供 D82-F 旧覆盖读取）。"""
+    try:
+        from ..settings_store import read_settings
+        llm = (read_settings(ws) or {}).get("llm") or {}
+        return llm if isinstance(llm, dict) else {}
+    except Exception:  # noqa: BLE001
+        return {}
+
+
 def _settings_from_workspace(ws: Path, *, stage: str = "") -> dict:
     """构造 LLMClient settings：优先 provider 两段式（含 command），回退旧单层 llm 段。
 
-    - 有 providers/stages 配置 → 用 `stage_endpoint`（透传 type/cmd/model 等）；
-    - 无 → `load_llm_settings`（旧 api_key/base_url/model）。
+    **D125 关键修复**：过去这里只返回「一套 base_url/api_key + 两个 model 名」——
+    base_url/api_key 取的是 `stage_endpoint(默认 evaluation)` 那套，于是
+    转录请求会被发往**评阅段的端点**（转录/评阅用不同 provider 时必然 400
+    "Model is unavailable"）。
+
+    现在改为返回**两段各自的完整 endpoint**（base_url/api_key/model/type/cmd…），
+    `LLMClient._step_base_key()` 按 step 取对应那一套，互不串用。
+
+    返回结构：
+        {
+          "transcription": {...完整 endpoint...},
+          "evaluation":    {...完整 endpoint...},
+          # 兼容旧调用方的平铺字段（= 该 stage 的 endpoint）
+          "base_url": ..., "api_key": ..., "model": ...,
+          "transcription_model": ..., "evaluation_model": ...,
+        }
     """
     try:
         from . import providers as _prov
-        st = _prov.stages(ws)
         provs = _prov.list_providers(ws)
         if provs:
             use_stage = stage if stage in ("transcription", "evaluation") else "evaluation"
-            ep = _prov.stage_endpoint(ws, use_stage)
-            # 同时保留另一段的模型，供 _step_cfg 回退
+            eps = {st: _prov.stage_endpoint(ws, st) for st in ("transcription", "evaluation")}
+            ep = eps[use_stage]
             return {
+                # D125：两段各一套完整配置（关键）
+                "transcription": eps["transcription"],
+                "evaluation": eps["evaluation"],
+                # D82-F 旧覆盖（llm.transcription / llm.evaluation 的部分字段）：
+                # 存到独立键，_step_endpoint 会**优先**采用它（保持旧行为）
+                "_legacy_override": {
+                    st: dict(raw) for st, raw in
+                    ((st, (_llm_raw(ws).get(st) or {})) for st in ("transcription", "evaluation"))
+                    if isinstance(raw, dict)
+                },
+                # 兼容字段
                 **ep,
-                "transcription_model": _prov.stage_endpoint(ws, "transcription").get("model") or "",
-                "evaluation_model": _prov.stage_endpoint(ws, "evaluation").get("model") or "",
+                "transcription_model": eps["transcription"].get("model") or "",
+                "evaluation_model": eps["evaluation"].get("model") or "",
             }
     except Exception:  # noqa: BLE001
         pass
@@ -125,19 +159,44 @@ class LLMClient:
                             "calls": 0, "calls_with_usage": 0}
 
     def _step_cfg(self, step: str | None) -> dict:
-        """D82-F：llm.transcription / llm.evaluation 可各自覆盖 base_url/api_key/model。"""
+        """取某段的**完整** endpoint 配置（D125）。
+
+        优先级：
+        1. `settings[step]`（新结构：两段各一套完整 endpoint，由 `_settings_from_workspace` 填充）；
+        2. `settings[step]` 若只是旧 D82-F 的部分覆盖（只有 model 等），与平铺字段合并；
+        3. 都没有 → {} （由 `_step_base_key` 回退到平铺字段，保持旧单层配置可用）。
+        """
         if not step:
             return {}
         raw = self._llm_settings.get(step)
         return dict(raw) if isinstance(raw, dict) else {}
 
-    def _step_base_key(self, step: str | None) -> "tuple[str, str, str]":
+    def _step_endpoint(self, step: str | None) -> dict:
+        """D125：返回该段生效的 {base_url, api_key, model, type, cmd, ...}。"""
         cfg = self._step_cfg(step)
-        base = str(cfg.get("base_url") or self.base_url).rstrip("/")
-        key = str(cfg.get("api_key") or self.api_key)
-        model = str(cfg.get("model") or (self.transcription_model if step == "transcription"
-                                         else self.evaluation_model))
-        return base, key, model
+        # D82-F：llm.<step> 里的部分字段（base_url/api_key/model）优先于 stages
+        legacy = (self._llm_settings.get("_legacy_override") or {}).get(step or "") or {}
+        if isinstance(legacy, dict) and legacy:
+            cfg = {**cfg, **legacy}
+        # 旧单层配置（没有 stages）：所有段共用平铺字段
+        merged = {
+            "provider": cfg.get("provider") or "",
+            "base_url": cfg.get("base_url") or self.base_url,
+            "api_key": cfg.get("api_key") or self.api_key,
+            "model": cfg.get("model") or (
+                self.transcription_model if step == "transcription" else self.evaluation_model),
+            "type": cfg.get("type") or getattr(self, "provider_type", "api"),
+            "cmd": cfg.get("cmd") if isinstance(cfg.get("cmd"), list) else None,
+            "input_mode": cfg.get("input_mode"),
+            "output_mode": cfg.get("output_mode"),
+            "timeout_s": cfg.get("timeout_s"),
+        }
+        return merged
+
+    def _step_base_key(self, step: str | None) -> "tuple[str, str, str]":
+        ep = self._step_endpoint(step)
+        return (str(ep["base_url"] or "").rstrip("/"), str(ep["api_key"] or ""),
+                str(ep["model"] or ""))
 
     # ---- core request -------------------------------------------------
     def request(self, messages: list[dict], model: str | None = None,
@@ -148,8 +207,11 @@ class LLMClient:
 
         provider_type=command 时不走 HTTP，改为子进程回环（每次新进程=天然隔离）。
         """
-        if self.provider_type == "command":
-            return self._request_via_command(messages, model=model, max_tokens=max_tokens)
+        # D125：command 型也**按段**取配置（转录/评阅可能一个 api 一个 command）
+        step_ep = self._step_endpoint(step)
+        if str(step_ep.get("type") or "api") == "command":
+            return self._request_via_command(messages, model=model, max_tokens=max_tokens,
+                                             endpoint=step_ep)
         base_url, api_key, step_model = self._step_base_key(step)
         payload = {
             "model": model or step_model,
@@ -161,6 +223,9 @@ class LLMClient:
             payload["response_format"] = response_format
 
         last_err = None
+        # D125：报错带上「用的哪一段/哪个 provider/base/model」，便于一眼定位配置错配
+        where = (f"（step={step or 'evaluation'}, provider={step_ep.get('provider') or '-'}, "
+                 f"base_url={base_url}, model={payload.get('model')}）")
         for attempt in range(self.retries + 1):
             try:
                 resp = httpx.post(
@@ -179,9 +244,14 @@ class LLMClient:
                     time.sleep(wait)
                     last_err = "API 限流(429)，多次重试后仍失败"
                     continue
+                # D125：**确定性错误不重试**（模型不可用/请求非法/鉴权失败，重试毫无意义）
+                body = resp.text[:400]
+                if resp.status_code in (400, 401, 403, 404) or "Model is unavailable" in body:
+                    raise LLMAPIError(
+                        f"LLM API 请求失败(status={resp.status_code}): {body}{where}")
                 # NOK：脱敏 —— 只带前 400 字符 body，绝不含 Authorization/key
                 raise LLMAPIError(
-                    f"LLM API 请求失败(status={resp.status_code}): {resp.text[:400]}")
+                    f"LLM API 请求失败(status={resp.status_code}): {body}{where}")
             except (httpx.TimeoutException, httpx.TransportError) as e:
                 if attempt < self.retries:
                     wait = 2 ** attempt * 5
@@ -193,7 +263,7 @@ class LLMClient:
         raise LLMAPIError(last_err or "LLM API 请求失败")
 
     def _request_via_command(self, messages: list[dict], *, model: str | None,
-                             max_tokens: int) -> dict:
+                             max_tokens: int, endpoint: "dict | None" = None) -> dict:
         """command provider：把 messages 压成 stdin 契约，子进程返回文本。
 
         - 只取 system + user 文本/图片；**每次新进程，无历史** → 结构性隔离；
@@ -241,7 +311,14 @@ class LLMClient:
             item_id="llm-client", prompt="\n\n".join(texts), system=system,
             model=model or "", images=images, temperature=self.temperature,
             max_tokens=max_tokens)
-        res = run_command(self.command, payload)
+        # D125：command 型按段取 cmd（转录/评阅可能配了不同 agent CLI）
+        prov = dict(self.command or {})
+        if isinstance(endpoint, dict) and isinstance(endpoint.get("cmd"), list) \
+                and endpoint["cmd"]:
+            prov = {**prov, "cmd": [str(x) for x in endpoint["cmd"]]}
+        if isinstance(endpoint, dict) and endpoint.get("timeout_s"):
+            prov = {**prov, "timeout_s": int(endpoint["timeout_s"])}
+        res = run_command(prov, payload)
         if not res.get("ok"):
             raise LLMAPIError(f"command provider 调用失败：{res.get('error')}")
         usage = res.get("usage") or {}

@@ -6,6 +6,7 @@
 import json
 import os
 import shutil
+import time
 import pathlib
 from pathlib import Path
 
@@ -1484,6 +1485,64 @@ def llm_provider(action, name, provider_type, cmd, input_mode, output_mode, time
     raise SystemExit(0 if rep.get("ok") else 2)
 
 
+@llm.command("test")
+@click.option("--stage", "stage", default="both",
+              type=click.Choice(["both", "transcription", "evaluation"], case_sensitive=False),
+              help="测哪一段：transcription（多模态）/ evaluation（纯文本）/ both")
+@click.option("--model", default="", help="临时覆盖模型名（不写配置）")
+@click.option("--workspace", "-w", default=None)
+@click.option("--verbose", "-v", is_flag=True)
+@click.pass_obj
+def llm_test(obj, stage, model, workspace, verbose):
+    """D125：按段测试 LLM 配置（最小请求；能立刻发现 base_url/key/model 错配）。"""
+    import base64 as _b64
+    import tempfile as _tmp
+    from .grading.llm import LLMAPIError, LLMClient
+    ws = _setup(verbose or obj.get("verbose"), workspace)
+    stages = (["transcription", "evaluation"] if stage == "both" else [stage.lower()])
+    results = []
+    for st in stages:
+        item = {"stage": st, "ok": False}
+        try:
+            client = LLMClient(ws=ws)
+            ep = client._step_endpoint(st)
+            item.update({"provider": ep.get("provider") or "-",
+                         "type": ep.get("type") or "api",
+                         "base_url": ep.get("base_url") or "",
+                         "model": model or ep.get("model") or "",
+                         "hasKey": bool(ep.get("api_key"))})
+            t0 = time.time()
+            if st == "transcription":
+                # 多模态：造一张 8x8 的 PNG，问一句话
+                from PIL import Image
+                fd, png = _tmp.mkstemp(suffix=".png")
+                try:
+                    Image.new("RGB", (8, 8), (255, 255, 255)).save(png)
+                    txt = client.chat_with_images(
+                        "你是一个测试助手。", "这张图片是什么颜色？只回答颜色。",
+                        [png], model=model or None, max_tokens=16, step="transcription")
+                finally:
+                    try:
+                        import os as _os
+                        _os.unlink(png)
+                    except OSError:
+                        pass
+            else:
+                txt = client.chat("你是一个测试助手。", "只回复两个字：收到。",
+                                  model=model or None, max_tokens=16, step="evaluation")
+            item.update({"ok": True, "ms": int((time.time() - t0) * 1000),
+                         "reply": str(txt or "")[:60]})
+        except LLMAPIError as exc:
+            item["error"] = str(exc)[:400]
+        except Exception as exc:  # noqa: BLE001
+            item["error"] = f"{type(exc).__name__}: {str(exc)[:300]}"
+        results.append(item)
+    click.echo(json.dumps({"ok": all(r["ok"] for r in results), "results": results},
+                          ensure_ascii=False, indent=1))
+    if not all(r["ok"] for r in results):
+        raise click.ClickException("至少一段配置测试失败（见上面 detail：provider/base_url/model）")
+
+
 @llm.command("batch")
 @click.option("--task", "task_path", default="", help="任务包 JSON（用 plan+转录生成 batch 输入）")
 @click.option("--jsonl", "jsonl_path", default="", help="已有 JSONL（或不传而用 --task 生成）")
@@ -1569,6 +1628,11 @@ def llm_batch(task_path, jsonl_path, provider_name, limit, submit, poll_id, down
 @click.option("--rerun", "rerun", default=None,
               type=click.Choice(["download", "transcribe", "evaluate", "report", "upload"]),
               help="单步重跑（指定 step 名，只重跑该步）")
+@click.option("--allow-partial", "allow_partial", is_flag=True,
+              help="D125：转录有学生失败时仍继续评阅（默认中止，避免用残缺数据出报告）")
+@click.option("--steps", "steps", default="",
+              help="D125：本次只跑这些步骤（逗号分隔，如 `transcribe` / `transcribe,evaluate`）；"
+                   "缺省=用任务包 grade.steps")
 @click.option("--xxt-class", "xxt_class", default="",
               help="D86：学习通班级 <courseId>:<classId>（用 class_map 解析 class_dir 并装配 plan）")
 @click.option("--work", "work_id", default="", help="D86：学习通 workId（批阅下载目录定位用）")
@@ -1581,8 +1645,8 @@ def llm_batch(task_path, jsonl_path, provider_name, limit, submit, poll_id, down
 @click.option("--workspace", "-w", default=None)
 @click.option("--verbose", "-v", is_flag=True)
 @click.pass_obj
-def grade(obj, task_path, pads_dir, images_dir, rerun, xxt_class, work_id, plan_path, mode, tags,
-          limit, dry_plan, workspace, verbose):
+def grade(obj, task_path, pads_dir, images_dir, rerun, steps, allow_partial, xxt_class, work_id,
+          plan_path, mode, tags, limit, dry_plan, workspace, verbose):
     """AI 批阅：transcribe → evaluate → report（阶段3；download/upload 属阶段4）。
 
     任务包 grade.steps 驱动；journal 运行记录写入
@@ -1626,7 +1690,19 @@ def grade(obj, task_path, pads_dir, images_dir, rerun, xxt_class, work_id, plan_
         click.echo(_json.dumps(_inputs.plan_summary(plan or {}), ensure_ascii=False, indent=1))
         return
 
+    # D125：--steps 覆盖任务包 grade.steps（分步批阅：仅转录 / 仅评阅 / 转录+评阅）
+    step_list = [x.strip() for x in str(steps or "").split(",") if x.strip()]
+    if step_list:
+        bad = [x for x in step_list if x not in ("transcribe", "evaluate", "report")]
+        if bad:
+            raise click.UsageError(f"--steps 含未知步骤：{','.join(bad)}"
+                                   "（可选 transcribe,evaluate,report）")
+        task["grade"] = {**(task.get("grade") or {}), "steps": step_list}
+        tp.write_text(json.dumps(task, ensure_ascii=False, indent=1), encoding="utf-8")
+
     kwargs = {"images_dir": images_dir} if images_dir else {}
+    if allow_partial:
+        kwargs["allow_partial"] = True
     if plan:
         kwargs["plan"] = plan
         # D124：把解析出的班级目录**显式**传给 run_task（只给 plan 不够：

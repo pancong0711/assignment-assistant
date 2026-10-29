@@ -1328,6 +1328,58 @@ class Handler(BaseHTTPRequestHandler):
                     return
             self._json(rep, 200 if rep.get("ok", True) else 400)
             return
+        if u.path == "/llm/test":
+            # D125：按段测试 LLM 配置（转录=多模态 / 评阅=纯文本）
+            payload = {}
+            try:
+                length = int(self.headers.get("Content-Length") or 0)
+                if length:
+                    payload = json.loads(self.rfile.read(length).decode("utf-8")) or {}
+            except Exception:  # noqa: BLE001
+                payload = {}
+            stage = str(payload.get("stage") or "both").lower()
+            stages = (["transcription", "evaluation"] if stage == "both" else [stage])
+            from .grading.llm import LLMAPIError, LLMClient
+            ws_ = Path(self.ws).resolve()
+            results = []
+            for st in stages:
+                item: dict = {"stage": st, "ok": False}
+                try:
+                    client = LLMClient(ws=ws_)
+                    ep = client._step_endpoint(st)
+                    item.update({"provider": ep.get("provider") or "",
+                                 "type": ep.get("type") or "api",
+                                 "base_url": ep.get("base_url") or "",
+                                 "model": ep.get("model") or "",
+                                 "hasKey": bool(ep.get("api_key"))})
+                    t0 = time.time()
+                    if st == "transcription":
+                        import tempfile as _tf
+                        from PIL import Image as _Im
+                        fd, png = _tf.mkstemp(suffix=".png")
+                        try:
+                            _Im.new("RGB", (8, 8), (255, 255, 255)).save(png)
+                            txt = client.chat_with_images(
+                                "你是一个测试助手。", "这张图片是什么颜色？只回答颜色。",
+                                [png], max_tokens=16, step="transcription")
+                        finally:
+                            try:
+                                Path(png).unlink()
+                            except OSError:
+                                pass
+                    else:
+                        txt = client.chat("你是一个测试助手。", "只回复两个字：收到。",
+                                          max_tokens=16, step="evaluation")
+                    item.update({"ok": True, "ms": int((time.time() - t0) * 1000),
+                                 "reply": str(txt or "")[:60]})
+                except LLMAPIError as exc:
+                    item["error"] = str(exc)[:400]
+                except Exception as exc:  # noqa: BLE001
+                    item["error"] = f"{type(exc).__name__}: {str(exc)[:300]}"
+                results.append(item)
+            ok = all(r["ok"] for r in results)
+            self._json({"ok": ok, "results": results}, 200 if ok else 400)
+            return
         if u.path == "/llm/provider":
             payload: dict = {}
             try:
@@ -1720,6 +1772,12 @@ class Handler(BaseHTTPRequestHandler):
                 args += ["--tags", ",".join(tags) if isinstance(tags, list) else str(tags)]
             if payload.get("limit"):
                 args += ["--limit", str(int(payload.get("limit")))]
+            # D125：分步批阅（仅转录 / 仅评阅 / 转录+评阅）与"允许部分失败"
+            steps_ = payload.get("steps")
+            if isinstance(steps_, list) and steps_:
+                args += ["--steps", ",".join(str(x) for x in steps_)]
+            if payload.get("allowPartial") is True:
+                args += ["--allow-partial"]
             # D118：启动前先装配 plan 做**前置体检**——没有任何学生作答图时直接给可读错误，
             # 而不是等引擎跑到转录步才抛 FileNotFoundError（Windows 上表现为 WinError 3）。
             pads_dir_arg = ""
