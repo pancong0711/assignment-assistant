@@ -741,6 +741,11 @@ def register(group: click.Group) -> None:
         ws = _setup(verbose or obj.get("verbose"), workspace)
         rep = M.migrate(ws, Path(old_home) if old_home else None, apply=apply_)
         click.echo(json.dumps(rep, ensure_ascii=False, indent=1))
+        hs = (rep.get("inventory") or {}).get("hints") or []
+        if hs:
+            click.echo("\n下一步（可直接复制执行）：")
+            for h in hs:
+                click.echo(h)
         if not apply_ and (rep["inventory"]["summary"]["reviewDirs"]
                            or rep["inventory"]["summary"]["legacyDrafts"]):
             click.echo("\n（以上为演练。确认无误后加 --apply 执行；源文件不会被删除）")

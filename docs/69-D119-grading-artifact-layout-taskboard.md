@@ -273,3 +273,62 @@ else:
    这正是"不同作业批次不互相覆盖"；
 3. **旧草稿无法自动判定属于哪张作业纸** → 迁入 `grading/_unassigned/drafts/` 并告警；
 4. `grading/<task>/images/` 已废弃，可用 `assist grading clean --stale-images --apply` 清理。
+
+---
+
+## 10. 一键迁移与管理：可用性修复（D119-FIX）
+
+用户问「有没有设计一键迁移旧作答图片或者相关的管理方法？」
+功能上一轮已实现（`assist xxt migrate-layout` / `assist grading clean`），
+但复查时发现**对真实数据不好用**，已修：
+
+### 10.1 发现的三个缺口
+
+| # | 缺口 | 现象 | 修复 |
+|---|---|---|---|
+| **G1** | 默认**发现不了**历史数据 | D119 之后 `xxt_home()` 已指向 `<ws>/.runtime/xxt`，而 `migrate-layout` 默认只看它 → 仓库 `.scratch` 里的旧草稿/旧图**完全扫不到**（实测：默认 `legacyDrafts=0`，显式 `--old-home .scratch` 才发现 3 份） | 新增 `discover_old_homes()`：自动扫描 ①仓库 `.scratch` ②当前 `xxt_home()` ③`XXT_HOME` ④旧 `find_workspace()/.runtime[/xxt]`，**遍历全部**候选根盘点（不只第一个） |
+| **G2** | 草稿"无法映射"后**没有下一步** | 旧草稿按 `classId` 存，而新布局按 `class_dir` → 映射不上就只说"保留原地"，教师不知道该做什么 | 新增 `hints()`：把盘点结果翻成**可直接复制的命令**（含 `assist xxt class-map --course … --class … --dir classes/…`、提示先去「班级与标签」建班） |
+| **G3** | 单班教师也要手工映射 | `classId → class_dir` 只走 classmap，单班场景白配 | `_guess_class_dir()` 增加「workspace 只有**一个** `classes/*` 目录时直接用它」 |
+
+### 10.2 修复后的实际输出（本机真实数据）
+
+```
+下一步（可直接复制执行）：
+# ⚠ xxt 根在代码仓库，先迁移：
+assist xxt migrate-layout -w <workspace> --old-home <repo>/.scratch --apply
+# ⚠ 旧草稿 3 份无法确定 class_dir（classId=40009084, C1）。
+#   先建立映射（学习通班级 → 本地班级目录）：
+#   assist xxt class-map --course <courseId> --class <classId> --dir classes/<班级>
+#   然后重跑：assist xxt migrate-layout --apply
+#   注意：workspace 里还没有 classes/ 目录 —— 先在「班级与标签」建班并导入名单
+```
+
+### 10.3 完整的一键流程
+
+```bash
+# ① 演练：扫描所有旧位置，列出将迁移什么、给出下一步命令
+assist xxt migrate-layout -w <workspace>
+
+# ② 若提示"无法确定 class_dir"：先建映射（或先在「班级与标签」建班）
+assist xxt class-map --course <courseId> --class <classId> --dir classes/<班级>
+
+# ③ 执行迁移（只复制、不删源、幂等）
+assist xxt migrate-layout -w <workspace> --apply
+
+# ④ 清理旧残留（演练 → 执行）
+assist grading clean --stale-images --tmp
+assist grading clean --stale-images --tmp --apply
+
+# ⑤ 体检确认
+assist doctor          # 看 grading_layout 是否转绿
+```
+
+### 10.4 验证
+
+| 项 | 结果 |
+|---|---|
+| 自动发现仓库 `.scratch` | 默认即扫到 3 份旧草稿（修复前为 0） |
+| 多旧根扫描 | `inventory` 遍历全部候选，两个旧根的草稿都会列出 |
+| 单班推断 | 只有一个 `classes/*` 时自动映射 |
+| 可执行提示 | 输出含 `migrate-layout` / `class-map` / `classes` / `grading clean` 指引 |
+| engine pytest | **651 passed**（D119 用例 11 → 15） |
