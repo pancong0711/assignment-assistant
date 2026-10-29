@@ -295,6 +295,44 @@ export const useSettingsStore = defineStore('settings', {
       return true
     },
     /** R1.4 修复按钮：POST /install/<item> + SSE 进度；完成后自动重跑体检。 */
+    /** D122：清理「已迁移完成」的源（sha256 一致才删；先演练 → 确认）。 */
+    async runCleanMigrated(): Promise<boolean> {
+      if (!this.engineOnline) {
+        this.installLog = '⚠ 引擎未在线。'
+        return false
+      }
+      this.installing = 'clean-migrated'
+      try {
+        const { cleanMigratedSources } = await import('../lib/engineClient')
+        const dry = await cleanMigratedSources(this.engineUrl, this.engineToken, false)
+        const n = dry?.summary?.removable ?? 0
+        const blk = dry?.summary?.blocked ?? 0
+        if (!n) {
+          this.installLog = blk
+            ? `没有可安全删除的源（${blk} 项未通过一致性校验，已保留）。`
+            : '没有已迁移的残留源。'
+          return true
+        }
+        const lines = (dry.removable || []).slice(0, 20).map((d) => `  ${d.path}`).join('\n')
+        const warn = blk ? `\n\n⚠ ${blk} 项内容不一致，将保留` : ''
+        if (!window.confirm(`将删除 ${n} 个「已迁移完成」的源目录：\n\n${lines}${warn}\n\n确定？`)) {
+          this.installLog = '已取消。'
+          return false
+        }
+        const rep = await cleanMigratedSources(this.engineUrl, this.engineToken, true)
+        this.installLog = rep?.ok
+          ? `✅ 已清理 ${rep.summary?.removable ?? 0} 个源目录`
+            + (rep.summary?.blocked ? `；保留 ${rep.summary.blocked} 个（不一致）` : '')
+          : `❌ 清理失败：${rep?.error || ''}`
+        await this.runDoctor()
+        return !!rep?.ok
+      } catch (e) {
+        this.installLog = `❌ 清理失败：${String((e as Error).message || e)}`
+        return false
+      } finally {
+        this.installing = ''
+      }
+    },
     /** D121：一键备份（workspace + 浏览器数据；引擎侧脱敏）。 */
     async runBackup(): Promise<boolean> {
       if (!this.engineOnline) {
@@ -386,18 +424,19 @@ export const useSettingsStore = defineStore('settings', {
         }
         const lines = (dry.moved || []).slice(0, 20)
           .map((m) => `  ${m.from}\n    → ${m.to}`).join('\n')
-        const ok = window.confirm(
-          `将迁移 ${n} 个文件到正确位置（不覆盖、不删源）：\n\n${lines}` +
-          (n > 20 ? `\n… 其余 ${n - 20} 项` : '') + '\n\n确定执行？',
+        // 询问「移动还是复制」：确定=移动(删源) / 取消=复制(保留源)
+        const doMove = window.confirm(
+          `将迁移 ${n} 个文件到正确位置（不覆盖）。\n\n${lines}` +
+          (n > 20 ? `\n… 其余 ${n - 20} 项` : '') +
+          '\n\n【确定】= 移动（迁移后删除源）\n【取消】= 复制（保留源）',
         )
-        if (!ok) {
-          this.installLog = '已取消（未做任何修改）。'
-          return false
-        }
+
         // ② 执行
-        const rep = await fixWorkspaceLayout(this.engineUrl, this.engineToken, true)
+        const rep = await fixWorkspaceLayout(this.engineUrl, this.engineToken, true, doMove)
         this.installLog = rep?.ok
-          ? `✅ 已迁移 ${rep.summary?.moved ?? 0} 个文件（跳过 ${rep.summary?.skipped ?? 0}）`
+          ? `✅ 已${doMove ? '移动' : '复制'} ${rep.summary?.moved ?? 0} 个文件`
+            + `（跳过 ${rep.summary?.skipped ?? 0}`
+            + (doMove ? `；已删源 ${rep.summary?.removedSrc ?? 0}` : '；源保留') + '）'
           : `❌ 迁移失败：${rep?.error || '未知错误'}`
         await this.runDoctor()
         return !!rep?.ok

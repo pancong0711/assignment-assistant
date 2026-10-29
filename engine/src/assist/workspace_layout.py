@@ -58,17 +58,21 @@ def inspect(ws) -> dict:
     return out
 
 
-def fix_layout(ws, *, apply: bool = False) -> dict:
+def fix_layout(ws, *, apply: bool = False, move: bool = False) -> dict:
     """把 kb/ 下的错位数据搬到正确位置。
 
-    - **不覆盖**：目标已存在 → 把源改名 `.old-<ts>` 留在原地并告警；
-    - 只复制（`copy2`），**不删源目录**（由教师确认后用清理命令删）；
+    - **不覆盖**：目标已存在 → 跳过并告警；
+    - 默认**只复制**（`copy2`），不删源；`move=True` 时改为**迁移后删源**（D122）；
     - 幂等：重复执行时目标已存在 → 跳过。
+
+    `move` 的语义：复制成功后**才**删源文件；任何一步失败不删源。
+    空出来的源目录由 ``clean_migrated()`` 统一回收（保持目录结构判断集中在一处）。
     """
     ws = Path(ws).resolve()
     inv = inspect(ws)
     moved: list[dict] = []
     skipped: list[dict] = []
+    removed_src: list[str] = []
     for it in inv["migratable"]:
         src, dst = Path(it["from"]), Path(it["to"])
         if dst.is_file():
@@ -76,13 +80,45 @@ def fix_layout(ws, *, apply: bool = False) -> dict:
             continue
         if apply:
             dst.parent.mkdir(parents=True, exist_ok=True)
-            shutil.copy2(src, dst)
-            logger.info(f"[fix-layout] {src} → {dst}")
+            if move:
+                # 复制成功后才删源：先 copy2（保留元数据），再删源文件
+                shutil.copy2(src, dst)
+                if not _same_size(src, dst):
+                    skipped.append({**it, "reason": "复制后大小不一致，保留源文件"})
+                    continue
+                try:
+                    src.unlink()
+                    removed_src.append(str(src))
+                except OSError as exc:
+                    logger.warning(f"[fix-layout] 删源失败（已复制）：{src}: {exc}")
+            else:
+                shutil.copy2(src, dst)
+            logger.info(f"[fix-layout] {src} → {dst}{'（已删源）' if move else ''}")
         moved.append(it)
+    # D122-FIX：--move 删掉源文件后，**空目录也要回收**，否则体检仍报 violation，
+    # 用户会误以为"没迁移成功"。只删空目录（rmdir 失败即跳过），不动任何有内容的目录。
+    pruned_dirs: list[str] = []
+    if apply and move:
+        for v in inv["violations"]:
+            root = Path(v["path"])
+            try:
+                for d in sorted((x for x in root.rglob("*") if x.is_dir()),
+                                key=lambda x: len(x.parts), reverse=True):
+                    if not any(d.iterdir()):
+                        d.rmdir()
+                        pruned_dirs.append(str(d))
+                if root.is_dir() and not any(root.iterdir()):
+                    root.rmdir()
+                    pruned_dirs.append(str(root))
+            except OSError:
+                pass
     report = {
-        "ok": True, "apply": apply, "workspace": str(ws),
+        "ok": True, "apply": apply, "move": bool(move), "workspace": str(ws),
         "violations": inv["violations"], "moved": moved, "skipped": skipped,
+        "removedSrc": removed_src, "prunedDirs": pruned_dirs,
         "summary": {"moved": len(moved), "skipped": len(skipped),
+                    "removedSrc": len(removed_src),
+                    "prunedDirs": len(pruned_dirs),
                     "violations": len(inv["violations"])},
     }
     if apply:
@@ -94,6 +130,93 @@ def fix_layout(ws, *, apply: bool = False) -> dict:
         except Exception:  # noqa: BLE001
             pass
     return report
+
+
+def _same_size(a: Path, b: Path) -> bool:
+    try:
+        return a.stat().st_size == b.stat().st_size
+    except OSError:
+        return False
+
+
+def _file_sha(path: Path) -> str:
+    import hashlib
+    h = hashlib.sha256()
+    try:
+        with open(path, "rb") as fh:
+            for chunk in iter(lambda: fh.read(1 << 20), b""):
+                h.update(chunk)
+    except OSError:
+        return ""
+    return h.hexdigest()
+
+
+def clean_migrated(ws, *, apply: bool = False) -> dict:
+    """D122：清理「**已迁移完成**」的源文件/目录（`kb/classes/**` 等）。
+
+    判定"可安全删"必须**同时**满足：
+    1. 目标文件存在于正确位置；
+    2. 且与源文件 **sha256 一致**（不是仅比大小）。
+
+    只有全部文件都满足，才把该源目录列为可删。任何不一致 → 保留并告警。
+    """
+    ws = Path(ws).resolve()
+    inv = inspect(ws)
+    removable: list[dict] = []
+    blocked: list[dict] = []
+
+    # 按「源目录顶层」聚合：kb/classes/<批次> 等
+    by_root: dict[str, list[dict]] = {}
+    for it in inv["migratable"]:
+        src = Path(it["from"])
+        root = src.parents[2] if len(src.parents) >= 3 else src.parent
+        by_root.setdefault(str(root), []).append(it)
+
+    for root, items in sorted(by_root.items()):
+        bad: list[str] = []
+        for it in items:
+            src, dst = Path(it["from"]), Path(it["to"])
+            if not dst.is_file():
+                bad.append(f"{src.name}（目标缺失）")
+                continue
+            if not src.is_file():
+                continue                      # 源已删（之前 move 过）→ 不算问题
+            if _file_sha(src) != _file_sha(dst):
+                bad.append(f"{src.name}（内容不一致）")
+        files = [f for f in Path(root).rglob("*") if f.is_file()] if Path(root).is_dir() else []
+        entry = {"path": root, "files": len(files), "bytes": _size_dir(Path(root))}
+        if bad:
+            blocked.append({**entry, "reason": "；".join(bad[:5])})
+        else:
+            removable.append(entry)
+
+    if apply:
+        for it in removable:
+            try:
+                shutil.rmtree(it["path"])
+                logger.info(f"[clean-migrated] 已删除已迁移源 {it['path']}")
+            except OSError as exc:
+                logger.warning(f"[clean-migrated] 删除失败 {it['path']}: {exc}")
+    report = {
+        "ok": True, "apply": apply, "workspace": str(ws),
+        "removable": removable, "blocked": blocked,
+        "summary": {"removable": len(removable), "blocked": len(blocked),
+                    "bytes": sum(it["bytes"] for it in removable)},
+    }
+    return report
+
+
+def _size_dir(p: Path) -> int:
+    total = 0
+    if not p.is_dir():
+        return 0
+    for f in p.rglob("*"):
+        if f.is_file():
+            try:
+                total += f.stat().st_size
+            except OSError:
+                pass
+    return total
 
 
 def is_valid_workspace_root(name_hint: "list[str] | None" = None) -> bool:

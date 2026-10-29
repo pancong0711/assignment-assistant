@@ -914,7 +914,21 @@ class Handler(BaseHTTPRequestHandler):
             except Exception:  # noqa: BLE001
                 payload = {}
             from . import workspace_layout as WL
-            rep = WL.fix_layout(Path(self.ws).resolve(), apply=bool(payload.get("apply")))
+            rep = WL.fix_layout(Path(self.ws).resolve(),
+                               apply=bool(payload.get("apply")),
+                               move=bool(payload.get("move")))
+            self._json(rep, 200 if rep.get("ok") else 400)
+            return
+        if u.path == "/workspace/clean-migrated":
+            payload = {}
+            try:
+                length = int(self.headers.get("Content-Length") or 0)
+                if length:
+                    payload = json.loads(self.rfile.read(length).decode("utf-8")) or {}
+            except Exception:  # noqa: BLE001
+                payload = {}
+            from . import workspace_layout as WL
+            rep = WL.clean_migrated(Path(self.ws).resolve(), apply=bool(payload.get("apply")))
             self._json(rep, 200 if rep.get("ok") else 400)
             return
         if u.path == "/kb/write":

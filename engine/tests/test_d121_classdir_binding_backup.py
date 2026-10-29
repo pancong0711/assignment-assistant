@@ -204,3 +204,103 @@ def test_clean_junk_never_deletes_real_class_named_like_reserved(tmp_path):
     assert (real / "roster.xlsx").is_file(), "名册文件必须保留"
     assert any("tasks" in (it.get("realClassDirs") or [])
                for it in rep["protected"]), "应标记为真实班级目录"
+
+
+# ---------------- D122：--move（删源）+ clean-migrated（sha256 校验） ----------------
+
+def test_fix_layout_move_deletes_source(tmp_path):
+    """--move：复制成功后删源；默认（不加 move）保留源。"""
+    from assist import workspace_layout as WL
+    def _mk(ws):
+        src = ws / "kb" / "classes" / "班A" / "roster" / "roster.xlsx"
+        src.parent.mkdir(parents=True)
+        src.write_bytes(b"data")
+        return src
+    # 默认：复制，源保留
+    ws1 = tmp_path / "w1"
+    s1 = _mk(ws1)
+    rep = WL.fix_layout(ws1, apply=True)
+    assert rep["move"] is False
+    assert (ws1 / "classes/班A/roster/roster.xlsx").is_file()
+    assert s1.is_file(), "默认不删源"
+    # --move：删源
+    ws2 = tmp_path / "w2"
+    _mk(ws2)
+    rep2 = WL.fix_layout(ws2, apply=True, move=True)
+    assert rep2["move"] is True and rep2["summary"]["removedSrc"] == 1
+    assert (ws2 / "classes/班A/roster/roster.xlsx").is_file()
+    assert not (ws2 / "kb/classes/班A/roster/roster.xlsx").exists(), "move 应删源"
+
+
+def test_clean_migrated_requires_identical_content(tmp_path):
+    """clean-migrated：只有 **sha256 一致**才允许删源；被改坏则保留。"""
+    from assist import workspace_layout as WL
+    ws = tmp_path / "ws"
+    src = ws / "kb" / "classes" / "班A" / "roster" / "roster.xlsx"
+    src.parent.mkdir(parents=True)
+    src.write_bytes(b"same")
+    WL.fix_layout(ws, apply=True)               # 复制
+    # 演练：可删
+    dry = WL.clean_migrated(ws, apply=False)
+    assert dry["summary"]["removable"] == 1 and dry["summary"]["blocked"] == 0
+    # 改坏目标 → 变成 blocked
+    (ws / "classes/班A/roster/roster.xlsx").write_bytes(b"tampered")
+    rep = WL.clean_migrated(ws, apply=True)
+    assert rep["summary"]["removable"] == 0
+    assert rep["summary"]["blocked"] == 1
+    assert src.is_file(), "不一致时必须保留源"
+
+
+def test_clean_migrated_apply_removes_when_identical(tmp_path):
+    from assist import workspace_layout as WL
+    ws = tmp_path / "ws"
+    src = ws / "kb" / "classes" / "班A" / "roster" / "roster.xlsx"
+    src.parent.mkdir(parents=True)
+    src.write_bytes(b"same")
+    WL.fix_layout(ws, apply=True)
+    rep = WL.clean_migrated(ws, apply=True)
+    assert rep["summary"]["removable"] == 1
+    assert not (ws / "kb" / "classes").exists(), "一致时应删掉已迁移源"
+    assert (ws / "classes/班A/roster/roster.xlsx").is_file()
+
+
+def test_cli_move_and_clean_migrated(tmp_path):
+    ws = tmp_path / "ws"
+    src = ws / "kb" / "classes" / "班A" / "roster" / "roster.xlsx"
+    src.parent.mkdir(parents=True)
+    src.write_bytes(b"x")
+    r = CliRunner().invoke(cli, ["workspace", "fix-layout", "-w", str(ws), "--apply", "--move"])
+    assert r.exit_code == 0, r.output
+    assert not src.exists(), "CLI --move 应删源"
+    r2 = CliRunner().invoke(cli, ["workspace", "clean-migrated", "-w", str(ws)])
+    assert r2.exit_code == 0, r2.output
+
+
+def test_fix_layout_move_prunes_empty_dirs(tmp_path):
+    """D122-FIX：`--move` 后必须回收空目录，否则体检仍报 violation（用户会以为没迁移成功）。"""
+    from assist import workspace_layout as WL
+    ws = tmp_path / "ws"
+    src = ws / "kb" / "classes" / "班A" / "roster" / "roster.xlsx"
+    src.parent.mkdir(parents=True)
+    src.write_bytes(b"x")
+    rep = WL.fix_layout(ws, apply=True, move=True)
+    assert rep["summary"]["removedSrc"] == 1
+    assert rep["summary"]["prunedDirs"] >= 1
+    assert not (ws / "kb" / "classes").exists(), "空的 kb/classes 应被回收"
+    assert (ws / "classes/班A/roster/roster.xlsx").is_file()
+    assert WL.inspect(ws)["summary"]["violations"] == 0, "体检不应再有 violation"
+
+
+def test_fix_layout_move_keeps_nonempty_forbidden_dir(tmp_path):
+    """若 kb/classes 里还有**未迁移**的文件，不得删该目录。"""
+    from assist import workspace_layout as WL
+    ws = tmp_path / "ws"
+    src = ws / "kb" / "classes" / "班A" / "roster" / "roster.xlsx"
+    src.parent.mkdir(parents=True)
+    src.write_bytes(b"x")
+    # 一个不会被迁移的额外文件（不在 migratable 里）
+    extra = ws / "kb" / "classes" / "别的东西.txt"
+    extra.write_bytes(b"keep")
+    WL.fix_layout(ws, apply=True, move=True)
+    assert extra.is_file(), "有内容的目录不得删除"
+    assert (ws / "kb" / "classes").is_dir()

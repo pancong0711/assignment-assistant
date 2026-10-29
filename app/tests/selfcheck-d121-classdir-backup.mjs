@@ -93,5 +93,22 @@ const stripComments = (s) => s.replace(/\/\*[\s\S]*?\*\//g, '')
   }
 }
 
+/* 7) D122：迁移默认复制；--move 才删源；清理已迁移源须 sha256 一致 */
+{
+  const wl = engine('workspace_layout.py')
+  assert.ok(/def fix_layout\(ws, \*, apply: bool = False, move: bool = False\)/.test(wl),
+    'fix_layout 应支持 move 参数')
+  assert.ok(/def clean_migrated/.test(wl), '应有 clean_migrated')
+  assert.ok(/_file_sha/.test(wl) && /sha256/.test(wl), '一致性校验应使用 sha256')
+  assert.ok(!/shutil\.move/.test(wl), '不应使用 shutil.move（复制成功后才删源更安全）')
+  const sv = read('src/views/SettingsView.vue')
+  assert.ok(/清理已迁移源/.test(sv), '设置中心应有「清理已迁移源」按钮')
+  const st = stripComments(read('src/stores/settings.ts'))
+  assert.ok(/async runCleanMigrated/.test(st), 'settings 应有 runCleanMigrated')
+  const cliPy = readFileSync(resolve(appDir, '..', 'engine/src/assist/cli.py'), 'utf-8')
+  assert.ok(/workspace_grp\.command\("clean-migrated"\)/.test(cliPy), 'CLI 应有 clean-migrated')
+  assert.ok(/--move/.test(cliPy), 'CLI fix-layout 应有 --move')
+}
+
 console.log('OK d121-classdir-backup：解析不回退/精确自动绑定/保留名排除 · '
   + '假目录保护真实产物 · 备份脱敏不含 .runtime · PWA 一键备份+清理（演练+确认）')

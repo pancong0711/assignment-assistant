@@ -244,3 +244,45 @@ assist workspace backup                # → <ws>/backups/*.zip
 assist xxt class-map --list            # 看当前映射
 assist xxt class-map --course <c> --class <k> --dir classes/<班级>   # 仅需手工时
 ```
+
+---
+
+## 8. 补充：迁移默认复制 / `--move` / 清理已迁移源（D122）
+
+用户确认「一键迁移是复制不是 move」后，补齐配套能力。
+
+### 8.1 行为约定
+
+| 命令 | 行为 |
+|---|---|
+| `assist workspace fix-layout` | 演练 |
+| `assist workspace fix-layout --apply` | **复制**（源保留，默认） |
+| `assist workspace fix-layout --apply --move` | **移动**：复制成功并校验大小后才删源；随后**回收空目录** |
+| `assist workspace clean-migrated [--apply]` | 清理「已迁移完成」的源；**sha256 一致**才删，否则保留并告警 |
+
+PWA（设置中心）：
+- 「workspace 目录布局」的 🔧 一键迁移 → 技能确认弹窗：**【确定】= 移动（删源）／【取消】= 复制（保留源）**；
+- 新增「🧹 清理已迁移源」按钮（演练 → 确认 → 执行）。
+
+### 8.2 安全设计
+
+1. **不用 `shutil.move`**：先 `copy2` → 校验大小一致 → 才 `unlink` 源。任何一步失败都保留源。
+2. `clean_migrated` 用 **sha256** 逐文件比对（不是只比大小），只有**全部一致**才把该源目录列为可删。
+3. 空目录回收只 `rmdir` **空目录**，有内容一律保留。
+
+### 8.3 复审发现并修复
+
+| # | 问题 | 说明 |
+|---|---|---|
+| **R4** | `--move` 删了文件但**空目录残留** | 体检仍报 `violations=1`，用户误以为没迁移成功。改为 `--move` 后自底向上回收空目录（`prunedDirs`），实测 `violations` → **0**。加了"有内容则不删"的回归用例 |
+
+### 8.4 验证
+
+| 项 | 结果 |
+|---|---|
+| 默认复制 | 源保留 ✅ |
+| `--move` | 源文件删除、空目录回收、`violations=0` ✅ |
+| 非空目录 | `kb/classes` 里还有未迁移文件时**不删目录** ✅ |
+| `clean-migrated` | 内容一致 → 可删；**改坏目标 → blocked 并保留源** ✅ |
+| engine pytest | **691 passed**（D121 用例 16 → 22） |
+| app selfcheck | 31 项全绿（补充 D122 哨兵） |

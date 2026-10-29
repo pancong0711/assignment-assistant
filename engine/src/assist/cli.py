@@ -1665,18 +1665,45 @@ def workspace_layout_cmd(obj, workspace, verbose):
 
 @workspace_grp.command("fix-layout")
 @click.option("--apply", "apply_", is_flag=True, help="真正迁移（缺省只演练）")
+@click.option("--move", is_flag=True,
+              help="迁移后删除源文件（默认只复制不删源；复制并校验大小后才删）")
 @click.option("--workspace", "-w", default=None)
 @click.option("--verbose", "-v", is_flag=True)
 @click.pass_obj
-def workspace_fix_layout(obj, apply_, workspace, verbose):
-    """D120：把 kb/classes/** 等错位数据迁移到 <ws>/classes/**（不覆盖、不删源）。"""
+def workspace_fix_layout(obj, apply_, move, workspace, verbose):
+    """D120/D122：把 kb/classes/** 等错位数据迁移到 <ws>/classes/**。
+
+    默认**只复制不删源**；加 `--move` 则复制成功并校验后删源。
+    迁移后残留的空源目录可用 `assist workspace clean-migrated` 回收。
+    """
     from . import workspace_layout as WL
     ws = _setup(verbose or obj.get("verbose"), workspace)
-    rep = WL.fix_layout(ws, apply=apply_)
+    rep = WL.fix_layout(ws, apply=apply_, move=move)
     click.echo(json.dumps(rep, ensure_ascii=False, indent=1))
     if not apply_ and rep["summary"]["moved"]:
-        click.echo(f"\n（演练：将迁移 {rep['summary']['moved']} 个文件。"
-                   f"确认后加 --apply；源文件不会被删除）")
+        mode = "移动（删源）" if move else "复制（保留源）"
+        click.echo(f"\n（演练：将{mode} {rep['summary']['moved']} 个文件。确认后加 --apply）")
+
+
+@workspace_grp.command("clean-migrated")
+@click.option("--apply", "apply_", is_flag=True, help="真正删除（缺省只演练）")
+@click.option("--workspace", "-w", default=None)
+@click.option("--verbose", "-v", is_flag=True)
+@click.pass_obj
+def workspace_clean_migrated(obj, apply_, workspace, verbose):
+    """D122：清理「已迁移完成」的源（kb/classes/** 等）。
+
+    安全判定：目标文件存在**且 sha256 与源一致**，才允许删；否则保留并告警。
+    """
+    from . import workspace_layout as WL
+    ws = _setup(verbose or obj.get("verbose"), workspace)
+    rep = WL.clean_migrated(ws, apply=apply_)
+    click.echo(json.dumps(rep, ensure_ascii=False, indent=1))
+    if rep["summary"]["blocked"]:
+        click.echo(f"\n⚠ {rep['summary']['blocked']} 个源目录未通过一致性校验，已保留（请人工核对）")
+    if not apply_ and rep["summary"]["removable"]:
+        click.echo(f"\n（演练：可安全删除 {rep['summary']['removable']} 项 / "
+                   f"{rep['summary']['bytes'] / 1024 / 1024:.1f} MB。确认后加 --apply）")
 
 
 @workspace_grp.command("backup")

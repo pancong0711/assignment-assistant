@@ -480,6 +480,12 @@ onMounted(() => {
                 @click="settings.runBackup()">
           {{ settings.installing === 'backup' ? '备份中…' : '💾 一键备份' }}
         </button>
+        <!-- D122：清理「已迁移完成」的源（kb/classes 等；sha256 一致才删） -->
+        <button class="btn" style="margin-left:8px" :disabled="settings.installing !== ''"
+                title="删除已迁移到 classes/ 的旧源（如 kb/classes）；仅当目标与源内容 sha256 一致才删"
+                @click="settings.runCleanMigrated()">
+          {{ settings.installing === 'clean-migrated' ? '清理中…' : '🧹 清理已迁移源' }}
+        </button>
         <!-- D121：清理假目录（<ws>/grading、<ws>/classes/grading 等；含真实产物一律拒绝） -->
         <button class="btn" style="margin-left:8px" :disabled="settings.installing !== ''"
                 title="清理不是班级、也不是题库的结构目录（先演练，含真实批阅产物的会跳过）"

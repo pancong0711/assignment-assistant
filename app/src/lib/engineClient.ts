@@ -1498,6 +1498,25 @@ export async function saveTaskpadToEngine(
   return o
 }
 
+/** D122：POST /workspace/clean-migrated —— 清理「已迁移完成」的源（sha256 一致才删）。 */
+export async function cleanMigratedSources(
+  engineAddr: string, token: string | undefined, apply: boolean,
+): Promise<{ ok?: boolean; removable?: Array<{ path: string; files: number; bytes: number }>
+  blocked?: Array<{ path: string; reason: string }>
+  summary?: { removable: number; blocked: number; bytes: number }; error?: string }> {
+  const base = normalizeEngineAddr(engineAddr)
+  const res = await fetch(engineUrlWithToken(base, '/workspace/clean-migrated', token), {
+    method: 'POST', headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ apply }),
+  })
+  const o = (await res.json().catch(() => ({}))) as
+    { ok?: boolean; removable?: Array<{ path: string; files: number; bytes: number }>
+      blocked?: Array<{ path: string; reason: string }>
+      summary?: { removable: number; blocked: number; bytes: number }; error?: string }
+  if (!res.ok && !o?.error) throw new Error(`HTTP ${res.status}`)
+  return o
+}
+
 /** D121：POST /workspace/clean-junk —— 清理假目录（含真实产物的一律拒绝）。 */
 export async function cleanWorkspaceJunk(
   engineAddr: string, token: string | undefined, apply: boolean,
@@ -1562,12 +1581,14 @@ export function collectBrowserData(): Record<string, unknown> {
 /** POST /workspace/fix-layout：迁移 kb/ 下的错位目录（D120）。 */
 export async function fixWorkspaceLayout(
   engineAddr: string, token: string | undefined, apply: boolean,
-): Promise<{ ok?: boolean; summary?: { moved: number; skipped: number; violations: number }
-  moved?: Array<{ from: string; to: string }>; error?: string }> {
+  /** D122：true = 迁移后删源（默认只复制） */
+  move = false,
+): Promise<{ ok?: boolean; summary?: { moved: number; skipped: number; violations: number
+  removedSrc?: number }; moved?: Array<{ from: string; to: string }>; error?: string }> {
   const base = normalizeEngineAddr(engineAddr)
   const res = await fetch(engineUrlWithToken(base, '/workspace/fix-layout', token), {
     method: 'POST', headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ apply }),
+    body: JSON.stringify({ apply, move }),
   })
   const o = (await res.json().catch(() => ({}))) as
     { ok?: boolean; summary?: { moved: number; skipped: number; violations: number }
