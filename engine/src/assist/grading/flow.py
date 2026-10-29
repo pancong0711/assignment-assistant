@@ -274,7 +274,7 @@ def _run_report(ctx: dict, reports_dir: Path) -> list[Path]:
 
 def run_task(task_path: Path, ws: Path, images_dir: Path | None = None,
              rerun: str | None = None, plan: "dict | None" = None,
-             mode: str = "") -> dict:
+             mode: str = "", class_dir: str = "") -> dict:
     """任务包 grade 节驱动的执行入口。
 
     Args:
@@ -282,9 +282,22 @@ def run_task(task_path: Path, ws: Path, images_dir: Path | None = None,
         ws: workspace 根目录。
         images_dir: 学生作业图片目录（本地批阅；阶段4 download 自动填充）。
         rerun: 指定单个 step 名 → 只重跑该步（参数 Recovery 自 journal）。
+        class_dir: D124：班级目录（`classes/<班级>`）。**优先级最高**。
+
+    D124（关键修复）：PWA 传来的 taskpad 里**没有** `class_dir`（它存在浏览器 localStorage），
+    而 `grading_dir()` 需要它。此前 cli 只把它给了 `plan`，没写回 `task` →
+    批阅一进来就报 `class_dir=''`。现在的取值优先级：
+        参数 class_dir > plan.classDir > task.class_dir
+    三者都没有 → 明确报错（而不是走到 grading_dir 才崩）。
     """
     task_path = Path(task_path).expanduser().resolve()
     task = json.loads(task_path.read_text(encoding="utf-8"))
+    # D124：注入 class_dir（参数 > plan > task），保证 grading_dir 拿到真实班级目录
+    effective_class_dir = (str(class_dir or "").strip()
+                           or str((plan or {}).get("classDir") or "").strip()
+                           or str(task.get("class_dir") or "").strip())
+    if effective_class_dir:
+        task["class_dir"] = effective_class_dir
     grade_cfg = task.get("grade", {}) or {}
     steps = grade_cfg.get("steps", ["transcribe", "evaluate", "report"])
     if not steps:

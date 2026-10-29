@@ -144,7 +144,12 @@ const dupTags = computed(() => {
   return [...seen.entries()].filter(([, n]) => n > 1).map(([t]) => t)
 })
 
-const classDirName = computed(() => roster.students[0]?.class || 'classA')
+/** D124：目录名用**班级名**（RosterClass.name），不用 students[0].class。
+ *  后者是导入的原始班级字段（如 `2025-化工25班`），会造成两套目录。 */
+const classDirName = computed(() => {
+  const cur = roster.classes[roster.activeClassId]
+  return String(cur?.name || '').trim()
+})
 const bp = computed(() => batchPaths(classDirName.value))
 const batchCmdPreview = computed(() =>
   batchCommand(bp.value.roster, padRows.value.map((r) => bp.value.task(r.id)), bp.value.classDir, missingTags.value))
@@ -172,7 +177,8 @@ async function downloadBatchZip() {
     // D100-T7：batch zip 内嵌 HTML 的参考答案同样走生效版
     await ensureDefaultSheetHtmlProvider((kind) => kb.book(kind as never), kb.effectiveSolution)
     setBatchHtmlIncludeSolution(batchIncludeAnswers.value)   // D57-2
-    const { blob, cd, padCount } = await buildVariantBatchZip(roster.students, pad.savedJsons())
+    const { blob, cd, padCount } = await buildVariantBatchZip(
+      roster.students, pad.savedJsons(), classDirName.value)
     downloadBlob(blob, `batch-package-${new Date().toISOString().slice(0, 10)}.zip`)
     roster.registerArtifact({ name: `batch-package-${new Date().toISOString().slice(0, 10)}.zip`, kind: 'batch-zip', via: 'browser-download', bytes: blob.size })
     status.value = `已生成整班 batch 交付包（班级 ${cd}）：${padCount} 份作业纸 + roster.xlsx + batch.json + README（内嵌 HTML 口径：${batchIncludeAnswers.value ? '教师版含答案' : '学生版不含答案'}）。解压到引擎 workspace 根目录后按 README 执行 assist sheet batch 即可（batch PDF 通道本身不含答案）。`

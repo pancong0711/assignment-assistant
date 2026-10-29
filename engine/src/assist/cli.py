@@ -1629,6 +1629,10 @@ def grade(obj, task_path, pads_dir, images_dir, rerun, xxt_class, work_id, plan_
     kwargs = {"images_dir": images_dir} if images_dir else {}
     if plan:
         kwargs["plan"] = plan
+        # D124：把解析出的班级目录**显式**传给 run_task（只给 plan 不够：
+        # run_task 内 grading_dir() 用的是 task 上的 class_dir，而 taskpad 不含该字段）
+        if str(plan.get("classDir") or "").strip():
+            kwargs["class_dir"] = str(plan["classDir"])
         if mode:
             kwargs["mode"] = mode
     # D118：输入侧问题（如"没有任何学生作答图"）应给可读错误，而不是 FileNotFoundError 堆栈
@@ -1731,6 +1735,34 @@ def workspace_backup(obj, out_zip, browser_json, workspace, verbose):
     click.echo(json.dumps({"secretCheck": chk}, ensure_ascii=False, indent=1))
     if not chk.get("ok"):
         raise click.ClickException("备份包自检失败：疑似含未脱敏密钥")
+
+
+@workspace_grp.command("audit-class-dirs")
+@click.option("--workspace", "-w", default=None)
+@click.option("--verbose", "-v", is_flag=True)
+@click.pass_obj
+def workspace_audit_class_dirs(obj, workspace, verbose):
+    """D124：检查班级目录名是否等于班级真名（RosterClass.name）。"""
+    from . import class_dir_audit as CDA
+    ws = _setup(verbose or obj.get("verbose"), workspace)
+    click.echo(json.dumps(CDA.audit(ws), ensure_ascii=False, indent=1))
+
+
+@workspace_grp.command("fix-class-dirs")
+@click.option("--apply", "apply_", is_flag=True, help="真正重命名（缺省只演练）")
+@click.option("--workspace", "-w", default=None)
+@click.option("--verbose", "-v", is_flag=True)
+@click.pass_obj
+def workspace_fix_class_dirs(obj, apply_, workspace, verbose):
+    """D124：把错名班级目录改成班级名（同步更新 class_map）。"""
+    from . import class_dir_audit as CDA
+    ws = _setup(verbose or obj.get("verbose"), workspace)
+    rep = CDA.fix(ws, apply=apply_)
+    click.echo(json.dumps(rep, ensure_ascii=False, indent=1))
+    if rep["summary"]["conflict"]:
+        click.echo(f"\n⚠ {rep['summary']['conflict']} 个目标目录已存在，未自动合并（请人工确认）")
+    if not apply_ and rep["summary"]["renamed"]:
+        click.echo(f"\n（演练：将重命名 {rep['summary']['renamed']} 个目录。确认后加 --apply）")
 
 
 @workspace_grp.command("clean-junk")

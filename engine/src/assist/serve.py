@@ -34,7 +34,7 @@ from . import __version__
 from .xxt import layout as xxt_layout
 
 CHECK_IDS = ("python_env", "uv", "deps", "playwright", "xelatex", "fonts", "settings", "kb",
-              "grading_layout", "workspace_layout", "roster_persist")
+              "grading_layout", "workspace_layout", "roster_persist", "class_dir_names")
 INSTALL_ITEMS = ("deps", "playwright", "fonts", "tex_guide", "python_guide", "uv", "kb_init", "katex", "tinytex", "engine_update")
 
 KATEX_VERSION = "0.16.4"
@@ -267,6 +267,34 @@ def _doctor_checks(ws: Path) -> list[dict]:
     checks.append(_check("kb", "green" if ok_kb else "yellow", "kb 题库",
                          f"{kb_dir}；xlsx={len(kb_xlsx)}" + (f"（{', '.join(kb_xlsx[:5])}）" if kb_xlsx else "（缺失，可创建默认题库）"),
                          {} if ok_kb else {"type": "install", "install": "kb_init"}))
+    # D124（兼容期）：班级目录名是否等于班级真名（RosterClass.name）
+    try:
+        from . import class_dir_audit as _cda
+        aud = _cda.audit(ws)
+        n_fix, n_conf = aud["summary"]["fixable"], aud["summary"]["conflict"]
+        n_unk = aud["summary"]["unknown"]
+        if n_fix or n_conf:
+            parts = []
+            if n_fix:
+                names = "、".join(f"{x['dir']}→{x['className']}" for x in aud["fixable"][:3])
+                parts.append(f"{n_fix} 个班级目录名与班级名不一致（{names}）")
+            if n_conf:
+                parts.append(f"{n_conf} 个目标目录已存在，需人工确认")
+            checks.append(_check(
+                "class_dir_names", "yellow", "班级目录命名",
+                "；".join(parts),
+                {"type": "api", "endpoint": "/workspace/fix-class-dirs",
+                 "label": "🔧 按班级名修正目录"}))
+        elif n_unk:
+            checks.append(_check(
+                "class_dir_names", "yellow", "班级目录命名",
+                f"{n_unk} 个班级缺 className 元信息（旧数据）：到「班级与标签」保存一次班级即可写入",
+                {"type": "guide"}))
+        else:
+            checks.append(_check("class_dir_names", "green", "班级目录命名",
+                                 "各班级目录名与班级名一致", {}))
+    except Exception:  # noqa: BLE001
+        pass
     # D120：workspace 目录布局（kb/ 下不得出现 classes/ roster/ grading/ 等）
     try:
         from . import workspace_layout as _wl
@@ -858,7 +886,9 @@ class Handler(BaseHTTPRequestHandler):
             from .files import roster_io
             rep = roster_io.write_roster(Path(self.ws).resolve(),
                                          str(payload.get("classDir") or ""),
-                                         payload.get("students") or [])
+                                         payload.get("students") or [],
+                                         class_name=str(payload.get("className") or ""),
+                                         class_id=str(payload.get("classId") or ""))
             self._json(rep, 200 if rep.get("ok") else 400)
             return
         if u.path == "/taskpad/save":
@@ -918,6 +948,47 @@ class Handler(BaseHTTPRequestHandler):
                                apply=bool(payload.get("apply")),
                                move=bool(payload.get("move")))
             self._json(rep, 200 if rep.get("ok") else 400)
+            return
+        if u.path == "/workspace/fix-class-dirs":
+            payload = {}
+            try:
+                length = int(self.headers.get("Content-Length") or 0)
+                if length:
+                    payload = json.loads(self.rfile.read(length).decode("utf-8")) or {}
+            except Exception:  # noqa: BLE001
+                payload = {}
+            from . import class_dir_audit as CDA
+            rep = CDA.fix(Path(self.ws).resolve(), apply=bool(payload.get("apply")))
+            self._json(rep, 200 if rep.get("ok") else 400)
+            return
+        if u.path == "/workspace/auto-bind-classes":
+            # D124：把 PWA 的班级表（id/name）交给引擎，按名称自动绑定 class_map
+            payload = {}
+            try:
+                length = int(self.headers.get("Content-Length") or 0)
+                if length:
+                    payload = json.loads(self.rfile.read(length).decode("utf-8")) or {}
+            except Exception:  # noqa: BLE001
+                payload = {}
+            from .xxt import classmap
+            ws_ = Path(self.ws).resolve()
+            bound, skipped = [], []
+            for c in payload.get("classes") or []:
+                if not isinstance(c, dict):
+                    continue
+                name = str(c.get("name") or "").strip()
+                cid = str(c.get("id") or "").strip()
+                if not (name and cid):
+                    continue
+                if (ws_ / "classes" / name).is_dir():
+                    try:
+                        classmap.set_class_dir(ws_, "", cid, f"classes/{name}")
+                        bound.append({"classId": cid, "classDir": f"classes/{name}"})
+                    except Exception:  # noqa: BLE001
+                        skipped.append({"classId": cid})
+                else:
+                    skipped.append({"classId": cid, "reason": f"目录不存在：classes/{name}"})
+            self._json({"ok": True, "bound": bound, "skipped": skipped})
             return
         if u.path == "/workspace/clean-migrated":
             payload = {}
@@ -2374,7 +2445,9 @@ class Handler(BaseHTTPRequestHandler):
             from . import workspace_layout as WL
             from . import workspace_junk as WJ
             ws_ = Path(self.ws).resolve()
-            self._json({**WL.inspect(ws_), "junk": WJ.find_junk(ws_)})
+            from . import class_dir_audit as _cda
+            self._json({**WL.inspect(ws_), "junk": WJ.find_junk(ws_),
+                        "classDirAudit": _cda.audit(ws_)})
         elif u.path == "/kb/catalog":
             from .files.kb_io import catalog as _catalog
             q = urllib.parse.parse_qs(u.query)

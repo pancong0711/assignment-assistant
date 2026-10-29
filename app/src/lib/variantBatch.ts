@@ -143,8 +143,11 @@ export function batchPaths(cd: string) {
 export async function buildVariantBatchZip(
   students: RosterStudent[],
   pads: BatchZipPad[],
+  /** D124：班级名（`RosterClass.name`）。缺省时按 roster 里第一个学生的 class 兜底（兼容旧调用）。 */
+  className = '',
 ): Promise<{ blob: Blob; cd: string; padCount: number }> {
-  const cd = students[0]?.class || 'classA'
+  const cd = String(className || students[0]?.class || '').trim()
+  if (!cd) throw new Error('班级名为空：请先在「班级与标签」给班级命名')
   const p = batchPaths(cd)
   const zip = new JSZip()
   zip.file(p.roster, writeRosterXlsx(students))

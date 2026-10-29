@@ -586,9 +586,19 @@ export const useRosterStore = defineStore('roster', {
       this.registerArtifact({ name: 'roster-task-package.zip', kind: 'other', via: 'browser-download', bytes: blob.size })
       return '已导出 roster-task-package.zip（roster.xlsx + roster.json + task-package.json（含成绩源 family）+ 附带说明）。'
     },
-    /** 已连接 workspace 目录时原地写入 classes/<班级>/roster/（Chrome/Edge） */
-    async saveToDir(dirHandle: FileSystemDirectoryHandle): Promise<string> {
-      const cls = this.students[0]?.class ?? 'classA'
+    /** 已连接 workspace 目录时原地写入 classes/<班级名>/roster/（Chrome/Edge）。
+     *
+     *  D124：目录名必须用**班级名**（`RosterClass.name`，即「班级与标签」新建/保存班级时
+     *  创建的那个名称），**不能**用 `students[0].class`——后者是从点名册 xlsx 导入的原始值
+     *  （如 `2025-化工25班`），与班级名不是一回事，会造成两套目录。
+     */
+    async saveToDir(dirHandle: FileSystemDirectoryHandle, className?: string): Promise<string> {
+      const cur = this.classes[this.activeClassId]
+      // 班级名优先：显式参数 > 当前班级 name；**没有兜底成 'classA'**（那会凭空造目录）
+      const cls = String(className || cur?.name || '').trim()
+      if (!cls) {
+        throw new Error('班级名为空：请先在「班级与标签」给班级命名（保存班级），再写回 roster')
+      }
       const dir = `classes/${cls}/roster`
       await writeFileInDir(dirHandle, `${dir}/roster.xlsx`, writeRosterXlsx(this.students))
       await writeFileInDir(dirHandle, `${dir}/roster.json`, JSON.stringify(
@@ -650,6 +660,9 @@ async function doPersistToDisk(classDirHint?: string): Promise<string> {
     // ① 引擎写盘（路径由后端权威决定）
     const rep = await saveRosterToEngine(st.engineUrl, st.engineToken, {
       classDir,
+      // D124：带上班级名与 id，引擎据此写进 roster.json，供体检判断「目录名 == 班级名」
+      className: String(cur.name || '').trim(),
+      classId: String(cur.id || ''),
       students: roster.students.map((s) => ({
         name: s.name, number: s.number, class: s.class, tag: s.tag,
       })),

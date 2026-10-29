@@ -295,6 +295,45 @@ export const useSettingsStore = defineStore('settings', {
       return true
     },
     /** R1.4 修复按钮：POST /install/<item> + SSE 进度；完成后自动重跑体检。 */
+    /** D124：按班级名修正目录名（兼容期；先演练 → 确认）。 */
+    async runFixClassDirs(): Promise<boolean> {
+      if (!this.engineOnline) {
+        this.installLog = '⚠ 引擎未在线。'
+        return false
+      }
+      this.installing = 'fix-class-dirs'
+      try {
+        const { fixClassDirs } = await import('../lib/engineClient')
+        const dry = await fixClassDirs(this.engineUrl, this.engineToken, false)
+        const n = dry?.summary?.renamed ?? 0
+        const conf = dry?.summary?.conflict ?? 0
+        if (!n) {
+          this.installLog = conf
+            ? `没有可自动修正的目录（${conf} 个目标已存在，需人工确认）。`
+            : '班级目录名都已正确。'
+          return true
+        }
+        const lines = (dry.renamed || []).slice(0, 20)
+          .map((x) => `  ${x.dir} → ${x.className}`).join('\n')
+        const warn = conf ? `\n\n⚠ ${conf} 个目标目录已存在，将跳过（请人工确认）` : ''
+        if (!window.confirm(`将按班级名重命名 ${n} 个目录：\n\n${lines}${warn}\n\n确定？`)) {
+          this.installLog = '已取消。'
+          return false
+        }
+        const rep = await fixClassDirs(this.engineUrl, this.engineToken, true)
+        this.installLog = rep?.ok
+          ? `✅ 已修正 ${rep.summary?.renamed ?? 0} 个班级目录`
+            + (rep.summary?.conflict ? `；跳过 ${rep.summary.conflict} 个（目标已存在）` : '')
+          : `❌ 修正失败：${rep?.error || ''}`
+        await this.runDoctor()
+        return !!rep?.ok
+      } catch (e) {
+        this.installLog = `❌ 修正失败：${String((e as Error).message || e)}`
+        return false
+      } finally {
+        this.installing = ''
+      }
+    },
     /** D122：清理「已迁移完成」的源（sha256 一致才删；先演练 → 确认）。 */
     async runCleanMigrated(): Promise<boolean> {
       if (!this.engineOnline) {

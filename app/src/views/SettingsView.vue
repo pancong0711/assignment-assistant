@@ -480,6 +480,12 @@ onMounted(() => {
                 @click="settings.runBackup()">
           {{ settings.installing === 'backup' ? '备份中…' : '💾 一键备份' }}
         </button>
+        <!-- D124（兼容期）：班级目录名应为班级真名，而不是 roster 第一位学生的班级字段 -->
+        <button class="btn" style="margin-left:8px" :disabled="settings.installing !== ''"
+                title="classes/ 下的目录名应与「班级与标签」里的班级名一致；此前可能误用第一位学生的班级字段"
+                @click="settings.runFixClassDirs()">
+          {{ settings.installing === 'fix-class-dirs' ? '修正中…' : '🔧 修正班级目录名' }}
+        </button>
         <!-- D122：清理「已迁移完成」的源（kb/classes 等；sha256 一致才删） -->
         <button class="btn" style="margin-left:8px" :disabled="settings.installing !== ''"
                 title="删除已迁移到 classes/ 的旧源（如 kb/classes）；仅当目标与源内容 sha256 一致才删"

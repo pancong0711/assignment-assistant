@@ -1456,7 +1456,9 @@ export async function savePack(
 export async function saveRosterToEngine(
   engineAddr: string, token: string | undefined,
   payload: { classDir: string; students: Array<{ name: string; number?: string
-    class?: string; tag?: string }> },
+    class?: string; tag?: string }>
+    /** D124：班级名（RosterClass.name）与班级 id，供引擎体检比对目录名 */
+    className?: string; classId?: string },
 ): Promise<{ ok?: boolean; path?: string; count?: number; error?: string }> {
   const base = normalizeEngineAddr(engineAddr)
   const res = await fetch(engineUrlWithToken(base, '/roster/write', token), {
@@ -1494,6 +1496,27 @@ export async function saveTaskpadToEngine(
     body: JSON.stringify({ taskpad }),
   })
   const o = (await res.json().catch(() => ({}))) as { ok?: boolean; path?: string; id?: string; error?: string }
+  if (!res.ok && !o?.error) throw new Error(`HTTP ${res.status}`)
+  return o
+}
+
+/** D124：POST /workspace/fix-class-dirs —— 按班级名修正目录名（兼容期）。 */
+export async function fixClassDirs(
+  engineAddr: string, token: string | undefined, apply: boolean,
+): Promise<{ ok?: boolean; renamed?: Array<{ dir: string; className: string }>
+  conflict?: Array<{ dir: string; className: string; reason: string }>
+  unknown?: Array<{ dir: string }>
+  summary?: { renamed: number; conflict: number; unknown: number }; error?: string }> {
+  const base = normalizeEngineAddr(engineAddr)
+  const res = await fetch(engineUrlWithToken(base, '/workspace/fix-class-dirs', token), {
+    method: 'POST', headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ apply }),
+  })
+  const o = (await res.json().catch(() => ({}))) as
+    { ok?: boolean; renamed?: Array<{ dir: string; className: string }>
+      conflict?: Array<{ dir: string; className: string; reason: string }>
+      unknown?: Array<{ dir: string }>
+      summary?: { renamed: number; conflict: number; unknown: number }; error?: string }
   if (!res.ok && !o?.error) throw new Error(`HTTP ${res.status}`)
   return o
 }

@@ -75,7 +75,8 @@ def _normalize_students(students) -> list[dict]:
     return out
 
 
-def write_roster(ws: Path, class_dir: str, students) -> dict:
+def write_roster(ws: Path, class_dir: str, students, *, class_name: str = "",
+                 class_id: str = "") -> dict:
     """把名单写到 `<ws>/<class_dir>/roster/roster.xlsx` + `.json`。
 
     - 路径由本函数决定（引擎权威）；
@@ -120,7 +121,16 @@ def write_roster(ws: Path, class_dir: str, students) -> dict:
             wb.save(tmp)
             tmp.replace(xlsx)
             from ..filelock import atomic_write_text
-            atomic_write_text(js, json.dumps(rows, ensure_ascii=False, indent=1))
+            # D124：写入班级名元信息，供引擎体检判断「目录名 == 班级名」
+            cd_name = str(class_dir or "").strip().strip("/").split("/")[-1]
+            payload = {
+                "className": str(class_name or "").strip() or cd_name,
+                "classId": str(class_id or "").strip(),
+                "classDir": str(class_dir or "").strip(),
+                "updatedAt": time.strftime("%Y-%m-%d %H:%M:%S"),
+                "students": rows,
+            }
+            atomic_write_text(js, json.dumps(payload, ensure_ascii=False, indent=1))
         except Exception as exc:  # noqa: BLE001
             logger.warning(f"写 roster 失败：{exc}")
             return {"ok": False, "error": str(exc)[:200]}
@@ -139,15 +149,29 @@ def read_roster_file(ws: Path, class_dir: str) -> dict:
         try:
             from .roster import read_roster
             rows = read_roster(xlsx)
+            # D124：即使从 xlsx 读，也把 roster.json 里的班级名元信息一并返回
+            meta = {}
+            if js.is_file():
+                try:
+                    data = json.loads(js.read_text(encoding="utf-8"))
+                    if isinstance(data, dict):
+                        meta = {k: data.get(k) for k in ("className", "classId", "classDir")}
+                except Exception:  # noqa: BLE001
+                    meta = {}
             return {"ok": True, "path": str(xlsx), "students": rows,
-                    "count": len(rows), "source": "xlsx"}
+                    "count": len(rows), "source": "xlsx", **meta}
         except Exception as exc:  # noqa: BLE001
             return {"ok": False, "error": str(exc)[:200]}
     if js.is_file():
         try:
-            rows = json.loads(js.read_text(encoding="utf-8"))
-            return {"ok": True, "path": str(js), "students": _normalize_students(rows),
-                    "count": len(rows), "source": "json"}
+            data = json.loads(js.read_text(encoding="utf-8"))
+            # 兼容旧结构（纯数组）与新结构（含 className 元信息）
+            rows = data.get("students") if isinstance(data, dict) else data
+            meta = {k: data.get(k) for k in ("className", "classId", "classDir")
+                    } if isinstance(data, dict) else {}
+            rows = _normalize_students(rows)
+            return {"ok": True, "path": str(js), "students": rows,
+                    "count": len(rows), "source": "json", **meta}
         except Exception as exc:  # noqa: BLE001
             return {"ok": False, "error": str(exc)[:200]}
     return {"ok": False, "error": f"未找到 roster：{xlsx}"}

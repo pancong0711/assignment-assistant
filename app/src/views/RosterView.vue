@@ -604,7 +604,9 @@ async function saveToWorkspace() {
     return
   }
   try {
-    status.value = await roster.saveToDir(dirHandle.value)
+    // D124：目录名用班级名（RosterClass.name），不再从 students[0].class 推断
+    const curCls = roster.classes[roster.activeClassId]
+    status.value = await roster.saveToDir(dirHandle.value, String(curCls?.name || ''))
   } catch (e) {
     status.value = `写回失败：${(e as Error).message}`
   }

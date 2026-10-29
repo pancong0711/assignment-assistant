@@ -430,7 +430,11 @@ const classDirOptions = computed<string[]>(() => {
   for (const cid of rosterStore.classOrder || []) {
     const c = rosterStore.classes[cid]
     if (!c) continue
-    const dir = `classes/${c.name || c.id}`
+    // D124：只用**班级名**（与写盘 saveToDir 同口径）；名字为空时**不列**，
+    // 避免退化成 id 造出与写盘不一致的目录（那正是两套目录的成因）。
+    const name = String(c.name || '').trim()
+    if (!name) continue
+    const dir = `classes/${name}`
     if (!out.includes(dir)) out.push(dir)
   }
   return out.sort()
