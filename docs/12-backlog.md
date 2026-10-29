@@ -698,3 +698,17 @@ rainclass 67/67，PWA↔engine 全等，仅末位浮点四舍五入噪声）。
 - ✅ D98 第六批（2026-10-18）：自检/回执机制——`assist doctor --report [--json]` 分层诊断
   （environment/config/capability/data/artifact，含 code+fix）；`skill_installer check` 同口径；
   WorkBuddy `run.py` 失败写 receipt；QwenWork SKILL 加自检步骤。9 测试；全量 484 passed。
+
+---
+
+## D126-B 教师总结报告（易错知识点汇总 + 共现/得分率图）— 待做
+
+> 来源：2026-10-29 用户提出，明确"先记着，不用着急做"。
+
+- 面向**教师**的总结报告（区别于 D126 已实现的"转写 + 批阅"学生报告）；
+- 内容：**全部作业的易错知识点**汇总，并指出**易错点之间的关联**；
+- 计划与另一教学工具项目的「**知识点共现矩阵 + 得分率图**」结合展示；
+- 数据源：`<ws>/<class_dir>/grading/<task>/evaluations/<学生>.json`
+  的 `questions[].errors[]`（`knowledge` / `description` / `evidence` / `confidence`）
+  + `per_question_scores`；
+- 产出形式：汇总 MD/HTML/PNG（教师版），不与学生报告混在一起。

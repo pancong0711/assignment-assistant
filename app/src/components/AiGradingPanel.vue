@@ -351,7 +351,7 @@ const curWorkDir = computed<string>(() => {
 })
 
 /* ④ 逐生审核 */
-const students = ref<Array<{ name: string; key: string; tag?: string }>>([])
+const students = ref<Array<{ name: string; key: string; tag?: string; images?: string[] }>>([])
 /** D117：学生清单加载中（供逐生审核空态提示） */
 const studentsLoading = ref(false)
 const drafts = ref<Record<string, any>>({})
@@ -413,6 +413,8 @@ async function loadStudents() {
     students.value = (st.students || []).map((s: any) => ({
       name: String(s.name || ''), key: String(s.workAnswerId || s.name || ''),
       tag: String(s.tag || ''),
+      // D126：带上作答原件文件名（逐生审核要显示原图）
+      images: Array.isArray(s.images) ? s.images.map(String) : [],
     }))
     // D116：tag 选项来自本地 roster + 作业纸 target_tag，可能晚于本函数就绪；
     // 由下面的 watch(tagOptions) 负责"首次就绪时默认全选"。
@@ -507,7 +509,14 @@ async function startAi(steps?: string[]) {
     try { taskpad = raw ? JSON.parse(raw) : null } catch { taskpad = null }
   }
   if (!taskpad) { msg.value = '请选择作业包（或单张作业纸）'; return }
-  busy.value = true; progress.value = '正在装配任务清单并启动 AI 批阅……'
+  // D126：按 steps 显示对应文案（此前一律写「AI 批阅」，点"仅转录"时误导）
+  const st = (steps && steps.length) ? steps : ['transcribe', 'evaluate', 'report']
+  const onlyTranscribe = st.length === 1 && st[0] === 'transcribe'
+  const onlyEvaluate = st.length === 1 && st[0] === 'evaluate'
+  const noReport = st.includes('transcribe') && st.includes('evaluate') && !st.includes('report')
+  const jobName = onlyTranscribe ? 'AI 转写' : (onlyEvaluate ? 'AI 评阅' : 'AI 批阅')
+  busy.value = true
+  progress.value = `正在装配任务清单并启动${jobName}……`
   try {
     const jobId = await startXxtGradeAi(props.engineAddr, props.token, {
       courseId: w.courseId, classId: w.classId, cpi: w.cpi, workId: w.workId, taskpad,
@@ -524,13 +533,19 @@ async function startAi(steps?: string[]) {
         const job = await fetchXxtLoginJob(props.engineAddr, props.token, jobId)
         const lines = job.lines || []
         if (job.status === 'running') {
-          progress.value = `AI 批阅中：${(lines.slice(-1)[0] || '').slice(-140)}`
+          progress.value = `${jobName}中：${(lines.slice(-1)[0] || '').slice(-140)}`
           pollTimer = window.setTimeout(tick, 2000); return
         }
         busy.value = false
         progress.value = (job.returncode ?? 0) === 0
-          ? '✅ AI 批阅完成（结果已写入本地批阅草稿，可在下方逐生审核）'
-          : `❌ AI 批阅失败：${extractJobError(lines.join('\n'))}`
+          ? (onlyTranscribe
+            ? '✅ AI 转写完成（转写内容已写入批阅草稿，可在下方逐生审核查看）'
+            : onlyEvaluate
+              ? '✅ AI 评阅完成（结果已写入本地批阅草稿，可在下方逐生审核）'
+              : noReport
+                ? '✅ 转写 + 评阅完成（尚未生成报告，可再点「④ 完整批阅」补报告）'
+                : '✅ AI 批阅完成（结果已写入本地批阅草稿，可在下方逐生审核）')
+          : `❌ ${jobName}失败：${extractJobError(lines.join('\n'))}`
         await loadStudents()
       } catch (e) { busy.value = false; progress.value = `状态查询失败：${String(e)}` }
     }

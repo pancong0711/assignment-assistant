@@ -2579,8 +2579,24 @@ class Handler(BaseHTTPRequestHandler):
             from .xxt import preview as _preview
             q = urllib.parse.parse_qs(u.query)
             run_id = (q.get("run_id") or [None])[0]
-            self._json(_preview.preview_students(
-                _xxt_home(), m_prev.group(1), m_prev.group(2), run_id=run_id))
+            rep = _preview.preview_students(
+                _xxt_home(), m_prev.group(1), m_prev.group(2), run_id=run_id)
+            # D126：把「作答原件文件名」合并进学生清单（逐生审核要显示原图）。
+            # preview_students 只解析列表页 HTML，没有图片名；这里用已下载的
+            # students.json 补齐（read_review_students 返回绝对路径，转成文件名）。
+            try:
+                from .grading import inputs as _gi
+                _d, rev = _gi.read_review_students(m_prev.group(1), m_prev.group(2))
+                by_name = {str(x.get("name") or ""): x for x in rev}
+                for stu in rep.get("students") or []:
+                    hit = by_name.get(str(stu.get("name") or ""))
+                    if hit:
+                        stu["images"] = [Path(p_).name for p_ in (hit.get("images") or [])]
+                        if hit.get("workAnswerId"):
+                            stu.setdefault("workAnswerId", hit["workAnswerId"])
+            except Exception:  # noqa: BLE001 —— 补齐失败不影响列表
+                logger.debug("补充作答图文件名失败", exc_info=True)
+            self._json(rep)
             return
         elif u.path == "/xxt/works":
             wp = xxt_layout.works_json(_xxt_home())

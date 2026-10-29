@@ -774,6 +774,9 @@ export interface XxtReviewStudent {
   status?: string
   graded?: boolean
   review_path?: string
+  /** D126：作答原件文件名（相对 <XXT_HOME>/pages/review/<classId>/<workId>/） */
+  images?: string[]
+  workAnswerId?: string
 }
 
 export interface XxtReviewStudents {

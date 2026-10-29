@@ -394,6 +394,23 @@ def run_task(task_path: Path, ws: Path, images_dir: Path | None = None,
         journal_append(journal, record)
         logger.info(f"[{step}] 完成，产物 {len(produced)} 项")
 
+    # D126：**转录**完成后就把转写内容写入草稿（dist 里 ai.transcript），
+    # 这样"仅转录"也能在逐生审核里看到 AI 认成了什么；
+    # 之前草稿只在全部步骤跑完后才写，点"仅转录"就什么都看不到。
+    if plan and "transcribe" in to_run:
+        try:
+            from .drafts import save_transcripts_to_drafts
+            n = save_transcripts_to_drafts(
+                ws, class_id=str(plan.get("classId") or ""),
+                work_id=str(plan.get("workId") or ""),
+                task_id=str(task.get("id") or "task"),
+                class_dir=str(plan.get("classDir") or ""),
+                transcripts_dir=ctx["transcripts_dir"])
+            if n:
+                logger.info(f"[草稿] 已写入 {n} 份转写内容（供逐生审核对照原图）")
+        except Exception as exc:  # noqa: BLE001
+            logger.warning(f"[草稿] 写入转写内容失败（不影响批阅结果）：{str(exc)[:160]}")
+
     # D86 §6：批阅完成后把结果落成"本地批阅草稿"（PWA 人工批阅栏可直接查看/修改/一键上传）
     if plan:
         cid = str((plan.get("classId") or "")).strip()

@@ -241,13 +241,18 @@ def build_report_md(transcript_path: Path, eval_path: Path) -> str:
     lines.append(f"**批阅时间：** {ts}")
     if ver_str:
         lines.append(f"**批阅版本：** {ver_str}")
-    lines += ["", "---", "", "## 一、评分", "", f"**总分：{score} / 100**"]
+    # D126：报告分两部分（发给学生看）：
+    #   一、AI 转写（AI 从你的作答中识别出的文字；便于对照原件发现识别偏差）
+    #   二、AI 批阅（评分 + 批语：指出错误在哪 + 启发式提问）
+    lines += ["", "---", "", "## 一、AI 转写（你写的原文）", "",
+              "> 下面是 AI 从你的作答图片中识别出的文字。若与你的原图有出入，"
+              "说明是识别偏差，不影响对思路的判断。", "",
+              markdown_text or "（无转写内容）",
+              "", "---", "", "## 二、AI 批阅", "", f"**总分：{score} / 100**"]
     if deductions:
         lines += ["", "**扣分明细：**", *[f"- {d}" for d in deductions]]
-    lines += ["", "---", "", "## 二、学生作答-转录", "", markdown_text,
-              "", "---", ""]
     if feedback_md:
-        lines += ["## 三、AI 评阅反馈", "", feedback_md, ""]
+        lines += ["", feedback_md, ""]
     lines += ["---", "*assist-engine 0.1.0 - AI 辅助批阅*", ""]
     return "\n".join(lines)
 
@@ -316,8 +321,12 @@ def md_to_html(md_text: str) -> str:
                 out.append(f"<li>{_inline(s[2:])}</li>")
             else:
                 out.append(f"<p>{_inline(s)}</p>")
+    # D126-FIX：`A4_CSS` / `MATHJAX_CDN` 从未定义过（本函数是早期遗留），
+    # 一旦调用就 NameError。改为复用与 `report_html` 同一套样式与 KaTeX 头，
+    # 保持输出可直接渲染、公式可显示。
     return f"""<!DOCTYPE html><html lang="zh"><head><meta charset="utf-8">
-<title>批阅报告</title><style>{A4_CSS}</style>{MATHJAX_CDN}</head><body>
+<title>批阅报告</title><style>{REPORT_CSS}</style>{_katex_head(find_katex_dir())}
+</head><body>
 {''.join(out)}
 </body></html>"""
 

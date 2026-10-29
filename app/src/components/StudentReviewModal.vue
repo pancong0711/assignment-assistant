@@ -10,7 +10,7 @@ const props = defineProps<{
   classId: string; workId: string
   /** D119：草稿按作业纸归属（不同作业批次不互相覆盖） */
   taskId?: string; classDir?: string
-  students: { name: string; key: string; tag?: string }[]
+  students: { name: string; key: string; tag?: string; images?: string[] }[]
   drafts: Record<string, any>
   startIndex?: number
 }>()
@@ -18,6 +18,8 @@ const emit = defineEmits<{ (e: 'close'): void; (e: 'saved'): void; (e: 'notify',
 
 const idx = ref(props.startIndex ?? 0)
 const rotate = ref(0)
+/** D126：AI 转写区是否展开（默认展开，教师最关心 AI 认没认对） */
+const showTranscript = ref(true)
 const layout = ref<'cols' | 'rows'>('cols')
 const msg = ref('')
 
@@ -26,9 +28,20 @@ const draft = computed(() => (cur.value ? (props.drafts[cur.value.key] || {}) : 
 const aiSet = computed(() => draft.value.ai || {})
 const revisionText = computed(() => String((draft.value.revision || {}).text || ''))
 
-/** 作答图片：来自 drafts 里 images（若有），否则由预览端点提供（此处用 review file URL 由父级传入？）。
- *  简化：作答图片用草稿里可能带有的 images；无则提示去「作业预览-学习通」查看。 */
-const answerImages = computed<string[]>(() => (draft.value.images as string[]) || [])
+/** 作答原件文件名。
+ *  D126：**优先用 students[].images**（来自 `<XXT_HOME>/pages/review/<classId>/<workId>/`
+ *  的实际文件名，由 `/xxt/preview/students` 补齐）；老数据回落 draft.images。
+ *  此前只读 draft.images（草稿里其实没有该字段）→ 永远看不到原图。
+ */
+const answerImages = computed<string[]>(() => {
+  const fromStudent = cur.value?.images
+  if (Array.isArray(fromStudent) && fromStudent.length) return fromStudent
+  const legacy = draft.value.images
+  return Array.isArray(legacy) ? (legacy as string[]) : []
+})
+
+/** D126：AI 转写内容（由父级按 (classDir, taskId, student) 拉取后传入）。 */
+const transcriptText = computed<string>(() => String(draft.value.ai?.transcript || ''))
 
 /* 人工批阅编辑态 */
 const score = ref(''); const comment = ref(''); const humanMode = ref('none')
@@ -98,13 +111,36 @@ async function save() {
                       display:flex; flex-direction:column; gap:8px">
             <img v-for="f in answerImages" :key="f" :src="imgUrl(f)" :alt="f"
                  :style="{ width:'100%', height:'auto', objectFit:'contain', transform:`rotate(${rotate}deg)`, borderRadius:'6px' }" />
-            <span v-if="!answerImages.length" class="hint">（本弹窗未加载作答图：作答图请在「作业预览-学习通 → 逐生预览」查看；此处专注审核批语。）</span>
+            <span v-if="!answerImages.length" class="hint">
+              （该生没有已下载的作答图；请先到「作业预览-学习通」对该作业点「⬇ 下载作答/批语」。）
+            </span>
           </div>
         </div>
 
         <!-- 右栏：AI 批语（上）/ 人工批阅（下） -->
         <div :style="{ flex: layout === 'rows' ? 'none' : '1.1', minWidth: '300px', width: layout === 'rows' ? '100%' : 'auto' }">
-          <h4>AI 批语 <span class="hint" style="font-weight:400">（只读基线{{ aiSet.score != null ? ` · 评分 ${aiSet.score}` : '' }}）</span></h4>
+          <!-- D126：AI 转写（便于对照原图，确认 AI 识别是否准确） -->
+          <h4 style="display:flex; align-items:center; gap:6px">
+            AI 转写
+            <span class="hint" style="font-weight:400">
+              （AI 从作答图识别出的文字；与左侧原图对照可发现识别偏差）
+            </span>
+            <button v-if="transcriptText" class="btn small" style="margin-left:auto"
+                    @click="showTranscript = !showTranscript">
+              {{ showTranscript ? '收起' : '展开' }}
+            </button>
+          </h4>
+          <div v-if="transcriptText && showTranscript"
+               style="border:1px solid var(--c-border); border-radius:8px; padding:8px;
+                      white-space:pre-wrap; max-height:30vh; overflow:auto;
+                      background:var(--c-bg-soft,#f8fafc); font-size:13px">
+            {{ transcriptText }}
+          </div>
+          <p v-else-if="!transcriptText" class="hint" style="margin:2px 0 8px">
+            （暂无转写内容：请先跑「① 仅转录」或「④ 完整批阅」。）
+          </p>
+
+          <h4 style="margin-top:10px">AI 批语 <span class="hint" style="font-weight:400">（只读基线{{ aiSet.score != null ? ` · 评分 ${aiSet.score}` : '' }}）</span></h4>
           <div style="border:1px solid var(--c-border); border-radius:8px; padding:8px; white-space:pre-wrap; min-height:80px;
                       background:var(--c-bg-soft,#f8fafc)">
             <span v-if="revisionText">（已另存修订版，见下）</span>

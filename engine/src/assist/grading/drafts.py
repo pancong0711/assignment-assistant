@@ -152,3 +152,48 @@ def render_reports_from_drafts(ws, *, class_id: str, work_id: str, task_id: str 
         done.append({"key": key, "student": student, "kind": kind,
                      "revised": bool(d.get("revised")), "png": bool(imgs)})
     return {"ok": True, "count": len(done), "reports": done, "dir": str(out_root)}
+
+
+def save_transcripts_to_drafts(ws, *, class_id: str, work_id: str, task_id: str,
+                               class_dir: str = "", transcripts_dir=None) -> int:
+    """D126：把转录产物写入批阅草稿的 `ai.transcript`（仅转录也能在逐生审核里看到）。
+
+    只填空缺的 transcript 字段，**不影响**已有的分数/批语；返回写入条数。
+    """
+    from pathlib import Path
+    from ..xxt import grade_store
+
+    if not (class_id and work_id):
+        return 0
+    tdir = Path(transcripts_dir) if transcripts_dir else None
+    if tdir is None or not tdir.is_dir():
+        return 0
+    # 学生名 → workAnswerId（优先用 plan）
+    wa_by_name: dict[str, str] = {}
+    try:
+        from . import inputs as _inputs
+        plan = _inputs.load_plan(ws, task_id, class_dir) or {}
+        for s in (plan.get("students") or []):
+            if s.get("name"):
+                wa_by_name[str(s["name"])] = str(s.get("workAnswerId") or "")
+    except Exception:  # noqa: BLE001
+        pass
+
+    n = 0
+    for tf in sorted(tdir.glob("[!_]*.json")):
+        try:
+            t = json.loads(tf.read_text(encoding="utf-8"))
+        except Exception:  # noqa: BLE001
+            continue
+        student = str(t.get("student") or tf.stem)
+        key = wa_by_name.get(student) or student
+        text = str(t.get("markdown") or "").strip()
+        if not text:
+            continue
+        rep = grade_store.save_draft_sets(
+            None, class_id, work_id, key,
+            ai={"transcript": text, "transcriptModel": str(t.get("model") or "")},
+            student=student, ws=Path(ws), class_dir=class_dir, task_id=task_id)
+        if rep.get("ok"):
+            n += 1
+    return n
