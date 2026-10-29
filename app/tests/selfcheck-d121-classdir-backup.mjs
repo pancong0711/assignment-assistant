@@ -110,5 +110,17 @@ const stripComments = (s) => s.replace(/\/\*[\s\S]*?\*\//g, '')
   assert.ok(/--move/.test(cliPy), 'CLI fix-layout 应有 --move')
 }
 
+/* 8) D123：映射规范化 —— PWA 用下拉选真实班级目录，保存前自动补 classes/ 前缀 */
+{
+  const comp = read('src/components/AiGradingPanel.vue')
+  assert.ok(/classDirOptions/.test(comp), '应有真实班级目录候选列表')
+  assert.ok(/<select v-model="classDir\[/.test(comp), '关联目录应改为下拉选择（避免手输漏前缀）')
+  assert.ok(/if \(v && !v\.startsWith\('classes\/'\)\) v = `classes\/\$\{v\}`/.test(comp),
+    '保存前应自动补 classes/ 前缀')
+  const py = engine('xxt/classmap.py')
+  assert.ok(/def normalize_class_dir/.test(py), '引擎应有 normalize_class_dir')
+  assert.ok(/map-fixed/.test(py), '应自动纠正存量坏映射并回写')
+}
+
 console.log('OK d121-classdir-backup：解析不回退/精确自动绑定/保留名排除 · '
   + '假目录保护真实产物 · 备份脱敏不含 .runtime · PWA 一键备份+清理（演练+确认）')

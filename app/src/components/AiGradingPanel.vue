@@ -422,16 +422,42 @@ async function loadStudents() {
 function classDirFor(w: { courseId: string; classId: string }): string {
   return classMap.value[`${w.courseId}:${w.classId}`] || classDir.value[`${w.courseId}:${w.classId}`] || ''
 }
+/** D123：本机真实存在的班级目录（`classes/<班级>`），供下拉选择。
+ *  此前是自由输入框，教师很容易漏掉 `classes/` 前缀（实测存成 `化工25`），
+ *  导致解析时找不到目录、批阅报"目录已不存在"。 */
+const classDirOptions = computed<string[]>(() => {
+  const out: string[] = []
+  for (const cid of rosterStore.classOrder || []) {
+    const c = rosterStore.classes[cid]
+    if (!c) continue
+    const dir = `classes/${c.name || c.id}`
+    if (!out.includes(dir)) out.push(dir)
+  }
+  return out.sort()
+})
+
 function suggestDir() {
   const w = curWork.value; if (!w) return
-  classDir.value = { ...classDir.value, [`${w.courseId}:${w.classId}`]: classDirFor(w) }
+  // 优先用按名称匹配的候选；匹配不到就选第一个真实班级，避免留空/手输
+  const guess = classDirFor(w) || classDirOptions.value[0] || ''
+  classDir.value = { ...classDir.value, [`${w.courseId}:${w.classId}`]: guess }
 }
 async function saveDir() {
   const w = curWork.value; if (!w) return
   const k = `${w.courseId}:${w.classId}`
+  // D123：自动补 `classes/` 前缀（与引擎 normalize_class_dir 同口径）
+  let v = String(classDir.value[k] || '').trim().replace(/^\/+|\/+$/g, '')
+  if (v && !v.startsWith('classes/')) v = `classes/${v}`
+  classDir.value = { ...classDir.value, [k]: v }
   const rep = await postXxtClassMap(props.engineAddr, props.token,
-    { courseId: w.courseId, classId: w.classId, classDir: classDir.value[k] || '' })
-  msg.value = rep?.ok ? `已关联 ${w.classId} → ${classDir.value[k]}` : `保存失败：${rep?.error || ''}`
+    { courseId: w.courseId, classId: w.classId, classDir: v })
+  if (rep?.ok) {
+    msg.value = `已关联 ${w.classId} → ${(rep as { map?: Record<string, string> }).map?.[k] || v}`
+  } else {
+    const cands = (rep as { candidates?: string[] })?.candidates || []
+    msg.value = `保存失败：${rep?.error || ''}`
+      + (cands.length ? `（可选：${cands.join('、')}）` : '')
+  }
   await loadConfig()
 }
 async function saveProvider() {
@@ -641,7 +667,17 @@ onMounted(async () => {
     <h3 style="margin-top:14px">② 班级 ↔ 作业纸目录（class_map，按文件名建议）</h3>
     <div v-if="curWork" style="display:flex; gap:8px; align-items:center; flex-wrap:wrap">
       <span class="hint" style="width:240px">{{ curWork.label }}</span>
-      <input v-model="classDir[`${curWork.courseId}:${curWork.classId}`]" placeholder="classes/xxx" style="width:230px" />
+      <!-- D123：改为下拉选择真实班级目录，避免手输漏 `classes/` 前缀 -->
+      <select v-model="classDir[`${curWork.courseId}:${curWork.classId}`]" style="min-width:230px">
+        <option value="">（未关联）</option>
+        <option v-for="d in classDirOptions" :key="d" :value="d">{{ d }}</option>
+        <option
+          v-if="classDir[`${curWork.courseId}:${curWork.classId}`]
+            && !classDirOptions.includes(classDir[`${curWork.courseId}:${curWork.classId}`])"
+          :value="classDir[`${curWork.courseId}:${curWork.classId}`]">
+          {{ classDir[`${curWork.courseId}:${curWork.classId}`] }}（当前映射，目录可能不存在）
+        </option>
+      </select>
       <button class="btn" @click="suggestDir">填当前映射</button>
       <button class="btn" @click="saveDir">保存映射</button>
     </div>

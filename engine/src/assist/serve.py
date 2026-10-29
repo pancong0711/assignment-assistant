@@ -1246,8 +1246,15 @@ class Handler(BaseHTTPRequestHandler):
                 rep = classmap.resolve_class_dir(ws, cid, kid, str(payload.get("name") or ""),
                                                  auto_write=bool(payload.get("write")))
             else:
-                rep = {"ok": True, "map": classmap.set_class_dir(ws, cid, kid,
-                                                                 str(payload.get("classDir") or ""))}
+                # D123：保存映射时规范化 + 校验目录存在（不存在 → 400 + 可选项）
+                try:
+                    rep = {"ok": True, "map": classmap.set_class_dir(ws, cid, kid,
+                                                                    str(payload.get("classDir") or ""))}
+                except classmap.ClassDirResolutionError as exc:
+                    self._json({"ok": False, "error": str(exc),
+                                "candidates": [c["classDir"] for c in
+                                               classmap.list_class_candidates(ws)][:8]}, 400)
+                    return
             self._json(rep, 200 if rep.get("ok", True) else 400)
             return
         if u.path == "/llm/provider":

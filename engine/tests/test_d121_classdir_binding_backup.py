@@ -44,8 +44,14 @@ def test_resolve_does_not_misbind_similar_name(tmp_path):
 
 
 def test_resolve_raises_when_mapped_dir_deleted(tmp_path):
-    """映射过但目录被删 → 明确报错。"""
-    C.set_class_dir(tmp_path, "co1", "c1", "classes/不存在")
+    """映射过但目录被删 → 明确报错。
+
+    注：D123 起 `set_class_dir` 会拒绝保存不存在的目录，
+    因此这里直接写坏映射来模拟"历史遗留的失效映射"。
+    """
+    from assist.settings_store import update_settings
+    update_settings(tmp_path, lambda d: d.setdefault("xxt", {}).__setitem__(
+        "class_map", {"co1:c1": "classes/不存在"}))
     with pytest.raises(C.ClassDirResolutionError) as ei:
         C.resolve_or_raise(tmp_path, "co1", "c1", "化工25")
     assert "已不存在" in str(ei.value)
@@ -304,3 +310,73 @@ def test_fix_layout_move_keeps_nonempty_forbidden_dir(tmp_path):
     WL.fix_layout(ws, apply=True, move=True)
     assert extra.is_file(), "有内容的目录不得删除"
     assert (ws / "kb" / "classes").is_dir()
+
+
+# ---------------- D123：映射规范化 + 存量自动纠正 ----------------
+
+def test_set_class_dir_normalizes_missing_prefix(tmp_path):
+    """D123：教师存成 `化工25`（漏 classes/ 前缀）→ 自动规范成 `classes/化工25`。"""
+    (tmp_path / "classes" / "化工25" / "roster").mkdir(parents=True)
+    rep = C.set_class_dir(tmp_path, "c", "k", "化工25")
+    assert rep["c:k"] == "classes/化工25"
+    assert C.resolve_or_raise(tmp_path, "c", "k", "")["classDir"] == "classes/化工25"
+
+
+def test_set_class_dir_rejects_nonexistent(tmp_path):
+    """D123：保存不存在的目录 → 拒绝并给出可用候选（不再静默存坏值）。"""
+    (tmp_path / "classes" / "化工25" / "roster").mkdir(parents=True)
+    with pytest.raises(C.ClassDirResolutionError) as ei:
+        C.set_class_dir(tmp_path, "c", "k", "不存在的班")
+    msg = str(ei.value)
+    assert "不存在" in msg and "classes/化工25" in msg
+
+
+def test_set_class_dir_empty_clears_mapping(tmp_path):
+    (tmp_path / "classes" / "A" / "roster").mkdir(parents=True)
+    C.set_class_dir(tmp_path, "c", "k", "classes/A")
+    assert C.set_class_dir(tmp_path, "c", "k", "") == {}
+
+
+def test_resolve_auto_fixes_legacy_mapping(tmp_path):
+    """D123：存量坏映射（`化工25`）在解析时**自动纠正并回写**，无需用户重选。"""
+    from assist.settings_store import update_settings
+    (tmp_path / "classes" / "化工25" / "roster").mkdir(parents=True)
+    update_settings(tmp_path, lambda d: d.setdefault("xxt", {}).__setitem__(
+        "class_map", {"236230001:153240001": "化工25"}))
+    rep = C.resolve_or_raise(tmp_path, "236230001", "153240001", "化工25")
+    assert rep["classDir"] == "classes/化工25"
+    assert rep["source"] == "map-fixed"
+    # 已回写
+    assert C.class_dir_for(tmp_path, "236230001", "153240001") == "classes/化工25"
+
+
+def test_serve_class_map_returns_400_on_bad_dir(tmp_path):
+    """D123：保存不存在的目录 → HTTP 400 + 候选列表（不是 500）。"""
+    import threading
+    import urllib.error
+    import urllib.request
+    from http.server import ThreadingHTTPServer
+
+    import assist.serve as S
+    (tmp_path / "classes" / "化工25" / "roster").mkdir(parents=True)
+    S._set_serve_ws(tmp_path); S.Handler.ws = tmp_path.resolve(); S.Handler.token = ""
+    httpd = ThreadingHTTPServer(("127.0.0.1", 0), S.Handler)
+    port = httpd.server_address[1]
+    threading.Thread(target=httpd.serve_forever, daemon=True).start()
+    try:
+        body = json.dumps({"courseId": "c", "classId": "k",
+                           "classDir": "不存在的班"}).encode()
+        req = urllib.request.Request(f"http://127.0.0.1:{port}/xxt/class-map",
+                                     data=body, method="POST",
+                                     headers={"Content-Type": "application/json"})
+        try:
+            urllib.request.urlopen(req)
+            raised = False
+        except urllib.error.HTTPError as e:
+            raised = e.code == 400
+            payload = json.loads(e.read())
+        assert raised, "应返回 400"
+        assert "不存在" in payload["error"]
+        assert "classes/化工25" in payload.get("candidates", [])
+    finally:
+        httpd.shutdown(); S._SERVE_WS = None

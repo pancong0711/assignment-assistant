@@ -44,9 +44,43 @@ def write_class_map(ws, mapping: dict) -> dict:
     return clean
 
 
+def normalize_class_dir(ws, raw: str) -> str:
+    """D123：把用户输入规范成 `classes/<班级>`。
+
+    PWA 的输入框容易漏 `classes/` 前缀（实测教师存成 `化工25`，
+    而真实目录是 `classes/化工25`）→ 解析时找不到 → 报"目录已不存在"。
+    """
+    s = str(raw or "").strip().replace("\\", "/").strip("/")
+    if not s:
+        return ""
+    if not s.startswith("classes/"):
+        cand = f"classes/{s}"
+        # 只有确认 `classes/<s>` 真实存在时才补前缀；否则保留原值（可能是自定义根目录）
+        try:
+            if (Path(ws).resolve() / cand).is_dir():
+                return cand
+        except OSError:
+            pass
+    return s
+
+
 def set_class_dir(ws, course_id, class_id, class_dir: str) -> dict:
+    """D123：保存映射时**规范化并校验**目录存在，不存在则拒绝并给出可选项。"""
+    raw = str(class_dir or "").strip()
+    if not raw:
+        cmap = read_class_map(ws)
+        cmap.pop(key_of(course_id, class_id), None)
+        return write_class_map(ws, cmap)
+    cd = normalize_class_dir(ws, raw)
+    target = (Path(ws).resolve() / cd)
+    if not target.is_dir():
+        cands = [c["classDir"] for c in list_class_candidates(ws)][:8]
+        raise ClassDirResolutionError(
+            f"班级目录不存在：{cd}（解析为 {target}）。"
+            + (f"本机可用班级目录：{'、'.join(cands)}。" if cands else "本机还没有任何班级目录，请先在「班级与标签」建班。")
+        )
     cmap = read_class_map(ws)
-    cmap[key_of(course_id, class_id)] = str(class_dir).strip()
+    cmap[key_of(course_id, class_id)] = cd
     return write_class_map(ws, cmap)
 
 
@@ -175,6 +209,15 @@ def resolve_or_raise(ws, course_id: str, class_id: str, class_name: str = "",
     if mapped:
         if (_P(ws_p) / mapped).is_dir():
             return {"classDir": mapped, "source": "map"}
+        # D123：存量映射可能漏了 `classes/` 前缀（如 `化工25`）→ 自动纠正并回写
+        fixed = normalize_class_dir(ws_p, mapped)
+        if fixed and fixed != mapped and (_P(ws_p) / fixed).is_dir():
+            try:
+                set_class_dir(ws_p, cid, kid, fixed)
+                logger.info(f"[D123] 自动纠正映射 {mapped} → {fixed}")
+            except Exception:  # noqa: BLE001
+                pass
+            return {"classDir": fixed, "source": "map-fixed", "original": mapped}
         raise ClassDirResolutionError(
             f"学习通班级 {kid} 关联的本地目录已不存在：{mapped}。"
             f"请在「AI 辅助批阅」② 区重新选择目录并保存，"
