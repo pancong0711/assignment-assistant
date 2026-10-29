@@ -391,7 +391,7 @@ P3 写操作（远期，本阶段不动）
 ```json
 {"run_id": "xxt-20261008-115", "mode": "readonly", "ts_start": "...", "ts_end": "...",
  "session": {"checked_at": "...", "verdict": "alive|dead", "storage": ".scratch/xxt-storage.json"},
- "courses": [ { "name": "大学物理C2", "courseId": "236230440", "classes": [ { "$ref": "19.2 ClassRecord" } ] } ],
+ "courses": [ { "name": "大学物理", "courseId": "<courseId>", "classes": [ { "$ref": "19.2 ClassRecord" } ] } ],
  "failures": [ { "$ref": "19.4 FailureRecord" } ] }
 ```
 - 会话体检失败（verdict=dead）→ 整个 run **直接失败退出**，不产出半成品数据；

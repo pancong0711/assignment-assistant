@@ -50,8 +50,8 @@ base = grading_dir(ws, task)               # ← D121 起拒绝空 class_dir →
 | `SheetContentView.vue:147` | `roster.students[0]?.class \|\| 'classA'` ❌ |
 | `variantBatch.ts:147` | `students[0]?.class \|\| 'classA'` ❌ |
 
-`students[].class` 是**从点名册 xlsx 导入的原始值**（如 `2025-环境251班`），
-与班级名（`环境251`）不是一回事 → 产生**两套目录**。
+`students[].class` 是**从点名册 xlsx 导入的原始值**（如 `2025-化工25班`），
+与班级名（`化工25`）不是一回事 → 产生**两套目录**。
 
 另外 `|| 'classA'` 兜底在班级无学生时会**凭空造出 `classes/classA`**（与 D119/D121 同类假目录问题）。
 
@@ -99,7 +99,7 @@ const dir = `classes/${cls.name}`     // cls = RosterClass
 `roster/roster.json` 与 `task-package.json` 增加：
 
 ```jsonc
-{ "className": "环境251", "classId": "c1", "updatedAt": "...",
+{ "className": "化工25", "classId": "c1", "updatedAt": "...",
   "students": [ ... ] }
 ```
 
@@ -109,7 +109,7 @@ const dir = `classes/${cls.name}`     // cls = RosterClass
 
 ```
 ⚠ 班级目录命名（yellow）
-   classes/2025-环境251班 的目录名与班级名不一致（班级名：环境251）
+   classes/2025-化工25班 的目录名与班级名不一致（班级名：化工25）
    [🔧 一键修正]
 ```
 

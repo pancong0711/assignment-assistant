@@ -36,7 +36,7 @@ class_dir = resolved.get("classDir") or str(task.get("class_dir") or "classes")
 
 | 概念 | 例子 | 存在哪 |
 |---|---|---|
-| 学习通班级 id | `153248256` | 学习通服务器 |
+| 学习通班级 id | `<classId>`（如 153240001） | 学习通服务器 |
 | 本地班级目录 | `classes/化工25` | workspace 磁盘 |
 
 对照表 = `settings.local.json` 的 `xxt.class_map`。

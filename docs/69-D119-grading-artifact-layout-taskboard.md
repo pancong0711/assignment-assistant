@@ -35,8 +35,8 @@ priority: XXT_HOME > (repo_root/.scratch 若存在 xxt-storage.json) > <ws>/.run
 实测（本机）：
 
 ```
-find_workspace(None) → /home/bot2603/assignment-assistant-workspace
-serve._ws()          → /home/bot2603/assignment-assistant-workspace
+find_workspace(None) → <ws>（教师 workspace）
+serve._ws()          → <ws>
 xxt_home()           → <repo>/.scratch        ← 仓库目录，不是 workspace！
 ```
 
