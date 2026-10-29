@@ -69,6 +69,9 @@ def test_cli_grade_missing_images_is_click_exception_not_traceback(tmp_path):
     pad = {
         "id": "202610-chap05-811",
         "class": "classA",
+        # D121：任务包必须带具体 class_dir（PWA/CLI 关联后写入）；
+        # 为空/为 "classes" 会被拒绝（旧实现会拼出假目录）
+        "class_dir": "classes/classA",
         "layout": {"orientation": "portrait", "per_page": 2,
                    "header": {"title": "t"}, "footer": {"text": ""}},
         "items": [{"kb": "problems", "chap": "chap04", "ids": ["c1"], "tag": "distinguish"}],

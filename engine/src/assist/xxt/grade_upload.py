@@ -480,3 +480,74 @@ def upload_grade(*, storage, course_id: str, class_id: str, cpi: str, work_id: s
         return result
     finally:
         _close(pw, browser)
+
+
+# ---------------- D121-G6：上传清单落盘（可复现 / 可审计） ----------------
+
+def upload_manifest_path(ws, class_dir: str, task_id: str, work_id: str) -> "Path | None":
+    """`<ws>/<class_dir>/grading/<taskId>/upload/<workId>.json`。"""
+    import re as _re
+    cd = str(class_dir or "").strip().strip("/")
+    tid = str(task_id or "").strip()
+    wid = str(work_id or "").strip()
+    if not cd or not tid or not wid:
+        return None
+    safe = lambda s: _re.sub(r"[\\/:*?\"<>|]", "_", s).strip(" .") or "x"  # noqa: E731
+    from pathlib import Path as _P
+    return _P(ws).resolve() / cd / "grading" / safe(tid) / "upload" / f"{safe(wid)}.json"
+
+
+def write_upload_manifest(ws, class_dir: str, task_id: str, work_id: str,
+                          payloads: list[dict], *, source: str = "",
+                          result: "dict | None" = None) -> dict:
+    """上传**前**写入「即将发送什么」；上传后可用 `result` 追加结果。
+
+    目的：出问题时能回答"上次到底给学习通发了什么"（此前 payload 现场拼装、不落盘）。
+    """
+    p = upload_manifest_path(ws, class_dir, task_id, work_id)
+    if p is None:
+        return {"ok": False, "error": "classDir/taskId/workId 不完整"}
+    prev = {}
+    if p.is_file():
+        try:
+            prev = json.loads(p.read_text(encoding="utf-8"))
+        except Exception:  # noqa: BLE001
+            prev = {}
+    # D121-FIX：payloads 里的图片带 base64（报告 PNG），原样落盘会让清单膨胀到 MB 级。
+    # 清单只记录**元信息**（文件名/大小），不存图片数据本身。
+    def _slim(p: dict) -> dict:
+        d = dict(p or {})
+        imgs = d.pop("images", None)
+        if isinstance(imgs, list):
+            metas = []
+            for im in imgs:
+                if not isinstance(im, dict):
+                    continue
+                data = str(im.get("data_b64") or "")
+                metas.append({
+                    "name": str(im.get("name") or ""),
+                    "bytes": (len(data) * 3 // 4) if data else 0,
+                    "hasData": bool(data),
+                })
+            if metas:
+                d["images"] = metas
+        return d
+
+    data = {
+        "workId": str(work_id), "taskId": str(task_id), "classDir": str(class_dir),
+        "source": source or prev.get("source") or "",
+        "generatedAt": prev.get("generatedAt") or time.strftime("%Y-%m-%d %H:%M:%S"),
+        "items": [_slim(x) for x in (payloads or [])],
+    }
+    if result is not None:
+        data["result"] = {**result, "at": time.strftime("%Y-%m-%d %H:%M:%S")}
+    elif prev.get("result"):
+        data["result"] = prev["result"]
+    try:
+        p.parent.mkdir(parents=True, exist_ok=True)
+        from ..filelock import atomic_write_text
+        atomic_write_text(p, json.dumps(data, ensure_ascii=False, indent=1))
+    except Exception as exc:  # noqa: BLE001
+        logger.warning(f"上传清单落盘失败：{exc}")
+        return {"ok": False, "error": str(exc)[:200]}
+    return {"ok": True, "path": str(p), "items": len(data["items"])}

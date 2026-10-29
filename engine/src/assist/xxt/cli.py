@@ -643,6 +643,13 @@ def register(group: click.Group) -> None:
                                       ensure_ascii=False, indent=1))
                 raise SystemExit(2)
 
+        # D121-G6：上传前先落盘「即将发送什么」（可复现/可审计）
+        try:
+            from .grade_upload import write_upload_manifest
+            write_upload_manifest(ws, _resolve_class_dir(), _task_id(), work_id,
+                                  payloads, source="evaluations")
+        except Exception:  # noqa: BLE001
+            pass
         reps: list[dict] = []
         for tgt in targets:
             stu = student or str(tgt.get("student") or "")

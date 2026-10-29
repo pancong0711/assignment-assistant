@@ -1,0 +1,206 @@
+"""D121：班级目录自动绑定 + 假目录根除 + 清理 + 一键备份 + 上传清单。
+
+触发：`<ws>/classes/grading/`、`<ws>/grading/` 两个假目录；体检误报「1 个班级缺 roster.xlsx（grading）」。
+"""
+import json
+import zipfile
+from pathlib import Path
+
+import pytest
+from click.testing import CliRunner
+
+from assist import backup as B
+from assist import workspace_junk as J
+from assist.cli import cli
+from assist.grading import flow as F
+from assist.xxt import classmap as C
+from assist.xxt.grade_upload import write_upload_manifest
+
+
+# ---------------- G1：解析不到不回退、可读报错 ----------------
+
+def test_resolve_raises_when_no_local_classes(tmp_path):
+    """本地没有任何班级目录 → 报错并提示先建班/重新提取（**不回退 'classes'**）。"""
+    with pytest.raises(C.ClassDirResolutionError) as ei:
+        C.resolve_or_raise(tmp_path, "co1", "c1", "化工25")
+    msg = str(ei.value)
+    assert "没有任何班级目录" in msg
+    assert "班级与标签" in msg or "重新提取" in msg
+
+
+def test_resolve_auto_binds_unique_exact_match(tmp_path):
+    """唯一**完全相同**的班级目录 → 自动写入映射（无需人工点保存映射）。"""
+    (tmp_path / "classes" / "化工25" / "roster").mkdir(parents=True)
+    rep = C.resolve_or_raise(tmp_path, "co1", "c1", "化工25")
+    assert rep["source"] == "auto" and rep["classDir"] == "classes/化工25"
+    assert C.class_dir_for(tmp_path, "co1", "c1") == "classes/化工25"
+
+
+def test_resolve_does_not_misbind_similar_name(tmp_path):
+    """名字相似但不同 → **不自动绑定**（错配比未配更危险）。"""
+    (tmp_path / "classes" / "化工2" / "roster").mkdir(parents=True)
+    with pytest.raises(C.ClassDirResolutionError):
+        C.resolve_or_raise(tmp_path, "co1", "c9", "化工25")
+
+
+def test_resolve_raises_when_mapped_dir_deleted(tmp_path):
+    """映射过但目录被删 → 明确报错。"""
+    C.set_class_dir(tmp_path, "co1", "c1", "classes/不存在")
+    with pytest.raises(C.ClassDirResolutionError) as ei:
+        C.resolve_or_raise(tmp_path, "co1", "c1", "化工25")
+    assert "已不存在" in str(ei.value)
+
+
+def test_is_class_dir_excludes_reserved(tmp_path):
+    """`classes/grading` 等保留名不算班级（修 roster_persist 误报）。"""
+    for name in ("grading", "roster", "tasks", "packs", "_unassigned"):
+        d = tmp_path / "classes" / name / "roster"
+        d.mkdir(parents=True)
+        assert not C.is_class_dir(tmp_path / "classes" / name), name
+    real = tmp_path / "classes" / "化工25" / "roster"
+    real.mkdir(parents=True)
+    assert C.is_class_dir(tmp_path / "classes" / "化工25")
+
+
+# ---------------- G1：grading_dir 拒绝假目录 ----------------
+
+def test_grading_dir_rejects_empty_class_dir(tmp_path):
+    with pytest.raises(ValueError) as ei:
+        F.grading_dir(tmp_path, {"id": "t1", "class_dir": ""})
+    assert "不合法" in str(ei.value)
+
+
+def test_grading_dir_rejects_bare_classes(tmp_path):
+    """回退值 'classes' 会拼出 <ws>/classes/grading 假目录 → 必须拒绝。"""
+    with pytest.raises(ValueError):
+        F.grading_dir(tmp_path, {"id": "t1", "class_dir": "classes"})
+
+
+def test_grading_dir_ok_for_real_class(tmp_path):
+    d = F.grading_dir(tmp_path, {"id": "t1", "class_dir": "classes/化工25"})
+    assert d.is_dir()
+    assert d.resolve().relative_to((tmp_path / "classes").resolve())
+
+
+def test_grading_dir_rejects_out_of_bounds(tmp_path):
+    with pytest.raises(ValueError):
+        F.grading_dir(tmp_path, {"id": "t1", "class_dir": "../outside"})
+
+
+# ---------------- G4：清理假目录（含真实产物必须拒绝） ----------------
+
+def test_clean_junk_protects_real_artifacts(tmp_path):
+    ws = tmp_path / "ws"
+    (ws / "kb").mkdir(parents=True)
+    # 顶层假目录（只有日志）→ 可删
+    (ws / "grading" / "t1").mkdir(parents=True)
+    (ws / "grading" / "t1" / "journal.jsonl").write_text("{}", encoding="utf-8")
+    # classes/grading 里有一个批次含真实 evaluations → 整棵保护
+    (ws / "classes" / "grading" / "t2" / "evaluations").mkdir(parents=True)
+    (ws / "classes" / "grading" / "t2" / "evaluations" / "张三.json").write_text("{}", encoding="utf-8")
+
+    rep = J.clean_junk(ws, apply=False)
+    assert rep["summary"]["deletable"] == 1
+    assert rep["summary"]["protected"] == 1
+    prot = rep["protected"][0]
+    assert prot["hasRealArtifacts"] and "t2" in prot["realArtifactBatches"]
+
+    J.clean_junk(ws, apply=True)
+    assert not (ws / "grading").exists(), "顶层假目录应被删"
+    assert (ws / "classes" / "grading" / "t2" / "evaluations" / "张三.json").is_file(), \
+        "含真实产物的目录必须保留"
+
+
+def test_cli_clean_junk_dry_run(tmp_path):
+    ws = tmp_path / "ws"
+    (ws / "kb").mkdir(parents=True)
+    (ws / "grading" / "t1").mkdir(parents=True)
+    r = CliRunner().invoke(cli, ["workspace", "clean-junk", "-w", str(ws)])
+    assert r.exit_code == 0, r.output
+    assert (ws / "grading").is_dir(), "演练不应删除"
+
+
+# ---------------- G5：一键备份（脱敏 + 不含 .runtime） ----------------
+
+def test_backup_redacts_secrets_and_excludes_runtime(tmp_path):
+    ws = tmp_path / "ws"
+    (ws / "kb").mkdir(parents=True)
+    (ws / "kb" / "problems.xlsx").write_bytes(b"x")
+    (ws / "classes" / "化工25" / "roster").mkdir(parents=True)
+    (ws / "classes" / "化工25" / "roster" / "roster.xlsx").write_bytes(b"r")
+    (ws / ".runtime" / "xxt" / "pages" / "review").mkdir(parents=True)
+    (ws / ".runtime" / "xxt" / "pages" / "review" / "a.jpg").write_bytes(b"img")
+    (ws / "settings.local.json").write_text(json.dumps({
+        "llm": {"base_url": "http://x", "api_key": "sk-REAL-123", "model": "m"},
+        "xxt": {"token": "tok-REAL"},
+    }, ensure_ascii=False), encoding="utf-8")
+
+    rep = B.create_backup(ws)
+    assert rep["ok"]
+    with zipfile.ZipFile(rep["path"]) as zf:
+        names = zf.namelist()
+        assert any("kb/problems.xlsx" in n for n in names)
+        assert any("roster.xlsx" in n for n in names)
+        assert not any(".runtime" in n for n in names), "不得收录 .runtime/"
+        st = zf.read("workspace/settings.local.json").decode("utf-8")
+        assert "sk-REAL-123" not in st and "tok-REAL" not in st
+        assert '"api_key": "***"' in st
+        man = json.loads(zf.read("manifest.json"))
+        assert man["kind"] == "assignment-assistant-backup"
+    assert B.verify_no_secrets(rep["path"])["ok"], "备份自检应通过"
+
+
+def test_backup_includes_browser_data(tmp_path):
+    ws = tmp_path / "ws"
+    (ws / "kb").mkdir(parents=True)
+    rep = B.create_backup(ws, browser_data={"roster": {"classes": {}}, "api_key": "sk-x"})
+    assert rep["ok"]
+    with zipfile.ZipFile(rep["path"]) as zf:
+        d = json.loads(zf.read("browser/data.json"))
+        assert "roster" in d
+        assert d["api_key"] == "***"
+
+
+def test_cli_backup(tmp_path):
+    ws = tmp_path / "ws"
+    (ws / "kb").mkdir(parents=True)
+    (ws / "kb" / "a.xlsx").write_bytes(b"x")
+    r = CliRunner().invoke(cli, ["workspace", "backup", "-w", str(ws)])
+    assert r.exit_code == 0, r.output
+    assert '"ok": true' in r.output
+    assert "secretCheck" in r.output
+
+
+# ---------------- G6：上传清单落盘 ----------------
+
+def test_upload_manifest_written_and_result_appended(tmp_path):
+    ws = tmp_path / "ws"
+    payloads = [{"student": "张三", "total_score": 88, "question_scores": [8, 9],
+                 "comment": "好"}]
+    rep = write_upload_manifest(ws, "classes/化工25", "t1", "w1", payloads,
+                                source="evaluations")
+    assert rep["ok"]
+    p = Path(rep["path"])
+    assert p.relative_to(ws).as_posix() == "classes/化工25/grading/t1/upload/w1.json"
+    d = json.loads(p.read_text(encoding="utf-8"))
+    assert d["source"] == "evaluations" and len(d["items"]) == 1
+
+    write_upload_manifest(ws, "classes/化工25", "t1", "w1", payloads,
+                          source="evaluations", result={"ok": True})
+    d2 = json.loads(p.read_text(encoding="utf-8"))
+    assert d2["result"]["ok"] is True
+    assert len(d2["items"]) == 1, "追加结果不应丢原始 items"
+
+
+def test_clean_junk_never_deletes_real_class_named_like_reserved(tmp_path):
+    """D121-FIX：真实班级名撞上保留名（如 `classes/tasks` 含 roster.xlsx）→ **不得删除**。"""
+    ws = tmp_path / "ws"
+    (ws / "kb").mkdir(parents=True)
+    real = ws / "classes" / "tasks" / "roster"
+    real.mkdir(parents=True)
+    (real / "roster.xlsx").write_bytes(b"real")
+    rep = J.clean_junk(ws, apply=True)
+    assert rep["summary"]["deletable"] == 0, "真实班级不得被判为假目录"
+    assert (real / "roster.xlsx").is_file(), "名册文件必须保留"
+    assert any("tasks" in (it.get("realClassDirs") or [])
+               for it in rep["protected"]), "应标记为真实班级目录"

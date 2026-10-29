@@ -295,6 +295,77 @@ export const useSettingsStore = defineStore('settings', {
       return true
     },
     /** R1.4 修复按钮：POST /install/<item> + SSE 进度；完成后自动重跑体检。 */
+    /** D121：一键备份（workspace + 浏览器数据；引擎侧脱敏）。 */
+    async runBackup(): Promise<boolean> {
+      if (!this.engineOnline) {
+        this.installLog = '⚠ 引擎未在线，无法备份。'
+        return false
+      }
+      this.installing = 'backup'
+      try {
+        const { backupWorkspace, collectBrowserData } = await import('../lib/engineClient')
+        this.installLog = '正在打包备份（kb/classes/tasks/packs + 浏览器数据）…'
+        const rep = await backupWorkspace(this.engineUrl, this.engineToken, collectBrowserData())
+        if (!rep?.ok) {
+          this.installLog = `❌ 备份失败：${rep?.error || '未知错误'}`
+          return false
+        }
+        this.installLog = `✅ 备份完成：${rep.path}（${rep.human}）`
+          + (rep.secretCheck?.ok ? '；密钥已脱敏' : '；⚠ 自检未通过')
+        return true
+      } catch (e) {
+        this.installLog = `❌ 备份失败：${String((e as Error).message || e)}`
+        return false
+      } finally {
+        this.installing = ''
+      }
+    },
+    /** D121：清理假目录（先演练 → 确认 → 执行）。 */
+    async runCleanJunk(): Promise<boolean> {
+      if (!this.engineOnline) {
+        this.installLog = '⚠ 引擎未在线。'
+        return false
+      }
+      this.installing = 'clean-junk'
+      try {
+        const { cleanWorkspaceJunk } = await import('../lib/engineClient')
+        const dry = await cleanWorkspaceJunk(this.engineUrl, this.engineToken, false)
+        const n = dry?.summary?.deletable ?? 0
+        const prot = dry?.summary?.protected ?? 0
+        if (!n && !prot) {
+          this.installLog = '没有发现假目录。'
+          return true
+        }
+        const lines = (dry.deletable || []).slice(0, 20)
+          .map((d) => `  ${d.path}（${d.files} 个文件）`).join('\n')
+        const warn = prot
+          ? `\n\n⚠ ${prot} 个目录含真实批阅产物，将**跳过不删**（请人工处理）`
+          : ''
+        if (!n) {
+          this.installLog = `发现 ${prot} 个含真实产物的目录，已跳过（不自动删）。`
+          return false
+        }
+        if (!window.confirm(
+          `将删除 ${n} 个假目录（${dry.summary?.bytes ? (dry.summary.bytes / 1024 / 1024).toFixed(1) : 0} MB）：\n\n`
+          + lines + warn + '\n\n确定执行？',
+        )) {
+          this.installLog = '已取消。'
+          return false
+        }
+        const rep = await cleanWorkspaceJunk(this.engineUrl, this.engineToken, true)
+        this.installLog = rep?.ok
+          ? `✅ 已清理 ${rep.summary?.deletable ?? 0} 个假目录`
+            + (rep.summary?.protected ? `；保留 ${rep.summary.protected} 个（含真实产物）` : '')
+          : `❌ 清理失败：${rep?.error || ''}`
+        await this.runDoctor()
+        return !!rep?.ok
+      } catch (e) {
+        this.installLog = `❌ 清理失败：${String((e as Error).message || e)}`
+        return false
+      } finally {
+        this.installing = ''
+      }
+    },
     /** D120：通用「一键修复」——调用体检项 fix.endpoint（先演练，确认后执行）。 */
     async runFixApi(endpoint: string, label = ''): Promise<boolean> {
       if (!this.engineOnline) {

@@ -83,7 +83,27 @@ def expand_items(ws: Path, task: dict) -> list[dict]:
 
 
 def grading_dir(ws: Path, task: dict) -> Path:
-    d = ws / task.get("class_dir", "classes") / "grading" / str(task.get("id", "task"))
+    """批阅产物目录：`<ws>/<class_dir>/grading/<taskId>/`。
+
+    D121：**拒绝** class_dir 为空/为 `"classes"` 的调用——旧实现会拼出
+    `<ws>/grading/`（空串塌掉）或 `<ws>/classes/grading/`（回退值）两个假目录。
+    """
+    class_dir = str(task.get("class_dir") or "").strip().strip("/")
+    if not class_dir or class_dir == "classes":
+        raise ValueError(
+            f"批阅产物目录不合法：class_dir={class_dir!r}。"
+            f"必须是具体班级目录（如 classes/化工25）；"
+            f"请先在「AI 辅助批阅」② 区完成学习通班级 ↔ 本地班级目录的关联。"
+        )
+    d = Path(ws) / class_dir / "grading" / str(task.get("id", "task"))
+    # 兜底：结果必须在 <ws>/classes/ 之下
+    root = (Path(ws).resolve() / "classes")
+    try:
+        d.resolve().relative_to(root)
+    except Exception:  # noqa: BLE001
+        raise ValueError(
+            f"批阅产物目录越界：{d}（应位于 {root} 之下）。class_dir={class_dir!r}"
+        ) from None
     d.mkdir(parents=True, exist_ok=True)
     return d
 

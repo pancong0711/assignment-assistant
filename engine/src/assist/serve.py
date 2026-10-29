@@ -287,10 +287,15 @@ def _doctor_checks(ws: Path) -> list[dict]:
     # D120：名单是否已落盘（localStorage 有、磁盘没有 → 提醒写盘）
     try:
         from .files import roster_io as _rio
+        # D121-G3：只认**真正的班级目录**（含 roster/，且不是 grading/ 等保留名）。
+        # 旧实现把 classes/ 下所有子目录都当班级 → `classes/grading` 被误报"缺 roster"。
+        from .xxt import classmap as _cmap
         classes_dir = ws / "classes"
         missing: list[str] = []
         if classes_dir.is_dir():
             for c in sorted(p for p in classes_dir.iterdir() if p.is_dir()):
+                if c.name in _cmap.RESERVED_CLASS_DIR_NAMES:
+                    continue
                 if not (c / "roster" / "roster.xlsx").is_file():
                     missing.append(c.name)
         if missing:
@@ -754,6 +759,41 @@ class Handler(BaseHTTPRequestHandler):
             self.send_header("Access-Control-Max-Age", "600")
         self.end_headers()
 
+    def _auto_bind_classes(self, works: "list[dict]") -> "tuple[list[dict], list[dict]]":
+        """D121-G2：为作业列表里的学习通班级自动建立 classmap（仅唯一精确命中）。
+
+        返回 `(auto_bound, need_confirm)`：
+        - auto_bound:  `[{classId, className, classDir}]`
+        - need_confirm:`[{classId, className, candidates: [...]}]`
+        """
+        auto_bound: list[dict] = []
+        need_confirm: list[dict] = []
+        seen: set = set()
+        try:
+            from .xxt import classmap
+            ws = Path(self.ws).resolve()
+            for w in works or []:
+                kid = str(w.get("classId") or "")
+                cid = str(w.get("courseId") or "")
+                if not kid or (cid, kid) in seen:
+                    continue
+                seen.add((cid, kid))
+                if cid and classmap.class_dir_for(ws, cid, kid):
+                    continue                      # 已绑定
+                name = str(w.get("className") or "")
+                try:
+                    rep = classmap.resolve_or_raise(ws, cid, kid, name)
+                    if rep.get("source") == "auto":
+                        auto_bound.append({"classId": kid, "className": name,
+                                           "classDir": rep["classDir"]})
+                except classmap.ClassDirResolutionError:
+                    cands = classmap.suggest_class_dir(ws, name)
+                    need_confirm.append({"classId": kid, "className": name,
+                                         "candidates": cands[:5]})
+        except Exception:  # noqa: BLE001 —— 自动绑定失败不影响作业列表
+            logger.debug("auto bind classes 跳过（异常）", exc_info=True)
+        return auto_bound, need_confirm
+
     def _grade_preflight(self, cid: str, kid: str, work: str, task_id: str,
                          pad_path: Path, pads_dir: str = "",
                          ) -> "tuple[dict, int] | None":
@@ -832,6 +872,37 @@ class Handler(BaseHTTPRequestHandler):
                 return
             from .files import taskpads
             rep = taskpads.save_taskpad(Path(self.ws).resolve(), payload.get("taskpad") or {})
+            self._json(rep, 200 if rep.get("ok") else 400)
+            return
+        if u.path == "/workspace/backup":
+            payload = {}
+            try:
+                length = int(self.headers.get("Content-Length") or 0)
+                if length:
+                    payload = json.loads(self.rfile.read(length).decode("utf-8")) or {}
+            except Exception:  # noqa: BLE001
+                payload = {}
+            from . import backup as B
+            rep = B.create_backup(Path(self.ws).resolve(),
+                                  browser_data=payload.get("browser") or None)
+            if rep.get("ok"):
+                chk = B.verify_no_secrets(rep["path"])
+                rep["secretCheck"] = chk
+                if not chk.get("ok"):
+                    rep["ok"] = False
+                    rep["error"] = "备份包自检失败：疑似含未脱敏密钥"
+            self._json(rep, 200 if rep.get("ok") else 400)
+            return
+        if u.path == "/workspace/clean-junk":
+            payload = {}
+            try:
+                length = int(self.headers.get("Content-Length") or 0)
+                if length:
+                    payload = json.loads(self.rfile.read(length).decode("utf-8")) or {}
+            except Exception:  # noqa: BLE001
+                payload = {}
+            from . import workspace_junk as WJ
+            rep = WJ.clean_junk(Path(self.ws).resolve(), apply=bool(payload.get("apply")))
             self._json(rep, 200 if rep.get("ok") else 400)
             return
         if u.path == "/workspace/fix-layout":
@@ -2143,8 +2214,15 @@ class Handler(BaseHTTPRequestHandler):
             return
         elif u.path == "/xxt/review/index":
             from .xxt import review as _review
-            self._json({"ok": True, "works": _review.list_review_works(_xxt_home()),
-                        "stats": _review.review_stats(_xxt_home())})
+            works = _review.list_review_works(_xxt_home())
+            # D121-G2：顺手做「学习通班级 → 本地班级目录」的自动绑定。
+            # 提取/下载流程过去完全不碰 classmap，导致教师从未建立映射 →
+            # 批阅时 class_dir 解析不到 → 拼出 <ws>/classes/grading 假目录。
+            # 这里只对「唯一精确命中」自动写入；其余收集成待确认列表返回给 PWA。
+            auto_bound, need_confirm = self._auto_bind_classes(works)
+            self._json({"ok": True, "works": works,
+                        "stats": _review.review_stats(_xxt_home()),
+                        "autoBound": auto_bound, "needConfirm": need_confirm})
             return
         elif (m_rev := re.fullmatch(r"/xxt/review/file/([0-9A-Za-z\-_]{1,40})/([0-9A-Za-z\-_]{1,40})/([^/]{1,160})", u.path)):
             from .xxt import review as _review
@@ -2260,9 +2338,22 @@ class Handler(BaseHTTPRequestHandler):
         elif u.path == "/taskpads":
             from .files import taskpads
             self._json({"ok": True, "items": taskpads.list_taskpads(Path(self.ws).resolve())})
+        elif u.path.startswith("/workspace/backup/file"):
+            from . import backup as B
+            q = urllib.parse.parse_qs(u.query)
+            ws_ = Path(self.ws).resolve()
+            name = (q.get("name") or [""])[0]
+            safe = Path(name).name
+            p = (ws_ / "backups" / safe).resolve()
+            if not str(p).startswith(str(ws_ / "backups")) or not p.is_file():
+                self._json({"ok": False, "error": "备份文件不存在"}, 404)
+                return
+            self._raw(p.read_bytes(), "application/zip")
         elif u.path == "/workspace/layout":
             from . import workspace_layout as WL
-            self._json(WL.inspect(Path(self.ws).resolve()))
+            from . import workspace_junk as WJ
+            ws_ = Path(self.ws).resolve()
+            self._json({**WL.inspect(ws_), "junk": WJ.find_junk(ws_)})
         elif u.path == "/kb/catalog":
             from .files.kb_io import catalog as _catalog
             q = urllib.parse.parse_qs(u.query)

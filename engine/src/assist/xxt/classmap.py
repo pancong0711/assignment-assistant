@@ -9,6 +9,8 @@ from __future__ import annotations
 import re
 from pathlib import Path
 
+from loguru import logger
+
 ROSTER_EXTS = (".xlsx", ".xls", ".csv")
 
 
@@ -71,6 +73,11 @@ def list_class_candidates(ws) -> list[dict]:
     return out
 
 
+def _strip_ext(name: str) -> str:
+    import os as _os
+    return _os.path.splitext(str(name or ""))[0]
+
+
 def suggest_class_dir(ws, class_name: str, limit: int = 5) -> list[dict]:
     """按**文件名**给出候选（含相似度分数）；无命中时退回目录名比较。"""
     want = _norm(class_name)
@@ -110,3 +117,112 @@ def resolve_class_dir(ws, course_id, class_id, class_name: str = "",
         set_class_dir(ws, course_id, class_id, best)
         return {"classDir": best, "source": "auto", "candidates": cands}
     return {"classDir": best, "source": "suggest", "candidates": cands}
+
+
+# ---------------- D121：班级目录解析（不回退、自动绑定、分级报错） ----------------
+
+# `classes/` 下这些名字是**保留名**，不是班级目录
+RESERVED_CLASS_DIR_NAMES = {"grading", "roster", "tasks", "packs", "_unassigned"}
+
+
+class ClassDirResolutionError(RuntimeError):
+    """学习通班级 → 本地班级目录 解析失败（带可执行的下一步动作）。"""
+
+
+def is_class_dir(p: "Path | str") -> bool:
+    """D121-G3：判断某目录是否为**班级目录**。
+
+    判据：是目录 + 不是保留名 + 含 `roster/` 子目录。
+    （旧实现把 `classes/` 下所有子目录都当班级 → `classes/grading` 被误判为缺 roster 的班级。）
+    """
+    from pathlib import Path as _P
+    d = _P(p)
+    try:
+        return (d.is_dir()
+                and d.name not in RESERVED_CLASS_DIR_NAMES
+                and (d / "roster").is_dir())
+    except OSError:
+        return False
+
+
+def list_real_class_dirs(ws) -> list[str]:
+    """列出真正的班级目录（相对 workspace，如 `classes/化工25`）。"""
+    from pathlib import Path as _P
+    root = _P(ws).resolve() / "classes"
+    if not root.is_dir():
+        return []
+    return [f"classes/{p.name}" for p in sorted(root.iterdir()) if is_class_dir(p)]
+
+
+def resolve_or_raise(ws, course_id: str, class_id: str, class_name: str = "",
+                     *, auto_bind: bool = True) -> dict:
+    """D121-G1/G2：解析班级目录；**绝不回退成 `"classes"`**。
+
+    行为：
+    1. 已有映射且目录存在 → 直接返回；
+    2. 已有映射但目录不存在 → 抛错（提示重新关联/重新提取）；
+    3. 无映射：若有**唯一精确**匹配（score>=0.999）→ 自动写入映射并返回（auto_bind）；
+    4. 无映射且有多个/模糊候选 → 抛错并列出候选；
+    5. 无任何候选 → 抛错并提示先建班。
+
+    返回 `{"classDir": "classes/xxx", "source": "map|auto", ...}`。
+    """
+    from pathlib import Path as _P
+    ws_p = _P(ws).resolve()
+    cid, kid = str(course_id or ""), str(class_id or "")
+
+    mapped = class_dir_for(ws_p, cid, kid) if cid and kid else ""
+    if mapped:
+        if (_P(ws_p) / mapped).is_dir():
+            return {"classDir": mapped, "source": "map"}
+        raise ClassDirResolutionError(
+            f"学习通班级 {kid} 关联的本地目录已不存在：{mapped}。"
+            f"请在「AI 辅助批阅」② 区重新选择目录并保存，"
+            f"或运行 `assist xxt class-map --course {cid} --class {kid} --dir classes/<班级>`；"
+            f"也可在学习通重新提取该班级。"
+        )
+
+    cands = suggest_class_dir(ws_p, class_name)
+    # D121：自动绑定只认「**完全相同**」——目录名与班级名归一后相等，
+    # 或 roster 文件名与班级名归一后相等。suggest_class_dir 的 score 是"相似度"，
+    # 直接用它会让 classes/化工2 误绑到"化工25"（错配比未配更危险）。
+    want = _norm(class_name)
+    exact: list[dict] = []
+    if want:
+        for c in (list_class_candidates(ws_p)):
+            names = [_norm(c.get("dirName") or "")] + [_norm(f) for f in c.get("rosters") or []]
+            names += [_norm(_strip_ext(f)) for f in c.get("rosters") or []]
+            if want in names:
+                exact.append({"classDir": c["classDir"], "score": 1.0})
+    if auto_bind and len(exact) == 1:
+        best = exact[0]["classDir"]
+        try:
+            set_class_dir(ws_p, cid, kid, best)
+        except Exception:  # noqa: BLE001 —— 写映射失败不影响本次解析
+            pass
+        logger.info(f"[D121] 自动绑定学习通班级 {kid} → {best}")
+        return {"classDir": best, "source": "auto", "candidates": cands}
+
+    real = list_real_class_dirs(ws_p)
+    if not real:
+        raise ClassDirResolutionError(
+            f"本地没有任何班级目录，无法定位学习通班级 {kid}"
+            + (f"（{class_name}）" if class_name else "")
+            + "。请先在「班级与标签」建班并导入名单；"
+              "或到「作业预览-学习通」重新提取该班级。"
+        )
+    if cands:
+        names = "、".join(sorted({c["classDir"] for c in cands[:5]}))
+        raise ClassDirResolutionError(
+            f"学习通班级 {kid}"
+            + (f"（{class_name}）" if class_name else "")
+            + f" 未绑定本地班级目录。候选：{names}。"
+              f"请在「AI 辅助批阅」② 区选择其一并「保存映射」，"
+              f"或运行 `assist xxt class-map --course {cid} --class {kid} --dir classes/<班级>`。"
+        )
+    raise ClassDirResolutionError(
+        f"学习通班级 {kid}"
+        + (f"（{class_name}）" if class_name else "")
+        + f" 未绑定，且按名称匹配不到候选（本地班级：{'、'.join(real[:5])}）。"
+          f"请在「AI 辅助批阅」② 区手工选择目录并保存映射。"
+    )

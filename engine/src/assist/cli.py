@@ -1608,8 +1608,12 @@ def grade(obj, task_path, pads_dir, images_dir, rerun, xxt_class, work_id, plan_
     elif xxt_class:
         cid, _, kid = str(xxt_class).partition(":")
         from .xxt import classmap
-        resolved = classmap.resolve_class_dir(ws, cid, kid, str(task.get("class") or ""))
-        class_dir = resolved.get("classDir") or str(task.get("class_dir") or "classes")
+        # D121：解析不到**不回退**（回退会产生 <ws>/classes/grading 假目录），改为可读报错
+        try:
+            resolved = classmap.resolve_or_raise(ws, cid, kid, str(task.get("class") or ""))
+        except classmap.ClassDirResolutionError as exc:
+            raise click.ClickException(str(exc)) from None
+        class_dir = resolved["classDir"]
         tag_list = [t.strip() for t in str(tags).split(",") if t.strip()]
         plan = _inputs.build_plan(ws, task_id=task_id, class_dir=class_dir,
                                   class_id=kid, work_id=work_id, mode=(mode or "optimized"),
@@ -1673,6 +1677,54 @@ def workspace_fix_layout(obj, apply_, workspace, verbose):
     if not apply_ and rep["summary"]["moved"]:
         click.echo(f"\n（演练：将迁移 {rep['summary']['moved']} 个文件。"
                    f"确认后加 --apply；源文件不会被删除）")
+
+
+@workspace_grp.command("backup")
+@click.option("--out", "out_zip", default=None, help="输出 zip 路径（缺省 <ws>/backups/…zip）")
+@click.option("--browser-json", default=None, type=click.Path(exists=True, dir_okay=False),
+              help="PWA 导出的 localStorage JSON（可选）")
+@click.option("--workspace", "-w", default=None)
+@click.option("--verbose", "-v", is_flag=True)
+@click.pass_obj
+def workspace_backup(obj, out_zip, browser_json, workspace, verbose):
+    """D121：一键备份（kb/classes/tasks/packs/sheets + 浏览器数据；**不含 .runtime/**，密钥脱敏）。"""
+    from . import backup as B
+    ws = _setup(verbose or obj.get("verbose"), workspace)
+    bd = None
+    if browser_json:
+        try:
+            bd = json.loads(Path(browser_json).read_text(encoding="utf-8"))
+        except Exception as exc:  # noqa: BLE001
+            raise click.ClickException(f"浏览器数据 JSON 读取失败：{exc}") from None
+    rep = B.create_backup(ws, Path(out_zip) if out_zip else None, browser_data=bd)
+    click.echo(json.dumps(rep, ensure_ascii=False, indent=1))
+    if not rep.get("ok"):
+        raise click.ClickException(rep.get("error") or "备份失败")
+    chk = B.verify_no_secrets(rep["path"])
+    click.echo(json.dumps({"secretCheck": chk}, ensure_ascii=False, indent=1))
+    if not chk.get("ok"):
+        raise click.ClickException("备份包自检失败：疑似含未脱敏密钥")
+
+
+@workspace_grp.command("clean-junk")
+@click.option("--apply", "apply_", is_flag=True, help="真正删除（缺省只演练）")
+@click.option("--workspace", "-w", default=None)
+@click.option("--verbose", "-v", is_flag=True)
+@click.pass_obj
+def workspace_clean_junk(obj, apply_, workspace, verbose):
+    """D121：清理假目录（<ws>/grading、<ws>/classes/grading 等）。
+
+    **含真实批阅产物（evaluations/transcripts/reports）的目录一律拒绝删除。**
+    """
+    from . import workspace_junk as J
+    ws = _setup(verbose or obj.get("verbose"), workspace)
+    rep = J.clean_junk(ws, apply=apply_)
+    click.echo(json.dumps(rep, ensure_ascii=False, indent=1))
+    if rep["summary"]["protected"]:
+        click.echo(f"\n⚠ {rep['summary']['protected']} 个目录含真实批阅产物，已拒绝删除（请人工处理）")
+    if not apply_ and rep["summary"]["deletable"]:
+        click.echo(f"\n（演练：可删 {rep['summary']['deletable']} 项 / "
+                   f"{rep['summary']['bytes'] / 1024 / 1024:.1f} MB。确认后加 --apply）")
 
 
 @workspace_grp.command("roster-save")
@@ -1776,8 +1828,11 @@ def grade_plan_xxt(task_path, xxt_class, work_id, pads_dir, tags, workspace):
     task_id = str(task.get("id") or "task")
     cid, _, kid = str(xxt_class).partition(":")
     from .xxt import classmap
-    resolved = classmap.resolve_class_dir(ws, cid, kid, str(task.get("class") or ""))
-    class_dir = resolved.get("classDir") or str(task.get("class_dir") or "classes")
+    try:
+        resolved = classmap.resolve_or_raise(ws, cid, kid, str(task.get("class") or ""))
+    except classmap.ClassDirResolutionError as exc:
+        raise click.ClickException(str(exc)) from None
+    class_dir = resolved["classDir"]
     tag_list = [t.strip() for t in str(tags).split(",") if t.strip()]
     plan = _inputs.build_plan(ws, task_id=task_id, class_dir=class_dir, class_id=kid,
                               work_id=work_id, mode="optimized", tags=tag_list,

@@ -1,7 +1,7 @@
 # D121 任务需求单：班级目录自动绑定 + 假目录根除 + 一键备份 + 上传清单
 
 > 日期：2026-10-29
-> 状态：**已确认（用户拍板）→ 执行中**
+> 状态：**已执行完成（2026-10-29）**；验证见 §7
 > 关联：`docs/70-D120`（workspace 根语义/roster 落盘）、`docs/69-D119`（批阅产物布局）、`docs/04`（数据契约）
 > 触发：`<ws>/classes/grading/`、`<ws>/grading/` 两个**假目录**；PWA 体检误报「1 个班级缺 roster.xlsx（grading）」
 
@@ -184,3 +184,63 @@ PWA：体检项 `workspace_layout` 的 `fix.type='api'` 扩展现有按钮（同
 | 清理命令误删真实批阅产物 | 默认演练 + 内容清单 + 含 `evaluations/transcripts/reports` 时拒绝 |
 | 备份包体积过大 | 排除 `.runtime/`；`manifest` 记录各项统计 |
 | 备份包泄漏密钥 | 强制脱敏，备份后自检 `api_key` 不存在 |
+
+---
+
+## 6. 实施记录（已完成）
+
+### 6.1 落地内容
+
+| 条目 | 实现 |
+|---|---|
+| **G1 不回退** | `classmap.resolve_or_raise()`：解析不到**抛 `ClassDirResolutionError`**（分级：无班级/有候选/映射目录已删，各给下一步动作）。`cli.py` 两处调用点改用它 |
+| **G1' 目录越界断言** | `flow.grading_dir()` 拒绝 `class_dir` 为空或为 `"classes"`（旧实现正是这两个值造出假目录），并断言结果必须落在 `<ws>/classes/` 之下 |
+| **G2 自动绑定** | `resolve_or_raise(auto_bind=True)`：**仅当归一后完全相同**（目录名或 roster 文件名）才自动写入映射。`GET /xxt/review/index` 顺手对所有作业班级执行，返回 `autoBound` / `needConfirm` 供 PWA 统一提示 |
+| **G3 班级识别** | `is_class_dir()`：非保留名 + 含 `roster/`。`roster_persist` 用它 → 不再把 `classes/grading` 误报为缺 roster 的班级 |
+| **G4 清理假目录** | `workspace_junk.py` + `assist workspace clean-junk [--apply]` + `POST /workspace/clean-junk`，PWA「🧹 清理假目录」按钮（演练→确认→执行） |
+| **G5 一键备份** | `backup.py` + `assist workspace backup [--out] [--browser-json]` + `POST /workspace/backup` + `GET /workspace/backup/file`，PWA「💾 一键备份」按钮。**不含 `.runtime/`**、`settings.local.json` 递归脱敏、备份后 `verify_no_secrets()` 自检 |
+| **G6 上传清单** | `write_upload_manifest()` → `grading/<taskId>/upload/<workId>.json`；`xxt grade-upload` 两个路径（drafts/evaluations）上传**前**落盘，上传后可追加 `result` |
+
+### 6.2 复审发现并修复的 3 个问题
+
+| # | 问题 | 说明 |
+|---|---|---|
+| **R1** | **clean-junk 会误删真实班级** | 若教师把班级命名为保留名（如 `classes/tasks`），会被当成假目录删除。改为 `_looks_like_real_class()`：含 `roster.xlsx/roster.json/task-package.json` 一律视为真实班级，**永不删** |
+| **R2** | **上传清单膨胀** | `drafts_to_payloads()` 的 `images` 含报告 PNG 的 base64，原样落盘会让清单到 MB 级。改为只记元信息（`name`/`bytes`/`hasData`）——实测 400KB → **300 字节** |
+| **R3** | **备份漏收水印/题图素材** | `collectBrowserData()` 最初只收 6 个键，漏了 `watermark.assets.v1`、`watermark.styles.v1`、`fig.assets.v1`（教师上传的**图片素材，丢了不可恢复**）。补齐并加自检：**store 里的键必须全部被收集**（仅排除瞬时状态） |
+
+### 6.3 验证
+
+| 项 | 结果 |
+|---|---|
+| 解析不到 | 抛可读错误，含"先在「班级与标签」建班 / 重新提取" |
+| 自动绑定 | `classes/化工25` 与班级名"化工25"完全相同 → 自动写映射（`source=auto`） |
+| 防误绑 | 有 `classes/化工2` 但班级名"化工25" → **不**自动绑定，报错要求人工确认 |
+| 映射目录被删 | 明确报"关联的本地目录已不存在" |
+| grading_dir | 空 / `"classes"` / `../outside` 全部被拒 |
+| clean-junk | 顶层 `<ws>/grading` 可删；`classes/grading` 含 `evaluations/` → **保护**；真实班级撞保留名 → **保护** |
+| 备份 | 不含 `.runtime/`；`api_key`/`token` → `***`；`verify_no_secrets()` 通过；含浏览器数据 |
+| 上传清单 | 路径 `classes/…/grading/<task>/upload/<workId>.json`；追加 `result` 不丢 `items`；图片只存元信息 |
+| 端到端（HTTP） | `GET /workspace/layout` 检出 2 个假目录 → `clean-junk` 演练 `deletable=1/protected=1` → 执行后顶层删掉、真实产物保留 → 备份 `secretCheck.ok=true` |
+| engine pytest | **685 passed**（新增 `test_d121_classdir_binding_backup.py` 16 例） |
+| app `vue-tsc` / `build` | 0 error |
+| app `npm run selfcheck` | **31 项全绿**（新增 `selfcheck-d121-classdir-backup.mjs`） |
+| 脱敏 / bat lint | 通过 |
+
+### 6.4 教师操作指引
+
+```bash
+# ① 体检（PWA 设置中心 → 体检）
+assist doctor
+
+# ② 清理假目录（PWA 有「🧹 清理假目录」按钮）
+assist workspace clean-junk            # 演练
+assist workspace clean-junk --apply    # 含真实批阅产物的目录会自动跳过
+
+# ③ 一键备份（PWA 有「💾 一键备份」按钮）
+assist workspace backup                # → <ws>/backups/*.zip
+
+# ④ 关联班级目录（现在多数情况会自动完成）
+assist xxt class-map --list            # 看当前映射
+assist xxt class-map --course <c> --class <k> --dir classes/<班级>   # 仅需手工时
+```

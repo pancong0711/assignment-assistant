@@ -474,6 +474,18 @@ onMounted(() => {
         <button class="btn" style="margin-left:8px" :disabled="engineRestarting || checking"
                 title="使引擎侧代码/配置改动生效（进程重启，约1–2s）"
                 @click="restartEngineNow">{{ engineRestarting ? '重启中…' : '🔄 重启引擎' }}</button>
+        <!-- D121：一键备份（workspace + 浏览器数据；引擎侧强制脱敏、不含 .runtime/） -->
+        <button class="btn" style="margin-left:8px" :disabled="settings.installing !== ''"
+                title="备份 kb/classes/tasks/packs + 浏览器数据；密钥自动脱敏；不含 .runtime/（作答图可重下）"
+                @click="settings.runBackup()">
+          {{ settings.installing === 'backup' ? '备份中…' : '💾 一键备份' }}
+        </button>
+        <!-- D121：清理假目录（<ws>/grading、<ws>/classes/grading 等；含真实产物一律拒绝） -->
+        <button class="btn" style="margin-left:8px" :disabled="settings.installing !== ''"
+                title="清理不是班级、也不是题库的结构目录（先演练，含真实批阅产物的会跳过）"
+                @click="settings.runCleanJunk()">
+          {{ settings.installing === 'clean-junk' ? '清理中…' : '🧹 清理假目录' }}
+        </button>
         <span class="hint" style="margin-left:8px">{{ statusHint }}</span>
       </p>
       <ul class="check-list">

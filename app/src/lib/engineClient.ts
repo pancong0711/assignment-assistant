@@ -1498,6 +1498,67 @@ export async function saveTaskpadToEngine(
   return o
 }
 
+/** D121：POST /workspace/clean-junk —— 清理假目录（含真实产物的一律拒绝）。 */
+export async function cleanWorkspaceJunk(
+  engineAddr: string, token: string | undefined, apply: boolean,
+): Promise<{ ok?: boolean; deletable?: Array<{ path: string; files: number; bytes: number }>
+  protected?: Array<{ path: string; realArtifactBatches: string[] }>
+  summary?: { deletable: number; protected: number; bytes: number }; error?: string }> {
+  const base = normalizeEngineAddr(engineAddr)
+  const res = await fetch(engineUrlWithToken(base, '/workspace/clean-junk', token), {
+    method: 'POST', headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ apply }),
+  })
+  const o = (await res.json().catch(() => ({}))) as
+    { ok?: boolean; deletable?: Array<{ path: string; files: number; bytes: number }>
+      protected?: Array<{ path: string; realArtifactBatches: string[] }>
+      summary?: { deletable: number; protected: number; bytes: number }; error?: string }
+  if (!res.ok && !o?.error) throw new Error(`HTTP ${res.status}`)
+  return o
+}
+
+/** D121：POST /workspace/backup —— 一键备份（含 PWA localStorage 导出；密钥由引擎脱敏）。 */
+export async function backupWorkspace(
+  engineAddr: string, token: string | undefined,
+  browser: Record<string, unknown>,
+): Promise<{ ok?: boolean; path?: string; human?: string; secretCheck?: { ok?: boolean }
+  error?: string }> {
+  const base = normalizeEngineAddr(engineAddr)
+  const res = await fetch(engineUrlWithToken(base, '/workspace/backup', token), {
+    method: 'POST', headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ browser }),
+  })
+  const o = (await res.json().catch(() => ({}))) as
+    { ok?: boolean; path?: string; human?: string; secretCheck?: { ok?: boolean }; error?: string }
+  if (!res.ok && !o?.error) throw new Error(`HTTP ${res.status}`)
+  return o
+}
+
+/** D121：把 PWA 的关键 localStorage 打成一个对象（交给引擎备份）。 */
+export function collectBrowserData(): Record<string, unknown> {
+  const out: Record<string, unknown> = {}
+  // D121：必须覆盖**所有会丢就找不回**的浏览器数据：
+  // 名单/题库/作业纸/作业包/设置 + 水印素材/水印样式/题图素材（后三者是教师上传的图片，丢了不可恢复）
+  const keys: Array<[string, string]> = [
+    ['roster-classes.v2', 'assignment-assistant.roster-classes.v2'],
+    ['roster.v1', 'assignment-assistant.roster.v1'],
+    ['kb.v1', 'assignment-assistant.kb.v1'],
+    ['taskpads', 'assignment-assistant.taskpads.v1'],
+    ['packs', 'assignment-assistant.packs.v1'],
+    ['settings', 'assignment-assistant.settings.v1'],
+    ['watermarkAssets', 'assignment-assistant.watermark.assets.v1'],
+    ['watermarkStyles', 'assignment-assistant.watermark.styles.v1'],
+    ['figAssets', 'assignment-assistant.fig.assets.v1'],
+  ]
+  for (const [name, key] of keys) {
+    try {
+      const raw = localStorage.getItem(key)
+      if (raw) out[name] = JSON.parse(raw)
+    } catch { /* 非 JSON 或不可读 → 跳过 */ }
+  }
+  return out
+}
+
 /** POST /workspace/fix-layout：迁移 kb/ 下的错位目录（D120）。 */
 export async function fixWorkspaceLayout(
   engineAddr: string, token: string | undefined, apply: boolean,
