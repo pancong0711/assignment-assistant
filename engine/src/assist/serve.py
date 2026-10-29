@@ -34,7 +34,7 @@ from . import __version__
 from .xxt import layout as xxt_layout
 
 CHECK_IDS = ("python_env", "uv", "deps", "playwright", "xelatex", "fonts", "settings", "kb",
-              "grading_layout")
+              "grading_layout", "workspace_layout", "roster_persist")
 INSTALL_ITEMS = ("deps", "playwright", "fonts", "tex_guide", "python_guide", "uv", "kb_init", "katex", "tinytex", "engine_update")
 
 KATEX_VERSION = "0.16.4"
@@ -267,6 +267,42 @@ def _doctor_checks(ws: Path) -> list[dict]:
     checks.append(_check("kb", "green" if ok_kb else "yellow", "kb 题库",
                          f"{kb_dir}；xlsx={len(kb_xlsx)}" + (f"（{', '.join(kb_xlsx[:5])}）" if kb_xlsx else "（缺失，可创建默认题库）"),
                          {} if ok_kb else {"type": "install", "install": "kb_init"}))
+    # D120：workspace 目录布局（kb/ 下不得出现 classes/ roster/ grading/ 等）
+    try:
+        from . import workspace_layout as _wl
+        inv = _wl.inspect(ws)
+        n_files = (inv.get("summary") or {}).get("files", 0)
+        if n_files:
+            names = "、".join(f"kb/{v['name']}" for v in inv.get("violations") or [])
+            checks.append(_check(
+                "workspace_layout", "yellow", "workspace 目录布局",
+                f"检测到 {names}（共 {n_files} 个文件错位，如名单被写到题库目录下）",
+                {"type": "api", "endpoint": "/workspace/fix-layout", "label": "🔧 一键迁移到正确位置"}))
+        else:
+            checks.append(_check("workspace_layout", "green", "workspace 目录布局",
+                                 "kb/ 下无错位目录", {}))
+    except Exception:  # noqa: BLE001
+        checks.append(_check("workspace_layout", "yellow", "workspace 目录布局",
+                             "检查失败（不影响使用）", {}))
+    # D120：名单是否已落盘（localStorage 有、磁盘没有 → 提醒写盘）
+    try:
+        from .files import roster_io as _rio
+        classes_dir = ws / "classes"
+        missing: list[str] = []
+        if classes_dir.is_dir():
+            for c in sorted(p for p in classes_dir.iterdir() if p.is_dir()):
+                if not (c / "roster" / "roster.xlsx").is_file():
+                    missing.append(c.name)
+        if missing:
+            checks.append(_check(
+                "roster_persist", "yellow", "名单落盘",
+                f"{len(missing)} 个班级缺 roster.xlsx（{'、'.join(missing[:5])}）："
+                f"到「班级与标签」点一次保存即会自动写盘（D120：保存即落盘）",
+                {"type": "guide", "hint": "打开「班级与标签」→ 保存" }))
+        else:
+            checks.append(_check("roster_persist", "green", "名单落盘", "各班级均有 roster.xlsx", {}))
+    except Exception:  # noqa: BLE001
+        pass
     # D119：批阅产物布局体检（作答原件/草稿是否在正确 workspace；是否有旧目录残留）
     try:
         from .xxt import migrate_layout as _ml
@@ -769,6 +805,47 @@ class Handler(BaseHTTPRequestHandler):
                             "detail": xxt_err,
                             "hint": "关闭引擎窗口 → 删除 workspace\_engine → 重新双击 start.bat；见 docs/24 §14"}, 503)
                 return
+        if u.path == "/roster/write":
+            # D120：名单落盘（路径由引擎权威决定：<ws>/<class_dir>/roster/roster.xlsx）
+            payload: dict = {}
+            try:
+                length = int(self.headers.get("Content-Length") or 0)
+                if length:
+                    payload = json.loads(self.rfile.read(length).decode("utf-8")) or {}
+            except Exception as exc:  # noqa: BLE001
+                self._json({"ok": False, "error": f"bad json: {exc}"}, 400)
+                return
+            from .files import roster_io
+            rep = roster_io.write_roster(Path(self.ws).resolve(),
+                                         str(payload.get("classDir") or ""),
+                                         payload.get("students") or [])
+            self._json(rep, 200 if rep.get("ok") else 400)
+            return
+        if u.path == "/taskpad/save":
+            payload = {}
+            try:
+                length = int(self.headers.get("Content-Length") or 0)
+                if length:
+                    payload = json.loads(self.rfile.read(length).decode("utf-8")) or {}
+            except Exception as exc:  # noqa: BLE001
+                self._json({"ok": False, "error": f"bad json: {exc}"}, 400)
+                return
+            from .files import taskpads
+            rep = taskpads.save_taskpad(Path(self.ws).resolve(), payload.get("taskpad") or {})
+            self._json(rep, 200 if rep.get("ok") else 400)
+            return
+        if u.path == "/workspace/fix-layout":
+            payload = {}
+            try:
+                length = int(self.headers.get("Content-Length") or 0)
+                if length:
+                    payload = json.loads(self.rfile.read(length).decode("utf-8")) or {}
+            except Exception:  # noqa: BLE001
+                payload = {}
+            from . import workspace_layout as WL
+            rep = WL.fix_layout(Path(self.ws).resolve(), apply=bool(payload.get("apply")))
+            self._json(rep, 200 if rep.get("ok") else 400)
+            return
         if u.path == "/kb/write":
             # B4：PWA 把内存 KbBook（kind + chapters）交给引擎，openpyxl 原位改值保留样式。
             from .files import snapshot, write_chapters_preserving
@@ -2174,6 +2251,18 @@ class Handler(BaseHTTPRequestHandler):
             ws_ = Path(self.ws).resolve()
             self._json({"ok": True, "items": P.list_templates(ws_),
                         "default": (P.default_template(ws_) or {}).get("id", "")})
+        elif u.path == "/roster/read":
+            from .files import roster_io
+            q = urllib.parse.parse_qs(u.query)
+            rep = roster_io.read_roster_file(Path(self.ws).resolve(),
+                                             (q.get("classDir") or [""])[0])
+            self._json(rep, 200 if rep.get("ok") else 404)
+        elif u.path == "/taskpads":
+            from .files import taskpads
+            self._json({"ok": True, "items": taskpads.list_taskpads(Path(self.ws).resolve())})
+        elif u.path == "/workspace/layout":
+            from . import workspace_layout as WL
+            self._json(WL.inspect(Path(self.ws).resolve()))
         elif u.path == "/kb/catalog":
             from .files.kb_io import catalog as _catalog
             q = urllib.parse.parse_qs(u.query)

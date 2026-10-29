@@ -1643,6 +1643,85 @@ def grade(obj, task_path, pads_dir, images_dir, rerun, xxt_class, work_id, plan_
                    "（provider 未返回 usage 时可能为 0）")
 
 
+@cli.group("workspace", help="D120：workspace 目录布局（校验/迁移）+ 名单与作业纸落盘")
+def workspace_grp():
+    pass
+
+
+@workspace_grp.command("layout")
+@click.option("--workspace", "-w", default=None)
+@click.option("--verbose", "-v", is_flag=True)
+@click.pass_obj
+def workspace_layout_cmd(obj, workspace, verbose):
+    """检查 kb/ 下是否有错位目录（classes/roster/grading/tasks/packs）。"""
+    from . import workspace_layout as WL
+    ws = _setup(verbose or obj.get("verbose"), workspace)
+    click.echo(json.dumps(WL.inspect(ws), ensure_ascii=False, indent=1))
+
+
+@workspace_grp.command("fix-layout")
+@click.option("--apply", "apply_", is_flag=True, help="真正迁移（缺省只演练）")
+@click.option("--workspace", "-w", default=None)
+@click.option("--verbose", "-v", is_flag=True)
+@click.pass_obj
+def workspace_fix_layout(obj, apply_, workspace, verbose):
+    """D120：把 kb/classes/** 等错位数据迁移到 <ws>/classes/**（不覆盖、不删源）。"""
+    from . import workspace_layout as WL
+    ws = _setup(verbose or obj.get("verbose"), workspace)
+    rep = WL.fix_layout(ws, apply=apply_)
+    click.echo(json.dumps(rep, ensure_ascii=False, indent=1))
+    if not apply_ and rep["summary"]["moved"]:
+        click.echo(f"\n（演练：将迁移 {rep['summary']['moved']} 个文件。"
+                   f"确认后加 --apply；源文件不会被删除）")
+
+
+@workspace_grp.command("roster-save")
+@click.option("--class-dir", required=True, help="如 classes/化工25")
+@click.option("--from-json", "json_path", required=True, type=click.Path(exists=True, dir_okay=False),
+              help="名单 JSON：[{name,number,class,tag}]")
+@click.option("--workspace", "-w", default=None)
+@click.option("--verbose", "-v", is_flag=True)
+@click.pass_obj
+def workspace_roster_save(obj, class_dir, json_path, workspace, verbose):
+    """D120：把名单写入 <ws>/<class_dir>/roster/roster.xlsx（路径由引擎决定）。"""
+    from .files import roster_io
+    ws = _setup(verbose or obj.get("verbose"), workspace)
+    students = json.loads(Path(json_path).read_text(encoding="utf-8"))
+    rep = roster_io.write_roster(ws, class_dir, students)
+    click.echo(json.dumps(rep, ensure_ascii=False, indent=1))
+    if not rep.get("ok"):
+        raise click.ClickException(rep.get("error") or "写名单失败")
+
+
+@workspace_grp.command("roster-show")
+@click.option("--class-dir", required=True)
+@click.option("--workspace", "-w", default=None)
+@click.option("--verbose", "-v", is_flag=True)
+@click.pass_obj
+def workspace_roster_show(obj, class_dir, workspace, verbose):
+    """D120：读回名单（PWA localStorage 丢失时可从这里恢复）。"""
+    from .files import roster_io
+    ws = _setup(verbose or obj.get("verbose"), workspace)
+    rep = roster_io.read_roster_file(ws, class_dir)
+    click.echo(json.dumps(rep, ensure_ascii=False, indent=1))
+    if not rep.get("ok"):
+        raise click.ClickException(rep.get("error") or "读取失败")
+
+
+@workspace_grp.command("taskpad-list")
+@click.option("--workspace", "-w", default=None)
+@click.option("--verbose", "-v", is_flag=True)
+@click.pass_obj
+def workspace_taskpad_list(obj, workspace, verbose):
+    """D120：列出磁盘上的作业纸（<ws>/tasks/）。"""
+    from .files import taskpads
+    ws = _setup(verbose or obj.get("verbose"), workspace)
+    items = taskpads.list_taskpads(ws)
+    click.echo(json.dumps({"ok": True, "count": len(items),
+                           "ids": [x.get("id") for x in items]},
+                          ensure_ascii=False, indent=1))
+
+
 @cli.group("grading", help="D119：批阅成果管理（清理可重跑产物 / 临时文件 / 旧目录残留）")
 def grading_grp():
     pass

@@ -138,6 +138,9 @@ export const useTaskpadStore = defineStore('taskpad', {
       if (exist >= 0) this.saved[exist] = entry
       else this.saved.push(entry)
       localStorage.setItem(LS_KEY, JSON.stringify(this.saved))
+      // D120-Q5：同时落盘 `<ws>/tasks/<padId>.taskpad.json` ——
+      // 否则作业包（磁盘）只存 padId 引用，换浏览器/清缓存后变成悬空引用。
+      void persistTaskpadToDisk(entry.json)
       return entry.id
     },
     removeFromLibrary(id: string) {
@@ -203,3 +206,24 @@ export const useTaskpadStore = defineStore('taskpad', {
     },
   },
 })
+
+/* ---------------- D120：作业纸落盘（<ws>/tasks/<padId>.taskpad.json） ---------------- */
+
+/** 落盘最近一次结果（供 UI/体检展示）。 */
+let lastTaskpadPersist = ''
+export function lastTaskpadPersistMessage(): string { return lastTaskpadPersist }
+
+async function persistTaskpadToDisk(jsonText: string): Promise<void> {
+  try {
+    const { useSettingsStore } = await import('./settings')
+    const { saveTaskpadToEngine } = await import('../lib/engineClient')
+    const st = useSettingsStore()
+    const pad = JSON.parse(jsonText) as Record<string, unknown>
+    const rep = await saveTaskpadToEngine(st.engineUrl, st.engineToken, pad)
+    lastTaskpadPersist = rep?.ok
+      ? `已落盘 ${rep.path}`
+      : `未落盘：${rep?.error || '引擎离线'}（数据仍在浏览器 localStorage）`
+  } catch (e) {
+    lastTaskpadPersist = `落盘失败：${String((e as Error).message || e)}`
+  }
+}

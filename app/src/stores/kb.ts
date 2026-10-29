@@ -204,6 +204,20 @@ export const useKbStore = defineStore('kb', {
     async connectWorkspaceDir(): Promise<boolean> {
       const dir = await pickDirectory()
       if (!dir) return false
+      // D120-Q1：必须是 **workspace 根**（内含 kb/）。
+      // 旧实现把「题库目录」和「workspace 根」当同一个句柄用，
+      // 导致 roster 被写进 <ws>/kb/classes/（引擎读不到 → AI 批阅报"名单 0 人"）。
+      const hasKb = await dirHasSubdir(dir, 'kb')
+      if (!hasKb) {
+        this.savedAt = ''
+        this.origin = this.origin === 'none' ? 'none' : this.origin
+        // 用 fsDirName 传递错误提示（视图层会读它展示）
+        this.fsDirName = ''
+        throw new Error(
+          `所选目录不是 workspace 根（未找到 kb/ 子目录）：${dir.name}。` +
+          '请选择包含 kb/、classes/ 的上级目录，而不是 kb/ 本身。',
+        )
+      }
       await connectKbDir(dir)
       this.fsDirName = dir.name
       this.origin = this.origin === 'none' ? 'fs' : this.origin
@@ -424,6 +438,16 @@ export async function restoreKbDir(): Promise<boolean> {
     return false
   } catch { return false }
 }
+/** D120：目录下是否存在指定子目录（workspace 根校验用）。 */
+async function dirHasSubdir(dir: FileSystemDirectoryHandle, name: string): Promise<boolean> {
+  try {
+    await dir.getDirectoryHandle(name)
+    return true
+  } catch {
+    return false
+  }
+}
+
 export function getKbDirHandle(): FileSystemDirectoryHandle | undefined {
   return moduleAny._dirHandle
 }

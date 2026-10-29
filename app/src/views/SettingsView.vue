@@ -484,6 +484,12 @@ onMounted(() => {
             :disabled="settings.installing !== ''" @click="settings.runInstall((c as any).fix.install)">
             {{ settings.installing === (c as any).fix.install ? '安装中…' : '🔧 修复' }}
           </button>
+          <!-- D120：通用一键修复（先演练 → 确认 → 执行），如 kb/classes → classes/ 迁移 -->
+          <button v-else-if="c.status !== 'ok' && (c as any).fix?.type === 'api'" class="btn small"
+            style="margin-left:8px" :disabled="settings.installing !== ''"
+            @click="settings.runFixApi((c as any).fix.endpoint, (c as any).fix.label)">
+            {{ settings.installing === (c as any).fix.endpoint ? '处理中…' : ((c as any).fix.label || '🔧 修复') }}
+          </button>
         </li>
       </ul>
       <p v-if="settings.installLog" class="hint"><code>安装输出</code>

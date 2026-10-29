@@ -295,6 +295,48 @@ export const useSettingsStore = defineStore('settings', {
       return true
     },
     /** R1.4 修复按钮：POST /install/<item> + SSE 进度；完成后自动重跑体检。 */
+    /** D120：通用「一键修复」——调用体检项 fix.endpoint（先演练，确认后执行）。 */
+    async runFixApi(endpoint: string, label = ''): Promise<boolean> {
+      if (!this.engineOnline) {
+        this.installLog = '⚠ 引擎未在线，无法执行修复。'
+        return false
+      }
+      this.installing = endpoint
+      this.installLog = `正在执行：${label || endpoint} …`
+      try {
+        const { fixWorkspaceLayout } = await import('../lib/engineClient')
+        // ① 演练
+        const dry = await fixWorkspaceLayout(this.engineUrl, this.engineToken, false)
+        const n = dry?.summary?.moved ?? 0
+        if (!n) {
+          this.installLog = '没有需要迁移的内容（或已迁移过）。'
+          await this.runDoctor()
+          return true
+        }
+        const lines = (dry.moved || []).slice(0, 20)
+          .map((m) => `  ${m.from}\n    → ${m.to}`).join('\n')
+        const ok = window.confirm(
+          `将迁移 ${n} 个文件到正确位置（不覆盖、不删源）：\n\n${lines}` +
+          (n > 20 ? `\n… 其余 ${n - 20} 项` : '') + '\n\n确定执行？',
+        )
+        if (!ok) {
+          this.installLog = '已取消（未做任何修改）。'
+          return false
+        }
+        // ② 执行
+        const rep = await fixWorkspaceLayout(this.engineUrl, this.engineToken, true)
+        this.installLog = rep?.ok
+          ? `✅ 已迁移 ${rep.summary?.moved ?? 0} 个文件（跳过 ${rep.summary?.skipped ?? 0}）`
+          : `❌ 迁移失败：${rep?.error || '未知错误'}`
+        await this.runDoctor()
+        return !!rep?.ok
+      } catch (e) {
+        this.installLog = `❌ 迁移失败：${String((e as Error).message || e)}`
+        return false
+      } finally {
+        this.installing = ''
+      }
+    },
     async runInstall(itemId: string): Promise<boolean> {
       if (!this.engineOnline) {
         // D64 §22.1 修复：不再静默返回——冒出一句，避免"闪一下无提示"

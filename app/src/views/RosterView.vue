@@ -644,6 +644,10 @@ const nonTranslationRatios = computed(() => roster.ratios.filter((g) => g.tag !=
       <a href="#class-list">班级清单</a>
     </p>
     <p class="roster-status" v-if="status" :class="{ 'status-fail': rosterFailNotice }">{{ status }}</p>
+    <!-- D120：自动写盘结果（保存即落盘到 <ws>/<班级>/roster/roster.xlsx；失败不静默） -->
+    <p class="hint" v-if="roster.persistMsg" style="margin:2px 0">
+      名单落盘：{{ roster.persistMsg }}
+    </p>
     </div>
     <p class="hint" style="margin-top:0">
       名单列自适应（姓名|name、学号|number、班级|class、tag|tag）；成绩源支持<b>格式预设</b>

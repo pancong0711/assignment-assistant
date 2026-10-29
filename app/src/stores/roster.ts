@@ -10,6 +10,7 @@ import {
   type PreviewTable,
 } from '../lib/rosterXlsx'
 import { downloadData, writeFileInDir } from '../lib/fsAccess'
+import { fetchRosterFromEngine } from '../lib/engineClient'
 import { idbPut, idbGet, idbDel } from '../lib/idbRaw'
 import JSZip from 'jszip'
 
@@ -127,6 +128,8 @@ export const useRosterStore = defineStore('roster', {
       ratios: (cur?.ratios ?? [...DEFAULT_GROUP_RATIOS]) as GroupRatio[],
       savedAt: cur?.updatedAt ?? '',
       dirty: false,
+      /** D120：最近一次「自动写盘」结果（UI 展示，避免写盘失败被静默吞掉） */
+      persistMsg: '' as string,
     }
   },
   getters: {
@@ -186,6 +189,31 @@ export const useRosterStore = defineStore('roster', {
       } catch {
         // 超出 localStorage 配额时静默跳过（内存中仍可编辑/导出）
       }
+      // D120-G2：自动落盘到 <ws>/<class_dir>/roster/roster.xlsx（800ms 防抖）
+      scheduleAutoPersistToDisk()
+    },
+    /** D120：手动触发落盘（设置中心/体检用）。返回可读结果。 */
+    async persistToDisk(classDir?: string): Promise<string> {
+      return await doPersistToDisk(classDir)
+    },
+    /** D120：从磁盘恢复名单（localStorage 丢失时的兜底）。 */
+    async restoreFromDisk(classDir: string): Promise<string> {
+      const { useSettingsStore } = await import('./settings')
+      const settings = useSettingsStore()
+      const r = await fetchRosterFromEngine(settings.engineUrl, settings.engineToken, classDir)
+      if (!r?.ok || !r.students?.length) return r?.error || '磁盘上未找到名单'
+      const stu = (r.students as Array<{ name?: string; number?: string; class?: string; tag?: string }>).map((s) => ({
+        name: String(s.name || ''), number: String(s.number || ''),
+        class: String(s.class || ''), tag: String(s.tag || ''),
+        score: null as number | null, manualTag: !!s.tag, punish: false,
+      }))
+      const cur = this.classes[this.activeClassId]
+      if (cur) { cur.students = stu }
+      this.students = stu
+      localStorage.setItem(LS_CLASSES_KEY, JSON.stringify({
+        classes: this.classes, order: this.classOrder, activeId: this.activeClassId,
+      }))
+      return `已从磁盘恢复 ${stu.length} 名学生（${r.students.length} 行）`
     },
     /** D49：新建班级（可选从当前班级克隆配置/比例；名单与源不复制=全新开始） */
     createClass(name?: string, cloneRatios = true): string {
@@ -572,3 +600,79 @@ export const useRosterStore = defineStore('roster', {
     },
   },
 })
+
+/* ---------------- D120：名单自动落盘（浏览器 → workspace 磁盘） ---------------- */
+
+/** classId/班级名 → classDir（`classes/<班级>`）。优先 classmap，其次目录名。 */
+async function classDirOfRoster(cls: { id: string; name?: string }): Promise<string> {
+  try {
+    const { useSettingsStore } = await import('./settings')
+    const { fetchXxtClassMap } = await import('../lib/engineClient')
+    const st = useSettingsStore()
+    const r = await fetchXxtClassMap(st.engineUrl, st.engineToken).catch(() => null)
+    const map = (r as { map?: Record<string, string> } | null)?.map || {}
+    for (const [k, v] of Object.entries(map)) {
+      if (k.endsWith(`:${cls.id}`) && v) return v
+    }
+  } catch { /* 引擎离线 → 用目录名 */ }
+  return `classes/${cls.name || cls.id || 'classA'}`
+}
+
+let persistTimer: number | undefined
+let persistSeq = 0
+
+/** 800ms 防抖后写盘（Q2）。 */
+function scheduleAutoPersistToDisk(): void {
+  if (typeof window === 'undefined') return
+  if (persistTimer !== undefined) window.clearTimeout(persistTimer)
+  const seq = ++persistSeq
+  persistTimer = window.setTimeout(() => {
+    persistTimer = undefined
+    if (seq !== persistSeq) return       // 期间又有变更 → 丢弃过期任务
+    void doPersistToDisk()
+  }, 800)
+}
+
+/** 真正写盘：ENGINE 优先 → FSA 兜底。静默失败（不打断编辑），但记录最近一次结果。 */
+let lastPersistMsg = ''
+export function lastRosterPersistMessage(): string { return lastPersistMsg }
+
+async function doPersistToDisk(classDirHint?: string): Promise<string> {
+  try {
+    const { useSettingsStore } = await import('./settings')
+    const { saveRosterToEngine } = await import('../lib/engineClient')
+    const { useRosterStore } = await import('./roster')
+    const st = useSettingsStore()
+    const roster = useRosterStore()
+    const cur = roster.classes[roster.activeClassId]
+    if (!cur || !roster.students.length) return '名单为空，未写盘'
+    const classDir = classDirHint || await classDirOfRoster(cur)
+    // ① 引擎写盘（路径由后端权威决定）
+    const rep = await saveRosterToEngine(st.engineUrl, st.engineToken, {
+      classDir,
+      students: roster.students.map((s) => ({
+        name: s.name, number: s.number, class: s.class, tag: s.tag,
+      })),
+    })
+    if (rep?.ok) {
+      lastPersistMsg = `已写盘 ${rep.path}（${rep.count} 人）`
+      try { const { useRosterStore } = await import('./roster'); useRosterStore().persistMsg = lastPersistMsg } catch { /* noop */ }
+      return lastPersistMsg
+    }
+    // ② FSA 兜底（需 workspace 根句柄）
+    const { getKbDirHandle } = await import('./kb')
+    const { writeFileInDir } = await import('../lib/fsAccess')
+    const h = getKbDirHandle()
+    if (h) {
+      const xlsx = writeRosterXlsx(roster.students)
+      await writeFileInDir(h, `${classDir}/roster/roster.xlsx`, xlsx)
+      lastPersistMsg = `已写盘（FSA）${classDir}/roster/roster.xlsx`
+      return lastPersistMsg
+    }
+    lastPersistMsg = `未写盘：${rep?.error || '引擎离线且未连接 workspace 目录'}`
+    return lastPersistMsg
+  } catch (e) {
+    lastPersistMsg = `写盘失败：${String((e as Error).message || e)}`
+    return lastPersistMsg
+  }
+}

@@ -1450,6 +1450,71 @@ export async function savePack(
   return o
 }
 
+/* ---------------- D120：roster / 作业纸落盘（路径由引擎权威决定） ---------------- */
+
+/** POST /roster/write：把名单写到 `<ws>/<class_dir>/roster/roster.xlsx`。 */
+export async function saveRosterToEngine(
+  engineAddr: string, token: string | undefined,
+  payload: { classDir: string; students: Array<{ name: string; number?: string
+    class?: string; tag?: string }> },
+): Promise<{ ok?: boolean; path?: string; count?: number; error?: string }> {
+  const base = normalizeEngineAddr(engineAddr)
+  const res = await fetch(engineUrlWithToken(base, '/roster/write', token), {
+    method: 'POST', headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(payload),
+  })
+  const o = (await res.json().catch(() => ({}))) as { ok?: boolean; path?: string; count?: number; error?: string }
+  if (!res.ok && !o?.error) throw new Error(`HTTP ${res.status}`)
+  return o
+}
+
+/** GET /roster/read?classDir=：从磁盘读回名单（localStorage 丢失时恢复）。 */
+export async function fetchRosterFromEngine(
+  engineAddr: string, token: string | undefined, classDir: string,
+): Promise<{ ok?: boolean; students?: Array<{ name: string; number?: string; class?: string; tag?: string }>
+  count?: number; error?: string }> {
+  const base = normalizeEngineAddr(engineAddr)
+  try {
+    return (await getJson2(engineUrlWithToken(
+      base, `/roster/read?classDir=${encodeURIComponent(classDir)}`, token))) as
+      { ok?: boolean; students?: Array<{ name: string; number?: string; class?: string; tag?: string }>
+        count?: number; error?: string }
+  } catch {
+    return { ok: false, error: '引擎不可达' }
+  }
+}
+
+/** POST /taskpad/save：作业纸落盘 `<ws>/tasks/<padId>.taskpad.json`。 */
+export async function saveTaskpadToEngine(
+  engineAddr: string, token: string | undefined, taskpad: Record<string, unknown>,
+): Promise<{ ok?: boolean; path?: string; id?: string; error?: string }> {
+  const base = normalizeEngineAddr(engineAddr)
+  const res = await fetch(engineUrlWithToken(base, '/taskpad/save', token), {
+    method: 'POST', headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ taskpad }),
+  })
+  const o = (await res.json().catch(() => ({}))) as { ok?: boolean; path?: string; id?: string; error?: string }
+  if (!res.ok && !o?.error) throw new Error(`HTTP ${res.status}`)
+  return o
+}
+
+/** POST /workspace/fix-layout：迁移 kb/ 下的错位目录（D120）。 */
+export async function fixWorkspaceLayout(
+  engineAddr: string, token: string | undefined, apply: boolean,
+): Promise<{ ok?: boolean; summary?: { moved: number; skipped: number; violations: number }
+  moved?: Array<{ from: string; to: string }>; error?: string }> {
+  const base = normalizeEngineAddr(engineAddr)
+  const res = await fetch(engineUrlWithToken(base, '/workspace/fix-layout', token), {
+    method: 'POST', headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ apply }),
+  })
+  const o = (await res.json().catch(() => ({}))) as
+    { ok?: boolean; summary?: { moved: number; skipped: number; violations: number }
+      moved?: Array<{ from: string; to: string }>; error?: string }
+  if (!res.ok && !o?.error) throw new Error(`HTTP ${res.status}`)
+  return o
+}
+
 /* ---------------- D89-N3/N4：题目 solution 多版本 ---------------- */
 
 export interface SolutionVersion {

@@ -1,7 +1,7 @@
 # D120 任务需求单：workspace 根语义收口 + roster 自动落盘 + 目录错位迁移
 
 > 日期：2026-10-29
-> 状态：**已确认（2026-10-29 用户拍板）→ 执行中**
+> 状态：**已执行完成（2026-10-29）**；验证见 §8
 > 关联：`docs/69-D119`（批阅产物布局）、`docs/04`（数据契约）、`docs/05-D13`（workspace 引导）
 > 触发：教师在「班级与标签」点「写回 workspace」后，roster 出现在 **`<ws>/kb/classes/<班级>/roster/`**，
 > 而引擎只读 **`<ws>/<class_dir>/roster/roster.xlsx`** → AI 批阅报「名单 0 人」。
@@ -176,3 +176,61 @@ await roster.saveToDir(dirHandle)
 | Q4 | 修复顺序 | ✅ **先修代码 → 再迁移** |
 | Q5 | 是否一并做作业纸写盘 | ✅ **做**（`<ws>/tasks/<padId>.taskpad.json`），消除"包在纸没"的悬空引用 |
 | Q6 | 「导出全部本地数据」备份 | 下一轮（本轮不做） |
+
+---
+
+## 8. 实施记录（已完成）
+
+### 8.1 落地内容
+
+| 条目 | 实现 |
+|---|---|
+| **G1 根语义唯一** | `kb.connectWorkspaceDir()` 新增 `dirHasSubdir(dir,'kb')` 校验：**选到 `kb/` 子目录当场拒绝**并提示「所选目录不是 workspace 根」。UI 语义从"题库目录"收紧为"workspace 根" |
+| **G2 roster 自动落盘** | `roster.persist()` 末尾触发 `scheduleAutoPersistToDisk()`（**800ms 防抖**，Q2）→ 引擎 `POST /roster/write`（路径由后端决定）→ FSA 兜底。新增 `roster.persistMsg` 并在「班级与标签」页展示（**不静默失败**） |
+| **G2' 从磁盘恢复** | 新增 `roster.restoreFromDisk(classDir)` + `GET /roster/read`（localStorage 丢失时救命） |
+| **G3 迁移** | `engine/workspace_layout.py`：`inspect()` 检出 `kb/{classes,roster,grading,tasks,packs}`；`fix_layout()` **复制不删源、不覆盖、幂等**；`POST /workspace/fix-layout` + CLI `assist workspace fix-layout [--apply]` |
+| **G4 护栏** | doctor 新增 `workspace_layout`（yellow + `fix.type='api'` 一键迁移）与 `roster_persist`；SettingsView 支持 `fix.type==='api'` 按钮（**先演练 → confirm → 执行**） |
+| **G5 CLI 等价** | `assist workspace layout / fix-layout / roster-save / roster-show / taskpad-list` |
+| **Q5 作业纸落盘** | `engine/files/taskpads.py` → `<ws>/tasks/<padId>.taskpad.json`；`taskpad.saveToLibrary()` 保存即落盘；**8MB 上限**防写爆 |
+
+### 8.2 复审发现并修复的 3 个问题
+
+| # | 问题 | 说明 |
+|---|---|---|
+| **R1** | **路径注入** | `safe_class_dir` 先 `.strip('/')` 再判绝对路径 → `"/abs/path"` 被 strip 成合法路径蒙混过关；`..` 只被"过滤"而非拒绝。改为**先判绝对路径/盘符，任何 `..` 一律拒绝** |
+| **R2** | **并发写 roster 备份互相覆盖** | 8 并发实测只剩 **1 个备份**（应 7~8 个）。改为 `locked()` 整段加锁 + 备份名冲突自动加序号 + 先写 `.tmp` 再 `replace` 原子替换。修复后 8 并发 → **7 个备份、无残留 tmp** |
+| **R3** | **`inspect()` 返回结构不一致** | `kb/` 不存在时提前 `return` **缺 `summary`**，调用方 `KeyError`。改为任何分支都带 `summary` |
+
+### 8.3 验证
+
+| 项 | 结果 |
+|---|---|
+| 真实路径安全检查 | `classes/A`、`classes/化工25` 通过；`/etc`、`../../etc`、`C:\\win`、`classes/../x`、空、空白 **全部拒绝** |
+| 写读同路径（关键） | `roster_io.write_roster()` 落盘路径 == `grading/inputs.roster_file()` 读取路径（`.resolve()` 相等） |
+| 并发 | 8 线程并发写 → 内容完整、7 个历史备份、无 `.tmp` 残留 |
+| 迁移 | 演练不落盘；`--apply` 复制到位、**源保留**、二次执行 `moved=0/skipped=N`；**正常 kb 内容（fig/solutions/xlsx）零误判** |
+| 作业纸落盘 | `tasks/p1.taskpad.json` 生成；超 8MB 拒绝 |
+| PWA 端到端 | `persist()` → 1 次 `/roster/write` → 磁盘 `classes/化工25/roster/roster.xlsx`（2 人），UI 显示「名单落盘：已写盘 …」 |
+| 作业纸端到端 | `saveToLibrary()` → 磁盘 `tasks/padTest.taskpad.json` |
+| engine pytest | **669 passed**（新增 `test_d120_roster_persist_layout.py` 18 例） |
+| app `vue-tsc` / `build` | 0 error |
+| app `npm run selfcheck` | **30 项全绿**（新增 `selfcheck-d120-workspace-root.mjs`） |
+| 脱敏 / bat lint | 通过 |
+
+### 8.4 给教师的操作指引（当前这批数据）
+
+```bash
+# ① 体检：应出现「workspace 目录布局 ⚠」
+assist doctor
+#    或在 PWA「设置中心 → 环境体检」看
+
+# ② 迁移错位的 kb/classes → classes/（演练 → 执行）
+assist workspace fix-layout              # 演练
+assist workspace fix-layout --apply      # 执行（不覆盖、不删源）
+
+# ③ 让 roster 落盘：打开「班级与标签」点一次保存（此后自动写盘）
+#    或 CLI： assist workspace roster-save --class-dir classes/<班级> --from-json roster.json
+
+# ④ 确认
+assist workspace roster-show --class-dir classes/<班级>
+```
