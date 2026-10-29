@@ -806,9 +806,15 @@ export interface XxtGradeDrafts {
 /** GET /xxt/grade/drafts/<classId>/<workId>：读本地人工批阅草稿。 */
 export async function fetchXxtGradeDrafts(
   engineAddr: string, token: string | undefined, classId: string, workId: string,
+  /** D119：带上作业纸 id（草稿按 taskId 归属，不同作业批次不互相覆盖） */
+  scope: { taskId?: string; classDir?: string } = {},
 ): Promise<XxtGradeDrafts> {
   const base = normalizeEngineAddr(engineAddr)
+  const qs = new URLSearchParams()
+  if (scope.taskId) qs.set('taskId', scope.taskId)
+  if (scope.classDir) qs.set('classDir', scope.classDir)
   const path = `/xxt/grade/drafts/${encodeURIComponent(classId)}/${encodeURIComponent(workId)}`
+    + (qs.toString() ? `?${qs}` : '')
   return (await getJson2(engineUrlWithToken(base, path, token))) as XxtGradeDrafts
 }
 
@@ -816,6 +822,8 @@ export async function fetchXxtGradeDrafts(
 export async function saveXxtGradeDraft(
   engineAddr: string, token: string | undefined,
   payload: { classId: string; workId: string; key: string; score?: number | null
+    /** D119：草稿按作业纸归属（不同作业批次不互相覆盖） */
+    taskId?: string; classDir?: string
     comment?: string; commentText?: string; images?: { name: string; data_b64: string }[]
     student?: string; tag?: string
     ai?: Record<string, unknown>; human?: Record<string, unknown> | null

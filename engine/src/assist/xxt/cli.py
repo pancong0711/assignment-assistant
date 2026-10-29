@@ -728,6 +728,23 @@ def register(group: click.Group) -> None:
             })
         click.echo(json.dumps(rows, ensure_ascii=False, indent=1))
 
+    @group.command("migrate-layout")
+    @click.option("--old-home", default="", help="旧 xxt 根（缺省=当前 xxt_home()）")
+    @click.option("--apply", "apply_", is_flag=True, help="真正执行（缺省只盘点并给出命令）")
+    @click.option("--workspace", "-w", default=None)
+    @click.option("--verbose", "-v", is_flag=True)
+    @click.pass_obj
+    def xxt_migrate_layout(obj, old_home, apply_, workspace, verbose):
+        """D119：批阅产物目录迁移（作答原件/草稿 → 新布局；只复制不删源）。"""
+        from ..cli import _setup
+        from . import migrate_layout as M
+        ws = _setup(verbose or obj.get("verbose"), workspace)
+        rep = M.migrate(ws, Path(old_home) if old_home else None, apply=apply_)
+        click.echo(json.dumps(rep, ensure_ascii=False, indent=1))
+        if not apply_ and (rep["inventory"]["summary"]["reviewDirs"]
+                           or rep["inventory"]["summary"]["legacyDrafts"]):
+            click.echo("\n（以上为演练。确认无误后加 --apply 执行；源文件不会被删除）")
+
     @group.command("login")
     @click.option("--storage", "storage", default=None, type=click.Path(dir_okay=False),
                   help="storage_state JSON 目标（覆盖旧值）")

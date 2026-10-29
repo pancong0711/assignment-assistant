@@ -36,7 +36,8 @@ def save_drafts_from_grading(ws, *, class_id: str, work_id: str, task_id: str,
     from .report import build_report_md, render_report_png
 
     ws = Path(ws)
-    task = {"id": str(task_id), "class_dir": class_dir or f"classes/{class_id}"}
+    resolved_class_dir = str(class_dir or "").strip().strip("/") or f"classes/{class_id}"
+    task = {"id": str(task_id), "class_dir": resolved_class_dir}
     base = grading_dir(ws, task)
     ev_dir, tr_dir = base / "evaluations", base / "transcripts"
     if not ev_dir.is_dir():
@@ -81,17 +82,22 @@ def save_drafts_from_grading(ws, *, class_id: str, work_id: str, task_id: str,
         # D92-R2：写入**双套**结构；AI 产物落 ai 套（人工审核另写 human/修订，不覆盖此基线）
         ai_set = {"score": score, "comment": comment, "reportImages": images or []}
         if str(kind) == "human":
+            # D119：按 (ws, class_dir, task_id) 写入新布局 —— 不同作业批次互不覆盖
             rep = grade_store.save_draft_sets(
                 home, class_id, work_id, key, human={**ai_set, "used": True},
-                human_mode="replace", student=student, tag=ev.get("tag") or "")
+                human_mode="replace", student=student, tag=ev.get("tag") or "",
+                ws=ws, class_dir=resolved_class_dir, task_id=str(task_id))
         else:
             rep = grade_store.save_draft_sets(
                 home, class_id, work_id, key, ai=ai_set,
-                student=student, tag=ev.get("tag") or "")
+                student=student, tag=ev.get("tag") or "",
+                ws=ws, class_dir=resolved_class_dir, task_id=str(task_id))
         written.append({"student": student, "key": key, "ok": rep.get("ok"),
                         "score": score, "images": len(images)})
     return {"ok": bool(written), "count": len(written), "drafts": written,
-            "file": str((grade_store.draft_file(home, class_id, work_id) or ""))}
+            "file": str(grade_store.draft_file(ws, class_id, work_id,
+                                               class_dir=resolved_class_dir,
+                                               task_id=str(task_id), home=home) or "")}
 
 def render_reports_from_drafts(ws, *, class_id: str, work_id: str, task_id: str = "",
                                class_dir: str = "", home=None, katex_dir=None,
@@ -110,7 +116,10 @@ def render_reports_from_drafts(ws, *, class_id: str, work_id: str, task_id: str 
     if home is None:
         from ..xxt.session import xxt_home
         home = xxt_home()
-    data = grade_store.read_drafts(home, class_id, work_id)
+    # D119：新布局优先，旧布局回落
+    data = grade_store.read_drafts(home, class_id, work_id, ws=ws,
+                                   class_dir=str(class_dir or f"classes/{class_id}"),
+                                   task_id=str(task_id))
     if not data:
         return {"ok": False, "error": "无本地批阅草稿（先跑一次 AI 批阅或保存人工批阅）"}
     out_root = ws / (class_dir or f"classes/{class_id}") / "grading" / (task_id or "task") / "reports"

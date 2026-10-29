@@ -16,6 +16,7 @@ _SAFE = re.compile(r"[0-9A-Za-z\-_]{1,40}")
 
 
 def drafts_root(home=None) -> Path:
+    """**旧布局**根目录 `<xxt_home>/grade-drafts`（仅为兼容/迁移保留）。"""
     if home is None:
         from .session import xxt_home
         home = xxt_home()
@@ -24,30 +25,79 @@ def drafts_root(home=None) -> Path:
     return d
 
 
-def draft_file(home, class_id: str, work_id: str) -> "Path | None":
+def legacy_draft_file(home, class_id: str, work_id: str) -> "Path | None":
     if not _SAFE.fullmatch(str(class_id)) or not _SAFE.fullmatch(str(work_id)):
         return None
-    d = drafts_root(home) / str(class_id)
-    d.mkdir(parents=True, exist_ok=True)
-    return d / f"{work_id}.json"
+    return drafts_root(home) / str(class_id) / f"{work_id}.json"
 
 
-def read_drafts(home, class_id: str, work_id: str) -> dict:
-    p = draft_file(home, class_id, work_id)
-    if p is None or not p.is_file():
-        return {}
-    try:
-        d = json.loads(p.read_text(encoding="utf-8"))
-        return d if isinstance(d, dict) else {}
-    except Exception:  # noqa: BLE001
-        return {}
+def grading_drafts_dir(ws, class_dir: str, task_id: str) -> "Path | None":
+    """D119 新布局：`<ws>/<class_dir>/grading/<taskId>/drafts/`。"""
+    tid = str(task_id or "").strip()
+    cd = str(class_dir or "").strip().strip("/")
+    if not tid or not cd:
+        return None
+    safe_tid = re.sub(r"[\\/:*?\"<>|]", "_", tid).strip(" .") or "task"
+    return Path(ws).resolve() / cd / "grading" / safe_tid / "drafts"
 
 
+def draft_file(ws=None, class_id: str = "", work_id: str = "",
+               *, class_dir: str = "", task_id: str = "",
+               home=None) -> "Path | None":
+    """草稿文件路径（D119）。
+
+    - 给了 `task_id` + `class_dir` + `ws` → **新布局**（写这里）；
+    - 否则 → 旧布局（兼容既有调用方）。
+    """
+    if not _SAFE.fullmatch(str(class_id)) or not _SAFE.fullmatch(str(work_id)):
+        return None
+    if task_id and class_dir and ws is not None:
+        d = grading_drafts_dir(ws, class_dir, task_id)
+        if d is not None:
+            d.mkdir(parents=True, exist_ok=True)
+            return d / f"{work_id}.json"
+    return legacy_draft_file(home, class_id, work_id)
+
+
+def _candidate_draft_files(ws=None, class_id: str = "", work_id: str = "",
+                           *, class_dir: str = "", task_id: str = "",
+                           home=None) -> "list[Path]":
+    """读取候选顺序：新布局 → 旧布局（旧数据不被静默忽略）。"""
+    out: list[Path] = []
+    if task_id and class_dir and ws is not None:
+        d = grading_drafts_dir(ws, class_dir, task_id)
+        if d is not None:
+            out.append(d / f"{work_id}.json")
+    legacy = legacy_draft_file(home, class_id, work_id)
+    if legacy is not None:
+        out.append(legacy)
+    return out
+
+
+def read_drafts(home=None, class_id: str = "", work_id: str = "", *,
+                ws=None, class_dir: str = "", task_id: str = "") -> dict:
+    """读草稿：新布局优先，其次旧布局（兼容未迁移数据）。"""
+    for p in _candidate_draft_files(ws, class_id, work_id,
+                                    class_dir=class_dir, task_id=task_id, home=home):
+        if not p.is_file():
+            continue
+        try:
+            d = json.loads(p.read_text(encoding="utf-8"))
+        except Exception:  # noqa: BLE001
+            continue
+        if isinstance(d, dict):
+            return d
+    return {}
 def save_draft(home, class_id: str, work_id: str, key: str, *,
                score=None, comment: str = "", comment_text: str = "",
-               images: "list[dict] | None" = None, extra: "dict | None" = None) -> dict:
-    """写单个学生的本地批阅草稿（合并式更新；score=None 表示不改分数）。"""
-    p = draft_file(home, class_id, work_id)
+               images: "list[dict] | None" = None, extra: "dict | None" = None,
+               ws=None, class_dir: str = "", task_id: str = "") -> dict:
+    """写单个学生的本地批阅草稿（合并式更新；score=None 表示不改分数）。
+
+    D119：传 `ws`+`class_dir`+`task_id` → 写入**新布局**
+    `<ws>/<class_dir>/grading/<taskId>/drafts/<workId>.json`（不同作业批次互不覆盖）。
+    """
+    p = draft_file(ws, class_id, work_id, class_dir=class_dir, task_id=task_id, home=home)
     if p is None:
         return {"ok": False, "error": "非法 classId/workId"}
     k = str(key or "").strip()
@@ -128,9 +178,13 @@ def _is_revised(out: dict) -> bool:
 def save_draft_sets(home, class_id: str, work_id: str, key: str, *,
                     ai: "dict | None" = None, human: "dict | None" = None,
                     human_mode: "str | None" = None, revision: "dict | None" = None,
-                    student: str = "", tag: str = "") -> dict:
-    """D92-R2：写双套草稿（ai/human 各自合并；human_mode 可选；revision 可选）。"""
-    p = draft_file(home, class_id, work_id)
+                    student: str = "", tag: str = "",
+                    ws=None, class_dir: str = "", task_id: str = "") -> dict:
+    """D92-R2：写双套草稿（ai/human 各自合并；human_mode 可选；revision 可选）。
+
+    D119：传 `ws`+`class_dir`+`task_id` → 写入新布局（按作业纸隔离）。
+    """
+    p = draft_file(ws, class_id, work_id, class_dir=class_dir, task_id=task_id, home=home)
     if p is None:
         return {"ok": False, "error": "非法 classId/workId"}
     k = str(key or "").strip()
@@ -167,8 +221,9 @@ def save_draft_sets(home, class_id: str, work_id: str, key: str, *,
     return {"ok": True, "key": k, "draft": box["draft"], "file": str(p)}
 
 
-def delete_draft(home, class_id: str, work_id: str, key: str) -> dict:
-    p = draft_file(home, class_id, work_id)
+def delete_draft(home, class_id: str, work_id: str, key: str, *,
+                 ws=None, class_dir: str = "", task_id: str = "") -> dict:
+    p = draft_file(ws, class_id, work_id, class_dir=class_dir, task_id=task_id, home=home)
     if p is None or not p.is_file():
         return {"ok": False, "error": "无草稿文件"}
     from ..filelock import update_json

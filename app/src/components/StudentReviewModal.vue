@@ -8,6 +8,8 @@ import { saveXxtGradeDraft, xxtReviewFileUrl } from '../lib/engineClient'
 const props = defineProps<{
   engineAddr: string; token?: string
   classId: string; workId: string
+  /** D119：草稿按作业纸归属（不同作业批次不互相覆盖） */
+  taskId?: string; classDir?: string
   students: { name: string; key: string; tag?: string }[]
   drafts: Record<string, any>
   startIndex?: number
@@ -55,6 +57,7 @@ async function save() {
   const payload: any = {
     classId: props.classId, workId: props.workId, key: c.key, student: c.name,
     human_mode: humanMode.value,
+    taskId: props.taskId, classDir: props.classDir,
   }
   if (humanMode.value !== 'none') {
     payload.human = { score: Number.isFinite(n as number) ? n : null, comment: comment.value, used: true }

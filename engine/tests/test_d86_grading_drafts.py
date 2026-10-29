@@ -34,7 +34,9 @@ def test_save_drafts_from_grading_maps_wa_and_cuts_markdown(tmp_path: Path):
                                      class_dir=class_dir, kind="ai", with_report_png=False,
                                      home=tmp_path)
     assert rep["ok"] and rep["drafts"][0]["key"] == "wa-1"
-    d = grade_store.read_drafts(tmp_path, "C1", "W1")["wa-1"]
+    # D119：草稿写在 `<ws>/<class_dir>/grading/<taskId>/drafts/<workId>.json`
+    d = grade_store.read_drafts(tmp_path, "C1", "W1", ws=tmp_path,
+                                class_dir=class_dir, task_id=task_id)["wa-1"]
     # D92：AI 产物落 ai 套
     assert d["ai"]["score"] == 88.0
     assert "**" not in d["ai"]["comment"] and "· 优点" in d["ai"]["comment"]   # Markdown 格式收敛
@@ -56,7 +58,9 @@ def test_save_drafts_writes_report_png_base64(tmp_path: Path, monkeypatch):
                                      class_dir=class_dir, kind="human", with_report_png=True,
                                      home=tmp_path)
     assert rep["drafts"][0]["images"] == 1
-    d = grade_store.read_drafts(tmp_path, "C1", "W2")["学生B"]     # 无 plan → 键=姓名
+    # D119：新布局读取（无 plan → 键=姓名）
+    d = grade_store.read_drafts(tmp_path, "C1", "W2", ws=tmp_path,
+                                class_dir="classes/demo", task_id="t2")["学生B"]
     # D92：kind=human → human 套 + replace
     assert d["human"]["used"] is True and d.get("humanMode") == "replace"
     assert base64.b64decode(d["human"]["reportImages"][0]["data_b64"]).startswith(b"\x89PNG")

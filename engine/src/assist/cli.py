@@ -22,6 +22,13 @@ def _setup(verbose: bool, ws: "Path | str | None" = None):
     setup_logging(verbose)
     ws_path = find_workspace(ws) if ws is not None else find_workspace()
     apply_runtime_env(ws_path)
+    # D119-L3：把当前 workspace 绑定给 xxt_home()，避免它隐式用 find_workspace(None)
+    # 解析到别的 workspace（跨工作区串数据）。
+    try:
+        from .xxt.session import bind_workspace
+        bind_workspace(ws_path)
+    except Exception:  # noqa: BLE001 —— 绑定失败不影响主流程
+        pass
     return ws_path
 
 
@@ -1634,6 +1641,37 @@ def grade(obj, task_path, pads_dir, images_dir, rerun, xxt_class, work_id, plan_
                    f"completion={t.get('completion_tokens', 0)} "
                    f"total={t.get('total_tokens', 0)} calls={t.get('calls', 0)}"
                    "（provider 未返回 usage 时可能为 0）")
+
+
+@cli.group("grading", help="D119：批阅成果管理（清理可重跑产物 / 临时文件 / 旧目录残留）")
+def grading_grp():
+    pass
+
+
+@grading_grp.command("clean")
+@click.option("--task", "task_id", default="", help="只清某张作业纸（grading/<taskId>/）")
+@click.option("--reports", is_flag=True, help="清 reports/（报告可重跑）")
+@click.option("--journal", is_flag=True, help="清 journal.jsonl / batch-report.json / diagnostics.jsonl")
+@click.option("--drafts", is_flag=True, help="清 drafts/（**人工批改成果，谨慎**）")
+@click.option("--tmp", is_flag=True, help="清 <ws>/tmp/ai-grade/（作业包临时快照）")
+@click.option("--stale-images", "stale_images", is_flag=True,
+              help="清已废弃的 grading/<task>/images/（D119 起不再使用）")
+@click.option("--all", "all_", is_flag=True, help="清整个 grading/<task>/（不含作答原件）")
+@click.option("--apply", "apply_", is_flag=True, help="真正删除（缺省只演练）")
+@click.option("--workspace", "-w", default=None)
+@click.option("--verbose", "-v", is_flag=True)
+@click.pass_obj
+def grading_clean(obj, task_id, reports, journal, drafts, tmp, stale_images, all_, apply_, workspace, verbose):
+    """D119：清理批阅成果（默认演练；**绝不触碰** kb/ 与作答原件 pages/review/）。"""
+    from .grading import cleanup as C
+    ws = _setup(verbose or obj.get("verbose"), workspace)
+    rep = C.clean(ws, task_id=task_id, reports=reports, journal=journal, drafts=drafts,
+                  tmp=tmp, all_=all_, stale_images=stale_images, apply=apply_)
+    click.echo(json.dumps(rep, ensure_ascii=False, indent=1))
+    if not rep.get("ok"):
+        raise click.ClickException(rep.get("error") or "清理失败")
+    if not apply_ and rep.get("count"):
+        click.echo(f"\n（以上为演练，共 {rep['count']} 项 / {rep['human']}。确认后加 --apply 执行）")
 
 
 @cli.group("grade-plan", help="D98-B7：无 LLM 的清单/收作业（兜底；程序不调模型）")

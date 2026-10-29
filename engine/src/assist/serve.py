@@ -33,7 +33,8 @@ from loguru import logger
 from . import __version__
 from .xxt import layout as xxt_layout
 
-CHECK_IDS = ("python_env", "uv", "deps", "playwright", "xelatex", "fonts", "settings", "kb")
+CHECK_IDS = ("python_env", "uv", "deps", "playwright", "xelatex", "fonts", "settings", "kb",
+              "grading_layout")
 INSTALL_ITEMS = ("deps", "playwright", "fonts", "tex_guide", "python_guide", "uv", "kb_init", "katex", "tinytex", "engine_update")
 
 KATEX_VERSION = "0.16.4"
@@ -98,6 +99,12 @@ _SERVE_WS: Path | None = None
 def _set_serve_ws(ws: Path) -> None:
     global _SERVE_WS
     _SERVE_WS = Path(ws).resolve()
+    # D119-L3：xxt_home() 必须跟随 serve 的 workspace（下载/草稿/作答原件口径唯一）
+    try:
+        from .xxt.session import bind_workspace
+        bind_workspace(_SERVE_WS)
+    except Exception:  # noqa: BLE001
+        pass
 
 
 def _ws() -> Path:
@@ -260,6 +267,28 @@ def _doctor_checks(ws: Path) -> list[dict]:
     checks.append(_check("kb", "green" if ok_kb else "yellow", "kb 题库",
                          f"{kb_dir}；xlsx={len(kb_xlsx)}" + (f"（{', '.join(kb_xlsx[:5])}）" if kb_xlsx else "（缺失，可创建默认题库）"),
                          {} if ok_kb else {"type": "install", "install": "kb_init"}))
+    # D119：批阅产物布局体检（作答原件/草稿是否在正确 workspace；是否有旧目录残留）
+    try:
+        from .xxt import migrate_layout as _ml
+        inv = _ml.inventory(ws)
+        issues: list[str] = []
+        if inv.get("usesRepoScratch"):
+            issues.append(f"xxt 根落在代码仓库（{inv.get('xxtHome')}）—— 换 workspace 不换数据，请运行 "
+                          f"`assist xxt migrate-layout --apply`")
+        if not inv.get("sameHome") and (inv.get("summary") or {}).get("reviewDirs"):
+            issues.append(f"作答原件仍分布在旧目录（{inv.get('xxtHome')}）")
+        if (inv.get("summary") or {}).get("legacyDrafts"):
+            issues.append(f"有 {inv['summary']['legacyDrafts']} 份旧草稿未迁移（grade-drafts/）")
+        if (inv.get("summary") or {}).get("staleImagesDirs"):
+            issues.append(f"有 {inv['summary']['staleImagesDirs']} 个已废弃的 "
+                          f"grading/<task>/images/ 目录，可用 `assist grading clean --stale-images --apply` 清理")
+        checks.append(_check("grading_layout", "yellow" if issues else "green",
+                             "批阅产物布局（D119）",
+                             "；".join(issues) if issues else "作答原件与批阅成果位置正确",
+                             {"type": "guide"} if issues else {}))
+    except Exception:  # noqa: BLE001 —— 体检失败不阻断
+        checks.append(_check("grading_layout", "yellow", "批阅产物布局（D119）",
+                             "检查失败（不影响使用）", {"type": "guide"}))
     # D74-7：云同步/网盘占用（只提示，不阻塞）
     try:
         from .xxt.sync import detect as _detect_sync
@@ -1536,6 +1565,10 @@ class Handler(BaseHTTPRequestHandler):
             key = str(payload.get("key") or payload.get("workAnswerId")
                       or payload.get("name") or "")
             cid_, wid_ = str(payload.get("classId") or ""), str(payload.get("workId") or "")
+            # D119：草稿按 (ws, class_dir, taskId) 归属 → 不同作业批次互不覆盖
+            scope = {"ws": Path(self.ws).resolve(),
+                     "class_dir": str(payload.get("classDir") or ""),
+                     "task_id": str(payload.get("taskId") or "")}
             # D92：支持双套结构（ai/human/human_mode/revision）；旧字段（score/comment/images）走兼容
             if any(k in payload for k in ("ai", "human", "human_mode", "revision")):
                 rep = grade_store.save_draft_sets(
@@ -1543,13 +1576,14 @@ class Handler(BaseHTTPRequestHandler):
                     ai=payload.get("ai"), human=payload.get("human"),
                     human_mode=payload.get("human_mode"),
                     revision=payload.get("revision"),
-                    student=str(payload.get("student") or ""), tag=str(payload.get("tag") or ""))
+                    student=str(payload.get("student") or ""), tag=str(payload.get("tag") or ""),
+                    **scope)
             else:
                 rep = grade_store.save_draft(
                     _xxt_home(), cid_, wid_, key,
                     score=payload.get("score"), comment=str(payload.get("comment") or ""),
                     comment_text=str(payload.get("commentText") or ""),
-                    images=payload.get("images"))
+                    images=payload.get("images"), **scope)
             self._json(rep, 200 if rep.get("ok") else 400)
             return
         if u.path == "/xxt/grade/render-from-drafts":
@@ -2166,13 +2200,18 @@ class Handler(BaseHTTPRequestHandler):
             self._json({"ok": True, "assets_dir": str(ad), "source": src,
                         "styles": list_styles(ad), "files": files})
         elif u.path.startswith("/xxt/grade/drafts/"):
-            # D85 §3：读本地人工批阅草稿 <xxt_home>/grade-drafts/<class>/<work>.json
+            # D119：读本地批阅草稿（新布局 grading/<taskId>/drafts/ 优先，旧 grade-drafts/ 回落）
             m = re.fullmatch(r"/xxt/grade/drafts/([0-9A-Za-z\-_]{1,40})/([0-9A-Za-z\-_]{1,40})", u.path)
             if not m:
                 self._json({"ok": False, "error": "bad path"}, 400)
                 return
             from .xxt import grade_store
-            drafts = grade_store.read_drafts(_xxt_home(), m.group(1), m.group(2))
+            qd = urllib.parse.parse_qs(u.query)
+            drafts = grade_store.read_drafts(
+                _xxt_home(), m.group(1), m.group(2),
+                ws=Path(self.ws).resolve(),
+                class_dir=(qd.get("classDir") or [""])[0],
+                task_id=(qd.get("taskId") or [""])[0])
             self._json({"ok": True, "classId": m.group(1), "workId": m.group(2),
                         "count": len(drafts), "drafts": drafts})
         elif u.path == "/xxt/work/list":

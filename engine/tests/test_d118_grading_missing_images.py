@@ -51,7 +51,10 @@ def test_plan_without_any_images_raises_readable_error(tmp_path):
     msg = str(ei.value)
     assert "没有任何学生图片" in msg
     assert "下载" in msg, "错误信息应给出下一步操作"
-    assert "images" in msg, "错误信息应指出图片目录"
+    # D119：错误信息应指出**真实**的作答原件目录（pages/review/...），
+    # 而不是曾经那个从不存在的 <ws>/grading/<task>/images
+    assert "pages/review" in msg, f"错误信息应指出真实下载目录：{msg}"
+    assert "grading" not in msg, f"不应再提已废弃的 grading/<task>/images：{msg}"
 
 
 def test_cli_grade_missing_images_is_click_exception_not_traceback(tmp_path):

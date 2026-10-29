@@ -406,7 +406,8 @@ async function loadStudents() {
   try {
     const [st, dr] = await Promise.all([
       fetchXxtReviewStudents(props.engineAddr, props.token, w.classId, w.workId),
-      fetchXxtGradeDrafts(props.engineAddr, props.token, w.classId, w.workId),
+      fetchXxtGradeDrafts(props.engineAddr, props.token, w.classId, w.workId,
+                          { taskId: padId.value || packId.value, classDir: curWorkDir.value }),
     ])
     drafts.value = (dr.drafts || {}) as Record<string, any>
     students.value = (st.students || []).map((s: any) => ({
@@ -842,6 +843,7 @@ onMounted(async () => {
       v-if="reviewOpen"
       :engine-addr="props.engineAddr" :token="props.token"
       :class-id="curWork?.classId || ''" :work-id="curWork?.workId || ''"
+      :task-id="padId || packId" :class-dir="curWorkDir"
       :students="students" :drafts="drafts" :start-index="reviewIndex"
       @close="reviewOpen = false"
       @saved="loadStudents"

@@ -1,7 +1,7 @@
 # D119 任务需求单：批阅产物目录重构（作答原件 / 批阅成果分离）+ 跨工作区串数据治理
 
 > 日期：2026-10-28
-> 状态：**需求单（待确认 → 执行）**
+> 状态：**已执行完成（2026-10-29）**；验证见 §9
 > 关联：`docs/68-D118`（缺图报错）、`docs/16`（学习通下载）、`docs/05-D86`（批阅流程）、`docs/04`（数据契约）
 > 用户原话：作答图就按「作业预览-学习通」下载的地方；后面 AI 批阅/人工批阅/人工审核都指向这个文件夹找作答原件，
 > 而通过 app 完成的批阅/审核修改放到新文件夹 —— 这样管理更合理；跨工作区串数据的隐患要排查。
@@ -159,34 +159,63 @@ else:
 
 ---
 
-## 5. 待确认问题
+## 5. 已确认结论（2026-10-28 用户拍板）
 
-### Q1 草稿归属：按 `work` 还是按 `task`（作业纸）？
-- 方案 A（推荐）：`<class_dir>/grading/<taskId>/drafts/<workId>.json` —— 一次"作业纸 × 学习通作业"一份草稿，语义最准；
-- 方案 B：`<class_dir>/grading/_drafts/<workId>.json` —— 不绑 task，换作业纸仍复用同一份人工批语。
-> 差别：同一份学习通作业用两张不同作业纸批阅时，A 各存一份，B 共用一份。你希望哪种？
+| # | 结论 |
+|---|---|
+| **Q1** | **草稿按 `taskId`（作业纸）归属**：`<class_dir>/grading/<taskId>/drafts/<workId>.json`。**不同作业批次不互相覆盖** |
+| Q2 | 旧数据**只检测+提示**，由教师显式运行迁移命令（安全）；同时**提供一键迁移**命令 |
+| Q3 | 作答原件保持 `--mode missing` 默认（不覆盖已有原件）；`--mode full` 可显式覆盖 |
+| Q4 | `--images` 手工批阅入口**保留**，但必须显式传入且目录须已存在（不存在→可读报错） |
+| Q5 | 报告留在 `<class_dir>/grading/<taskId>/reports/` |
 
-### Q2 旧数据迁移是否自动执行？
-- 方案 A（推荐）：**只检测+提示**，由教师显式运行迁移命令（安全）；
-- 方案 B：启动时自动迁移（省事，但有覆盖风险）。
+### 5.1 「不同作业批次不覆盖」的落地
 
-### Q3 作答原件是否允许"重新下载覆盖"？
-现状 `review-download` 有 `--mode full|missing|comments-only`。
-- 方案 A（推荐）：保持现状（默认 `missing` 只补缺失，不覆盖已有原件）；
-- 方案 B：一律可覆盖。
+- 草稿键 = `(class_dir, taskId, workId)`，物理落盘为 `grading/<taskId>/drafts/<workId>.json`；
+- 同一 `taskId` 重复批阅：**合并式更新**（沿用 `save_draft` 的读-改-写+锁语义），不整体覆盖；
+- 不同 `taskId`：**各自独立文件**，天然互不影响；
+- 删除某 task 的 grading 目录 → 只影响该作业纸的批阅成果，不动作答原件、不动其它 task。
 
-### Q4 `--images` 手工批阅的语义要不要保留？
-你提到"手工批阅必要，但图片目录应该已存在"。
-- 方案 A（推荐）：保留，但**仅当显式传 `--images`** 时生效，且该目录必须已存在（不存在→可读报错）；
-- 方案 B：彻底删除该入口，手工批阅也强制走 `pages/review/`。
-> 我倾向 A：留一个"外部图片目录"入口应对特殊情况（如教师自己扫描的作业）。
+### 5.2 提供清理方法（用户要求）
 
-### Q5 报告的最终归属
-报告现在混在 `grading/<task>/reports/`。
-- 方案 A（推荐）：保持（同一任务的产物聚在一起，便于整体删除/重跑）；
-- 方案 B：另设 `reports/` 顶层目录，跨任务汇总。
+新增 `assist grading clean`（或并入 `assist clean`），支持：
 
----
+| 选项 | 作用 |
+|---|---|
+| `--dry-run`（默认） | 只列出将删除什么、释放多少空间 |
+| `--task <id>` | 只清某张作业纸的批阅成果 |
+| `--journal` | 只清 `journal.jsonl` / `batch-report.json` 等运行记录 |
+| `--reports` | 只清 `reports/`（产物可重跑） |
+| `--tmp` | 清 `<ws>/tmp/ai-grade/*.taskpad.json` |
+| `--all` | 清整个 `grading/<task>/`（**作答原件永不在清理范围**） |
+
+**硬约束**：清理命令**绝不触碰** `pages/review/**`（作答原件）与 `kb/**`（题库）。
+
+### 5.3 迁移方案（Q2 + 用户"提示迁移方法 + 一键迁移"）
+
+新增 `assist xxt migrate-layout`：
+
+1. **盘点**（默认，等价 `--dry-run`）：
+   - 旧 `xxt_home()` 是否为仓库 `.scratch`（隐患 A）
+   - `grade-drafts/<classId>/*.json` 共有几份、能否映射到 `class_dir`
+   - 旧 `<ws>/<class>/grading/<task>/images/` 是否残留（可删）
+   - 输出**逐条可执行命令**（提示迁移方法）
+2. **执行**（`--apply`）：
+   - 作答原件：`<old>/pages/review/**` → `<ws>/.runtime/xxt/pages/review/**`（**复制不删源**）
+   - 草稿：`grade-drafts/<classId>/<workId>.json` → `<class_dir>/grading/<taskId>/drafts/<workId>.json`
+     - `classId → class_dir` 用 `classmap.resolve_class_dir`；
+     - `taskId` 无法从旧草稿推断 → 写入 `_unassigned/<workId>.json` 并**明确告警**（不静默丢）
+   - 每步写入 `migration-report.json`；幂等（重复执行不重复搬）
+3. **安全**：迁移前自动快照旧目录；**旧文件保留**，由教师确认后再用清理命令删除。
+
+## 5.4 其他已确认细节
+
+| # | 结论 |
+|---|---|
+| D1 | 需求单增加提示：**批阅成果（草稿）无二次来源，丢了不可恢复**，建议纳入备份；doctor 检查项里给出提醒 |
+| D3 | `students.json` 可被 `review-download --mode comments-only` 重写 → 作为 **L1 的唯一例外**（下载回执刷新），写入文档 |
+| D4 | `<ws>/tmp/ai-grade/*.taskpad.json` 纳入清理（`--tmp`），并在其中落盘 `taskpad` 快照便于追溯 |
+| D5 | 迁移独立成命令：`assist xxt migrate-layout [--apply]` |
 
 ## 6. 直接影响（会修的已知缺陷）
 
@@ -203,3 +232,44 @@ else:
 | 迁移丢数据 | 先 `--dry-run`、迁移前自动快照、旧目录**保留不删** |
 | 教师机已有 `.runtime/xxt` 与仓库 `.scratch` 并存 | 检测到并存时**告警并要求显式选择**，不自动合并 |
 | 改动面大（下载/批阅/审核/报告/doctor） | 分阶段：T1+T2（口径）→ T3（草稿迁移）→ T4+T5（fallback/文案）→ T6（doctor） |
+
+---
+
+## 9. 实施记录（已完成）
+
+### 9.1 落地内容
+
+| 条目 | 实现 |
+|---|---|
+| **T1** 去掉仓库 `.scratch` 优先 | `xxt/session.py`：优先级改为 `XXT_HOME` > **已绑定 workspace** > `ASSIST_DEV_SCRATCH=1`（显式开发便利）> 兜底。默认**不再**命中仓库 |
+| **T2** 口径唯一 | 新增 `bind_workspace()/bound_workspace()`；`cli._setup()` 与 `serve._set_serve_ws()` 均绑定 → 所有 87 处 `xxt_home()` 调用自动跟随 |
+| **T3** 草稿按 taskId 归属 | `grade_store`：新增 `grading_drafts_dir()`；`draft_file/read_drafts/save_draft/save_draft_sets/delete_draft` 支持 `ws/class_dir/task_id`。新布局 `<ws>/<class_dir>/grading/<taskId>/drafts/<workId>.json`；**读**新→旧回落，**写**只写新 |
+| **T4** 删掉 images fallback | `flow.py`：`ctx["images_dir"]` 不再默认指向 `grading/<task>/images`（无写入方）；只有显式 `--images` 才用；未提供/目录不存在 → `GradingInputError` 可读报错 |
+| **T5** 错误文案 | 改为指出**真实**作答原件目录：`<ws>/.runtime/xxt/pages/review/<classId>/<workId>/` |
+| **迁移** | 新增 `assist xxt migrate-layout [--apply]`（`xxt/migrate_layout.py`）：盘点 + 一键迁移；**只复制不删源**、幂等、写 `migration-report.json`；草稿无法映射 classDir 时保留原地并告警 |
+| **清理** | 新增 `assist grading clean [--reports --journal --drafts --tmp --stale-images --all --task] [--apply]`（`grading/cleanup.py`）：默认演练；**安全红线**二次校验，绝不触碰 `kb/` 与 `pages/review/` |
+| **T6** doctor | 新增检查项 `grading_layout`：检出「xxt 根在代码仓库」「旧目录残留」「旧草稿未迁移」「废弃 images 目录」 |
+| 前后端串联 | `fetchXxtGradeDrafts` / `saveXxtGradeDraft` 增加 `taskId`/`classDir`；`StudentReviewModal` 透传；`AiGradingPanel` 传 `padId||packId` 与 `curWorkDir` |
+
+### 9.2 验证
+
+| 项 | 结果 |
+|---|---|
+| 跨工作区隔离（实测） | WS_A 存的草稿，切到 WS_B 读为 `{}`；切回 WS_A 仍可读 —— **不再串数据** |
+| `xxt_home()` 默认 | 跟随绑定 workspace，**不含** `.scratch` |
+| 草稿按 task 隔离 | 同一 workId 用 padA/padB 分别存 80 / 95，两份文件互不覆盖 |
+| 同 task 重复保存 | 合并式更新（ai 80 保留 + human 90 写入） |
+| 读兼容 | 新布局无文件时回落旧 `grade-drafts/` |
+| 迁移 | 演练不落盘；`--apply` 复制到位、**源文件保留**、二次执行判定"已存在"跳过 |
+| 清理 | 默认演练不删；`--apply` 删 reports/tmp；**作答原件与题库安然无恙** |
+| engine pytest | **647 passed**（新增 `test_d119_artifact_layout.py` 11 例） |
+| app `vue-tsc -b` | 0 error |
+
+### 9.3 关键行为变化（需告知教师）
+
+1. **作答图/草稿不再落在代码仓库** —— 若之前跑过，旧数据仍在原地，用
+   `assist xxt migrate-layout`（先演练）迁移；
+2. **草稿按作业纸归属** —— 同一份学习通作业换一张作业纸批阅，会生成**新的草稿文件**（互不覆盖），
+   这正是"不同作业批次不互相覆盖"；
+3. **旧草稿无法自动判定属于哪张作业纸** → 迁入 `grading/_unassigned/drafts/` 并告警；
+4. `grading/<task>/images/` 已废弃，可用 `assist grading clean --stale-images --apply` 清理。

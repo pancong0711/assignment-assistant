@@ -160,13 +160,26 @@ def _run_transcribe(ctx: dict, client, transcripts_dir: Path) -> list[Path]:
             logger.info(f"[转录] plan 模式：{len(groups)} 名学生")
         else:
             n_stu = len(plan.get("students") or [])
+            from ..xxt import layout as _xxt_layout
+            real_dir = _xxt_layout.pages_dir() / "review" / str(
+                (plan.get("classId") or ctx.get("class_id") or "<classId>")) / str(
+                plan.get("workId") or ctx.get("work_id") or "<workId>")
             msg = (f"plan 模式下没有任何学生图片（名单 {n_stu} 人，0 人有图）："
-                   f"请先在「作业预览-学习通」下载学生作答图，再重跑 AI 批阅。"
-                   f"（批阅下载目录：{ctx.get('images_dir')}）")
+                   f"请先在「作业预览-学习通」对该作业点「⬇ 下载作答/批语」，再重跑 AI 批阅。"
+                   f"（作答原件应位于：{real_dir}）")
             logger.error(msg)
             raise GradingInputError(msg)
     else:
-        images_dir: Path = ctx["images_dir"]
+        images_dir = ctx.get("images_dir")
+        if not images_dir:
+            raise GradingInputError(
+                "未提供作答图片来源：请在「作业预览-学习通」下载作答图后重跑，"
+                "或显式传 --images <已存在的图片目录>（手工批阅）。")
+        images_dir = Path(images_dir)
+        if not images_dir.is_dir():
+            raise GradingInputError(
+                f"指定的作答图目录不存在：{images_dir}。"
+                f"请改用「作业预览-学习通」下载的目录（<workspace>/.runtime/xxt/pages/review/<班级>/<作业>/）。")
         groups = group_images(images_dir)
         if not groups:
             logger.warning(f"图片目录为空（无 .png/.jpg 等文件），跳过转录: {images_dir}")
@@ -273,7 +286,9 @@ def run_task(task_path: Path, ws: Path, images_dir: Path | None = None,
         "task_path": task_path,
         "homework": task.get("course", "") + " " + str(task.get("id", "")),
         "items": expand_items(ws, task),
-        "images_dir": Path(images_dir).expanduser().resolve() if images_dir else p["images"],
+        # D119：**不再**默认指向 `<ws>/<class>/grading/<task>/images`（该目录无任何写入方，
+        # 是 D118 那个 WinError 3 的来源）。只有显式传 --images 的"手工批阅"才用它。
+        "images_dir": Path(images_dir).expanduser().resolve() if images_dir else None,
         "transcripts_dir": p["transcripts"],
         "evaluations_dir": p["evaluations"],
         "reports_dir": p["reports"],

@@ -19,20 +19,60 @@ LOGIN_URL = ("https://passport2.chaoxing.com/login?fid=&newversion=true"
              "&refer=https%3A%2F%2Fi.chaoxing.com")
 SCAN_TIMEOUT = 30 * 60  # 扫码等待上限 30 分钟
 
+# 旧默认布局标记：这些文件出现在 `<ws>/.runtime/` 下 = 该目录本身就是 xxt 根
+_LEGACY_MARKERS = (
+    "xxt-storage.json",
+    "xxt-qr.png",
+    "xxt-login-state.json",
+    "xxt-after-login.html",
+)
+
+
+# D119：进程级「当前 workspace」绑定。serve 启动时绑定；CLI 用 -w 时绑定。
+# 目的：让 xxt_home() 不再隐式使用 find_workspace(None)（可能与 serve 实际 ws 不同 →
+# 跨工作区串数据：在 A 下载、切到 B 批阅仍读 A 的图/草稿）。
+_BOUND_WS: "Path | None" = None
+
+
+def bind_workspace(ws: "Path | str | None") -> None:
+    """绑定当前 workspace（D119-L3 口径唯一）。传 None 解除绑定。"""
+    global _BOUND_WS
+    _BOUND_WS = Path(ws).expanduser().resolve() if ws else None
+
+
+def bound_workspace() -> "Path | None":
+    return _BOUND_WS
+
 
 def xxt_home() -> Path:
     """统一 xxt 工件根（storage/qr/runs/pages），serve 与 CLI 必须使用同一口径。
 
-    优先级：XXT_HOME > 开发仓库 .scratch（已有 storage 时）> workspace/.runtime/xxt。
-    兼容旧默认布局：若 workspace/.runtime 下已有旧的 xxt-storage.json/xxt-qr.png，
-    则把该目录本身作为根，避免升级后突然找不到历史会话或二维码。
+    D119 优先级（**已去掉"仓库 .scratch 优先"**，那会让教师的作答图/草稿落到代码仓库里）：
+      1. 环境变量 `XXT_HOME`（显式覆盖，保留给高级用法）
+      2. **已绑定的 workspace**（serve / CLI -w）→ `<ws>/.runtime/xxt`
+      3. 开发便利：`ASSIST_DEV_SCRATCH=1` 且仓库 `.scratch` 有 storage → 用它（**仅显式开启**）
+      4. 兜底：`find_workspace(None)/.runtime/xxt`
+    兼容旧默认布局：若 `<ws>/.runtime` 下已有旧的 xxt-storage.json/xxt-qr.png，
+    则以该目录本身为根，避免升级后突然找不到历史会话或二维码。
     """
     env = os.environ.get("XXT_HOME")
     if env:
         return Path(env).expanduser()
-    repo_root = Path(__file__).resolve().parents[4]
-    if (repo_root / ".scratch" / "xxt-storage.json").exists():
-        return repo_root / ".scratch"
+    # 2) 已绑定的 workspace（D119 主路径）
+    if _BOUND_WS is not None:
+        runtime = _BOUND_WS / ".runtime"
+        if any((runtime / name).exists() for name in _LEGACY_MARKERS):
+            return runtime
+        return runtime / "xxt"
+    # 3) 开发便利：必须显式开启，绝不默认生效
+    if str(os.environ.get("ASSIST_DEV_SCRATCH") or "") in ("1", "true", "True"):
+        repo_root = Path(__file__).resolve().parents[4]
+        if (repo_root / ".scratch" / "xxt-storage.json").exists():
+            import sys as _sys
+            print("[xxt_home] 警告：正在使用仓库 .scratch（ASSIST_DEV_SCRATCH=1）",
+                  file=_sys.stderr)
+            return repo_root / ".scratch"
+    # 4) 兜底
     from ..workspace import find_workspace
     runtime = Path(find_workspace(None)).resolve() / ".runtime"
     legacy_markers = (
