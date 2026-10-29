@@ -1,7 +1,7 @@
 # D77 诊断：feishu4dsh 长回复被 SDK 分片后，后续分片落到聊天根（不在话题内）
 
 > 日期：2026-10-12
-> 环境：生产入口 `~/.dsh/profiles/feishu4dsh`，插件路径 `/home/bot2603/feishu4dsh`（v0.12.2）
+> 环境：生产入口 `~/.dsh/profiles/feishu4dsh`，插件路径 `~/.dsh/profiles/feishu4dsh`（v0.12.2）
 > 配置：`sessionScope: chat-thread`；入站批合并修复 `batch.text.delayMs = 0` 已在位
 > 结论：**已定位到确定性根因**，不是飞书话题能力问题，也不是入站 `thread_id` 丢失；
 > 问题在出站长文本分片：SDK 自动分片时只有第一片带 `replyTo`，后续片走 `message.create` 落到聊天根。
@@ -134,7 +134,7 @@ async function sendLongMarkdown(port, chatId, text, options) {
 
 ## 6. 相关代码位置
 
-- 生产插件：`/home/bot2603/feishu4dsh`
+- 生产插件：`~/.dsh/profiles/feishu4dsh`
   - 出站封装：`src/bridge.ts`（`safeSend` / `openReplyStream` / `openCardReplyStream` / `sendFallback`）
   - 入站/锚点：`handleInboundMessage`、`safeOpenStream`、`renderSessionEvent` 的 `user/message` 分支
 - SDK：`node_modules/@larksuiteoapi/node-sdk/lib/index.js`
