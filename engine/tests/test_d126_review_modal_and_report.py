@@ -101,3 +101,51 @@ def test_report_still_has_score_and_deductions(tmp_path):
     t, e = _mk_report_files(tmp_path)
     md = build_report_md(t, e)
     assert "扣分明细" in md and "第2题 扣5分" in md
+
+
+# ---------------- D126-FIX：部分失败中止时，已成功的转写也要可见 ----------------
+
+def test_partial_failure_still_persists_successful_transcripts(tmp_path, monkeypatch):
+    """回归：转录"部分失败 → 默认中止"时，已成功学生的转写仍必须进草稿。
+
+    原实现只在 step 循环之后写草稿，而 `_run_transcribe` 部分失败会 raise，
+    导致「仅转录」最常见的情形（有学生限流/读图失败）逐生审核里一片空白。
+    """
+    import pytest
+    from assist.grading import flow
+
+    ws = tmp_path / "ws"; ws.mkdir()
+    tp = ws / "t1.taskpad.json"
+    tp.write_text(json.dumps({"id": "t1", "class_dir": "classes/A",
+                              "grade": {"steps": ["transcribe"]}}), encoding="utf-8")
+    plan = {"taskId": "t1", "classDir": "classes/A", "classId": "c1", "workId": "w1",
+            "students": [{"name": "张三", "workAnswerId": "wa1", "images": ["/x/a.jpg"]},
+                         {"name": "李四", "workAnswerId": "wa2", "images": ["/x/b.jpg"]}]}
+
+    def fake_batch(client, items, out_dir, **kw):
+        out_dir.mkdir(parents=True, exist_ok=True)
+        out = out_dir / "张三.json"
+        out.write_text(json.dumps({"student": "张三", "markdown": "成功转写", "model": "m"},
+                                  ensure_ascii=False), encoding="utf-8")
+        return {"total": 2, "failed": 1,
+                "items": [{"id": "张三", "ok": True, "out": str(out)},
+                          {"id": "李四", "ok": False, "error": "429 限流"}]}
+
+    monkeypatch.setattr("assist.grading.transcribe.transcribe_batch", fake_batch)
+    monkeypatch.setattr("assist.grading.llm.LLMClient.__init__", lambda self, **k: None)
+
+    with pytest.raises(flow.GradingInputError):
+        flow.run_task(tp, ws, plan=plan)
+
+    d = grade_store.read_drafts(ws, "c1", "w1", ws=ws, class_dir="classes/A", task_id="t1")
+    assert d.get("wa1", {}).get("ai", {}).get("transcript") == "成功转写", \
+        "部分失败中止时，已成功学生的转写也应可见"
+
+
+def test_md_to_html_no_nameerror_and_has_katex(tmp_path):
+    """D126 §3.5：`md_to_html` 曾引用未定义的 A4_CSS/MATHJAX_CDN（一调用就 NameError）。"""
+    from assist.grading.report import md_to_html
+    html = md_to_html("## 二、AI 批阅\n\n**总分：88 / 100**\n\n- 第 2 题单位错\n")
+    assert "AI 批阅" in html and "88 / 100" in html
+    assert "<html" in html and "</html>" in html
+    assert "__katex" in html or "katex" in html.lower(), "应带 KaTeX 头（公式可渲染）"

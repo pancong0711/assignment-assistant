@@ -712,3 +712,17 @@ rainclass 67/67，PWA↔engine 全等，仅末位浮点四舍五入噪声）。
   的 `questions[].errors[]`（`knowledge` / `description` / `evidence` / `confidence`）
   + `per_question_scores`；
 - 产出形式：汇总 MD/HTML/PNG（教师版），不与学生报告混在一起。
+
+---
+
+## D109–D126 对账（2026-10-30 核对）
+
+> 说明：`docs/13-taskboard.md` 的活动记录停在 D108，D109 起均只有独立需求单
+> （`docs/6x`–`docs/7x`）与提交记录。本段仅记录**当前仍未完成**的项，避免重复登记。
+
+- ✅ D126 同批补漏（2026-10-30）：部分失败中止时转写丢失 + 草稿 key 退化 + PWA `allowPartial` 无入口；
+  详见 `docs/75` §6。engine **726 passed** / build 0 err / selfcheck 34 全绿。
+- ⏳ **产物版本号过期**：`report.build_report_md` 页脚、`evaluate.py`/`transcribe.py` 的
+  `version` 仍为 `assist-engine 0.1.0`（实际 `0.4.0`）。属历史元数据，需先定"产物版本是否参与
+  比对/迁移"再改，暂不动。
+- ⏳ **D126-B 教师总结报告**（见上节，非本轮）。

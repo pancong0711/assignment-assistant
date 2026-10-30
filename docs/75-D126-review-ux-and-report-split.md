@@ -1,7 +1,7 @@
 # D126 缺陷修复：逐生审核看不到原图/转写 + 分步文案 + 报告拆「转写 / 批阅」
 
 > 日期：2026-10-29
-> 状态：**已执行完成**
+> 状态：**已执行完成**（2026-10-30 补漏，见 §6）
 > 关联：`docs/74-D125`（分阶段 endpoint / 分步批阅）、`docs/32-D80`（批阅）
 
 ## 1. 现象（用户反馈）
@@ -88,6 +88,44 @@
 | engine pytest | **724 passed**（新增 `test_d126_review_modal_and_report.py` 6 例） |
 | app `vue-tsc` / `build` | 0 error |
 | app `npm run selfcheck` | **34 项全绿**（新增 `selfcheck-d126-review-ux.mjs`） |
+
+## 6. 补漏（2026-10-30 · 复审 D126 同批工作）
+
+> 背景：D126 实施过程中发生过 context window exceed，导致同批部分收尾未完成。
+> 本次逐条核对 D126 需求单与实际代码，确认 §3.1–§3.5 **均已落地**，但发现 **P3 只修了一半**。
+
+### 6.1 P3 的两处缺口（已修）
+
+| # | 缺口 | 后果 |
+|---|---|---|
+| G1 | `save_transcripts_to_drafts` 写在 step 循环**之后** | `_run_transcribe` 在"部分失败且未加 `--allow-partial`"时直接 `raise`（D125 定的默认中止），**永远走不到写草稿** → 已成功学生的转写全部丢失。而"仅转录"正是最需要看转写的场景，"个别学生限流/读图失败"又是最常见情形。 |
+| G2 | 写草稿的 key 依赖 `load_plan()` 从磁盘读 | `run_task(plan=...)` 的 plan 不一定落盘 → `wa_by_name` 为空 → 退化成**用姓名当 key**；前端 `drafts[students[].key]` 按 `workAnswerId` 取 → 写了草稿但逐生审核**依旧空白**（静默失败）。 |
+
+修复：
+
+- 抽出 `flow._persist_transcripts()`；在 transcribe 分支用 **`try/finally`** 调用——
+  无论成功、部分失败中止还是 0 名学生有图，已产生的转写都会落草稿；
+  循环后的调用保留为幂等兜底（覆盖"只重跑转录"等不走该分支的路径）。
+- `save_transcripts_to_drafts(..., plan=)` 新增参数，由调用方**直接传入 plan**；
+  仅在未传时才回落 `load_plan()`。
+- PWA：`allowPartial` 此前在 `engineClient`/serve/CLI 三层都已支持却**没有任何界面入口**，
+  等于形同虚设。现加「有学生转录失败时仍继续（默认中止）」勾选框，默认仍保持 D125 的中止语义。
+
+### 6.2 顺带发现（未改，已登记）
+
+- `build_report_md` 页脚、`evaluate.py`/`transcribe.py` 产物 `version` 字段仍写着
+  `assist-engine 0.1.0`（实际 `__version__ = 0.4.0`）。属历史元数据，改动会影响
+  既有产物版本比对语义，**不在本轮范围**，记入 `docs/12-backlog.md`。
+
+### 6.3 验证（补漏后）
+
+| 项 | 结果 |
+|---|---|
+| 新增回归 `test_partial_failure_still_persists_successful_transcripts` | 修复前**复现失败**（drafts = `{}`），修复后通过 ✅ |
+| 新增回归 `test_md_to_html_no_nameerror_and_has_katex` | 通过 ✅ |
+| engine pytest | **726 passed** |
+| app `vue-tsc` / `build` | 0 error |
+| app `npm run selfcheck` | 34 项全绿 |
 
 ## 5. 后续（已记录，本轮不做）
 

@@ -31,6 +31,10 @@ const msg = ref('')
 /* D106：转录图片发送模式 + SVG 重绘（默认关） */
 const imageMode = ref<'auto' | 'original'>('auto')
 const svgRedraw = ref(false)
+/** D125/D126：转录有学生失败时是否仍继续（默认关 = 中止，避免残缺数据进评阅）。
+ *  引擎与 PWA 此前都已支持（`--allow-partial` / `allowPartial`），但界面没有入口，
+ *  `allowPartial` 参数形同虚设 —— 用户遇到个别学生限流/读图失败时无路可走。 */
+const allowPartial = ref(false)
 const busy = ref(false)
 const progress = ref('')
 let pollTimer: number | undefined
@@ -526,6 +530,7 @@ async function startAi(steps?: string[]) {
       imageMode: imageMode.value,      // D106
       svgRedraw: svgRedraw.value,      // D106
       ...(steps && steps.length ? { steps } : {}),   // D125：分步批阅
+      ...(allowPartial.value ? { allowPartial: true } : {}),   // D126-FIX：部分失败仍继续
     })
     stopPoll()
     const tick = async () => {
@@ -798,6 +803,10 @@ onMounted(async () => {
               @click="startAi(['transcribe', 'evaluate'])">③ 转录+评阅</button>
       <button class="btn" :disabled="busy" title="完整流程：转录 → 评阅 → 报告"
               @click="startAi()">▶ ④ 完整批阅</button>
+      <label class="hint" style="display:inline-flex; align-items:center; gap:4px; margin-left:8px">
+        <input type="checkbox" v-model="allowPartial" />
+        有学生转录失败时仍继续（默认中止）
+      </label>
     </div>
     <p v-if="progress" class="hint" style="margin-top:6px">{{ progress }}</p>
 

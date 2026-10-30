@@ -155,10 +155,15 @@ def render_reports_from_drafts(ws, *, class_id: str, work_id: str, task_id: str 
 
 
 def save_transcripts_to_drafts(ws, *, class_id: str, work_id: str, task_id: str,
-                               class_dir: str = "", transcripts_dir=None) -> int:
+                               class_dir: str = "", transcripts_dir=None,
+                               plan: "dict | None" = None) -> int:
     """D126：把转录产物写入批阅草稿的 `ai.transcript`（仅转录也能在逐生审核里看到）。
 
     只填空缺的 transcript 字段，**不影响**已有的分数/批语；返回写入条数。
+
+    D126-FIX：`plan` 可由调用方直接传入。草稿 key 必须是 **workAnswerId**
+    （前端 `drafts[students[].key]` 按它取），而 plan 未落盘时 `load_plan()` 读不到，
+    过去会静默退化成用姓名当 key → 写了草稿但逐生审核依旧空白。
     """
     from pathlib import Path
     from ..xxt import grade_store
@@ -168,16 +173,17 @@ def save_transcripts_to_drafts(ws, *, class_id: str, work_id: str, task_id: str,
     tdir = Path(transcripts_dir) if transcripts_dir else None
     if tdir is None or not tdir.is_dir():
         return 0
-    # 学生名 → workAnswerId（优先用 plan）
+    # 学生名 → workAnswerId：优先用调用方传入的 plan（run_task 的 plan 不一定落盘）
+    if plan is None:
+        try:
+            from . import inputs as _inputs
+            plan = _inputs.load_plan(ws, task_id, class_dir) or {}
+        except Exception:  # noqa: BLE001
+            plan = {}
     wa_by_name: dict[str, str] = {}
-    try:
-        from . import inputs as _inputs
-        plan = _inputs.load_plan(ws, task_id, class_dir) or {}
-        for s in (plan.get("students") or []):
-            if s.get("name"):
-                wa_by_name[str(s["name"])] = str(s.get("workAnswerId") or "")
-    except Exception:  # noqa: BLE001
-        pass
+    for st in ((plan or {}).get("students") or []):
+        if st.get("name"):
+            wa_by_name[str(st["name"])] = str(st.get("workAnswerId") or "")
 
     n = 0
     for tf in sorted(tdir.glob("[!_]*.json")):
