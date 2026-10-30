@@ -411,7 +411,9 @@ async function loadStudents() {
     const [st, dr] = await Promise.all([
       fetchXxtReviewStudents(props.engineAddr, props.token, w.classId, w.workId),
       fetchXxtGradeDrafts(props.engineAddr, props.token, w.classId, w.workId,
-                          { taskId: padId.value || packId.value, classDir: curWorkDir.value }),
+                          { taskId: packId.value || padId.value, classDir: curWorkDir.value,
+                            // D127：兼容读取旧目录键（曾按作业纸 id 写入的历史草稿）
+                            altTaskId: packId.value ? padId.value : '' }),
     ])
     drafts.value = (dr.drafts || {}) as Record<string, any>
     students.value = (st.students || []).map((s: any) => ({
@@ -532,6 +534,8 @@ async function startAi(steps?: string[]) {
   try {
     const jobId = await startXxtGradeAi(props.engineAddr, props.token, {
       courseId: w.courseId, classId: w.classId, cpi: w.cpi, workId: w.workId, taskpad,
+      // D127：作业包模式显式传 packId 作为批阅作用域键（与下方读草稿同口径）
+      ...(packId.value ? { packId: packId.value } : {}),
       ...(padsPayload && padsPayload.length > 1 ? { pads: padsPayload } : {}),
       mode: mode.value, tags: [...tagsSel.value],
       limit: Number(limit.value) || 0,
@@ -610,7 +614,7 @@ async function renderReports() {
   progress.value = '正在按草稿逐生生成报告（人工在前 + 【附件】AI + 修订标红）……'
   try {
     const r = await renderReportsFromDrafts(props.engineAddr, props.token, {
-      classId: w.classId, workId: w.workId, taskId: padId.value || packId.value,
+      classId: w.classId, workId: w.workId, taskId: packId.value || padId.value,
     })
     busy.value = false
     if (r?.ok) {

@@ -595,6 +595,29 @@ def restart_plan(platform_name: str, supervised: bool) -> str:
     return "execv"
 
 
+def _llm_error_kind(msg: str) -> str:
+    """D127-FIX：把 LLM 测试失败分成三类，避免教师把"请求参数问题"误判成"配置错误"。
+
+    - ``config``：鉴权失败 / 模型不存在 / 地址不可达 —— **真配置问题**；
+    - ``request``：400 且提示参数不合法（图片尺寸、格式、token 上限等）—— 探针/请求本身的问题，
+      说明 base_url/key/model **已经通了**（请求已到达供应商）；
+    - ``unknown``：其它。
+    """
+    m = str(msg or "")
+    low = m.lower()
+    if any(k in low for k in ("401", "403", "unauthorized", "invalid api key",
+                              "invalid_api_key", "model is unavailable",
+                              "model not found", "model_not_found")):
+        return "config"
+    if ("status=400" in low or "invalid_parameter" in low
+            or "must be larger than" in low or "invalid_request" in low):
+        return "request"
+    if any(k in low for k in ("connection", "timeout", "network", "resolve",
+                              "name or service", "unreachable")):
+        return "config"
+    return "unknown"
+
+
 def _llm_test_summary(results: "list[dict]") -> str:
     """D127：把逐段测试失败原因压成一行摘要（供前端直接展示，绝不含 key）。"""
     bad = [r for r in (results or []) if not r.get("ok")]
@@ -1368,12 +1391,22 @@ class Handler(BaseHTTPRequestHandler):
                     t0 = time.time()
                     if st == "transcription":
                         import tempfile as _tf
+
                         from PIL import Image as _Im
                         fd, png = _tf.mkstemp(suffix=".png")
                         try:
-                            _Im.new("RGB", (8, 8), (255, 255, 255)).save(png)
+                            # D127-FIX：探针图 **128×128 彩色块**。
+                            # 之前用 8×8 纯白，阿里云 MAAS 直接 400
+                            # "height:8 or width:8 must be larger than 10" →
+                            # 看起来像"配置错误"，其实配置是通的，只是测试图太小。
+                            # 真实作答图都是 1000px 级别，探针也必须接近真实量级。
+                            _probe = _Im.new("RGB", (128, 128), (220, 40, 40))
+                            for _x in range(64, 128):
+                                for _y in range(128):
+                                    _probe.putpixel((_x, _y), (40, 60, 200))
+                            _probe.save(png)
                             txt = client.chat_with_images(
-                                "你是一个测试助手。", "这张图片是什么颜色？只回答颜色。",
+                                "你是一个测试助手。", "这张图片主要是什么颜色？只回答颜色。",
                                 [png], max_tokens=256, step="transcription")
                         finally:
                             try:
@@ -1387,8 +1420,10 @@ class Handler(BaseHTTPRequestHandler):
                                  "reply": str(txt or "")[:60]})
                 except LLMAPIError as exc:
                     item["error"] = str(exc)[:400]
+                    item["errorKind"] = _llm_error_kind(str(exc))
                 except Exception as exc:  # noqa: BLE001
                     item["error"] = f"{type(exc).__name__}: {str(exc)[:300]}"
+                    item["errorKind"] = "unknown"
                 results.append(item)
             ok = all(r["ok"] for r in results)
             # D127：**始终返回 200**。此前用 HTTP 400 表达"测试没通过"，
@@ -1764,13 +1799,18 @@ class Handler(BaseHTTPRequestHandler):
                 self._json({"ok": False, "error": err}, 400)
                 return
             # 作业包落 workspace 临时目录（PWA 的 pad 存在 localStorage，需显式传入）
-            task_id = str(pad.get("id") or "").strip() or "ai-grade-task"
+            # D127-FIX：批阅**作用域键**必须前后端一致。
+            #   作业包模式 → packId（该包内所有 tag 的作业纸共用同一批阅目录）
+            #   单张作业纸 → 作业纸 id
+            # 此前引擎固定用 pad.id、前端读用 packId → 写了草稿但逐生审核读不到。
+            pack_id = str(payload.get("packId") or "").strip()
+            task_id = pack_id or (str(pad.get("id") or "").strip() or "ai-grade-task")
             pad_dir = Path(self.ws).resolve() / "tmp" / "ai-grade"
             pad_dir.mkdir(parents=True, exist_ok=True)
             pad_path = pad_dir / f"{task_id}.taskpad.json"
             pad_path.write_text(json.dumps(pad, ensure_ascii=False, indent=1), encoding="utf-8")
             args = ["grade", "--task", str(pad_path), "--xxt-class", f"{cid}:{kid}",
-                    "--work", work]
+                    "--work", work, "--scope-id", task_id]
             # D89：作业包多作业纸 → 落同一临时目录，--pads-dir 让 build_plan 按 tag 全量匹配
             if isinstance(pads, list) and len(pads) > 1:
                 pool = pad_dir / f"{task_id}-pads"
@@ -2557,11 +2597,14 @@ class Handler(BaseHTTPRequestHandler):
             from .xxt import grade_store
             qd = urllib.parse.parse_qs(u.query)
             # D126-FIX：统一归一为双套结构，前端按 ai.transcript / ai.comment 取值
+            # D127-FIX：支持 altTaskId 兼容回落（历史上目录键在 padId / packId 间漂移过）
+            _alt = [a for a in (qd.get("altTaskId") or []) if str(a).strip()]
             drafts = grade_store.read_drafts_normalized(
                 _xxt_home(), m.group(1), m.group(2),
                 ws=Path(self.ws).resolve(),
                 class_dir=(qd.get("classDir") or [""])[0],
-                task_id=(qd.get("taskId") or [""])[0])
+                task_id=(qd.get("taskId") or [""])[0],
+                alt_task_ids=_alt)
             self._json({"ok": True, "classId": m.group(1), "workId": m.group(2),
                         "count": len(drafts), "drafts": drafts})
         elif u.path == "/xxt/work/list":

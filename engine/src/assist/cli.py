@@ -1624,6 +1624,9 @@ def llm_batch(task_path, jsonl_path, provider_name, limit, submit, poll_id, down
 @click.option("--task", "task_path", required=True, help="任务包 JSON 路径（grade 节驱动）")
 @click.option("--pads-dir", "pads_dir", default=None,
               help="D89：作业包目录（*.taskpad.json，按 tag 自动匹配多名学生；缺省=用 <ws>/tasks/）")
+@click.option("--scope-id", "scope_id", default=None,
+              help="D127：批阅作用域键（作业包 id；单张作业纸模式=作业纸 id）。"
+                   "决定 grading/<scope>/{drafts,transcripts,...} 目录，必须与 PWA 读取端一致。")
 @click.option("--images", "images_dir", default=None, help="学生作业图片目录（文件名=学生名或学号-题号）")
 @click.option("--rerun", "rerun", default=None,
               type=click.Choice(["download", "transcribe", "evaluate", "report", "upload"]),
@@ -1646,7 +1649,7 @@ def llm_batch(task_path, jsonl_path, provider_name, limit, submit, poll_id, down
 @click.option("--verbose", "-v", is_flag=True)
 @click.pass_obj
 def grade(obj, task_path, pads_dir, images_dir, rerun, steps, allow_partial, xxt_class, work_id,
-          plan_path, mode, tags, limit, dry_plan, workspace, verbose):
+          plan_path, mode, tags, limit, dry_plan, scope_id, workspace, verbose):
     """AI 批阅：transcribe → evaluate → report（阶段3；download/upload 属阶段4）。
 
     任务包 grade.steps 驱动；journal 运行记录写入
@@ -1663,7 +1666,10 @@ def grade(obj, task_path, pads_dir, images_dir, rerun, steps, allow_partial, xxt
     ws = _setup(verbose or obj.get("verbose"), workspace)
     tp = Path(task_path).expanduser().resolve()
     task = _json.loads(tp.read_text(encoding="utf-8"))
-    task_id = str(task.get("id") or "task")
+    # D127：--scope-id 统一批阅目录键（作业包 id / 作业纸 id），与 PWA 读取端同口径
+    if scope_id:
+        task["pack_id"] = str(scope_id)
+    task_id = str(scope_id or task.get("id") or "task")
 
     plan = None
     if plan_path:

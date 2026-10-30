@@ -211,3 +211,70 @@ engine pytest 744 passed；app build 0 error；selfcheck 全绿。
 - 教师总结报告（D126-B）尚未实施；`evaluations/*.json` 已带 `knowledge[]`，为其做好了数据准备。
 - `SheetContentView.vue` 的变体编排仍用全库 `pad.savedJsons()`（整班 zip 入口）；
   与整班预览口径尚未统一，**下一轮**处理。
+
+---
+
+## 7. D127-FIX（2026-10-30，用户现场反馈两例）
+
+### 7.1 测试配置 400，但正式转写正常
+
+**现象**：转录段报
+`invalid_parameter_error ... The image length and width do not meet the model restrictions. [height:8 or width:8 must be larger than 10]`；
+评阅段正常。
+
+**根因**：`/llm/test` 的转录探针用 **8×8 纯白图**（`serve.py` `_Im.new("RGB",(8,8))`），
+低于阿里云 MAAS 的尺寸下限。**这恰恰证明 provider/key/base_url/model 都通了**——
+请求已到达供应商，只是被参数校验拒绝；而正式转写用学生真实作答图（1000px 级）所以正常。
+
+**修复**
+| # | 改动 |
+|---|---|
+| F1 | 探针图改 **128×128 彩色块**（左红右蓝），提问“主要是什么颜色”，贴近真实量级 |
+| F2 | 新增 `_llm_error_kind()`：把失败分为 `config`（401/403/模型不存在/网络）与 `request`（400 参数不合法），结果带 `errorKind` |
+| F3 | 前端逐段显示 `provider/base_url/model/ms/error` 原文（上一轮已做） |
+
+> 教训：探针必须与真实请求同量级。上一轮 `max_tokens:16 → 256` 是同一类问题。
+
+### 7.2 能转录，但逐生审核看不到转写
+
+**现象**：点「仅转录」后 `transcripts/*.json` 已生成，逐生审核仍显示“暂无转写内容”。
+
+**根因（作用域键读写不一致）**：
+
+| 环节 | 取值 |
+|---|---|
+| 引擎写草稿 | `task.get("id")` → **作业纸 id** → `grading/<padId>/drafts/` |
+| 前端读草稿 | `packId` → `grading/<packId>/drafts/` |
+
+实测复现：写入 `classes/A/grading/pad-qa/drafts/w1.json`，按 `packId` 读返回 `{}`。
+
+**修复**
+| # | 改动 |
+|---|---|
+| F4 | 新增 `flow.grading_scope_id(task, plan)`：统一作用域键（`plan.packId` > `task.pack_id` > `task.id`） |
+| F5 | **`plan.packId` 注入 `task.pack_id`**（此前只注入了 `class_dir`，漏了作用域键——这是事故的直接原因） |
+| F6 | 草稿写入（转写/评阅/报告）全部改用 `grading_scope_id()` |
+| F7 | serve `/xxt/grade/ai-run` 以 `payload.packId` 为作用域键，并新增 CLI `--scope-id` |
+| F8 | 读取侧新增 `alt_task_ids` 兼容回落：先找 `packId`，找不到再找 `padId`（历史草稿无需迁移即可读） |
+| F9 | PWA 启动批阅显式传 `packId`；读草稿 `taskId = packId \|\| padId`，并传 `altTaskId` |
+| F10 | 空态提示补充第三种排查方向：“文件夹里有 json 但这里为空 = 目录口径不一致” |
+
+### 7.3 契约级回归（关键）
+
+新增 `engine/tests/test_d128_scope_contract.py`（5 例），把**跨端契约**固定下来：
+
+- `test_transcript_visible_under_pack_scope`：按 packId 写入，按前端参数读取可见；
+- `test_scope_id_equals_grading_dir_key`：作用域键 == 目录名；
+- `test_transcripts_land_in_scope_dir_used_by_grading_dir`：transcripts 与 drafts 同树；
+- `test_legacy_pad_scope_still_readable`：旧 `padId` 目录可回落读取；
+- `test_full_flow_then_read_like_pwa`：**端到端** run_task → 用前端参数读，断言能看到转写。
+
+> 这类问题靠单模块 mock 很难发现，必须有“写入→按读取端参数读”的整链测试。
+
+### 7.4 验证
+
+| 项 | 结果 |
+|---|---|
+| engine pytest | **749 passed**（新增 D128 5 例） |
+| app build | 0 error |
+| app selfcheck | 全绿（新增 `selfcheck-d128-scope-contract.mjs`） |

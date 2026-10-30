@@ -97,6 +97,20 @@ def grading_key(task: dict) -> str:
     return str(task.get("id", "task"))
 
 
+def grading_scope_id(task: dict, plan: "dict | None" = None) -> str:
+    """D127-FIX：批阅**作用域 id**（= 草稿/转写/评阅/报告目录键）。
+
+    必须与 `grading_dir()` 的口径**完全一致**，否则会出现
+    「写在 grading/<padId>/drafts、却按 grading/<packId>/drafts 去读」→
+    逐生审核显示"暂无转写内容"，而文件夹里明明有 json。
+    优先级：plan.packId > task.pack_id > task.id（历史兼容）。
+    """
+    pk_plan = str(((plan or {}).get("packId") or "")).strip()
+    if pk_plan:
+        return pk_plan
+    return grading_key(task)
+
+
 def grading_dir(ws: Path, task: dict) -> Path:
     """批阅产物目录：`<ws>/<class_dir>/grading/<packId>/`（D127）。
 
@@ -330,7 +344,7 @@ def _persist_transcripts(ws, task: dict, plan: "dict | None", transcripts_dir) -
         n = save_transcripts_to_drafts(
             ws, class_id=str(plan.get("classId") or ""),
             work_id=str(plan.get("workId") or ""),
-            task_id=str(task.get("id") or "task"),
+            task_id=grading_scope_id(task, plan),
             class_dir=str(plan.get("classDir") or ""),
             transcripts_dir=transcripts_dir,
             plan=plan)
@@ -368,6 +382,13 @@ def run_task(task_path: Path, ws: Path, images_dir: Path | None = None,
                            or str(task.get("class_dir") or "").strip())
     if effective_class_dir:
         task["class_dir"] = effective_class_dir
+    # D127-FIX：**作用域键注入**（与 class_dir 同口径）。
+    # 作业包模式的批阅目录必须是 grading/<packId>/，而 task（taskpad）本身没有 pack_id，
+    # 只有 plan 里有。此前漏了这一步 → 目录落到 grading/<padId>/，
+    # 而前端按 packId 读草稿 → "能转写但逐生审核看不到"。
+    _plan_pack = str(((plan or {}).get("packId") or "")).strip()
+    if _plan_pack and not str(task.get("pack_id") or "").strip():
+        task["pack_id"] = _plan_pack
     grade_cfg = task.get("grade", {}) or {}
     # D127：默认**不再包含 report**——报告是人工审核之后的独立工序
     #       （「📄 一键生成批阅报告」），不应随批阅自动跑、更不该反复生成。
@@ -490,7 +511,7 @@ def run_task(task_path: Path, ws: Path, images_dir: Path | None = None,
             try:
                 from .drafts import save_drafts_from_grading
                 saved = save_drafts_from_grading(ws, class_id=cid, work_id=wid,
-                                                 task_id=str(task.get("id") or "task"),
+                                                 task_id=grading_scope_id(task, plan),
                                                  class_dir=str(plan.get("classDir") or ""),
                                                  kind=str(ctx.get("report_kind") or "ai"))
                 logger.info(f"[草稿] 已写入本地批阅草稿 {saved.get('count')} 份（kind={ctx.get('report_kind')}）")

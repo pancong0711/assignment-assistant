@@ -61,13 +61,25 @@ def draft_file(ws=None, class_id: str = "", work_id: str = "",
 
 def _candidate_draft_files(ws=None, class_id: str = "", work_id: str = "",
                            *, class_dir: str = "", task_id: str = "",
+                           alt_task_ids: "list[str] | None" = None,
                            home=None) -> "list[Path]":
-    """读取候选顺序：新布局 → 旧布局（旧数据不被静默忽略）。"""
+    """读取候选顺序：新布局 → **兼容目录**（alt_task_ids）→ 旧布局。
+
+    D127-FIX：批阅目录键曾一度在「作业纸 id」与「作业包 id」之间漂移，
+    导致"写了草稿但逐生审核读不到"。这里允许调用方传入兼容 id 列表
+    （如 padId），让历史数据仍可读，教师无需手动迁移。
+    """
     out: list[Path] = []
-    if task_id and class_dir and ws is not None:
-        d = grading_drafts_dir(ws, class_dir, task_id)
-        if d is not None:
-            out.append(d / f"{work_id}.json")
+    tids = [str(task_id or "").strip()]
+    for a in (alt_task_ids or []):
+        a = str(a or "").strip()
+        if a and a not in tids:
+            tids.append(a)
+    if class_dir and ws is not None:
+        for tid in tids:
+            d = grading_drafts_dir(ws, class_dir, tid)
+            if d is not None:
+                out.append(d / f"{work_id}.json")
     legacy = legacy_draft_file(home, class_id, work_id)
     if legacy is not None:
         out.append(legacy)
@@ -75,14 +87,16 @@ def _candidate_draft_files(ws=None, class_id: str = "", work_id: str = "",
 
 
 def read_drafts(home=None, class_id: str = "", work_id: str = "", *,
-                ws=None, class_dir: str = "", task_id: str = "") -> dict:
+                ws=None, class_dir: str = "", task_id: str = "",
+                alt_task_ids: "list[str] | None" = None) -> dict:
     """读草稿（**原始结构**）：新布局优先，其次旧布局（兼容未迁移数据）。
 
     注意：返回的是磁盘上的原样结构，可能是 D92 之前的单套 `{score, comment}`。
     需要统一双套 `{ai, human, humanMode, revision}` 请用 `read_drafts_normalized`。
     """
     for p in _candidate_draft_files(ws, class_id, work_id,
-                                    class_dir=class_dir, task_id=task_id, home=home):
+                                    class_dir=class_dir, task_id=task_id,
+                                    alt_task_ids=alt_task_ids, home=home):
         if not p.is_file():
             continue
         try:
@@ -95,7 +109,8 @@ def read_drafts(home=None, class_id: str = "", work_id: str = "", *,
 
 
 def read_drafts_normalized(home=None, class_id: str = "", work_id: str = "", *,
-                           ws=None, class_dir: str = "", task_id: str = "") -> dict:
+                           ws=None, class_dir: str = "", task_id: str = "",
+                           alt_task_ids: "list[str] | None" = None) -> dict:
     """读草稿并逐条 `normalize_draft`（统一为双套 `{ai, human, humanMode, revision}`）。
 
     D126-FIX：给「逐生审核」这类**按 `ai.transcript` / `ai.comment` 取值**的消费方用。
@@ -104,7 +119,8 @@ def read_drafts_normalized(home=None, class_id: str = "", work_id: str = "", *,
     看起来"已批阅却看不到内容"。
     """
     raw = read_drafts(home, class_id, work_id, ws=ws,
-                      class_dir=class_dir, task_id=task_id)
+                      class_dir=class_dir, task_id=task_id,
+                      alt_task_ids=alt_task_ids)
     return {str(k): (normalize_draft(v) if isinstance(v, dict) else v)
             for k, v in raw.items()}
 def save_draft(home, class_id: str, work_id: str, key: str, *,

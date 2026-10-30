@@ -810,12 +810,14 @@ export interface XxtGradeDrafts {
 export async function fetchXxtGradeDrafts(
   engineAddr: string, token: string | undefined, classId: string, workId: string,
   /** D119：带上作业纸 id（草稿按 taskId 归属，不同作业批次不互相覆盖） */
-  scope: { taskId?: string; classDir?: string } = {},
+  /** D127：`altTaskId` = 兼容读取的旧目录键（如单张作业纸 id），避免历史草稿读不到 */
+  scope: { taskId?: string; classDir?: string; altTaskId?: string } = {},
 ): Promise<XxtGradeDrafts> {
   const base = normalizeEngineAddr(engineAddr)
   const qs = new URLSearchParams()
   if (scope.taskId) qs.set('taskId', scope.taskId)
   if (scope.classDir) qs.set('classDir', scope.classDir)
+  if (scope.altTaskId) qs.set('altTaskId', scope.altTaskId)
   const path = `/xxt/grade/drafts/${encodeURIComponent(classId)}/${encodeURIComponent(workId)}`
     + (qs.toString() ? `?${qs}` : '')
   return (await getJson2(engineUrlWithToken(base, path, token))) as XxtGradeDrafts
@@ -949,6 +951,8 @@ export async function postXxtClassMap(
 export async function startXxtGradeAi(
   engineAddr: string, token: string | undefined,
   payload: { courseId: string; classId: string; cpi: string; workId: string
+    /** D127：批阅作用域键（作业包 id；未用包时留空=按单张作业纸 id） */
+    packId?: string
     taskpad: Record<string, unknown>; pads?: Record<string, unknown>[]
     mode?: string; tags?: string[]; limit?: number
     /** D106：图片发送模式（auto=分段压缩 | original=原图，便于对比转录效果） */

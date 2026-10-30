@@ -144,9 +144,11 @@ async function save() {
                       background:var(--c-bg-soft,#f8fafc); font-size:13px"
                v-html="transcriptHtml"></div>
           <p v-else-if="!transcriptText" class="hint" style="margin:2px 0 8px">
-            （暂无转写内容。常见原因：① 该生是本次「仅评阅」，或批阅发生在 D126 之前
-            （那时不保存转写）——重跑一次「① 仅转录」即可补齐；② 多数学生转写失败时
-            勾选「有学生转录失败时仍继续」再看。）
+            （暂无转写内容。请按顺序排查：① 该生是否根本没参与本次转写（如「仅评阅」、
+            或批阅发生在 D126 之前，那时不保存转写）——重跑「① 仅转录」即可；② 多数学生转录
+            失败时，勾选「有学生转录失败时仍继续」再看；③ 若「仅转录」提示完成、文件夹里也有
+            transcripts/*.json，但这里仍为空 → 属于**目录口径不一致**（草稿与转写不在同一
+            grading 目录），请把该作业的 grading 目录名反馈给开发者。）
           </p>
 
           <h4 style="margin-top:10px">AI 批语 <span class="hint" style="font-weight:400">（只读基线{{ aiSet.score != null ? ` · 评分 ${aiSet.score}` : '' }}）</span></h4>
