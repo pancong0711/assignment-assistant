@@ -10,6 +10,7 @@ import { computeScoresFiltered } from '../lib/roster'
 import type { PreviewTable } from '../lib/rosterXlsx'
 import { useRosterStore } from '../stores/roster'
 import { useTaskpadStore } from '../stores/taskpad'
+import { usePackStore } from '../stores/packs'
 import { getKbDirHandle } from '../stores/kb'
 import { buildBatchManifest, partitionStudentsByTag } from '../lib/classOverlay'
 import { parseTaskpad, padInferredTag } from '../lib/taskpad'
@@ -349,9 +350,24 @@ const classPreviewUnmatched = ref<string[]>([])
 /** D43-3/D43-6 收口：整班预览改用 stringifySheetHtml（与 CLI assignment.html.j2 同一模板）。
  *  数组分段 = lib/classOverlay.partitionStudentsByTag（tag→包，--default 兜底同口径）；
  *  每包段内学生 → expandPadItems 取题帧；KaTeX 相对路径（同源 ./katex/，离线也渲染）。 */
+const packStore = usePackStore()
+
+/** D127：整班预览**跟随当前选中的作业包**。
+ *
+ *  此前用 `pad.savedJsons()`（全库）按 tag 反推 → 同一 tag 在多个批次都有作业纸时，
+ *  会串到**别的作业**的题目。现在只取当前包内的作业纸。
+ *  没有选中包时返回空并给出明确提示（不再静默回退全库）。
+ */
+const classPackPads = computed(() => packStore.packPadJsons(pad.savedJsons()))
+
+/** 整班预览的取题来源（当前包）；无包 → 空数组。 */
+function classPadJsons(): Array<{ id: string; json: string }> {
+  return classPackPads.value.pads.map((x) => ({ id: x.id, json: x.json }))
+}
+
 function buildClassInputs(): { inputs: SheetHtmlPadInput[]; unmatched: number; unmatchedNames: string[]; total: number } {
   const { groups, unmatched } = partitionStudentsByTag(
-    roster.students, pad.savedJsons(), classPreviewFallbackId.value)
+    roster.students, classPadJsons(), classPreviewFallbackId.value)
   const inputs: SheetHtmlPadInput[] = groups.map((g) => ({
     pad: g.pad,
     // D100-T7：参考答案走生效版（版本库置顶/最新版 → 回落 xlsx 列）
@@ -380,7 +396,7 @@ function buildClassInputs(): { inputs: SheetHtmlPadInput[]; unmatched: number; u
 /** D57-1：按当前开关构建整班 HTML（含答案/水印/页码三开关；与设计页同语义）。 */
 /** D94-T2：整班渲染输入 —— 学生→作业纸映射（由 tag 决定），顺序用 roster.students（点名册顺序）。 */
 function classOrderResolver(): (stu: SheetHtmlStudent) => { pad: any; items: any[] } | null {
-  const { groups } = partitionStudentsByTag(roster.students, pad.savedJsons(), classPreviewFallbackId.value)
+  const { groups } = partitionStudentsByTag(roster.students, classPadJsons(), classPreviewFallbackId.value)
   const padByTag = new Map<string, { pad: any; items: any[] }>()
   const itemsOf = (p: any) => expandPadItems(p, (k) => kbStore.book(k as KbKind), kbStore.effectiveSolution)
   for (const g of groups) {
@@ -417,9 +433,22 @@ function buildClassPreviewHtml(): string {
 function previewWholeClass() {
   if (!roster.students.length) { classPreviewMsg.value = '名单为空：先导入/生成带 tag 名单。'; return }
   if (!pad.saved.length) { classPreviewMsg.value = '作业纸清单为空：到「作业纸内容」页保存作业纸后再预览。'; return }
+  // D127：整班预览**只出当前作业包内的作业纸**（不再按 tag 从全库反推）
+  if (!packStore.currentId) {
+    classPreviewMsg.value = '未选择作业包：请先到「作业纸设计」页选择当前作业包（整班预览只出该包内的作业纸，'
+      + '避免同一 tag 串到别的批次）。'
+    return
+  }
+  const pk = classPackPads.value
+  if (!pk.pads.length) {
+    classPreviewMsg.value = `当前作业包「${packStore.currentId}」内没有可用的作业纸`
+      + (pk.dangling.length ? `（包内引用的 ${pk.dangling.join('、')} 找不到，可能已删除）` : '')
+      + '：请先在「作业纸设计」页把作业纸加入该包。'
+    return
+  }
   previewingClass.value = true
   try {
-    const padJsons = pad.savedJsons()
+    const padJsons = classPadJsons()
     const { unmatchedNames, total } = buildClassInputs()
     classPreviewHtml.value = buildClassPreviewHtml()
     classPreviewManifest.value = buildBatchManifest(roster.students, padJsons)
@@ -433,7 +462,9 @@ function previewWholeClass() {
     const numWarn = noNum
       ? `；⚠ ${noNum} 人无学号：整班顺序按学号排序将不完整，请在名单/成绩源补齐「学号」列`
       : ''
-    classPreviewMsg.value = `已按当前 tag→包绑定生成整班预览（同一打印模板：${total} 名学生 / ${pad.saved.length} 份作业纸映射${unBrief}；口径：${classIncludeAnswers.value ? '教师版（含答案）' : '学生版（不含答案）'}${numWarn}）：iframe 内可滚动查看，「🖨 打印」直接出整班文档。`
+    const danglingWarn = pk.dangling.length
+      ? `；⚠ 包内引用的 ${pk.dangling.join('、')} 找不到（可能已删除）` : ''
+    classPreviewMsg.value = `已按当前作业包「${packStore.currentId}」内的 tag→作业纸绑定生成整班预览（同一打印模板：${total} 名学生 / ${pk.pads.length} 份作业纸映射${unBrief}${danglingWarn}；口径：${classIncludeAnswers.value ? '教师版（含答案）' : '学生版（不含答案）'}${numWarn}）：iframe 内可滚动查看，「🖨 打印」直接出整班文档。`
     showClassPreview.value = true
   } catch (e) {
     classPreviewMsg.value = `整班预览生成失败：${(e as Error).message}`
@@ -1027,6 +1058,18 @@ const nonTranslationRatios = computed(() => roster.ratios.filter((g) => g.tag !=
         本卡 = **整班分层预览/打印的唯一入口**（docs/13 D43-6 域分层：作业纸设计页只做模板级预览）。
         渲染与 CLI <code>assist sheet html</code> <b>同一模板</b>（lib/sheetHtml.ts）：名单里所有人按其 tag
         领到对应变体（引擎 batch 同口径）， KaTeX 同源渲染（离线也可）。
+      </p>
+      <p class="hint" style="margin:4px 0">
+        <b>D127 · 取题来源</b>：整班预览<b>跟随当前选中的作业包</b> ——
+        <template v-if="packStore.currentId">
+          当前包：<code>{{ packStore.currentId }}</code>
+          （{{ classPackPads.pads.length }} 张作业纸<template v-if="classPackPads.dangling.length">，
+          ⚠ {{ classPackPads.dangling.length }} 个引用找不到</template>）
+        </template>
+        <template v-else>
+          <b style="color:#b91c1c">尚未选择作业包</b>——请到「作业纸设计」页选择/新建作业包后再预览
+          （只出当前包内的作业纸，避免同一 tag 串到别的批次）。
+        </template>
       </p>
       <p>
         <label class="field" title="D57-1：不勾=学生版（预览/打印/下载均不含『参考答案：』行）；勾选=教师版">

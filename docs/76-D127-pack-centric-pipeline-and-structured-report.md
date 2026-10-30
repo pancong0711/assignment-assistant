@@ -191,9 +191,23 @@ classes/<班级>/grading/<packId>/
 | app selfcheck | 37 项全绿（新增 `selfcheck-d127-pack-pipeline.mjs`；`d125` 断言随按钮调整更新） |
 | 脱敏 | 通过 |
 
-### 6.3 已知遗留
+### 6.3 补做：整班预览跟随当前作业包（2026-10-30，用户拍板）
 
-- `RosterView` 整班预览的取题仍未切换到 `pick_pad_for_tag`（当前 PWA 的包选择在「作业纸内容」页）；
-  引擎侧已是包内取题，**建议下一轮前端统一**（见 §2 D3）。
+原遗留项已收口（对应 §2 **D3**）：
+
+| # | 改动 | 文件 |
+|---|---|---|
+| F1 | `packStore.packPadJsons(saved)`：返回**当前包内**的作业纸 JSON（id/json/tag），并报告 `dangling`（包内引用但找不到的 padId）；包内声明 tag 优先于作业纸自身 `target_tag` | `stores/packs.ts` |
+| F2 | 整班预览/打印/manifest 的取题改为 `classPadJsons()`（= 当前包），**不再用全库 `pad.savedJsons()` 按 tag 反推** | `views/RosterView.vue` |
+| F3 | 未选包 / 包内无作业纸 / 包内引用悬空 → **明确提示**并中止，不静默回退全库 | 同上 |
+| F4 | 整班预览卡显示“当前包：`<id>`（N 张作业纸，⚠ 悬空 M 个）”，让教师一眼确认没选错包 | 同上 |
+
+验证：`selfcheck-d127-pack-pipeline` 新增第 8 组断言（禁止全库映射 / 未选包有提示 / 悬空引用可报）；
+engine pytest 744 passed；app build 0 error；selfcheck 全绿。
+
+### 6.4 已知遗留
+
 - 旧 `grading/<padId>/` 需教师手动执行 `assist migrate-grading-dir --apply`（不自动迁移）。
 - 教师总结报告（D126-B）尚未实施；`evaluations/*.json` 已带 `knowledge[]`，为其做好了数据准备。
+- `SheetContentView.vue` 的变体编排仍用全库 `pad.savedJsons()`（整班 zip 入口）；
+  与整班预览口径尚未统一，**下一轮**处理。

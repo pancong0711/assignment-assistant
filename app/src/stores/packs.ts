@@ -29,6 +29,13 @@ export const usePackStore = defineStore('packs', {
       const p = state.packs.find((x) => x.id === state.currentId)
       return (p?.pads ?? []).map((r) => ({ padId: r.padId, tag: r.tag ?? '' }))
     },
+    /** D127：**当前包内的作业纸 JSON**（整班预览/出纸/批阅的唯一取题来源）。
+     *
+     *  与 `taskpad.savedJsons()`（全库）相对：同一 tag 在多个批次都有作业纸时，
+     *  用全库按 tag 反推会**串到别的作业**。这里只返回当前包内、且确实存在的作业纸。
+     *  包内声明的 tag 优先于作业纸自身的 `target_tag`（允许包内改绑定）。
+     *  需要 taskpad store 的已保存清单，故用普通函数（非 getter，避免跨 store 的响应式陷阱）。
+     */
   },
   actions: {
     persistLocal() {
@@ -105,6 +112,30 @@ export const usePackStore = defineStore('packs', {
     },
     select(id: string) {
       this.currentId = id
+    },
+    /** D127：当前包内的作业纸 JSON 列表（`{id, json, tag}`）。
+     *  @param saved 全库已保存作业纸（来自 taskpad store）
+     *  @returns 只含当前包内且存在的作业纸；另返回 dangling（包内引用但找不到的 padId）
+     */
+    packPadJsons(saved: Array<{ id: string; json: string }>): {
+      pads: Array<{ id: string; json: string; tag: string }>
+      dangling: string[]
+      packId: string
+    } {
+      const packId = this.currentId
+      const refs = this.currentPadRefs
+      if (!packId || !refs.length) return { pads: [], dangling: [], packId }
+      const byId = new Map(saved.map((x) => [String(x.id), x]))
+      const pads: Array<{ id: string; json: string; tag: string }> = []
+      const dangling: string[] = []
+      for (const r of refs) {
+        const hit = byId.get(String(r.padId))
+        if (!hit) { dangling.push(String(r.padId)); continue }
+        let padTag = ''
+        try { padTag = String((JSON.parse(hit.json) as { target_tag?: string })?.target_tag ?? '') } catch { padTag = '' }
+        pads.push({ id: String(hit.id), json: hit.json, tag: String(r.tag || padTag || '') })
+      }
+      return { pads, dangling, packId }
     },
     addPad(padId: string, tag: string) {
       const p = this.packs.find((x) => x.id === this.currentId)

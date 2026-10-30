@@ -81,4 +81,17 @@ const strip = (s) => s.replace(/\/\*[\s\S]*?\*\//g, '')
   assert.ok(/o\?\.results/.test(cli), '前端应保留 results/error 而不是丢掉')
 }
 
-console.log('OK d127-pack-pipeline：包内取题 · 目录按包 · 转写结构化 · 先判题目 · 报告组装 · 三态批语 · 测试可诊断')
+/* 8) 整班预览跟随当前作业包（不得用全库按 tag 反推） */
+{
+  const rv = strip(read('src/views/RosterView.vue'))
+  assert.ok(/packPadJsons/.test(rv), '整班预览应使用当前包内的作业纸')
+  assert.ok(/classPadJsons\(\)/.test(rv), '应有 classPadJsons 取题函数')
+  assert.ok(!/partitionStudentsByTag\(\s*roster\.students,\s*pad\.savedJsons\(\)/.test(rv),
+    '不得再用全库 savedJsons() 做整班 tag→作业纸映射')
+  assert.ok(/未选择作业包/.test(rv), '未选包时应给明确提示（不静默回退全库）')
+  const st = strip(read('src/stores/packs.ts'))
+  assert.ok(/packPadJsons\(saved/.test(st), 'packStore 应提供 packPadJsons()')
+  assert.ok(/dangling/.test(st), '应报告包内悬空引用')
+}
+
+console.log('OK d127-pack-pipeline：包内取题 · 目录按包 · 转写结构化 · 先判题目 · 报告组装 · 三态批语 · 测试可诊断 · 整班预览跟随当前包')
