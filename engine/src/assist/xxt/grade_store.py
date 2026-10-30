@@ -76,7 +76,11 @@ def _candidate_draft_files(ws=None, class_id: str = "", work_id: str = "",
 
 def read_drafts(home=None, class_id: str = "", work_id: str = "", *,
                 ws=None, class_dir: str = "", task_id: str = "") -> dict:
-    """读草稿：新布局优先，其次旧布局（兼容未迁移数据）。"""
+    """读草稿（**原始结构**）：新布局优先，其次旧布局（兼容未迁移数据）。
+
+    注意：返回的是磁盘上的原样结构，可能是 D92 之前的单套 `{score, comment}`。
+    需要统一双套 `{ai, human, humanMode, revision}` 请用 `read_drafts_normalized`。
+    """
     for p in _candidate_draft_files(ws, class_id, work_id,
                                     class_dir=class_dir, task_id=task_id, home=home):
         if not p.is_file():
@@ -88,6 +92,21 @@ def read_drafts(home=None, class_id: str = "", work_id: str = "", *,
         if isinstance(d, dict):
             return d
     return {}
+
+
+def read_drafts_normalized(home=None, class_id: str = "", work_id: str = "", *,
+                           ws=None, class_dir: str = "", task_id: str = "") -> dict:
+    """读草稿并逐条 `normalize_draft`（统一为双套 `{ai, human, humanMode, revision}`）。
+
+    D126-FIX：给「逐生审核」这类**按 `ai.transcript` / `ai.comment` 取值**的消费方用。
+    旧的 D85 单套草稿是 `{score, comment}` 形状，直接读会让前端取值全部落空 →
+    弹窗显示「无 AI 批语 / 暂无转写」，而列表页因 `drafts[k].score` 兜底仍显示「✓」，
+    看起来"已批阅却看不到内容"。
+    """
+    raw = read_drafts(home, class_id, work_id, ws=ws,
+                      class_dir=class_dir, task_id=task_id)
+    return {str(k): (normalize_draft(v) if isinstance(v, dict) else v)
+            for k, v in raw.items()}
 def save_draft(home, class_id: str, work_id: str, key: str, *,
                score=None, comment: str = "", comment_text: str = "",
                images: "list[dict] | None" = None, extra: "dict | None" = None,

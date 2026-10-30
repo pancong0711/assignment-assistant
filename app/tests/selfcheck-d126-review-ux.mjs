@@ -59,4 +59,17 @@ const stripComments = (s) => s.replace(/\/\*[\s\S]*?\*\//g, '')
   assert.ok(/def save_transcripts_to_drafts/.test(dr), '应有 save_transcripts_to_drafts')
 }
 
-console.log('OK d126-review-ux：分步文案 · 作答原图 · AI 转写区 · 报告(转写→批阅) · 仅转录也写草稿')
+/* 5) 读草稿必须归一化（否则旧单套草稿 {score,comment} 在弹窗里一片空白） */
+{
+  const gs = engine('xxt/grade_store.py')
+  const fn = gs.slice(gs.indexOf('def read_drafts_normalized'), gs.indexOf('def save_draft('))
+  assert.ok(/normalize_draft\(v\)/.test(fn), 'read_drafts_normalized 应逐条 normalize_draft')
+  // 逐生审核端点必须走归一化版本（否则旧单套草稿在弹窗里一片空白）
+  const serve = engine('serve.py')
+  assert.ok(/read_drafts_normalized\(/.test(serve), 'serve 草稿端点应使用 read_drafts_normalized')
+  // 落草稿也要带转写，否则"生成报告→回读"路径只有批语
+  const dr = engine('grading/drafts.py')
+  assert.ok(/ai_set\["transcript"\]/.test(dr), 'save_drafts_from_grading 应写入 ai.transcript')
+}
+
+console.log('OK d126-review-ux：分步文案 · 作答原图 · AI 转写区 · 报告(转写→批阅) · 仅转录也写草稿 · 读草稿归一化')

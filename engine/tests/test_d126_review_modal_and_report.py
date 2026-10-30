@@ -149,3 +149,78 @@ def test_md_to_html_no_nameerror_and_has_katex(tmp_path):
     assert "AI 批阅" in html and "88 / 100" in html
     assert "<html" in html and "</html>" in html
     assert "__katex" in html or "katex" in html.lower(), "应带 KaTeX 头（公式可渲染）"
+
+
+# ---------------- D126-FIX：读草稿必须归一化（否则逐生审核一片空白） ----------------
+
+def test_read_drafts_normalizes_legacy_single_set(tmp_path):
+    """回归：旧 D85 单套草稿 `{score, comment}` 读出来必须带 `ai.comment`。
+
+    此前 `read_drafts` 直接回原始 JSON，而前端按 `draft.ai.comment` 取值 →
+    逐生审核显示「无 AI 批语」；列表页却因 `drafts[k].score` 兜底显示「✓」，
+    表现为"已批阅但看不到内容"。
+    """
+    ws = tmp_path / "ws"
+    home = ws / ".runtime" / "xxt"
+    legacy = home / "grade-drafts" / "c1"
+    legacy.mkdir(parents=True)
+    (legacy / "w1.json").write_text(json.dumps(
+        {"54761942": {"score": 88.0, "comment": "旧批语", "updatedAt": "x"}},
+        ensure_ascii=False), encoding="utf-8")
+
+    d = grade_store.read_drafts_normalized(home, "c1", "w1", ws=ws,
+                                           class_dir="classes/A", task_id="t1")
+    one = d["54761942"]
+    assert one["ai"]["comment"] == "旧批语"
+    assert one["ai"]["score"] == 88.0
+    assert one["human"] == {} and one["humanMode"] == "none"
+
+
+def test_read_drafts_normalizes_new_two_set(tmp_path):
+    """新布局双套草稿读出来仍保持原样（ai.transcript / human 不丢）。"""
+    ws = tmp_path / "ws"
+    ws.mkdir()
+    grade_store.save_draft_sets(None, "c1", "w1", "wa1",
+                                ai={"transcript": "转写原文", "comment": "AI 批语"},
+                                human={"score": 90, "comment": "人工", "used": True},
+                                human_mode="replace", student="张三",
+                                ws=ws, class_dir="classes/A", task_id="t1")
+    d = grade_store.read_drafts_normalized(ws / ".runtime" / "xxt", "c1", "w1", ws=ws,
+                                           class_dir="classes/A", task_id="t1")
+    one = d["wa1"]
+    assert one["ai"]["transcript"] == "转写原文"
+    assert one["ai"]["comment"] == "AI 批语"
+    assert one["human"]["comment"] == "人工"
+    assert one["humanMode"] == "replace"
+
+
+def test_save_drafts_from_grading_includes_transcript(tmp_path):
+    """D126-FIX：落草稿（save_drafts_from_grading）也要带转写。
+
+    否则"生成报告 → 回读落草稿"这条路径只会写 score/comment，
+    逐生审核里就只剩批语、没有转写。
+    """
+    from assist.grading import drafts as DD
+    from assist.grading.flow import grading_dir
+
+    ws = tmp_path / "ws"; ws.mkdir()
+    task = {"id": "t1", "class_dir": "classes/A"}
+    base = grading_dir(ws, task)
+    (base / "evaluations").mkdir(parents=True, exist_ok=True)
+    (base / "transcripts").mkdir(parents=True, exist_ok=True)
+    (base / "transcripts" / "张三.json").write_text(json.dumps(
+        {"student": "张三", "markdown": "1. 由 F=ma 得 a=2", "model": "qwen3.7-flash"},
+        ensure_ascii=False), encoding="utf-8")
+    (base / "evaluations" / "张三.json").write_text(json.dumps(
+        {"student": "张三", "total_score": 88, "feedback_md": "### 第2题\n- ❌ 单位错"},
+        ensure_ascii=False), encoding="utf-8")
+
+    rep = DD.save_drafts_from_grading(ws, class_id="c1", work_id="w1", task_id="t1",
+                                      class_dir="classes/A", with_report_png=False)
+    assert rep.get("ok") is True
+    d = grade_store.read_drafts(ws / ".runtime" / "xxt", "c1", "w1", ws=ws,
+                                class_dir="classes/A", task_id="t1")
+    one = d["张三"]
+    assert one["ai"]["transcript"] == "1. 由 F=ma 得 a=2"
+    assert one["ai"]["transcriptModel"] == "qwen3.7-flash"
+    assert one["ai"]["score"] == 88

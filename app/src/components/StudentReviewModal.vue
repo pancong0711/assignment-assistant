@@ -137,14 +137,16 @@ async function save() {
             {{ transcriptText }}
           </div>
           <p v-else-if="!transcriptText" class="hint" style="margin:2px 0 8px">
-            （暂无转写内容：请先跑「① 仅转录」或「④ 完整批阅」。）
+            （暂无转写内容。常见原因：① 该生是本次「仅评阅」，或批阅发生在 D126 之前
+            （那时不保存转写）——重跑一次「① 仅转录」即可补齐；② 多数学生转写失败时
+            勾选「有学生转录失败时仍继续」再看。）
           </p>
 
           <h4 style="margin-top:10px">AI 批语 <span class="hint" style="font-weight:400">（只读基线{{ aiSet.score != null ? ` · 评分 ${aiSet.score}` : '' }}）</span></h4>
           <div style="border:1px solid var(--c-border); border-radius:8px; padding:8px; white-space:pre-wrap; min-height:80px;
                       background:var(--c-bg-soft,#f8fafc)">
             <span v-if="revisionText">（已另存修订版，见下）</span>
-            <span v-else>{{ aiSet.comment || '（无 AI 批语：请先跑 AI 批阅）' }}</span>
+            <span v-else>{{ aiSet.comment || '（无 AI 批语：该生可能只有本地旧草稿分数，或尚未跑 AI 批阅）' }}</span>
           </div>
           <p style="margin:6px 0">
             <button class="btn small" @click="startRevise">{{ revisionText ? '编辑修订版' : '另存修订版…' }}</button>

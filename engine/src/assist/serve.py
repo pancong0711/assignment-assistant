@@ -2539,7 +2539,8 @@ class Handler(BaseHTTPRequestHandler):
                 return
             from .xxt import grade_store
             qd = urllib.parse.parse_qs(u.query)
-            drafts = grade_store.read_drafts(
+            # D126-FIX：统一归一为双套结构，前端按 ai.transcript / ai.comment 取值
+            drafts = grade_store.read_drafts_normalized(
                 _xxt_home(), m.group(1), m.group(2),
                 ws=Path(self.ws).resolve(),
                 class_dir=(qd.get("classDir") or [""])[0],

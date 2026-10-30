@@ -81,6 +81,20 @@ def save_drafts_from_grading(ws, *, class_id: str, work_id: str, task_id: str,
                     logger.warning(f"报告 PNG 生成失败（{student}）：{str(exc)[:120]}")
         # D92-R2：写入**双套**结构；AI 产物落 ai 套（人工审核另写 human/修订，不覆盖此基线）
         ai_set = {"score": score, "comment": comment, "reportImages": images or []}
+        # D126-FIX：AI 套同时带上转写原文。`run_task` 的 transcribe 步已写过一次，
+        # 但"先生成报告再回读落草稿"（如 refill/重算）这条路径不经过那里 →
+        # 逐生审核会只剩批语、没有转写。合并写入（save_draft_sets 只并新增字段），
+        # 已有转写不会被空值覆盖。
+        _tf = tr_dir / f"{f.stem}.json"
+        if _tf.is_file():
+            try:
+                _t = json.loads(_tf.read_text(encoding="utf-8"))
+                _md = str(_t.get("markdown") or "").strip()
+                if _md:
+                    ai_set["transcript"] = _md
+                    ai_set["transcriptModel"] = str(_t.get("model") or "")
+            except Exception as exc:  # noqa: BLE001
+                logger.warning(f"读取转写失败（{student}）：{str(exc)[:120]}")
         if str(kind) == "human":
             # D119：按 (ws, class_dir, task_id) 写入新布局 —— 不同作业批次互不覆盖
             rep = grade_store.save_draft_sets(

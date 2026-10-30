@@ -127,6 +127,56 @@
 | app `vue-tsc` / `build` | 0 error |
 | app `npm run selfcheck` | 34 项全绿 |
 
+## 7. 补漏二（2026-10-30 用户现场反馈：已批阅学生看不到转写/批语）
+
+> 现象：AI 辅助批阅 → 逐生审核里**能看到作答原图，但 AI 转写与 AI 批语都是空的**；
+> 且学生在列表里显示为已批阅（AI 列有 ✓）。
+
+### 7.1 根因：`read_drafts` 不做归一化（H1）
+
+| 层 | 事实 |
+|---|---|
+| D85 时代的旧草稿 | 磁盘上是**单套**结构 `{score, comment, comment_text, images}` |
+| 新结构（D92-R2 起） | 双套 `{ai:{...}, human:{...}, humanMode, revision}` |
+| `normalize_draft()` | 负责把单套转成双套 —— 但只有**写路径**（`save_draft_sets`）和 `grading/drafts.py` 调用它 |
+| `grade_store.read_drafts()` | **直接回原始 JSON**，而 serve 的 `/xxt/grade/drafts` 正是用它 |
+
+于是前端 `draft.ai.comment` / `draft.ai.transcript` 取到的都是 `undefined` →
+弹窗显示「无 AI 批语 / 暂无转写」。**列表页却显示正常**，因为它有兜底：
+
+```vue
+{{ drafts[s.key]?.ai ? (drafts[s.key].ai.score ?? '✓') : (drafts[s.key]?.score ?? '—') }}
+```
+
+这就是"看起来已批阅、点进去却什么都没有"的直接原因。
+
+### 7.2 修复
+
+| # | 改动 | 说明 |
+|---|---|---|
+| F1 | 新增 `grade_store.read_drafts_normalized()` | 逐条 `normalize_draft`；**`read_drafts()` 契约保持不变**（既有 3 个调用方与测试不受影响） |
+| F2 | serve `/xxt/grade/drafts` 改用 `read_drafts_normalized` | 逐生审核拿到的永远是正确的双套结构 |
+| F3 | `save_drafts_from_grading` 写入 `ai.transcript` / `transcriptModel` | 「生成报告 → 回读落草稿」这条路径此前只写 score/comment，逐生审核会只剩批语没有转写（合并写入，不覆盖已有值） |
+| F4 | 弹窗空态文案区分「老数据无转写」与「确实没跑转录」 | 避免教师误判为故障 |
+
+### 7.3 关于"历史已批阅学生"
+
+D126 之前（含 D85/D86 的批阅）**从未保存过转写**，只有评阅产物。
+所以对老数据，补文案之后仍会显示「暂无转写内容」——这**不是 bug**；
+重跑一次「① 仅转录」即可补齐（F1/F2 修好后写入即可见）。
+
+### 7.4 验证
+
+| 项 | 结果 |
+|---|---|
+| 回归 `test_read_drafts_normalizes_legacy_single_set` | 旧单套 `{score, comment}` → `ai.comment` 有值 ✅ |
+| 回归 `test_read_drafts_normalizes_new_two_set` | 双套 `ai.transcript` / `humanMode` 原样保留 ✅ |
+| 回归 `test_save_drafts_from_grading_includes_transcript` | 落草稿带转写 ✅ |
+| 既有 `test_xxt_grade_store` 3 例 | 保持通过（证明 `read_drafts` 契约未破坏）✅ |
+| engine pytest | **729 passed** |
+| app `vue-tsc` / build | 0 error |
+| app selfcheck | 34 项全绿（d126 自检新增"读草稿归一化"断言）|
+
 ## 5. 后续（已记录，本轮不做）
 
 ### 5.1 教师总结报告（用户提出）
