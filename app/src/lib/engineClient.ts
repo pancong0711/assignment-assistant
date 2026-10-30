@@ -1811,7 +1811,9 @@ export async function testLlmStages(
   })
   const o = (await res.json().catch(() => ({}))) as
     { ok?: boolean; results?: Array<Record<string, unknown>>; error?: string }
-  if (!res.ok && !o?.error) throw new Error(`HTTP ${res.status}`)
+  // D127：服务端改为始终 200 + ok:false；这里只兜底非 JSON 的传输错误，
+  // 不再把"测试没通过"变成一句没有信息量的 `HTTP 400`。
+  if (!res.ok && !o?.error && !o?.results) throw new Error(`HTTP ${res.status}`)
   return o
 }
 

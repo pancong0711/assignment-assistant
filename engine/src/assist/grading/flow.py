@@ -76,14 +76,29 @@ def expand_items(ws: Path, task: dict) -> list[dict]:
                 # D105：批阅 prompt 用纯文本（text_plain），md+html 仅用于显示
                 sol_text = str(eff.get("text_plain") or eff.get("text") or fallback)
                 out.append({"序号": idx, "content": e.get("content", ""),
-                            "solution": sol_text, "tag": tag, "img": img})
+                            "solution": sol_text, "tag": tag, "img": img,
+                            # D127：题库「关联知识点」列 → 评阅时的知识点提示
+                            "related": str(e.get("related") or "")})
     if not out:
         logger.warning("任务包未选中任何题目")
     return out
 
 
+def grading_key(task: dict) -> str:
+    """D127：批阅产物目录名 —— **作业包 id 优先**。
+
+    作业包是唯一作业批次载体（单张作业纸也入包）；同一包内不同 tag 的作业纸
+    必须落在**同一目录**，否则转写/评阅/草稿会随作业纸分裂。
+    无 `pack_id` 时回退旧的作业纸 id（兼容历史任务包，由迁移命令处理）。
+    """
+    pk = str(task.get("pack_id") or "").strip()
+    if pk:
+        return pk
+    return str(task.get("id", "task"))
+
+
 def grading_dir(ws: Path, task: dict) -> Path:
-    """批阅产物目录：`<ws>/<class_dir>/grading/<taskId>/`。
+    """批阅产物目录：`<ws>/<class_dir>/grading/<packId>/`（D127）。
 
     D121：**拒绝** class_dir 为空/为 `"classes"` 的调用——旧实现会拼出
     `<ws>/grading/`（空串塌掉）或 `<ws>/classes/grading/`（回退值）两个假目录。
@@ -95,7 +110,7 @@ def grading_dir(ws: Path, task: dict) -> Path:
             f"必须是具体班级目录（如 classes/化工25）；"
             f"请先在「AI 辅助批阅」② 区完成学习通班级 ↔ 本地班级目录的关联。"
         )
-    d = Path(ws) / class_dir / "grading" / str(task.get("id", "task"))
+    d = Path(ws) / class_dir / "grading" / grading_key(task)
     # 兜底：结果必须在 <ws>/classes/ 之下
     root = (Path(ws).resolve() / "classes")
     try:
@@ -247,11 +262,28 @@ def _plan_items_for(ctx: dict, student: str) -> "list[dict] | None":
 
 
 def _run_evaluate(ctx: dict, client, evaluations_dir: Path) -> list[Path]:
+    """D127：**每生只用其 tag 对应作业纸的题目**评阅。
+
+    题目取不到时**跳过该生并写诊断**，绝不回退到"整份任务包题目"或让模型自己猜题目——
+    静默回退会导致用错作业纸评阅（跨批次串题），且老师无从察觉。
+    """
     tasks_items = ctx["items"]
     model = (ctx["task"].get("grade", {}).get("models", {}) or {}).get("evaluation")
     outs = []
     for tf in sorted(ctx["transcripts_dir"].glob("[!_]*.json")):
         items = _plan_items_for(ctx, tf.stem) if ctx.get("plan") else None
+        if ctx.get("plan") and not items:
+            # D127：plan 模式下必须能定位该生对应作业纸的题目
+            msg = (f"学生「{tf.stem}」没有可用的作业纸题目（tag 未匹配到当前作业包内的作业纸，"
+                   f"或该生不在带 tag 名单里）。已跳过评阅，请检查："
+                   f"① 该生 tag 是否已在作业包中绑定作业纸；② 名单是否已导入并打 tag。")
+            logger.error(f"[评阅] SKIP {tf.stem}: {msg}")
+            _diag(ctx, step="evaluate", student=tf.stem, error=msg)
+            journal_append(ctx["journal"], {
+                "ts": time.strftime("%Y-%m-%d %H:%M:%S"),
+                "run_id": ctx["run_id"], "step": "evaluate",
+                "student": tf.stem, "status": "fail", "error": msg[:300]})
+            continue
         try:
             outs.append(evaluate_student(client, tf, items or tasks_items, evaluations_dir,
                                          homework_name=ctx.get("homework", ""), model=model))
@@ -337,12 +369,30 @@ def run_task(task_path: Path, ws: Path, images_dir: Path | None = None,
     if effective_class_dir:
         task["class_dir"] = effective_class_dir
     grade_cfg = task.get("grade", {}) or {}
-    steps = grade_cfg.get("steps", ["transcribe", "evaluate", "report"])
+    # D127：默认**不再包含 report**——报告是人工审核之后的独立工序
+    #       （「📄 一键生成批阅报告」），不应随批阅自动跑、更不该反复生成。
+    steps = grade_cfg.get("steps", ["transcribe", "evaluate"])
     if not steps:
         raise ValueError("任务包 grade.steps 为空（=仅出作业纸，无需批阅）")
+    # 兼容历史任务包（存了 report 步骤）：静默忽略，避免"批阅顺带出报告"的旧行为。
+    steps = [x for x in steps if str(x) != "report"] or ["transcribe", "evaluate"]
 
     base = grading_dir(ws, task)
     p = _paths(base)
+    # D127：落包快照 —— 事后可核对"这个批阅目录当时用的是哪些作业纸/题目"
+    try:
+        _snap = {"packId": str(plan.get("packId") or task.get("pack_id") or "") if plan else
+                 str(task.get("pack_id") or ""),
+                 "taskId": str(task.get("id") or ""),
+                 "classDir": str(task.get("class_dir") or ""),
+                 "pads": [{"padId": s.get("padId") or "", "tag": s.get("tag") or "",
+                           "questionCount": len(s.get("questions") or [])}
+                          for s in ((plan or {}).get("students") or [])],
+                 "generatedAt": time.strftime("%Y-%m-%d %H:%M:%S")}
+        (base / "pack.json").write_text(json.dumps(_snap, ensure_ascii=False, indent=1),
+                                        encoding="utf-8")
+    except Exception as exc:  # noqa: BLE001 —— 快照失败不影响批阅
+        logger.warning(f"[pack] 写入 pack.json 失败：{str(exc)[:120]}")
     journal = base / "journal.jsonl"
     run_id = time.strftime("%Y%m%d-%H%M") + "-" + uuid.uuid4().hex[:6]
 

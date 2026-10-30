@@ -595,6 +595,19 @@ def restart_plan(platform_name: str, supervised: bool) -> str:
     return "execv"
 
 
+def _llm_test_summary(results: "list[dict]") -> str:
+    """D127：把逐段测试失败原因压成一行摘要（供前端直接展示，绝不含 key）。"""
+    bad = [r for r in (results or []) if not r.get("ok")]
+    if not bad:
+        return ""
+    parts = []
+    for r in bad:
+        stage = "转录" if r.get("stage") == "transcription" else "评阅"
+        parts.append(f"{stage}段失败（{r.get('provider') or '-'} / {r.get('model') or '-'}"
+                     f" @ {r.get('base_url') or '-'}）：{str(r.get('error') or '未知错误')[:200]}")
+    return "；".join(parts)
+
+
 class Handler(BaseHTTPRequestHandler):
     ws: Path = None  # type: ignore
     token: str = ""
@@ -1361,7 +1374,7 @@ class Handler(BaseHTTPRequestHandler):
                             _Im.new("RGB", (8, 8), (255, 255, 255)).save(png)
                             txt = client.chat_with_images(
                                 "你是一个测试助手。", "这张图片是什么颜色？只回答颜色。",
-                                [png], max_tokens=16, step="transcription")
+                                [png], max_tokens=256, step="transcription")
                         finally:
                             try:
                                 Path(png).unlink()
@@ -1369,7 +1382,7 @@ class Handler(BaseHTTPRequestHandler):
                                 pass
                     else:
                         txt = client.chat("你是一个测试助手。", "只回复两个字：收到。",
-                                          max_tokens=16, step="evaluation")
+                                          max_tokens=256, step="evaluation")
                     item.update({"ok": True, "ms": int((time.time() - t0) * 1000),
                                  "reply": str(txt or "")[:60]})
                 except LLMAPIError as exc:
@@ -1378,7 +1391,11 @@ class Handler(BaseHTTPRequestHandler):
                     item["error"] = f"{type(exc).__name__}: {str(exc)[:300]}"
                 results.append(item)
             ok = all(r["ok"] for r in results)
-            self._json({"ok": ok, "results": results}, 200 if ok else 400)
+            # D127：**始终返回 200**。此前用 HTTP 400 表达"测试没通过"，
+            # 前端 `if (!res.ok && !o?.error) throw new Error("HTTP 400")` 只能显示
+            # 一句 "HTTP 400"，把真正的 provider/base_url/model/error 全吞掉了。
+            self._json({"ok": ok, "results": results,
+                        "error": "" if ok else _llm_test_summary(results)}, 200)
             return
         if u.path == "/llm/provider":
             payload: dict = {}

@@ -113,15 +113,28 @@ def build_user_prompt(items: list[dict], markdown_text: str, student: str = "") 
     q_lines = []
     for it in items:
         n = it.get("序号") or it.get("index") or "?"
-        q_lines.append(f"第{n}题（标签: {it.get('tag', 'qa') or 'qa'}）：\n{it.get('content', '')}")
+        line = f"第{n}题（标签: {it.get('tag', 'qa') or 'qa'}）：\n{it.get('content', '')}"
+        rel = str(it.get("related") or "").strip()
+        if rel:
+            line += f"\n关联知识点（供参考）：{rel}"
+        q_lines.append(line)
         if it.get("solution"):
             q_lines.append(f"参考答案/解题要点（仅用于核对，勿向学生透露）：\n{it['solution']}")
+    # D127：先判题目，再评阅（两条指令都必须给到模型）
+    parts.append(
+        "【第一步：判断题目是否对应】\n"
+        "先核对学生转写中的题目/作答所针对的题目，是否就是下面这份**作业纸题目**：\n"
+        "- 一致 → question_match.match = true；\n"
+        "- 不一致（题号对不上/题干完全不同/像是另一份作业或学生自制作业纸）→ match = false，"
+        "并在 evidence 中**逐字引用**学生转写里的题目片段，在 reason 中说明差异；\n"
+        "- 学生没抄题目只有作答 → 按作答内容推断，证据不足时 match = true，"
+        "但 reason 注明「学生未抄题目，按作答内容推断」。\n"
+        "**判断只看题目本身，不受作答对错影响。**")
     if q_lines:
-        parts.append("作业纸题目（学生作业应逐题对应以下题目，若对不上请把 "
-                     "question_match.status 设为 false）：\n\n" + "\n\n".join(q_lines))
+        parts.append("【作业纸题目】\n\n" + "\n\n".join(q_lines))
     from .prompts import EVIDENCE_INSTRUCTION
     parts.append(EVIDENCE_INSTRUCTION)
-    parts.append(f"学生答案（转录）：\n{markdown_text}")
+    parts.append(f"【学生转写（含题目与作答）】\n{markdown_text}")
     return "\n\n".join(parts)
 
 
@@ -304,24 +317,32 @@ def evaluate_student(client: LLMClient, transcript_file: Path, items: list[dict]
     """评阅一份转录 → evaluations/<student>.json + .md 批语。"""
     t_data = json.loads(Path(transcript_file).read_text(encoding="utf-8"))
     student = t_data.get("student") or Path(transcript_file).stem
-    markdown_text = t_data.get("markdown", "") or ""
+    # D127：结构化转写 → 渲染成"题目/作答/示意图"分明的 markdown 再喂给评阅
+    from .transcribe import transcript_to_markdown
+    markdown_text = transcript_to_markdown(t_data)
     quality = t_data.get("quality")
 
     analysis = analyze(client, build_user_prompt(items, markdown_text, student), model=model)
 
-    # 顶替嫌疑判定（旧 evaluator 的 question_match 检查升级为显式 verdict）
-    match = analysis.get("question_match", {})
-    substitution = (match.get("status") is False)
+    # D127：题目一致性**交给 LLM 判断**（prompt 已要求先判题目再评阅）。
+    # 兼容 status / match 两种字段；只做教师侧提示，不自动扣分（用户拍板）。
+    match = analysis.get("question_match", {}) or {}
+    if "match" in match:
+        substitution = (match.get("match") is False)
+    else:
+        substitution = (match.get("status") is False)
     result = score_from_analysis(analysis, quality=quality)
     result["analysis"] = analysis
     if quality:
         result["quality"] = quality
     if substitution:
         result["verdict"] = "suspected-substitution"
-        result["deductions"] = list(result["deductions"]) + [
-            f"顶替嫌疑：{match.get('note', '学生作答与作业纸题目无关')}"]
+        # D127：**不再**写进 deductions（会出现在学生报告正文里，等于给学生贴标签）。
+        # 仅保留在 evaluations/*.json + 教师侧提示，供人工确认是否为学生自制作业纸。
+        logger.warning(f"[{student}] 题目与作业纸不一致：{match.get('reason') or match.get('note')}")
     else:
         result["verdict"] = "normal"
+    result["question_match"] = match
 
     result["feedback_md"] = build_feedback_md(result, student, homework_name,
                                               analysis=analysis)
@@ -333,7 +354,22 @@ def evaluate_student(client: LLMClient, transcript_file: Path, items: list[dict]
         "_eval_version": 1,
         "timestamp": time.strftime("%Y-%m-%d %H:%M"),
         "_name_match": t_data.get("_name_match", True),
+        # D127 审计：本次评阅实际使用的作业纸与题号（便于事后核对"是否用对了作业纸"）
+        "audit": {
+            "pad_id": str((items[0] or {}).get("padId") or "") if items else "",
+            "question_numbers": [str(it.get("序号") or "") for it in (items or [])],
+            "question_count": len(items or []),
+        },
     })
+    # D127：汇总本份作答中出现的知识点（供教师总结报告聚合，无需再给题目做标注）
+    _ks: list[str] = []
+    for _q in (analysis.get("questions") or []):
+        for _e in (_q.get("errors") or []):
+            for _k in (_e.get("knowledge") or []):
+                _k = str(_k or "").strip()
+                if _k and _k not in _ks:
+                    _ks.append(_k)
+    result["knowledge"] = _ks
 
     out_dir.mkdir(parents=True, exist_ok=True)
     out = out_dir / f"{student}.json"
@@ -354,17 +390,16 @@ def build_result_from_analysis(analysis: dict, *, student: str, quality: "dict |
                                name_match: bool = True) -> dict:
     """把**单条 analysis**变成与 evaluate_student 同结构的评阅结果（供 batch 回灌）。"""
     match = analysis.get("question_match", {}) if isinstance(analysis, dict) else {}
-    substitution = (match.get("status") is False)
+    # D127：与 evaluate_student 同口径 —— 只记 verdict 供教师侧提示，**不写进 deductions**
+    # （写进去就会出现在学生报告正文里，等于给学生贴"顶替"标签）。
+    substitution = (match.get("match") is False) if "match" in match \
+        else (match.get("status") is False)
     result = score_from_analysis(analysis or {}, quality=quality)
     result["analysis"] = analysis
     if quality:
         result["quality"] = quality
-    if substitution:
-        result["verdict"] = "suspected-substitution"
-        result["deductions"] = list(result["deductions"]) + [
-            f"顶替嫌疑：{match.get('note', '学生作答与作业纸题目无关')}"]
-    else:
-        result["verdict"] = "normal"
+    result["verdict"] = "suspected-substitution" if substitution else "normal"
+    result["question_match"] = match
     result["feedback_md"] = build_feedback_md(result, student, homework_name, analysis=analysis)
     result.update({
         "student": student,

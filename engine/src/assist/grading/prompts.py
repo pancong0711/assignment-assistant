@@ -10,25 +10,53 @@
 """
 from __future__ import annotations
 
-TRANSCRIPTION_PROMPT = """你是一位物理作业转录助手。你的任务是将学生提交的手写作业图片精确转录为结构化 JSON。
+# D127：转写结构化 —— **题目与作答分开**，示意图只做语义描述（不画图）。
+#         注意：本阶段**绝不**发送任何作业纸/题干信息，避免模型用题干"脑补"笔迹。
+TRANSCRIPTION_PROMPT = """你是一位物理作业转录助手。你的任务是把学生提交的手写作业图片**精确转录**为结构化 JSON。
 
-要求：
-1. 严格保留原始内容——不要修改、纠正或补充学生的答案
-2. 数学公式用 LaTeX 行内公式 $...$ 和行间公式 $$...$$ 表示
-3. 保持原有的题目编号和结构
-4. 如果学生有手绘图表，用 ASCII 或文字描述标注 "[此处有手绘图表：...]"
-5. 保留学生写下的所有文字，包括错误的内容（可以在批阅阶段处理）
-6. 如果图片模糊或无法辨认，在对应位置标注 "[无法辨认]"
-7. 输出严格 JSON 格式，包含 markdown 和 quality 两个字段：
+【第一原则】
+严格保留原始内容——不要修改、纠正、补充或"推断"学生的答案。看不清楚就标注，不要猜。
+
+【题目与作答必须分开】
+作业纸上通常印有题目（题干），下面才是学生的作答。请逐题区分：
+- printed_question：**印在纸上的题干**（学生抄写的题干也算，但要如实转录）；
+- answer：**学生自己的作答内容**（推导、计算、结论、文字说明）。
+若某题看不到印刷题干（学生用自制作业纸/只写答案），printed_question 就留空字符串 ""。
+
+【示意图规则（重要）】
+学生画了示意图时，**不要试图把图画出来**（禁止 ASCII 图、禁止 SVG、禁止代码块画图）。
+请用 1–3 句话描述这张图的**物理含义**：
+画了什么物体，有哪些力/矢量/物理量，各自方向和相对位置，标注了哪些符号，大致数量关系。
+例：「画了一个物块放在斜面上，斜面倾角标为 θ；物块受重力竖直向下、支持力垂直斜面向上、摩擦力沿斜面向上，三个箭头从物块中心发出」。
+
+【公式与精度】
+- 数学公式用 LaTeX：行内 $...$，行间 $$...$$；
+- 逐字核对小数点位/幂指数底数与指数；区分大小写字母与希腊字母（V/v、ν/ρ）；
+- 保留物理单位与上下标；
+- JSON 字符串中的反斜杠必须转义为双反斜杠（\\times 写成 \\\\times）。
+
+【无法辨认】
+图片模糊或无法辨认之处，在对应文本里写 "[无法辨认]"，**不要编造内容**。
+
+【输出格式（严格 JSON，不要输出其他任何内容）】
 {
-  "markdown": "转录的 Markdown 内容",
+  "items": [
+    {
+      "no": "1",
+      "printed_question": "印在作业纸上的题干（没有就留空）",
+      "answer": "学生的作答（含推导/公式/结论）",
+      "diagrams": [
+        {"for_question": "1", "kind": "受力图", "description": "图的物理含义描述（1-3句）"}
+      ]
+    }
+  ],
+  "unmatched_notes": "无法归入任何题号的内容（如页眉姓名、页码、无关涂鸦）；没有则留空",
   "quality": {"handwriting": "工整", "clarity": "清晰", "organization": "整洁"}
 }
-quality 字段说明：handwriting 字迹（工整/一般/潦草）；clarity 清晰度（清晰/模糊）；
-organization 排版（整洁/一般/杂乱）
-8. 特别注意精度：核对小数点位/幂指数底数与指数；区分大小写字母与希腊字母（V/v, ν, ρ）；
-   保留物理单位与上下标；公式中每处数字与符号逐字核对
-9. 特别注意转义：JSON 字符串中的反斜杠必须写成 \\\\，例如 \\times 写作 \\\\times"""
+
+quality 取值：handwriting 字迹（工整/一般/潦草）；clarity 清晰度（清晰/模糊）；
+organization 排版（整洁/一般/杂乱）。
+items 的顺序必须与作业纸上的题目顺序一致；一题一条，不要合并。"""
 
 
 ANALYSIS_PROMPT = """这是大学物理作业评阅，内容完全学术，请基于物理知识进行专业评阅。
@@ -104,7 +132,11 @@ def format_questions(questions: list[dict]) -> str:
 
 
 def build_evaluate_prompt(*, questions, markdown_text: str, tag: str = "") -> str:
-    """优化模式：tag 指令 + 题数声明 + 题目/答案 + 学生作答（转录）。"""
+    """D127 优化模式：tag 指令 + 题目/答案 + 学生转写 + **先判题目是否对应，再评阅**。
+
+    注意：`questions` 必须是**该生 tag 对应的那一张作业纸**的题目（由调用方保证）。
+    题目为空时**不得**让模型"自己猜题目"——调用方应报错（见 flow._run_evaluate）。
+    """
     parts: list[str] = []
     instr = tag_instruction(tag)
     if instr:
@@ -112,12 +144,23 @@ def build_evaluate_prompt(*, questions, markdown_text: str, tag: str = "") -> st
     q_text = format_questions(questions)
     if questions:
         n = len(questions)
+        parts.append(
+            "【第一步：先判断题目是否对应】\n"
+            "下面是本次作业**应当使用的作业纸题目**。请先核对：学生转写中的题目（或作答所针对的题目）"
+            "是否就是这些题目。\n"
+            "- 若一致 → question_match.match=true；\n"
+            "- 若不一致（题号对不上/题干完全不同/像是另一份作业或自制作业纸）→ match=false，"
+            "并在 evidence 中**逐字引用**学生转写里的题目片段，在 reason 里说明差异；\n"
+            "- 若学生没抄题目、只有作答 → 依据作答内容推断是否与给定题目对应，证据不足时 match=true 但"
+            "在 reason 中注明「学生未抄题目，按作答内容推断」。\n"
+            "**判断依据只看题目本身，不受作答对错影响。**")
         if n > 1:
             parts.append(f"本次作业共 {n} 题，请严格按以下题目逐题评阅，不要评阅额外内容。")
-        parts.append(f"作业题目与参考答案：\n{q_text}")
+        parts.append(f"【作业纸题目与参考答案】\n{q_text}")
     else:
-        parts.append("（未提供题目/参考答案：请你先自行判断题目，再评阅作答。）")
-    parts.append(f"学生答案（转录）：\n{markdown_text}")
+        parts.append("【缺少作业纸题目】无法核对题目一致性，请在 question_match.reason 中注明"
+                     "「未提供作业纸题目」，并仅基于作答本身评阅。")
+    parts.append(f"【学生转写（含题目与作答）】\n{markdown_text}")
     return "\n\n".join(parts)
 
 
@@ -176,10 +219,19 @@ EVALUATION_SCHEMA = {
         "schema": {
             "type": "object",
             "properties": {
+                # D127：题目一致性由 LLM 判断（Python 只提供事实）。
+                # status/note 保留兼容；新增 match/evidence/reason 便于教师核对。
                 "question_match": {
                     "type": "object",
-                    "properties": {"status": {"type": "boolean"}, "note": {"type": "string"}},
-                    "required": ["status", "note"], "additionalProperties": False,
+                    "properties": {
+                        "status": {"type": "boolean"},
+                        "match": {"type": "boolean"},
+                        "note": {"type": "string"},
+                        "evidence": {"type": "string"},
+                        "reason": {"type": "string"},
+                    },
+                    "required": ["status", "match", "note", "evidence", "reason"],
+                    "additionalProperties": False,
                 },
                 "questions": {
                     "type": "array",
@@ -209,9 +261,12 @@ EVALUATION_SCHEMA = {
                                         "confidence": {"type": "string",
                                                        "enum": ["high", "medium", "low"]},
                                         "why": {"type": "string"},
+                                        # D127：出错的知识点（可多个，如 ["动量守恒","弹性碰撞"]）
+                                        "knowledge": {"type": "array",
+                                                      "items": {"type": "string"}},
                                     },
                                     "required": ["step", "description", "guidance", "deduct",
-                                                 "evidence", "confidence", "why"],
+                                                 "evidence", "confidence", "why", "knowledge"],
                                     "additionalProperties": False,
                                 },
                             },
@@ -245,7 +300,9 @@ EVIDENCE_INSTRUCTION = """严谨性要求（必须遵守）：
    - low 置信度的错误**只提示、不扣分**（由程序处理）。
 4. 每题给 `correct_points`：列出学生做得对的地方（至少 1 条，确实全错才可空）。
 5. `guidance` 用苏格拉底式提问引导，**不要直接给答案**。
-6. 不得编造学生未写的内容；`evidence` 对不上原文时宁可标 low。"""
+6. 不得编造学生未写的内容；`evidence` 对不上原文时宁可标 low。
+7. 每条 errors 必须给 `knowledge`：列出这处错误涉及的**知识点名称**（可多个，用规范术语，
+   如 ["动量守恒", "完全弹性碰撞"]）；若题目题干已给出「关联知识点」，优先沿用其中的表述。"""
 
 
 # D106：可选的 SVG 重绘指令（默认关；开启后追加到转录 prompt）

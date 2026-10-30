@@ -19,37 +19,12 @@ from loguru import logger
 from .llm import LLMClient
 
 # ---- prompt：原样迁移自 _legacy/2601playwright/src/llm/transcriber.py ----
-TRANSCRIPTION_PROMPT = """你是一位物理作业转录助手。你的任务是将学生提交的手写作业图片精确转录为结构化 JSON。
+# D127：转写提示词的**唯一真源**在 prompts.TRANSCRIPTION_PROMPT（结构化 items[]）；
+# 此处保留同名符号仅为向后兼容（旧代码 `from .transcribe import TRANSCRIPTION_PROMPT`）。
+from .prompts import TRANSCRIPTION_PROMPT  # noqa: E402
 
-要求：
-1. 严格保留原始内容——不要修改、纠正或补充学生的答案
-2. 数学公式用 LaTeX 行内公式 $...$ 和行间公式 $$...$$ 表示
-3. 保持原有的题目编号和结构
-4. 如果学生有手绘图表，用 ASCII 或文字描述标注 "[此处有手绘图表：...]"
-5. 保留学生写下的所有文字，包括错误的内容（可以在批阅阶段处理）
-6. 如果图片模糊或无法辨认，在对应位置标注 "[无法辨认]"
-7. 输出严格 JSON 格式，包含 markdown 和 quality 两个字段：
-{
-  "markdown": "转录的 Markdown 内容",
-  "quality": {
-    "handwriting": "工整",
-    "clarity": "清晰",
-    "organization": "整洁"
-  }
-}
-quality 字段说明：
-  - handwriting: 字迹工整程度（工整/一般/潦草）
-  - clarity: 图片清晰度（清晰/模糊）
-  - organization: 排版整洁度（整洁/一般/杂乱）
-8. 特别注意精度：
-    - 仔细核对所有数字的小数点和位数
-    - **幂指数（$10^n$、$e^n$ 等）的底数和指数必须逐字核对**
-    - 区分大小写英文字母和希腊字母（V/v, ν, ρ 等）
-    - 保留所有物理单位（m/s², J, Pa, K 等）和上下标
-    - 公式中的每一处数字、符号、指数必须与原图逐字核对
-9. 特别注意转义：JSON 字符串中的反斜杠必须写成 \\\\，例如 \\times 应写为 \\\\times，\\frac 应写为 \\\\frac。请检查输出 JSON 中所有反斜杠是否已正确转义"""
-
-TRANSCRIBE_USER_TEXT = "请将这份物理作业图片转录为 Markdown 格式。"
+TRANSCRIBE_USER_TEXT = ("请把这份物理作业图片转录为结构化 JSON："
+                        "逐题分开「题目 / 作答」，示意图只做语义描述，不要画图。")
 
 # 转录解析重试（迁移旧 transcriber 的 5 次尝试逻辑，收敛为 3 次即可）
 _TRANSCRIBE_ATTEMPTS = 3
@@ -106,6 +81,65 @@ def _system_prompt() -> str:
         return TRANSCRIPTION_PROMPT
 
 
+# D127：转写产物结构版本。2 = items[]（题目/作答分开）；1 = 旧版一坨 markdown。
+TRANS_VERSION = 2
+
+
+def _engine_version() -> str:
+    try:
+        from .. import __version__ as _v
+        return f"assist-engine {_v}"
+    except Exception:  # noqa: BLE001
+        return "assist-engine"
+
+
+def is_structured(data: "dict | None") -> bool:
+    """D127：是否为结构化转写（items[] 非空）。旧版只有 markdown。"""
+    if not isinstance(data, dict):
+        return False
+    items = data.get("items")
+    return isinstance(items, list) and any(isinstance(x, dict) for x in items)
+
+
+def transcript_to_markdown(data: "dict | None") -> str:
+    """把结构化转写渲染成 markdown（题目/作答/示意图分开）。
+
+    D127 兼容：若无 items[] 但已有旧版 markdown，则原样返回（供报告复用；
+    评阅/报告入口会另行提示"请重新转写"，此处不做静默降级判断）。
+    """
+    if not isinstance(data, dict):
+        return ""
+    items = data.get("items")
+    if not (isinstance(items, list) and items):
+        return str(data.get("markdown") or "")
+    out: list[str] = []
+    for i, it in enumerate(items, start=1):
+        if not isinstance(it, dict):
+            continue
+        no = str(it.get("no") or i).strip() or str(i)
+        q = str(it.get("printed_question") or "").strip()
+        a = str(it.get("answer") or "").strip()
+        out.append(f"### 第 {no} 题")
+        out.append("")
+        out.append(f"**题目：** {q if q else '（作业纸上未识别到印刷题干）'}")
+        out.append("")
+        out.append("**作答：**")
+        out.append(a if a else "（未识别到作答内容）")
+        for dg in (it.get("diagrams") or []):
+            if not isinstance(dg, dict):
+                continue
+            kind = str(dg.get("kind") or "示意图").strip()
+            desc = str(dg.get("description") or "").strip()
+            if desc:
+                out.append("")
+                out.append(f"**{kind}：** {desc}")
+        out.append("")
+    tail = str(data.get("unmatched_notes") or "").strip()
+    if tail:
+        out += ["---", "", "**其他页面内容：**", tail, ""]
+    return "\n".join(out).strip()
+
+
 def transcribe_student(client: LLMClient, images: list[Path], student: str,
                        out_dir: Path, model: str | None = None) -> Path:
     """转录单个学生的一组图片 → transcripts/<student>.json（含 v1 版本号）。"""
@@ -137,8 +171,8 @@ def transcribe_student(client: LLMClient, images: list[Path], student: str,
         "model": model or client.transcription_model,
         "images": [p.name for p in images],
         "image_info": image_info,
-        "version": "assist-engine 0.1.0 (migrated from 2601playwright v0.3.0)",
-        "_trans_version": 1,
+        "version": _engine_version(),
+        "_trans_version": TRANS_VERSION,
         "timestamp": time.strftime("%Y-%m-%d %H:%M"),
     })
     # 姓名一致性预警（迁移自 transcriber._name_match）

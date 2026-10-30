@@ -500,6 +500,16 @@ function stopPoll() { if (pollTimer !== undefined) { window.clearTimeout(pollTim
 async function startAi(steps?: string[]) {
   const w = curWork.value
   if (!w) { msg.value = '请选择作业（需先在「作业预览-学习通」下载作答/批语）'; return }
+  // D127：前置产物缺失时给**明确提示**（而不是把按钮置灰——灰按钮不告诉原因）
+  const st = (steps && steps.length) ? steps : ['transcribe', 'evaluate']
+  if (st.length === 1 && st[0] === 'evaluate') {
+    const n = students.value.length
+    const done = students.value.filter((x) => !!drafts.value[x.key]?.ai?.transcript).length
+    if (n && done === 0) {
+      msg.value = '还没有任何转写：请先点「① 仅转写」（评阅必须建立在转写之上）'
+      return
+    }
+  }
   // D89：优先用作业包（多张作业纸，按 tag 匹配）；否则退回单张作业纸
   const packPadList = packPads.value.map((p) => { try { return JSON.parse(p.json) } catch { return null } })
     .filter(Boolean)
@@ -514,10 +524,8 @@ async function startAi(steps?: string[]) {
   }
   if (!taskpad) { msg.value = '请选择作业包（或单张作业纸）'; return }
   // D126：按 steps 显示对应文案（此前一律写「AI 批阅」，点"仅转录"时误导）
-  const st = (steps && steps.length) ? steps : ['transcribe', 'evaluate', 'report']
   const onlyTranscribe = st.length === 1 && st[0] === 'transcribe'
   const onlyEvaluate = st.length === 1 && st[0] === 'evaluate'
-  const noReport = st.includes('transcribe') && st.includes('evaluate') && !st.includes('report')
   const jobName = onlyTranscribe ? 'AI 转写' : (onlyEvaluate ? 'AI 评阅' : 'AI 批阅')
   busy.value = true
   progress.value = `正在装配任务清单并启动${jobName}……`
@@ -547,9 +555,7 @@ async function startAi(steps?: string[]) {
             ? '✅ AI 转写完成（转写内容已写入批阅草稿，可在下方逐生审核查看）'
             : onlyEvaluate
               ? '✅ AI 评阅完成（结果已写入本地批阅草稿，可在下方逐生审核）'
-              : noReport
-                ? '✅ 转写 + 评阅完成（尚未生成报告，可再点「④ 完整批阅」补报告）'
-                : '✅ AI 批阅完成（结果已写入本地批阅草稿，可在下方逐生审核）')
+              : '✅ 批阅完成（转写+评阅）。请在下方逐生审核，审完后点「📄 一键生成批阅报告」')
           : `❌ ${jobName}失败：${extractJobError(lines.join('\n'))}`
         await loadStudents()
       } catch (e) { busy.value = false; progress.value = `状态查询失败：${String(e)}` }
@@ -562,16 +568,39 @@ async function testLlm() {
   busy.value = true; progress.value = '正在按段测试 LLM 配置（转录=多模态 / 评阅=纯文本）……'
   try {
     const r = await testLlmStages(props.engineAddr, props.token, 'both')
+    // D127：失败时**逐段展示** provider/base_url/model/ms/error 原文
+    // （此前 serve 用 HTTP 400 表达失败，前端只剩一句 "HTTP 400"，看不到原因）
     const lines = (r.results || []).map((x: any) => {
-      const tag = x.stage === 'transcription' ? '转录' : '评阅'
+      const tag = x.stage === 'transcription' ? '转录段' : '评阅段'
+      const head = `${tag}：${x.provider || '-'} / ${x.model || '-'} @ ${x.base_url || '-'}`
       return x.ok
-        ? `✅ ${tag}：${x.provider || '-'} / ${x.model} @ ${x.base_url}（${x.ms}ms）`
-        : `❌ ${tag}：${x.provider || '-'} / ${x.model} @ ${x.base_url}｜${String(x.error || '').slice(0, 160)}`
+        ? `✅ ${head}（${x.ms}ms，回复：${String(x.reply || '').slice(0, 30)}）`
+        : `❌ ${head}\n    原因：${String(x.error || '未知错误').slice(0, 500)}`
     })
-    progress.value = lines.join('\n') || (r.error || '（无结果）')
+    const summary = r.ok ? '' : `\n\n${r.error || '（失败原因见上）'}`
+    progress.value = (lines.join('\n') || '（无结果）') + summary
   } catch (e) {
-    progress.value = `测试失败：${String((e as Error).message || e)}`
+    progress.value = `测试请求失败：${String((e as Error).message || e)}`
   } finally { busy.value = false }
+}
+
+/** D127：AI 状态 —— 让"跑过什么"在表上可见（此前只有 AI 分，跑完转写也看不出变化）。 */
+function aiState(s: { key: string }): { label: string; color: string } {
+  const d = drafts.value[s.key] || {}
+  const ai = d.ai || {}
+  if ((d.human?.reportImages?.length || 0) > 0) return { label: '有报告', color: '#14532d' }
+  if (ai.comment && (ai.score !== undefined && ai.score !== null)) return { label: '已评阅', color: '#1d4ed8' }
+  if (ai.transcript) return { label: '已转写', color: '#a16207' }
+  return { label: '未跑', color: '#9ca3af' }
+}
+/** D127：报告模式（未人工介入时显示 auto(AI)，不再是一串 "—"）。 */
+function reportMode(s: { key: string }): string {
+  const d = drafts.value[s.key] || {}
+  const hm = String(d.humanMode || 'none')
+  if (hm === 'replace') return '人工替代'
+  if (hm === 'append') return 'AI+人工'
+  if (hm === 'revise') return 'AI·修订'
+  return d.human?.used ? 'auto(人工)' : 'auto(AI)'
 }
 
 async function renderReports() {
@@ -799,10 +828,9 @@ onMounted(async () => {
               @click="startAi(['transcribe'])">① 仅转录</button>
       <button class="btn small" :disabled="busy" title="只跑评阅（要求已有转录产物）"
               @click="startAi(['evaluate'])">② 仅评阅</button>
-      <button class="btn small" :disabled="busy" title="转录 + 评阅，不生成报告"
-              @click="startAi(['transcribe', 'evaluate'])">③ 转录+评阅</button>
-      <button class="btn" :disabled="busy" title="完整流程：转录 → 评阅 → 报告"
-              @click="startAi()">▶ ④ 完整批阅</button>
+      <button class="btn" :disabled="busy"
+              title="完整批阅：转录 → 评阅（不含报告；审核后再用下方「📄 一键生成批阅报告」）"
+              @click="startAi(['transcribe', 'evaluate'])">▶ ③ 完整批阅</button>
       <label class="hint" style="display:inline-flex; align-items:center; gap:4px; margin-left:8px">
         <input type="checkbox" v-model="allowPartial" />
         有学生转录失败时仍继续（默认中止）
@@ -816,14 +844,15 @@ onMounted(async () => {
       保存后到 ⑤ 一键生成报告（按每生模式自动出 5 种版式之一）。
     </p>
     <table v-if="students.length" style="width:100%; border-collapse:collapse">
-      <thead><tr><th style="text-align:left">学生</th><th>tag</th><th>AI</th><th>人工</th><th>模式</th><th></th></tr></thead>
+      <thead><tr><th style="text-align:left">学生</th><th>tag</th><th>AI 状态</th><th>AI 分</th><th>人工</th><th>报告模式</th><th></th></tr></thead>
       <tbody>
         <tr v-for="(s, i) in students" :key="s.key">
           <td>{{ s.name }}</td>
           <td style="text-align:center">{{ s.tag || '—' }}</td>
-          <td style="text-align:center">{{ drafts[s.key]?.ai ? (drafts[s.key].ai.score ?? '✓') : (drafts[s.key]?.score ?? '—') }}</td>
+          <td style="text-align:center"><b :style="{ color: aiState(s).color }">{{ aiState(s).label }}</b></td>
+          <td style="text-align:center">{{ drafts[s.key]?.ai?.score ?? drafts[s.key]?.score ?? '—' }}</td>
           <td style="text-align:center">{{ drafts[s.key]?.human?.used ? (drafts[s.key].human.score ?? '✓') : '—' }}</td>
-          <td style="text-align:center">{{ drafts[s.key]?.humanMode || drafts[s.key]?.source || '—' }}</td>
+          <td style="text-align:center">{{ reportMode(s) }}</td>
           <td style="text-align:center"><button class="btn" @click="openReview(i)">审核</button></td>
         </tr>
       </tbody>

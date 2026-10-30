@@ -69,17 +69,25 @@ def test_mode_2_ai_revised():
     assert "[[R]]AI 内容（修订）[[/R]]" in md
 
 
-def test_mode_3_human_then_ai_attach():
+def test_mode_3_append_ai_first_then_human():
+    """D127：append = AI 批语在前 + 人工批语在后（此前与 replace 产出相同，属缺陷）。"""
     md, kind = _d(mode="append")
-    assert "# 人工批阅报告" in md and "# AI 批阅报告" in md
-    assert "【附件】" in md
-    assert md.index("人工批阅报告") < md.index("AI 批阅报告"), "人工报告应在 AI 之前"
+    assert "# AI 批阅报告" in md and "教师补充批语" in md
+    assert md.index("AI 内容") < md.index("人工内容"), "AI 批语应在人工批语之前"
+    assert "人工批阅报告" not in md, "append 不是纯人工报告"
 
 
-def test_mode_4_human_then_ai_revised():
+def test_mode_4_replace_is_human_only():
+    """D127：replace = 人工批语**替代** AI → 纯人工报告。"""
+    md, kind = _d(mode="replace")
+    assert kind == "human"
+    assert "# 人工批阅报告" in md and "AI 批阅报告" not in md
+    assert "AI 内容" not in md, "替代模式下不应出现 AI 批语"
+
+
+def test_mode_4b_append_keeps_revision_mark():
     md, kind = _d(mode="append", rev="AI 内容（修订）")
-    assert "人工批阅报告" in md and "AI 批阅报告" in md and "【附件】" in md
-    assert "[[R]]" in md
+    assert "教师补充批语" in md and "[[R]]" in md
 
 
 def test_mode_5_human_only():

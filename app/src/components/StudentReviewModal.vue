@@ -4,6 +4,7 @@
  *  左=学生作答图（可上/下一位、旋转）。保存写回双套草稿（不覆盖 AI 原文）。 */
 import { computed, ref, watch } from 'vue'
 import { saveXxtGradeDraft, xxtReviewFileUrl } from '../lib/engineClient'
+import { renderRich } from '../lib/richdoc'
 
 const props = defineProps<{
   engineAddr: string; token?: string
@@ -42,6 +43,13 @@ const answerImages = computed<string[]>(() => {
 
 /** D126：AI 转写内容（由父级按 (classDir, taskId, student) 拉取后传入）。 */
 const transcriptText = computed<string>(() => String(draft.value.ai?.transcript || ''))
+/** D127：转写正文已是"### 第 N 题 / **题目：** / **作答：** / **受力图：**"结构，
+ *  按富文本渲染（公式可显示；纯文本 pre-wrap 会把 ** 和 $..$ 原样露出来）。 */
+const transcriptHtml = computed<string>(() => (transcriptText.value ? renderRich(transcriptText.value) : ''))
+const aiCommentHtml = computed<string>(() => {
+  const t = String(aiSet.value.comment || '')
+  return t ? renderRich(t) : ''
+})
 
 /* 人工批阅编辑态 */
 const score = ref(''); const comment = ref(''); const humanMode = ref('none')
@@ -130,12 +138,11 @@ async function save() {
               {{ showTranscript ? '收起' : '展开' }}
             </button>
           </h4>
-          <div v-if="transcriptText && showTranscript"
+          <div v-if="transcriptText && showTranscript" class="rich-box"
                style="border:1px solid var(--c-border); border-radius:8px; padding:8px;
-                      white-space:pre-wrap; max-height:30vh; overflow:auto;
-                      background:var(--c-bg-soft,#f8fafc); font-size:13px">
-            {{ transcriptText }}
-          </div>
+                      max-height:30vh; overflow:auto;
+                      background:var(--c-bg-soft,#f8fafc); font-size:13px"
+               v-html="transcriptHtml"></div>
           <p v-else-if="!transcriptText" class="hint" style="margin:2px 0 8px">
             （暂无转写内容。常见原因：① 该生是本次「仅评阅」，或批阅发生在 D126 之前
             （那时不保存转写）——重跑一次「① 仅转录」即可补齐；② 多数学生转写失败时
@@ -143,10 +150,11 @@ async function save() {
           </p>
 
           <h4 style="margin-top:10px">AI 批语 <span class="hint" style="font-weight:400">（只读基线{{ aiSet.score != null ? ` · 评分 ${aiSet.score}` : '' }}）</span></h4>
-          <div style="border:1px solid var(--c-border); border-radius:8px; padding:8px; white-space:pre-wrap; min-height:80px;
+          <div style="border:1px solid var(--c-border); border-radius:8px; padding:8px; min-height:80px;
                       background:var(--c-bg-soft,#f8fafc)">
             <span v-if="revisionText">（已另存修订版，见下）</span>
-            <span v-else>{{ aiSet.comment || '（无 AI 批语：该生可能只有本地旧草稿分数，或尚未跑 AI 批阅）' }}</span>
+            <div v-else-if="aiCommentHtml" class="rich-box" v-html="aiCommentHtml"></div>
+            <span v-else>（无 AI 批语：该生可能只有本地旧草稿分数，或尚未跑 AI 批阅）</span>
           </div>
           <p style="margin:6px 0">
             <button class="btn small" @click="startRevise">{{ revisionText ? '编辑修订版' : '另存修订版…' }}</button>
@@ -161,16 +169,26 @@ async function save() {
           <p style="display:flex; gap:8px; align-items:center; flex-wrap:wrap; margin:0 0 6px">
             <label class="field">模式
               <select v-model="humanMode">
-                <option value="none">不批阅（仅 AI）</option>
-                <option value="replace">覆盖 AI（报告=人工批阅报告）</option>
-                <option value="append">人工在前 + AI 作附件</option>
-                <option value="revise">修订 AI（报告=AI批阅报告（人工修订））</option>
+                <option value="none">仅 AI（默认）</option>
+                <option value="replace">人工替代 AI（报告=纯人工）</option>
+                <option value="append">追加到 AI 之后（报告=AI + 教师补充）</option>
+                <option value="revise">修订 AI（报告=AI报告·人工修订·标红）</option>
               </select>
             </label>
             <label class="field">分数 <input v-model="score" type="number" min="0" max="100" style="width:80px" /></label>
           </p>
           <textarea v-model="comment" rows="4" style="width:100%; font-family:inherit"
                     placeholder="人工批语（支持 LaTeX；模式=none/revise 时可留空）"></textarea>
+          <p style="margin:8px 0 0; display:flex; gap:8px; align-items:center; flex-wrap:wrap">
+            <button class="btn small" :class="{ primary: humanMode === 'none' }"
+                    @click="humanMode = 'none'" title="报告只用 AI 批语（默认）">↩ 仅 AI</button>
+            <button class="btn small" :class="{ primary: humanMode === 'replace' }"
+                    @click="humanMode = 'replace'"
+                    title="人工批语替代 AI 批语 → 报告为纯人工批阅报告">✏ 人工替代 AI</button>
+            <button class="btn small" :class="{ primary: humanMode === 'append' }"
+                    @click="humanMode = 'append'"
+                    title="AI 批语在前 + 人工批语在后">➕ 追加到 AI 之后</button>
+          </p>
           <p style="margin:8px 0 0; display:flex; gap:8px; align-items:center">
             <button class="btn primary" @click="save">💾 保存到本地（不覆盖 AI 原文）</button>
             <span class="hint" v-if="msg">{{ msg }}</span>

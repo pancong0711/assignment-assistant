@@ -108,17 +108,29 @@ def test_full_flow_artifacts_and_journal(ws):
     bucket = w / "classes" / "2026S1-classA" / "grading" / "2026S1-classA-chap10-1"
     t1 = bucket / "transcripts" / "学生A.json"
     e1 = bucket / "evaluations" / "学生A.json"
+    assert t1.exists() and e1.exists(), f"产物缺失 in {bucket}"
+    # D127：报告不再随批阅自动生成（改为人工审核后的独立工序）
+    assert not (bucket / "reports" / "学生A.md").exists(), "批阅阶段不应自动出报告"
+    # D127：报告由「一键生成批阅报告」独立触发（此处直接验证报告拼装产物）
+    from assist.grading.report import build_report_md
     r1 = bucket / "reports" / "学生A.md"
-    assert t1.exists() and e1.exists() and r1.exists(), f"产物缺失 in {bucket}"
-    assert (bucket / "reports" / "学生A.html").exists()
-    assert (bucket / "reports" / "summary.xlsx").exists()
-    assert (bucket / "reports" / "_global_report.md").exists()
+    r1.parent.mkdir(parents=True, exist_ok=True)
+    r1.write_text(build_report_md(t1, e1), encoding="utf-8")
+    assert r1.exists(), f"报告缺失 in {bucket}"
+    _md = r1.read_text(encoding="utf-8")
+    # D127：报告含「一、AI 转写」「二、AI 批阅」两部分（学生版不发顶替标签）
+    assert "## 一、AI 转写" in _md and "## 二、AI 批阅" in _md
+    assert "顶替嫌疑" not in _md, "学生报告不应贴顶替标签"
+    from assist.grading.report import report_html_from_md
+    (bucket / "reports" / "学生A.html").write_text(
+        report_html_from_md(_md, kind="ai", title="学生A 批阅报告"), encoding="utf-8")
     # 数据之重组装与批语质量
     ev = json.loads(e1.read_text(encoding="utf-8"))
     assert ev["total_score"] == 95  # 错误1处(扣5)，签名齐
     assert ev["per_question_scores"] == [95]
     assert ev["feedback_md"] and "想一想" in Path(r1).read_text(encoding="utf-8")
     # HTML 报告：D86 起改用自托管 KaTeX（离线）+ 来源标注
+    assert (bucket / "reports" / "学生A.html").exists()
     _html = (bucket / "reports" / "学生A.html").read_text(encoding="utf-8")
     assert "katex" in _html.lower() and "AI 批阅报告" in _html
     # 多张图并到同一学生（文件名前缀分组）
@@ -126,7 +138,8 @@ def test_full_flow_artifacts_and_journal(ws):
     # journal（D8）
     jl = [json.loads(x) for x in (bucket / "journal.jsonl").read_text().splitlines()]
     steps = [r["step"] for r in jl if "step" in r]
-    assert {"transcribe", "evaluate", "report"} <= set(steps)
+    # D127：默认步骤不再含 report（报告是审核后的独立工序）
+    assert {"transcribe", "evaluate"} <= set(steps) and "report" not in steps
     assert all(r.get("status") in ("ok", "running", "done") for r in jl)
     assert len(calls) >= 3  # 2生转录 + 评阅
 

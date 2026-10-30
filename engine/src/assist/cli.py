@@ -2051,5 +2051,65 @@ def main():
         raise
 
 
+@cli.command("migrate-grading-dir")
+@click.option("--workspace", "-w", default=None)
+@click.option("--class-dir", default=None, help="只处理某个班级目录（如 classes/化工25）")
+@click.option("--dry-run/--apply", "dry_run", default=True,
+              help="默认只演练（--apply 才真正移动）")
+@click.option("--verbose", "-v", is_flag=True)
+@click.pass_obj
+def migrate_grading_dir(obj, workspace, class_dir, dry_run, verbose):
+    """D127：把旧的 `grading/<作业纸id>/` 迁移到 `grading/<作业包id>/`。
+
+    作业包在 D127 起是唯一批次载体；老数据目录名是单张作业纸 id。
+    迁移是**复制 + 校验**，不删源（安全优先）；已迁移过的会跳过（幂等）。
+    """
+    import shutil
+
+    from .grading.flow import grading_key
+    from .packs import list_packs
+
+    ws = _setup(verbose or obj.get("verbose"), workspace)
+    packs = list_packs(ws) or []
+    # padId -> packId
+    pad_to_pack: dict[str, str] = {}
+    for pk in packs:
+        pid = str(pk.get("id") or "")
+        for ref in (pk.get("pads") or []):
+            if isinstance(ref, dict) and ref.get("padId"):
+                pad_to_pack[str(ref["padId"])] = pid
+
+    root = Path(ws) / (class_dir or "classes")
+    if not root.is_dir():
+        click.echo(json.dumps({"ok": False, "error": f"目录不存在：{root}"},
+                              ensure_ascii=False, indent=1))
+        raise SystemExit(2)
+    moved, skipped, unknown = [], [], []
+    for gdir in sorted(root.glob("*/grading/*")):
+        if not gdir.is_dir():
+            continue
+        name = gdir.name
+        target_id = pad_to_pack.get(name)
+        if not target_id:
+            unknown.append(str(gdir))
+            continue
+        if target_id == name:
+            skipped.append({"from": str(gdir), "reason": "已是包 id"})
+            continue
+        dst = gdir.parent / target_id
+        if dst.exists() and any(dst.iterdir()):
+            skipped.append({"from": str(gdir), "to": str(dst), "reason": "目标已存在（不覆盖）"})
+            continue
+        if dry_run:
+            moved.append({"from": str(gdir), "to": str(dst), "dryRun": True})
+            continue
+        shutil.copytree(gdir, dst, dirs_exist_ok=True)
+        moved.append({"from": str(gdir), "to": str(dst), "dryRun": False})
+    out = {"ok": True, "dryRun": dry_run, "moved": moved, "skipped": skipped,
+           "unknown": unknown,
+           "hint": "默认只演练；确认无误后加 --apply。迁移为复制，不删源目录。"}
+    click.echo(json.dumps(out, ensure_ascii=False, indent=1))
+
+
 if __name__ == "__main__":
     main()

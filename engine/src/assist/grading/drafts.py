@@ -89,7 +89,8 @@ def save_drafts_from_grading(ws, *, class_id: str, work_id: str, task_id: str,
         if _tf.is_file():
             try:
                 _t = json.loads(_tf.read_text(encoding="utf-8"))
-                _md = str(_t.get("markdown") or "").strip()
+                from .transcribe import transcript_to_markdown
+                _md = transcript_to_markdown(_t).strip()
                 if _md:
                     ai_set["transcript"] = _md
                     ai_set["transcriptModel"] = str(_t.get("model") or "")
@@ -207,7 +208,8 @@ def save_transcripts_to_drafts(ws, *, class_id: str, work_id: str, task_id: str,
             continue
         student = str(t.get("student") or tf.stem)
         key = wa_by_name.get(student) or student
-        text = str(t.get("markdown") or "").strip()
+        from .transcribe import transcript_to_markdown
+        text = transcript_to_markdown(t).strip()
         if not text:
             continue
         rep = grade_store.save_draft_sets(

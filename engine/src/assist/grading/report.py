@@ -222,7 +222,10 @@ def build_report_md(transcript_path: Path, eval_path: Path) -> str:
     score = e_data.get("total_score", 0)
     deductions = e_data.get("deductions", [])
     feedback_md = e_data.get("feedback_md", "")
-    markdown_text = t_data.get("markdown", "")
+    # D127：结构化转写（items[]）→ 渲染成"题目/作答/示意图"分明的 markdown；
+    # 旧版纯 markdown 原样返回（报告仍能出，评阅入口另行提示重新转写）。
+    from .transcribe import transcript_to_markdown
+    markdown_text = transcript_to_markdown(t_data)
     name_match = e_data.get("_name_match", t_data.get("_name_match", True))
 
     lines = ["# 作业批阅报告", ""]
@@ -232,9 +235,6 @@ def build_report_md(transcript_path: Path, eval_path: Path) -> str:
     if not name_match:
         lines += [f"> ⚠️ **姓名预警**：转录内容中未检测到学生姓名 \"{student}\"，"
                   "可能图片与姓名不匹配，请人工检查", ""]
-    # 阶段3 新增：顶替嫌疑就地告警（任务包绑定题目的合并收益点）
-    if e_data.get("verdict") == "suspected-substitution":
-        lines += ["> 🚨 **顶替嫌疑**：学生作答与作业纸题目不匹配，请教师人工核查", ""]
     if homework:
         lines.append(f"**作业：** {homework}")
     lines.append(f"**转录模型：** {t_model}  |  **评阅模型：** {e_model}")
@@ -249,12 +249,49 @@ def build_report_md(transcript_path: Path, eval_path: Path) -> str:
               "说明是识别偏差，不影响对思路的判断。", "",
               markdown_text or "（无转写内容）",
               "", "---", "", "## 二、AI 批阅", "", f"**总分：{score} / 100**"]
+    # D127：批阅段**先列作业纸上的正确题目**，便于学生/教师对照"我转写的题目"与"题目原样"；
+    # 而不是在报告开头贴"顶替嫌疑"标签（那等于给学生扣帽子）。
+    qtext = _correct_questions_md(e_data)
+    if qtext:
+        lines += ["", "### 本次作业的题目", "", qtext]
+        qm = e_data.get("question_match") or {}
+        if qm and (qm.get("match") is False or qm.get("status") is False):
+            note = str(qm.get("reason") or qm.get("note") or "").strip()
+            lines += ["", "> ℹ️ **提示**：你转写出的题目与上面的作业纸题目存在差异"
+                      + (f"：{note}" if note else "") +
+                      "。请对照上面的题目，确认自己是否做的是这份作业。", ""]
     if deductions:
         lines += ["", "**扣分明细：**", *[f"- {d}" for d in deductions]]
     if feedback_md:
         lines += ["", feedback_md, ""]
-    lines += ["---", "*assist-engine 0.1.0 - AI 辅助批阅*", ""]
+    lines += ["---", f"*{_engine_ver()} - AI 辅助批阅*", ""]
     return "\n".join(lines)
+
+
+def _engine_ver() -> str:
+    """D127：报告页脚版本号跟随真实 `__version__`（此前硬编码 0.1.0）。"""
+    try:
+        from .. import __version__ as _v
+        return f"assist-engine {_v}"
+    except Exception:  # noqa: BLE001
+        return "assist-engine"
+
+
+def _correct_questions_md(e_data: dict) -> str:
+    """从评阅产物里取"作业纸题目"原文（D127 审计字段 questions）。"""
+    qs = e_data.get("questions") or []
+    if not isinstance(qs, list) or not qs:
+        return ""
+    out = []
+    for q in qs:
+        if not isinstance(q, dict):
+            continue
+        no = str(q.get("no") or q.get("id") or "").strip()
+        content = str(q.get("content") or "").strip()
+        if not content:
+            continue
+        out.append(f"**第 {no or '?'} 题：** {content}")
+    return "\n\n".join(out)
 
 
 # ---- MD → HTML：轻量转换器（免新增 markdown 依赖）----
@@ -386,15 +423,22 @@ def _mode_report_md(*, student: str, ai: dict, human: dict, human_mode: str,
         return head
 
     lines: list[str] = []
-    if hm == "human":
+    used = bool((human or {}).get("used"))
+    # D127：三种人工介入语义必须产出**不同**报告（此前 append/replace 走同一分支）。
+    #   replace = 人工批语**替代** AI → 纯人工报告
+    #   append  = AI 批语在前 + 人工批语在后
+    #   none    = 纯 AI（默认）
+    if hm in ("replace", "human") and used:
         lines += _human_section()
         return "\n".join(lines), "human"
-    if hm in ("append", "replace") and (human or {}).get("used"):
-        # 人工在前 + 【附件】AI 在后
-        lines += _human_section()
-        lines += ["", "---", "", "## 【附件】", ""]
+    if hm == "append" and used:
         lines += _ai_section()
-        return "\n".join(lines), "human"
+        lines += ["", "---", "", "## 教师补充批语", ""]
+        if (human or {}).get("score") is not None:
+            lines.append(f"**教师评分：** {human.get('score')} / 100")
+            lines.append("")
+        lines += [str((human or {}).get("comment") or "")]
+        return "\n".join(lines), ai_kind
     # 仅 AI（none / revise）
     lines += _ai_section()
     return "\n".join(lines), ai_kind

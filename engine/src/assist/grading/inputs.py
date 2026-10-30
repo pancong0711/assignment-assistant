@@ -69,7 +69,9 @@ def _questions_of(task: dict, ws=None) -> list[dict]:
         sol = str(eff.get("text_plain") or eff.get("text") or fallback)
         out.append({"no": str(it.get("no") or ""), "content": str(it.get("content") or ""),
                     "solution": sol,
-                    "tag": str(it.get("tag") or task.get("target_tag") or "")})
+                    "tag": str(it.get("tag") or task.get("target_tag") or ""),
+                    # D127：题库已有「关联知识点」列（旧 2603 `related`），作为评阅时的知识点提示
+                    "related": str(it.get("related") or "")})
     return out
 
 
@@ -125,13 +127,51 @@ def read_review_students(class_id: str, work_id: str) -> tuple[Path, list[dict]]
     return d, out
 
 
+def _norm_tag(t: str) -> str:
+    """D127：tag 归一（与 paper.pack 同口径：去空白/全角转半角/小写）。"""
+    from ..paper.pack import _norm_tag as _n
+    return _n(t)
+
+
 def build_plan(ws, *, task_id: str, class_dir: str, class_id: str = "", work_id: str = "",
                mode: str = "optimized", tags: "list[str] | None" = None,
                explicit_pads: "dict[str, dict] | None" = None,
                tasks_dir: "Path | None" = None,
-               review_students: "list[dict] | None" = None) -> dict:
-    """合成批阅任务清单（students 按 tag 关联题目；tags 过滤）。"""
-    tag_pads = pads_by_tag(ws, explicit_pads, tasks_dir)
+               review_students: "list[dict] | None" = None,
+               pack: "dict | None" = None,
+               fallback_pad_id: str = "") -> dict:
+    """合成批阅任务清单（students 按 tag 关联题目；tags 过滤）。
+
+    D127：传入 `pack` 时，题目**只从该作业包内按 tag 取**（唯一真源）；
+    取不到就留空并由下游明确报错，**不再回退到全库作业纸**（防跨批次串题）。
+    """
+    pack_ctx = None
+    if pack is not None:
+        from ..paper import pack as _pack
+        pack_ctx = _pack.pack_context(
+            ws, pack,
+            explicit_pads=[p for p in (explicit_pads or {}).values() if isinstance(p, dict)])
+        tag_pads = {}
+        for nt, e in (pack_ctx.get("by_tag") or {}).items():
+            tag_pads[e["tag"]] = {"padId": e["padId"], "questions": _questions_of(e["pad"], ws)}
+        tag_pads_norm = {nt: {"padId": e["padId"], "questions": _questions_of(e["pad"], ws)}
+                         for nt, e in (pack_ctx.get("by_tag") or {}).items()}
+    else:
+        tag_pads = pads_by_tag(ws, explicit_pads, tasks_dir)
+        tag_pads_norm = {_norm_tag(k): v for k, v in tag_pads.items()}
+
+    def _pad_for(tag: str):
+        """按 tag（归一）取 {padId, questions}；包模式支持显式兜底作业纸。"""
+        hit = tag_pads_norm.get(_norm_tag(tag)) if tag else None
+        if hit:
+            return hit
+        fb = str(fallback_pad_id or "").strip()
+        if fb and pack_ctx is not None:
+            from ..paper import pack as _pack
+            e = _pack.pick_pad_for_tag(pack_ctx, "", fallback_pad_id=fb)
+            if e:
+                return {"padId": e["padId"], "questions": _questions_of(e["pad"], ws)}
+        return {}
     roster = students_with_tags(ws, class_dir)
     _, rev = (Path(""), []) if review_students is not None else read_review_students(class_id, work_id)
     review = review_students if review_students is not None else rev
@@ -144,12 +184,13 @@ def build_plan(ws, *, task_id: str, class_dir: str, class_id: str = "", work_id:
         if want and tag not in want:
             continue
         r = by_name.get(s["name"]) or {}
+        _p = _pad_for(tag)
         students.append({
             "name": s["name"], "number": s.get("number") or "", "tag": tag,
             "workAnswerId": r.get("workAnswerId") or "",
             "images": list(r.get("images") or []),
-            "questions": list((tag_pads.get(tag) or {}).get("questions") or []),
-            "padId": (tag_pads.get(tag) or {}).get("padId") or "",
+            "questions": list(_p.get("questions") or []),
+            "padId": _p.get("padId") or "",
         })
     # 批阅下载里有、但名单里没有的学生（补进来，tag 空）
     for r in review:
@@ -160,7 +201,8 @@ def build_plan(ws, *, task_id: str, class_dir: str, class_id: str = "", work_id:
                              "workAnswerId": r.get("workAnswerId") or "",
                              "images": list(r.get("images") or []), "questions": [], "padId": ""})
     return {
-        "taskId": str(task_id), "classDir": str(class_dir),
+        "taskId": str(task_id), "packId": str((pack or {}).get("id") or ""),
+        "classDir": str(class_dir),
         "courseId": str(class_id), "classId": str(class_id), "workId": str(work_id),
         "mode": "brute" if str(mode).startswith("brute") else "optimized",
         "tags": sorted({s["tag"] for s in students if s["tag"]}),

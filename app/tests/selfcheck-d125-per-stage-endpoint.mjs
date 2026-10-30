@@ -53,14 +53,15 @@ const stripComments = (s) => s.replace(/\/\*[\s\S]*?\*\//g, '')
     '转录部分失败应默认中止')
 }
 
-/* 4) PWA：4 个按钮 + 测试配置 */
+/* 4) PWA：分步按钮 + 测试配置（D127：③ 改为「完整批阅」，语义重叠的「转录+评阅」已移除） */
 {
   const comp = read('src/components/AiGradingPanel.vue')
   assert.ok(/🔍 测试配置/.test(comp), '应有「测试配置」按钮')
-  assert.ok(/① 仅转录/.test(comp) && /② 仅评阅/.test(comp) && /③ 转录\+评阅/.test(comp),
-    '应有分步按钮')
+  assert.ok(/① 仅转录/.test(comp) && /② 仅评阅/.test(comp) && /③ 完整批阅/.test(comp),
+    '应有分步按钮（①仅转录 ②仅评阅 ③完整批阅）')
   assert.ok(/startAi\(\['transcribe'\]\)/.test(comp), '仅转录应传 steps=[transcribe]')
   assert.ok(/startAi\(\['evaluate'\]\)/.test(comp), '仅评阅应传 steps=[evaluate]')
+  assert.ok(!/转录\+评阅/.test(comp), 'D127：语义重叠的「转录+评阅」按钮应移除')
   assert.ok(/testLlmStages/.test(comp), '应调用 testLlmStages')
   const ec = stripComments(read('src/lib/engineClient.ts'))
   assert.ok(/export async function testLlmStages/.test(ec), 'engineClient 应有 testLlmStages')
