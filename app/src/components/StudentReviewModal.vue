@@ -2,9 +2,10 @@
 /** D92-R4：逐生审核弹窗（左右两栏；与「作业预览-学习通」的只读逐生预览不同——
  *  右上=AI 批语（只读，可"另存修订版"）；右下=人工批阅 + 模式（不批阅/覆盖/人工在前+附件AI/修订AI）。
  *  左=学生作答图（可上/下一位、旋转）。保存写回双套草稿（不覆盖 AI 原文）。 */
-import { computed, ref, watch } from 'vue'
+import { computed, nextTick, onMounted, ref, watch } from 'vue'
 import { saveXxtGradeDraft, xxtReviewFileUrl } from '../lib/engineClient'
 import { renderRich } from '../lib/richdoc'
+import { renderMathIn, KATEX_DONE_ATTR } from '../lib/katexRender'
 
 const props = defineProps<{
   engineAddr: string; token?: string
@@ -44,12 +45,32 @@ const answerImages = computed<string[]>(() => {
 /** D126：AI 转写内容（由父级按 (classDir, taskId, student) 拉取后传入）。 */
 const transcriptText = computed<string>(() => String(draft.value.ai?.transcript || ''))
 /** D127：转写正文已是"### 第 N 题 / **题目：** / **作答：** / **受力图：**"结构，
- *  按富文本渲染（公式可显示；纯文本 pre-wrap 会把 ** 和 $..$ 原样露出来）。 */
+ *  按富文本渲染（纯文本 pre-wrap 会把 ** 和 $..$ 原样露出来）。
+ *  D127-FIX：`renderRich` 只做 Markdown→HTML + 净化，**不含 KaTeX**；
+ *  必须再对容器调 `renderMathIn()`，否则公式仍显示 `$...$` 源码。 */
 const transcriptHtml = computed<string>(() => (transcriptText.value ? renderRich(transcriptText.value) : ''))
 const aiCommentHtml = computed<string>(() => {
   const t = String(aiSet.value.comment || '')
   return t ? renderRich(t) : ''
 })
+
+const transcriptEl = ref<HTMLElement | null>(null)
+const aiCommentEl = ref<HTMLElement | null>(null)
+
+/** 对两个富文本容器做 KaTeX 渲染（幂等；内容变化时先清除标记再强制重渲染）。 */
+async function renderFormulas() {
+  await nextTick()
+  for (const el of [transcriptEl.value, aiCommentEl.value]) {
+    if (!el) continue
+    el.removeAttribute(KATEX_DONE_ATTR)
+    await renderMathIn(el, true)
+  }
+}
+
+// 内容或当前学生变化 → 重渲染公式（v-html 更新后 DOM 已替换，必须重新跑 KaTeX）
+watch([transcriptHtml, aiCommentHtml, showTranscript], () => { void renderFormulas() },
+  { flush: 'post' })
+onMounted(() => { void renderFormulas() })
 
 /* 人工批阅编辑态 */
 const score = ref(''); const comment = ref(''); const humanMode = ref('none')
@@ -138,7 +159,7 @@ async function save() {
               {{ showTranscript ? '收起' : '展开' }}
             </button>
           </h4>
-          <div v-if="transcriptText && showTranscript" class="rich-box"
+          <div v-if="transcriptText && showTranscript" ref="transcriptEl" class="rich-box"
                style="border:1px solid var(--c-border); border-radius:8px; padding:8px;
                       max-height:30vh; overflow:auto;
                       background:var(--c-bg-soft,#f8fafc); font-size:13px"
@@ -155,7 +176,8 @@ async function save() {
           <div style="border:1px solid var(--c-border); border-radius:8px; padding:8px; min-height:80px;
                       background:var(--c-bg-soft,#f8fafc)">
             <span v-if="revisionText">（已另存修订版，见下）</span>
-            <div v-else-if="aiCommentHtml" class="rich-box" v-html="aiCommentHtml"></div>
+            <div v-else-if="aiCommentHtml" ref="aiCommentEl" class="rich-box"
+                 v-html="aiCommentHtml"></div>
             <span v-else>（无 AI 批语：该生可能只有本地旧草稿分数，或尚未跑 AI 批阅）</span>
           </div>
           <p style="margin:6px 0">

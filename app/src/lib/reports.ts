@@ -120,13 +120,57 @@ export function stringifyReviewReportHtml(r: ReviewReport): string {
   return `<!DOCTYPE html>
 <html lang="zh-CN">
 <head><meta charset="utf-8"><title>批阅报告 · ${r.student.name || '学生'}</title>
-<style>${css}</style></head>
+<style>${css}</style>
+<!-- D127-FIX：报告里的题干/转录/评语都含 LaTeX；此前没有任何 KaTeX 引入，
+     公式只能显示 $...$ 源码。与打印模板同口径（同源自托管，离线可用）。 -->
+<link rel="stylesheet" href="./katex/katex.min.css">
+<script defer src="./katex/katex.min.js"></script>
+<script defer src="./katex/contrib/auto-render.min.js"></script>
+</head>
 <body><div class="page">
 ${headerHtml(r)}
 ${body}
 ${total}
 ${footerHtml(r)}
-</div></body></html>`
+</div>${reportKatexScript()}</body></html>`
+}
+
+/** 报告页的 KaTeX 自动渲染（与 sheetHtml.katexScript 同口径：长定界符在前、幂等、失败降级）。 */
+function reportKatexScript(): string {
+  return `<script>
+(function () {
+  var opts = {
+    delimiters: [
+      { left: '$$', right: '$$', display: true },
+      { left: '\\[', right: '\\]', display: true },
+      { left: '$', right: '$', display: false },
+      { left: '\\(', right: '\\)', display: false }
+    ],
+    throwOnError: false
+  };
+  function render() {
+    document.querySelectorAll('.sec-body, .review-box').forEach(function (el) {
+      if (el.getAttribute('data-katex-done') === '1') return;
+      try {
+        window.renderMathInElement(el, opts);
+        el.setAttribute('data-katex-done', '1');
+      } catch (e) { /* 降级：保留源码 */ }
+    });
+  }
+  var tries = 0;
+  function waitReady() {
+    if (typeof window.renderMathInElement === 'function') { render(); return; }
+    if (++tries > 100) return;
+    setTimeout(waitReady, 50);
+  }
+  if (document.readyState === 'loading') {
+    document.addEventListener('DOMContentLoaded', waitReady);
+  } else { waitReady(); }
+  window.addEventListener('load', function () {
+    if (typeof window.renderMathInElement === 'function') render();
+  });
+})();
+</script>`
 }
 
 /** demo 示例（5 大题 A4 卷简化两题演示件）——显示用，绝不冒充真实批阅产物。 */

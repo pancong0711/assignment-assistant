@@ -847,20 +847,29 @@ onMounted(async () => {
       点「审核」打开弹窗：左=作答图；右上=AI 批语（可另存修订版）；右下=人工批阅（可选，AI 原文不被覆盖）。
       保存后到 ⑤ 一键生成报告（按每生模式自动出 5 种版式之一）。
     </p>
-    <table v-if="students.length" style="width:100%; border-collapse:collapse">
-      <thead><tr><th style="text-align:left">学生</th><th>tag</th><th>AI 状态</th><th>AI 分</th><th>人工</th><th>报告模式</th><th></th></tr></thead>
-      <tbody>
-        <tr v-for="(s, i) in students" :key="s.key">
-          <td>{{ s.name }}</td>
-          <td style="text-align:center">{{ s.tag || '—' }}</td>
-          <td style="text-align:center"><b :style="{ color: aiState(s).color }">{{ aiState(s).label }}</b></td>
-          <td style="text-align:center">{{ drafts[s.key]?.ai?.score ?? drafts[s.key]?.score ?? '—' }}</td>
-          <td style="text-align:center">{{ drafts[s.key]?.human?.used ? (drafts[s.key].human.score ?? '✓') : '—' }}</td>
-          <td style="text-align:center">{{ reportMode(s) }}</td>
-          <td style="text-align:center"><button class="btn" @click="openReview(i)">审核</button></td>
-        </tr>
-      </tbody>
-    </table>
+    <!-- D127-FIX：固定高度 + 表头粘性 + 滚轮滚动（与「班级与标签」名单表同口径），
+         避免几十人时整页被拉长、需要滚到页底才能看到下面的按钮。 -->
+    <div v-if="students.length" class="review-list-scroll">
+      <table class="review-list-table">
+        <thead>
+          <tr>
+            <th style="text-align:left">学生</th><th>tag</th><th>AI 状态</th>
+            <th>AI 分</th><th>人工</th><th>报告模式</th><th>操作</th>
+          </tr>
+        </thead>
+        <tbody>
+          <tr v-for="(s, i) in students" :key="s.key">
+            <td>{{ s.name }}</td>
+            <td class="c">{{ s.tag || '—' }}</td>
+            <td class="c"><b :style="{ color: aiState(s).color }">{{ aiState(s).label }}</b></td>
+            <td class="c">{{ drafts[s.key]?.ai?.score ?? drafts[s.key]?.score ?? '—' }}</td>
+            <td class="c">{{ drafts[s.key]?.human?.used ? (drafts[s.key].human.score ?? '✓') : '—' }}</td>
+            <td class="c">{{ reportMode(s) }}</td>
+            <td class="c"><button class="btn small" @click="openReview(i)">审核</button></td>
+          </tr>
+        </tbody>
+      </table>
+    </div>
     <p v-else class="hint">
       <template v-if="!curWork">未选择作业：先在 ③ 区选「作业」。</template>
       <template v-else-if="studentsLoading">正在读取学生清单…</template>
@@ -979,3 +988,26 @@ onMounted(async () => {
     <PlaygroundPanel :engine-addr="props.engineAddr" :token="props.token" />
 
 </template>
+
+<style scoped>
+/* D127-FIX：逐生审核名单 —— 固定高度 + 滚轮 + 粘性表头（与「班级与标签」名单表同口径）。 */
+.review-list-scroll {
+  max-height: 420px;
+  overflow: auto;
+  border: 1px solid var(--c-border);
+  border-radius: 8px;
+}
+.review-list-table { width: 100%; border-collapse: collapse; }
+.review-list-table th {
+  position: sticky; top: 0; z-index: 1;
+  background: var(--c-primary-soft, #eef2ff);
+  border-bottom: 1px solid var(--c-border);
+  padding: 6px 8px; font-size: 13px; white-space: nowrap;
+}
+.review-list-table td {
+  padding: 5px 8px; border-bottom: 1px solid var(--c-border);
+  font-size: 13px;
+}
+.review-list-table tbody tr:hover { background: var(--c-bg-soft, #f8fafc); }
+.review-list-table td.c { text-align: center; }
+</style>
