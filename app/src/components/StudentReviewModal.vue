@@ -3,7 +3,7 @@
  *  右上=AI 批语（只读，可"另存修订版"）；右下=人工批阅 + 模式（不批阅/覆盖/人工在前+附件AI/修订AI）。
  *  左=学生作答图（可上/下一位、旋转）。保存写回双套草稿（不覆盖 AI 原文）。 */
 import { computed, nextTick, onMounted, ref, watch } from 'vue'
-import { saveXxtGradeDraft, xxtReviewFileUrl } from '../lib/engineClient'
+import { saveXxtGradeDraft, xxtReviewFileUrl, xxtGradeReportUrl } from '../lib/engineClient'
 import { renderRich } from '../lib/richdoc'
 import { renderMathIn, KATEX_DONE_ATTR } from '../lib/katexRender'
 
@@ -12,7 +12,9 @@ const props = defineProps<{
   classId: string; workId: string
   /** D119：草稿按作业纸归属（不同作业批次不互相覆盖） */
   taskId?: string; classDir?: string
-  students: { name: string; key: string; tag?: string; images?: string[] }[]
+  /** D130-T12：`altKeys` 用于同一学生的备用草稿键（引擎给的 key 与历史键可能不同） */
+  students: { name: string; key: string; tag?: string; images?: string[]
+              altKeys?: string[] }[]
   drafts: Record<string, any>
   startIndex?: number
 }>()
@@ -22,11 +24,42 @@ const idx = ref(props.startIndex ?? 0)
 const rotate = ref(0)
 /** D126：AI 转写区是否展开（默认展开，教师最关心 AI 认没认对） */
 const showTranscript = ref(true)
+/** D130-T10：右栏页签 —— 批阅 / 📄 报告（iframe 预览已生成的 reports/<学生>.html） */
+const pane = ref<'review' | 'report'>('review')
+/** 报告 URL（切换学生/页签时重算；加 nonce 强制 iframe 重新加载，避免缓存旧报告） */
+const reportNonce = ref(0)
+const reportUrl = computed<string>(() => {
+  const s = cur.value
+  if (!s || !props.classDir || !props.taskId) return ''
+  return xxtGradeReportUrl(props.engineAddr, props.token, {
+    classDir: props.classDir, taskId: props.taskId, student: s.name,
+  }) + `&_=${reportNonce.value}`
+})
+/** 报告是否已生成（有报告图 = 生成过；用于「📄 报告」页签的可点击提示） */
+const hasReport = computed<boolean>(() => (draft.value.human?.reportImages?.length || 0) > 0)
+function openReport() {
+  reportNonce.value += 1
+  pane.value = 'report'
+}
+/** 父级生成报告后调用：自动切到报告页（验收 8）。 */
+function showReportTab() { openReport() }
+defineExpose({ showReportTab })
 const layout = ref<'cols' | 'rows'>('cols')
 const msg = ref('')
 
 const cur = computed(() => props.students[idx.value] || null)
-const draft = computed(() => (cur.value ? (props.drafts[cur.value.key] || {}) : {}))
+/** D130-T12：与表格**同源**取草稿（先按引擎 key，再按备用键兜底）——
+ *  否则会出现"表里说未跑、弹窗里却有内容"的错位。 */
+const draft = computed(() => {
+  const s = cur.value
+  if (!s) return {}
+  const keys = [s.key, ...(s.altKeys || []), s.name].filter(Boolean) as string[]
+  for (const k of keys) {
+    const d = props.drafts[k]
+    if (d && Object.keys(d).length) return d
+  }
+  return {}
+})
 const aiSet = computed(() => draft.value.ai || {})
 const revisionText = computed(() => String((draft.value.revision || {}).text || ''))
 
@@ -148,6 +181,28 @@ async function save() {
 
         <!-- 右栏：AI 批语（上）/ 人工批阅（下） -->
         <div :style="{ flex: layout === 'rows' ? 'none' : '1.1', minWidth: '300px', width: layout === 'rows' ? '100%' : 'auto' }">
+          <!-- D130-T10：页签 —— 批阅 / 报告（报告复用 reports/<学生>.html，iframe 预览） -->
+          <div class="pane-tabs">
+            <button class="btn small" :class="{ primary: pane === 'review' }"
+                    @click="pane = 'review'">✏ 批阅</button>
+            <button class="btn small" :class="{ primary: pane === 'report' }" @click="openReport()">
+              📄 报告{{ hasReport ? '' : '（未生成）' }}
+            </button>
+          </div>
+
+          <template v-if="pane === 'report'">
+            <div v-if="!reportUrl" class="hint" style="margin-top:8px">
+              （缺少班级目录或批阅目录键，无法定位报告。请先在 ② 区关联班级目录后再试。）
+            </div>
+            <iframe v-else :key="reportNonce" :src="reportUrl" class="report-frame"
+                    title="批阅报告预览"></iframe>
+            <p class="hint" style="margin-top:4px">
+              这里预览的就是要发给学生/上传平台的报告（含转写原文、评分与扣分依据）。
+              若显示"尚未生成报告"，先点下方「📄 一键生成批阅报告」。
+            </p>
+          </template>
+
+          <template v-else>
           <!-- D126：AI 转写（便于对照原图，确认 AI 识别是否准确） -->
           <h4 style="display:flex; align-items:center; gap:6px">
             AI 转写
@@ -217,8 +272,15 @@ async function save() {
             <button class="btn primary" @click="save">💾 保存到本地（不覆盖 AI 原文）</button>
             <span class="hint" v-if="msg">{{ msg }}</span>
           </p>
+          </template>
         </div>
       </div>
     </div>
   </div>
 </template>
+
+<style scoped>
+.pane-tabs { display: flex; gap: 6px; margin-bottom: 8px; }
+.report-frame { width: 100%; height: 62vh; border: 1px solid var(--c-border); border-radius: 8px;
+               background: #fff; }
+</style>

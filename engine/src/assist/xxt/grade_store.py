@@ -279,3 +279,23 @@ def student_key(student: dict) -> str:
     """草稿键：workAnswerId 优先，回落姓名（与批阅清单一致）。"""
     wa = str((student or {}).get("workAnswerId") or "").strip()
     return wa or str((student or {}).get("name") or "").strip()
+
+
+def resolve_draft_key(student: dict, drafts: dict) -> str:
+    """D130-T12：给某学生在 `drafts` 里定位**实际草稿键**。
+
+    历史原因草稿键可能是 `workAnswerId`、也可能是**姓名**（批阅清单未解析到 id 时
+    的回落），而学生列表页只有姓名/studentId。此前前端固定用 `workAnswerId || name`
+    当键 → 「AI 状态」列显示"未跑"，可点开弹窗却能按姓名兜底读到内容，
+    形成"列表与弹窗不一致"的典型症状（docs/78 §6 T12）。
+
+    返回优先级：workAnswerId（且草稿里确实有）→ 姓名（且草稿里确实有）
+    → workAnswerId → 姓名（都没有草稿时用于写新草稿，仍保持原口径）。
+    """
+    wa = str((student or {}).get("workAnswerId") or "").strip()
+    nm = str((student or {}).get("name") or "").strip()
+    if wa and wa in drafts:
+        return wa
+    if nm and nm in drafts:
+        return nm
+    return wa or nm

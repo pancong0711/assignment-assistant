@@ -260,3 +260,35 @@
 **验证**：engine pytest **820 passed**（新增 `tests/test_d130_knowledge_rubric.py` 28 例）。
 
 **口径说明**：`related_meta` 不新增 xlsx 列，存 `<ws>/kb/knowledge-meta.json`（sidecar，`kb__chap__qid` 为键），避免改动题库表结构；写题库一律走 `write_chapters_preserving`（保样式）+ 写前 `snapshot`（可回滚）。
+
+### 8.3 P1c（T9/T10/T12）— 2026-10-30 完成
+
+| 任务 | 落地 | 关键决定 |
+|---|---|---|
+| **T12**（原 P2 清单里的显示 bug，按用户确认提前） | 根因**已复现**：草稿键可能是 `workAnswerId`，也可能是**姓名**（批阅清单未解析到 id 时回落）；前端列表固定用 `workAnswerId \|\| name` 取 → 表里"未跑"、弹窗却能读到 | ① 引擎新增 `grade_store.resolve_draft_key()`；② `/xxt/preview/students` 返回**统一 `students[].key`**（带 taskId/classDir/altTaskId 参数）；③ 前端新增 `draftOf()`，**表格与弹窗同源**；④ 新增契约测试锁死"不得再直接 `drafts[s.key]`" |
+| T9 | **新增** `GradingRulesCard.vue` + serve `GET /rules`、`POST /rules/save`、`POST /rules/reset` | 三级开放：🔒 只读（实际进 prompt 的规则摘要 + 算法名）/ ✏️ 数值（引擎下发范围，前端即时提示，**权威校验在引擎**）/ ➕ checklist 项名；页面明示"只影响后续批阅，不改已生成报告" |
+| T10 | **新增** serve `GET /grade/report/<classDir>?taskId=&student=`；`StudentReviewModal` 加「✏ 批阅 / 📄 报告」页签 + iframe；生成报告后**自动切页** | 报告接口**故意不放在 `/xxt/` 分支下**（纯本地产物，不应因学习通模块不可用被 503）；取文件限定在 `<ws>/classes/**/grading/<taskId>/reports/` 内并做 resolve 校验防穿越 |
+
+**验证**：engine pytest **834 passed**；app build 0 error；selfcheck 全绿（新增 `selfcheck-d130-rule-cards.mjs`）；脱敏通过。
+新增 `tests/test_d130_serve_rules_report.py`（5 例，**起真实 HTTP 服务**验证读写/校验/journal/报告 200/404/**路径穿越被拒**）；新增 `tests/test_d130_t12_draft_key_contract.py`（9 例）。
+
+### 8.4 P1 完成度对照（验收标准 §5）
+
+| # | 验收项 | 状态 | 依据 |
+|---|---|---|---|
+| 1 | 同一份作业 qa 与 problems 各按自身规则扣分，报告标明来源与规则 | ✅ | 端到端测试 `test_end_to_end_mixed_kinds` |
+| 2 | 规则参数修改后**新批阅**生效、**已生成报告**不变 | ✅ | `test_prompt_follows_modified_rules`；报告是纯组装产物（D127） |
+| 3 | qa 缺要点按 missingPoints 扣；distinguish 按长度档且逻辑错误不扣但产生提问 | ✅ | `test_qa_missing_points_deduct` / `test_length_based_tiers` / `test_length_based_logic_errors_exempt` |
+| 4 | 「整体简略」仅 ≥80% 触发时对总分一次性 −5 | ✅ | `test_all_brief_only_fires_at_80_percent` / `test_all_brief_not_double_counted_per_question` |
+| 5 | AI 要点不自动置顶，教师确认后才使用 | ✅ | `test_save_rubric_version_not_pinned_by_default` / `test_pinned_rubric_becomes_effective_solution` |
+| 6 | related 为空可写、非空不覆盖、pinned_by:human 后不动 | ✅ | `test_plan_tagging_*` 三例 |
+| 7 | 术语归一须教师勾选确认后执行且有变更日志 | ✅ | `test_propose_groups_defaults_not_all_selected` / `test_impact_and_apply_mapping` / `test_rollback_restores_previous_terms` |
+| 8 | 逐生审核内可预览报告，生成后自动切换 | ✅ | 页签 + iframe + `showReportTab()`；`test_report_preview_serves_generated_html` |
+| 9 | pytest / build / selfcheck / 脱敏 全绿 | ✅ | 834 passed / 0 error / 全绿 / 通过 |
+
+### 8.5 P1 遗留（不在本轮范围，已记录）
+
+- 规则卡的 **PWA 端到端点击** 目前靠 selfcheck 源码契约 + serve 真实 HTTP 测试覆盖；真实浏览器点击回归留待下一轮（与 D129 的 KaTeX 浏览器自检同路）。
+- `SheetContentView.vue` 整班 zip 变体编排仍用全库 `pad.savedJsons()`（与整班预览口径未统一，D127 已登记）。
+- 教师总结报告（D126-B）未实施；`evaluations/*.json` 已带 `knowledge[]`。
+- P2（课堂资料 → summary）与 P3（Assistopia）未开始。

@@ -5,7 +5,7 @@
  *  说明：完整"逐生预览（作答图+批语两栏）"仍在「作业预览-学习通 → 批阅图片 → 逐生预览」，
  *  与本面板的"报告风格审核"并存（用户拍板的两种风格）。
  */
-import { computed, onMounted, ref, watch } from 'vue'
+import { computed, nextTick, onMounted, ref, watch } from 'vue'
 import { useTaskpadStore } from '../stores/taskpad'
 import { useKbStore } from '../stores/kb'
 import {
@@ -24,6 +24,7 @@ import { usePackStore } from '../stores/packs'
 import { useRosterStore } from '../stores/roster'
 import PlaygroundPanel from './PlaygroundPanel.vue'
 import StudentReviewModal from './StudentReviewModal.vue'
+import GradingRulesCard from './GradingRulesCard.vue'
 const packStore = usePackStore()
 const rosterStore = useRosterStore()
 
@@ -289,6 +290,18 @@ const workKey = ref(''); const padId = ref(''); const packId = ref(''); const mo
 const tagsSel = ref<string[]>([]); const limit = ref(0)
 const reviewOpen = ref(false); const reviewIndex = ref(0)
 function openReview(i: number) { reviewIndex.value = i; reviewOpen.value = true }
+/* D130-T10：生成报告后自动切到「📄 报告」页（验收 8）。
+ *  点「一键生成批阅报告」时若逐生审核**已打开**，直接让弹窗切页；
+ *  未打开则记住意图，等他打开**第一位**学生时再切（不擅自弹窗打断教师）。 */
+const reviewModal = ref<{ showReportTab?: () => void } | null>(null)
+const autoReportPending = ref(false)
+function onReviewOpen(i: number) {
+  openReview(i)
+  if (autoReportPending.value) {
+    autoReportPending.value = false
+    void nextTick(() => reviewModal.value?.showReportTab?.())
+  }
+}
 /** D116：tags 下拉的可选项 = 本地 roster 里学生已打的 tag ∪ 当前作业包内各作业纸的 target_tag。
  *
  *  旧实现从 `students`（学习通批阅列表）里找 `tag`，但学习通**不提供**分层 tag
@@ -408,17 +421,24 @@ async function loadStudents() {
   if (!w) { students.value = []; drafts.value = {}; return }
   studentsLoading.value = true
   try {
+    // D130-T12：作业包（packId）优先；兼容回落作业纸 id（历史上目录键漂移过）
+    const scope = { taskId: packId.value || padId.value, classDir: curWorkDir.value,
+                    altTaskId: packId.value ? padId.value : '' }
     const [st, dr] = await Promise.all([
-      fetchXxtReviewStudents(props.engineAddr, props.token, w.classId, w.workId),
-      fetchXxtGradeDrafts(props.engineAddr, props.token, w.classId, w.workId,
-                          { taskId: packId.value || padId.value, classDir: curWorkDir.value,
-                            // D127：兼容读取旧目录键（曾按作业纸 id 写入的历史草稿）
-                            altTaskId: packId.value ? padId.value : '' }),
+      // 把 scope 一并传给**学生清单**：引擎据此解析 `students[].key`（表与弹窗同源）
+      fetchXxtReviewStudents(props.engineAddr, props.token, w.classId, w.workId,
+                             undefined, scope),
+      fetchXxtGradeDrafts(props.engineAddr, props.token, w.classId, w.workId, scope),
     ])
     drafts.value = (dr.drafts || {}) as Record<string, any>
     students.value = (st.students || []).map((s: any) => ({
-      name: String(s.name || ''), key: String(s.workAnswerId || s.name || ''),
+      // D130-T12：**优先用引擎给的 key**（它知道草稿实际写在哪个键下）；
+      // 旧引擎/离线回落 `workAnswerId || name`，与历史口径一致。
+      name: String(s.name || ''),
+      key: String(s.key || s.workAnswerId || s.name || ''),
       tag: String(s.tag || ''),
+      /** 用于「同一学生两种键」兜底取值（见 draftOf） */
+      altKeys: [String(s.workAnswerId || ''), String(s.name || '')].filter(Boolean),
       // D126：带上作答原件文件名（逐生审核要显示原图）
       images: Array.isArray(s.images) ? s.images.map(String) : [],
     }))
@@ -588,9 +608,25 @@ async function testLlm() {
   } finally { busy.value = false }
 }
 
+/** D130-T12：**学生 → 草稿**的唯一取数入口。
+ *
+ *  历史缺陷：表格用 `drafts[s.key]`，而 `s.key` 固定取 `workAnswerId || name`；
+ *  可草稿可能写在另一个键下（按姓名写 / 按 workAnswerId 写）→ 表格显示"未跑"，
+ *  点开弹窗却因为兜底而能看到内容，形成"表与弹窗不一致"。
+ *  现在表格与弹窗**都**走本函数：先按引擎给的 key，再按其它候选键兜底，
+ *  两边同源，不可能再各说各话。
+ */
+function draftOf(s: { key?: string; name?: string; altKeys?: string[] }): Record<string, any> {
+  const keys = [s.key, ...(s.altKeys || []), s.name].filter(Boolean) as string[]
+  for (const k of keys) {
+    const d = drafts.value[k]
+    if (d && Object.keys(d).length) return d
+  }
+  return {}
+}
 /** D127：AI 状态 —— 让"跑过什么"在表上可见（此前只有 AI 分，跑完转写也看不出变化）。 */
-function aiState(s: { key: string }): { label: string; color: string } {
-  const d = drafts.value[s.key] || {}
+function aiState(s: { key: string; name?: string; altKeys?: string[] }): { label: string; color: string } {
+  const d = draftOf(s)
   const ai = d.ai || {}
   if ((d.human?.reportImages?.length || 0) > 0) return { label: '有报告', color: '#14532d' }
   if (ai.comment && (ai.score !== undefined && ai.score !== null)) return { label: '已评阅', color: '#1d4ed8' }
@@ -598,8 +634,8 @@ function aiState(s: { key: string }): { label: string; color: string } {
   return { label: '未跑', color: '#9ca3af' }
 }
 /** D127：报告模式（未人工介入时显示 auto(AI)，不再是一串 "—"）。 */
-function reportMode(s: { key: string }): string {
-  const d = drafts.value[s.key] || {}
+function reportMode(s: { key: string; name?: string; altKeys?: string[] }): string {
+  const d = draftOf(s)
   const hm = String(d.humanMode || 'none')
   if (hm === 'replace') return '人工替代'
   if (hm === 'append') return 'AI+人工'
@@ -622,6 +658,13 @@ async function renderReports() {
       const types = Array.from(new Set((r.reports || []).map((x) => x.kind))).join('/')
       progress.value = `✅ 已生成 ${n} 份报告（类型：${types || '自动'}）；写入本地草稿（含报告图）`
       await loadStudents()
+      // D130-T10：生成后自动切到报告页（弹窗已开则立即切，否则等下次打开）
+      if (reviewOpen.value) {
+        await nextTick()
+        reviewModal.value?.showReportTab?.()
+      } else {
+        autoReportPending.value = true
+      }
     } else {
       progress.value = `❌ 生成失败：${r?.error || '未知错误'}`
     }
@@ -862,10 +905,10 @@ onMounted(async () => {
             <td>{{ s.name }}</td>
             <td class="c">{{ s.tag || '—' }}</td>
             <td class="c"><b :style="{ color: aiState(s).color }">{{ aiState(s).label }}</b></td>
-            <td class="c">{{ drafts[s.key]?.ai?.score ?? drafts[s.key]?.score ?? '—' }}</td>
-            <td class="c">{{ drafts[s.key]?.human?.used ? (drafts[s.key].human.score ?? '✓') : '—' }}</td>
+            <td class="c">{{ draftOf(s).ai?.score ?? draftOf(s).score ?? '—' }}</td>
+            <td class="c">{{ draftOf(s).human?.used ? (draftOf(s).human.score ?? '✓') : '—' }}</td>
             <td class="c">{{ reportMode(s) }}</td>
-            <td class="c"><button class="btn small" @click="openReview(i)">审核</button></td>
+            <td class="c"><button class="btn small" @click="onReviewOpen(i)">审核</button></td>
           </tr>
         </tbody>
       </table>
@@ -891,6 +934,10 @@ onMounted(async () => {
     <p class="hint" style="margin-top:6px">
       完整逐生预览（作答图 + 两栏批语 + 旋转/上下位）仍在「作业预览-学习通 → 批阅图片 → 逐生预览」。
     </p>
+
+    <!-- D130-T9：评阅规则卡（教师可见/可改评分口径；此前完全硬编码） -->
+    <GradingRulesCard :engine-addr="props.engineAddr" :token="props.token"
+                      @notify="(m) => { progress = m }" />
   </div>
 
     <h3 style="margin-top:14px">⑦ 题库 AI 作答（对题目生成参考答案；不覆盖、可多版本）</h3>
@@ -976,6 +1023,7 @@ onMounted(async () => {
 
     <StudentReviewModal
       v-if="reviewOpen"
+      ref="reviewModal"
       :engine-addr="props.engineAddr" :token="props.token"
       :class-id="curWork?.classId || ''" :work-id="curWork?.workId || ''"
       :task-id="padId || packId" :class-dir="curWorkDir"

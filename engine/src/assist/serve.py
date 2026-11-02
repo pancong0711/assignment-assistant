@@ -907,7 +907,7 @@ class Handler(BaseHTTPRequestHandler):
                 self._json({"ok": False,
                             "error": "学习通模块不可用（引擎安装不完整）",
                             "detail": xxt_err,
-                            "hint": "关闭引擎窗口 → 删除 workspace\_engine → 重新双击 start.bat；见 docs/24 §14"}, 503)
+                            "hint": "关闭引擎窗口 → 删除 workspace/_engine → 重新双击 start.bat；见 docs/24 §14"}, 503)
                 return
         if u.path == "/roster/write":
             # D120：名单落盘（路径由引擎权威决定：<ws>/<class_dir>/roster/roster.xlsx）
@@ -1907,6 +1907,28 @@ class Handler(BaseHTTPRequestHandler):
                                                    "taskId": task_id, "kind": kind})
             self._json({"ok": True, "job_id": job_id})
             return
+        if u.path == "/rules/save":
+            payload: dict = {}
+            try:
+                length = int(self.headers.get("Content-Length") or 0)
+                if length:
+                    payload = json.loads(self.rfile.read(length).decode("utf-8")) or {}
+            except Exception as exc:  # noqa: BLE001
+                self._json({"ok": False, "error": f"bad json: {exc}"}, 400)
+                return
+            from .grading import rules as _rules
+            rules = payload.get("rules")
+            if not isinstance(rules, dict):
+                self._json({"ok": False, "error": "rules 必须是对象"}, 400)
+                return
+            rep = _rules.write_rules(Path(self.ws).resolve(), rules)
+            self._json(rep, 200 if rep.get("ok") else 400)
+            return
+        if u.path == "/rules/reset":
+            from .grading import rules as _rules
+            rep = _rules.reset_rules(Path(self.ws).resolve())
+            self._json(rep, 200 if rep.get("ok") else 400)
+            return
         if u.path == "/xxt/grade/draft":
             payload: dict = {}
             try:
@@ -2370,13 +2392,13 @@ class Handler(BaseHTTPRequestHandler):
                     self._json({"ok": True, "xxt": {
                         "verdict": "unknown",
                         "reasons": [f"学习通模块不可用：{xxt_err}"],
-                        "hint": "引擎安装不完整：关闭引擎窗口后删除 workspace\_engine，再双击 start.bat 重装；见 docs/24 §14",
+                        "hint": "引擎安装不完整：关闭引擎窗口后删除 workspace/_engine，再双击 start.bat 重装；见 docs/24 §14",
                     }, "avatar": {"ok": False}})
                 else:
                     self._json({"ok": False,
                                 "error": "学习通模块不可用（引擎安装不完整）",
                                 "detail": xxt_err,
-                                "hint": "关闭引擎窗口 → 删除 workspace\_engine → 重新双击 start.bat；见 docs/24 §14"}, 503)
+                                "hint": "关闭引擎窗口 → 删除 workspace/_engine → 重新双击 start.bat；见 docs/24 §14"}, 503)
                 return
         if u.path == "/xxt/status":
             self._json({"ok": True, "xxt": _xxt_session_check_cached(),
@@ -2657,7 +2679,85 @@ class Handler(BaseHTTPRequestHandler):
                             stu.setdefault("workAnswerId", hit["workAnswerId"])
             except Exception:  # noqa: BLE001 —— 补齐失败不影响列表
                 logger.debug("补充作答图文件名失败", exc_info=True)
+            # D130-T12：**服务端**给出统一的草稿键 `key`（前端不得再自行拼接）。
+            # 草稿历史上可能按 workAnswerId 写、也可能按姓名写（批阅清单未解析到 id 时），
+            # 前端若固定用 "workAnswerId || name" 取，就会"表里显示未跑、点开却有内容"。
+            try:
+                from .xxt import grade_store as _gs
+                from .xxt import layout as _xxt_layout2
+                _q2 = urllib.parse.parse_qs(u.query)
+                # 用与前端同口径的参数定位草稿：taskId / altTaskId / classDir
+                _task_id = (_q2.get("taskId") or [""])[0]
+                _alt = [a for a in (_q2.get("altTaskId") or []) if str(a).strip()]
+                _cdir = (_q2.get("classDir") or [""])[0]
+                _drafts: dict = {}
+                if _task_id:
+                    _drafts = _gs.read_drafts_normalized(
+                        _xxt_home(), m_prev.group(1), m_prev.group(2),
+                        ws=Path(self.ws).resolve(), class_dir=_cdir,
+                        task_id=_task_id, alt_task_ids=_alt)
+                for stu in rep.get("students") or []:
+                    stu["key"] = _gs.resolve_draft_key(stu, _drafts)
+            except Exception:  # noqa: BLE001 —— 键解析失败不阻断列表
+                logger.debug("解析草稿键失败", exc_info=True)
+                for stu in rep.get("students") or []:
+                    stu.setdefault("key", str(stu.get("workAnswerId")
+                                              or stu.get("name") or ""))
             self._json(rep)
+            return
+        elif u.path == "/rules":
+            # D130-T9：评阅规则卡读取（默认值 + 当前值 + 校验范围 + 可读摘要）
+            from .grading import rules as _rules
+            ws_ = Path(self.ws).resolve()
+            cur = _rules.read_rules(ws_)
+            summaries = {k: _rules.rule_summary(ws_, k) for k in _rules.SUPPORTED_KINDS}
+            self._json({"ok": True, "rules": cur, "defaults": _rules.DEFAULT_RULES,
+                        "kinds": list(_rules.SUPPORTED_KINDS),
+                        "summaries": summaries,
+                        "numericRanges": {k: list(v) for k, v in _rules._NUM_RANGES.items()},
+                        "file": str(_rules.rules_path(ws_))})
+            return
+        elif u.path.startswith("/grade/report/"):
+            # D130-T10：逐生审核「报告」页——返回已生成的报告 HTML 供 iframe 预览。
+            # 路径：/grade/report/<classDir>?taskId=&student=
+            # 注意：**不**放在 /xxt/ 分支下——报告预览是纯本地产物，
+            # 不应因学习通模块不可用而被 503 拦掉。
+            from .grading import report as _report_mod
+            q = urllib.parse.parse_qs(u.query)
+            task_id = str((q.get("taskId") or [""])[0]).strip()
+            student = str((q.get("student") or [""])[0]).strip()
+            class_dir = urllib.parse.unquote(u.path[len("/grade/report/"):]).strip("/")
+            ws_ = Path(self.ws).resolve()
+            if not (task_id and student and class_dir):
+                self._json({"ok": False, "error": "classDir/taskId/student 必填"}, 400)
+                return
+            # 安全：只允许在 <ws>/classes/**/grading/<taskId>/reports/ 下取
+            safe_task = re.sub(r"[\\/:*?\"<>|]", "_", task_id).strip(" .") or "task"
+            safe_stu = re.sub(r"[\\/:*?\"<>|]", "_", student).strip(" .")
+            base = (ws_ / class_dir / "grading" / safe_task / "reports")
+            try:
+                base.resolve().relative_to((ws_ / "classes").resolve())
+            except Exception:  # noqa: BLE001
+                self._json({"ok": False, "error": "路径越界"}, 400)
+                return
+            cand = [base / f"{safe_stu}.html", base / f"{safe_stu}.md"]
+            hit = next((p for p in cand if p.is_file()), None)
+            if hit is None:
+                self._json({"ok": False, "error": "尚未生成报告",
+                            "hint": "先点「📄 一键生成批阅报告」",
+                            "candidates": [str(p) for p in cand]}, 404)
+                return
+            html = hit.read_text(encoding="utf-8", errors="replace")
+            if hit.suffix == ".md":
+                html = _report_mod.report_html_from_md(html, kind="ai",
+                                                       title=f"{student} 批阅报告")
+            body = html.encode("utf-8")
+            self.send_response(200)
+            self.send_header("Content-Type", "text/html; charset=utf-8")
+            self.send_header("Content-Length", str(len(body)))
+            self.send_header("Cache-Control", "no-store")
+            self.end_headers()
+            self.wfile.write(body)
             return
         elif u.path == "/xxt/works":
             wp = xxt_layout.works_json(_xxt_home())

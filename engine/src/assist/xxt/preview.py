@@ -105,6 +105,9 @@ def parse_review_list(html: str) -> list[dict]:
             status = "已批阅" if score else "待批阅"
         students.append({
             "studentId": sid_m.group(1) if sid_m else "",
+            # D130-T12：列表页解析**拿不到 workAnswerId**（只有姓名/studentId）。
+            # 草稿键有可能是 workAnswerId（批阅清单解析成功时）——由 serve 用
+            # students.json 补齐 `workAnswerId` 与统一后的 `key`（见 resolve_draft_key）。
             "name": name,
             "score": score,
             "status": status,

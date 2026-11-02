@@ -777,6 +777,8 @@ export interface XxtReviewStudent {
   /** D126：作答原件文件名（相对 <XXT_HOME>/pages/review/<classId>/<workId>/） */
   images?: string[]
   workAnswerId?: string
+  /** D130-T12：引擎解析出的**统一草稿键**（表与弹窗必须同源，直接用这个） */
+  key?: string
 }
 
 export interface XxtReviewStudents {
@@ -1005,10 +1007,19 @@ export async function startXxtGradeRenderDrafts(
 export async function fetchXxtReviewStudents(
   engineAddr: string, token: string | undefined,
   classId: string, workId: string, runId?: string,
+  /** D130-T12：把「定位草稿」的参数一并传过去，服务端据此给出统一的 `students[].key`
+   *  （草稿可能按 workAnswerId 或姓名写；键必须由引擎权威解析，前端不得自行拼接）。 */
+  scope?: { taskId?: string; altTaskId?: string; classDir?: string },
 ): Promise<XxtReviewStudents> {
   const base = normalizeEngineAddr(engineAddr)
+  const qs = new URLSearchParams()
+  if (runId) qs.set('run_id', runId)
+  if (scope?.taskId) qs.set('taskId', scope.taskId)
+  if (scope?.altTaskId) qs.set('altTaskId', scope.altTaskId)
+  if (scope?.classDir) qs.set('classDir', scope.classDir)
+  const q = qs.toString()
   const path = `/xxt/preview/students/${encodeURIComponent(classId)}/${encodeURIComponent(workId)}`
-    + (runId ? `?run_id=${encodeURIComponent(runId)}` : '')
+    + (q ? `?${q}` : '')
   return (await getJson2(engineUrlWithToken(base, path, token))) as XxtReviewStudents
 }
 
@@ -1952,4 +1963,60 @@ export async function renderReportsFromDrafts(
   const o = (await res.json().catch(() => ({}))) as any
   if (!res.ok && !o?.error) throw new Error(`HTTP ${res.status}`)
   return o
+}
+
+/* ========== D130-T9：评阅规则卡（只读全量 + 数值可改 + 校验 + journal + 恢复默认） ========== */
+
+export interface GradingRulesPayload {
+  ok?: boolean
+  error?: string
+  rules?: Record<string, any>
+  defaults?: Record<string, any>
+  kinds?: string[]
+  summaries?: Record<string, string>
+  numericRanges?: Record<string, [number, number]>
+  file?: string
+}
+
+export async function fetchGradingRules(
+  engineAddr: string, token: string | undefined,
+): Promise<GradingRulesPayload> {
+  const base = normalizeEngineAddr(engineAddr)
+  return (await getJson2(engineUrlWithToken(base, '/rules', token))) as GradingRulesPayload
+}
+
+export async function saveGradingRules(
+  engineAddr: string, token: string | undefined, rules: Record<string, any>,
+): Promise<{ ok?: boolean; error?: string; errors?: string[]; changes?: any[] }> {
+  const base = normalizeEngineAddr(engineAddr)
+  const res = await fetch(engineUrlWithToken(base, '/rules/save', token), {
+    method: 'POST', headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ rules }),
+  })
+  const o = (await res.json().catch(() => ({}))) as any
+  if (!res.ok && !o?.error && !o?.errors) throw new Error(`HTTP ${res.status}`)
+  return o
+}
+
+export async function resetGradingRules(
+  engineAddr: string, token: string | undefined,
+): Promise<{ ok?: boolean; error?: string; changes?: any[] }> {
+  const base = normalizeEngineAddr(engineAddr)
+  const res = await fetch(engineUrlWithToken(base, '/rules/reset', token), { method: 'POST' })
+  const o = (await res.json().catch(() => ({}))) as any
+  if (!res.ok && !o?.error) throw new Error(`HTTP ${res.status}`)
+  return o
+}
+
+/* ========== D130-T10：逐生审核「📄 报告」页（iframe 预览已生成的报告 HTML） ========== */
+
+/** 报告 HTML 的地址（iframe src）。引擎未生成报告时返回 404，iframe 内显示提示。 */
+export function xxtGradeReportUrl(
+  engineAddr: string, token: string | undefined,
+  opts: { classDir: string; taskId: string; student: string },
+): string {
+  const base = normalizeEngineAddr(engineAddr)
+  const qs = new URLSearchParams({ taskId: opts.taskId, student: opts.student })
+  return engineUrlWithToken(
+    base, `/grade/report/${encodeURIComponent(opts.classDir)}?${qs.toString()}`, token)
 }
