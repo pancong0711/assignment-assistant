@@ -76,6 +76,10 @@ app/public/katex/
 
 # selfcheck esbuild 产物（tests/）
 app/tests/*.bundle.mjs
+# D130：浏览器回归的临时产物（SFC 编译/打包/落地页，脚本自行清理）
+app/tests/.d130-*
+app/tests/_d130.*.html
+app/tests/*-*.vue
 
 # D130：workspace 级评阅规则与知识点词表（教师本机配置，不入库）
 grading-rules.json
