@@ -1344,6 +1344,146 @@ def roster_rain(obj, files, out, workspace, verbose):
     click.echo(_j.dumps(summary.get("rows", [])[:5], ensure_ascii=False, indent=1))
 
 
+@cli.group("materials", help="D131：课堂资料库 <ws>/materials/<chap>/（PPT/PDF/讲义 → 知识点清单）")
+def materials_grp():
+    pass
+
+
+@materials_grp.command("list")
+@click.option("--workspace", "-w", default=None)
+@click.option("--verbose", "-v", is_flag=True)
+@click.pass_obj
+def materials_list(obj, workspace, verbose):
+    """列出已有章节资料 + 与题库章节的对账（题库有但资料缺 / 资料有但题库缺）。"""
+    from .files import materials as M
+    from .files.kb_io import read_kb
+    ws = _setup(verbose or obj.get("verbose"), workspace)
+    chaps = M.list_chaps(ws)
+    kb = read_kb(ws / "kb")
+    kb_chaps: set[str] = set()
+    for _kind, chapters in (kb or {}).items():
+        if isinstance(chapters, dict):
+            kb_chaps.update(str(c) for c in chapters)
+    out = []
+    for c in chaps:
+        d = M.chap_dir(ws, c)
+        idx = M.read_index(ws, c)
+        out.append({
+            "chap": c, "dir": str(d),
+            "sources": len(M.list_sources(ws, c)),
+            "extracted": len(idx.get("sources") or []),
+            "chars": (idx.get("summary") or {}).get("chars", 0),
+            "has_ai_suggest": (d / M.KNOW_AI).is_file(),
+            "has_confirmed": (d / M.KNOW_MD).is_file(),
+        })
+    click.echo(json.dumps({
+        "ok": True, "root": str(M.materials_root(ws)),
+        "chaps": out,
+        "kb_chaps_without_materials": sorted(kb_chaps - set(chaps)),
+        "materials_chaps_without_kb": sorted(set(chaps) - kb_chaps),
+        "hint": f"把资料放进 {M.materials_root(ws)}/<章节>/_source/ 后运行 "
+                f"`assist materials extract --chap <章节>`",
+    }, ensure_ascii=False, indent=2))
+
+
+@materials_grp.command("extract")
+@click.option("--chap", required=True, help="章节名（与题库 sheet 同名，如 chap04）")
+@click.option("--force", is_flag=True, help="忽略 sha256 缓存，强制重新抽取")
+@click.option("--workspace", "-w", default=None)
+@click.option("--verbose", "-v", is_flag=True)
+@click.pass_obj
+def materials_extract(obj, chap, force, workspace, verbose):
+    """抽取 `_source/` 里的 PPT/PDF/图片/文本 → `索引.json` + `_extract/`（增量）。"""
+    from .files import materials as M
+    ws = _setup(verbose or obj.get("verbose"), workspace)
+    try:
+        rep = M.extract_chap(ws, chap, force=force)
+    except M.MaterialsError as exc:
+        raise click.ClickException(str(exc))
+    click.echo(json.dumps(rep, ensure_ascii=False, indent=2))
+    if not rep.get("ok"):
+        raise click.ClickException("部分资料抽取失败（见 errors）")
+
+
+@materials_grp.command("show")
+@click.option("--chap", required=True)
+@click.option("--text", "show_text", is_flag=True, help="打印抽取到的文本（前 4000 字）")
+@click.option("--workspace", "-w", default=None)
+@click.option("--verbose", "-v", is_flag=True)
+@click.pass_obj
+def materials_show(obj, chap, show_text, workspace, verbose):
+    """查看某章节的索引与（可选）抽取文本。"""
+    from .files import materials as M
+    ws = _setup(verbose or obj.get("verbose"), workspace)
+    idx = M.read_index(ws, chap)
+    out = {"ok": True, "chap": chap, "index": idx}
+    if show_text:
+        src = M.read_source_text(ws, chap, max_chars=4000)
+        out["text_preview"] = src["text"]
+        out["text_chars_total"] = len(src["text"])
+    click.echo(json.dumps(out, ensure_ascii=False, indent=2))
+
+
+@materials_grp.command("suggest")
+@click.option("--chap", required=True)
+@click.option("--model", default="", help="覆盖模型")
+@click.option("--max-chars", default=60000, type=int, show_default=True,
+              help="送入模型的文本上限（超出截断并标记）")
+@click.option("--workspace", "-w", default=None)
+@click.option("--verbose", "-v", is_flag=True)
+@click.pass_obj
+def materials_suggest(obj, chap, model, max_chars, workspace, verbose):
+    """AI 抽取「本章知识点 + 逻辑关系」→ `知识点清单.ai.json`（**不**自动生效）。"""
+    from .files import materials as M
+    ws = _setup(verbose or obj.get("verbose"), workspace)
+    client = _rubric_client(ws)
+    try:
+        rep = M.suggest_knowledge(client, ws, chap, model=model or None,
+                                  max_chars=max_chars)
+    except M.MaterialsError as exc:
+        raise click.ClickException(str(exc))
+    click.echo(json.dumps(rep, ensure_ascii=False, indent=2))
+    click.echo(f"\n提示：核对后用 `assist materials confirm --chap {chap}` 生成本章知识点清单。",
+               err=True)
+
+
+@materials_grp.command("confirm")
+@click.option("--chap", required=True)
+@click.option("--force", is_flag=True, help="覆盖已有 `知识点清单.md`（教师已确认版）")
+@click.option("--workspace", "-w", default=None)
+@click.option("--verbose", "-v", is_flag=True)
+@click.pass_obj
+def materials_confirm(obj, chap, force, workspace, verbose):
+    """把 AI 建议固化为生效的 `知识点清单.md`（AI **不**覆盖已确认清单，除非 --force）。"""
+    from .files import materials as M
+    ws = _setup(verbose or obj.get("verbose"), workspace)
+    try:
+        rep = M.confirm_knowledge(ws, chap, force=force)
+    except M.MaterialsError as exc:
+        raise click.ClickException(str(exc))
+    click.echo(json.dumps(rep, ensure_ascii=False, indent=2))
+    if not rep.get("ok"):
+        raise click.ClickException(rep.get("error") or "确认失败")
+
+
+@materials_grp.command("knowledge")
+@click.option("--chap", required=True)
+@click.option("--workspace", "-w", default=None)
+@click.option("--verbose", "-v", is_flag=True)
+@click.pass_obj
+def materials_knowledge(obj, chap, workspace, verbose):
+    """查看生效的知识点清单（= summary 批阅依据）。"""
+    from .files import materials as M
+    ws = _setup(verbose or obj.get("verbose"), workspace)
+    md = M.read_knowledge_md(ws, chap)
+    click.echo(json.dumps({"ok": bool(md), "chap": chap,
+                           "terms": M.knowledge_terms(ws, chap),
+                           "markdown": md,
+                           "hint": "" if md else
+                           f"尚无生效清单：先 extract → suggest → confirm（章节 {chap}）"},
+                          ensure_ascii=False, indent=2))
+
+
 @cli.group("rules", help="D130：评阅规则（全局 + 按题目来源分型；改数值后新批阅生效）")
 def rules_grp():
     pass

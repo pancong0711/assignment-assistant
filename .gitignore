@@ -85,3 +85,7 @@ app/tests/*-*.vue
 grading-rules.json
 grading-rules.journal.jsonl
 knowledge-terms.json
+# D131：课堂资料库（教师本机资料与抽取缓存，不入库）
+materials/
+kb/knowledge-meta.json
+kb/knowledge-normalize-log.jsonl

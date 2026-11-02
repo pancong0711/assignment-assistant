@@ -741,3 +741,18 @@ rainclass 67/67，PWA↔engine 全等，仅末位浮点四舍五入噪声）。
 - P3：**Assistopia**（assist+utopia）：AI 调用本项目工具的可视化工作区，分级白名单 + 审计 +
   `<ws>/extensions/` 用户扩展隔离（升级不覆盖用户改动）。
 - 与 D126-B（教师总结报告）的关系：知识点标注 + `evaluations[].knowledge[]` 即其数据基础。
+
+---
+
+## D131 · 课堂资料 → 知识点清单 → summary 批阅联动（P2，2026-10-30 完成）
+
+> 需求单：`docs/79-D131-materials-and-summary-grading.md`（原 docs/78 P2 的 T12/T13/T14，已顺延为 T19/T20/T21）。
+
+- **目录定稿**：`<ws>/materials/<chap>/{_source,_extract,索引.json,知识点清单.md,知识点清单.ai.json}`
+  —— 与 `kb/`、`classes/` 平级，**不放 kb/ 下**（D120 语义边界），跨班共享。
+- 抽取：`officecli`（pptx/docx/xlsx，主）/ `pdftotext`+`pdftoppm`（pdf）/ 图片多模态 / md-txt；
+  sha256 增量。
+- 知识点：`materials suggest`（AI 建议，**不自动生效**）→ `materials confirm`（教师确认，AI 不覆盖）
+  → `summary` 批阅时进 prompt，产出 `knowledge_missing[]` 且启发式提问指向遗漏知识点。
+- **已知缺口**：图片/扫描型 PDF 的 suggest 尚未走多模态（页图已产出但没喂模型）；
+  PWA 资料页未做（确认动作刻意留在 CLI）。详见 docs/79 §10.4 / §11。

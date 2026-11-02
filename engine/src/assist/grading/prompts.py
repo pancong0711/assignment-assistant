@@ -156,7 +156,10 @@ KIND_OUTPUT_SCHEMA_HINT = {
 术语/准确性错误按"逻辑问题"处理：只给启发式提问，**不额外扣分**。""",
     "summary": """【总结题输出要求】每题除通用字段外，必须给：
 - `covered`: {"知识点与概念": true/false, "重要公式及推导": true/false, "示意图": true/false}
-  逐项判断是否讲到；题干没有要求画图时 `示意图` 填 true。""",
+  逐项判断是否讲到；题干没有要求画图时 `示意图` 填 true；
+- `knowledge_missing`: ["学生**漏掉**的本章知识点术语", ...]
+  只在题目给了「本堂课应掌握的知识点」时填写（没有该依据就填空数组）；
+  `guidance` 的启发式提问应**优先指向这些遗漏知识点**。""",
     "problems": """【计算/推导题输出要求】每题除通用字段外，按通用格式给出 `errors`（逐处错误）。""",
 }
 
@@ -164,6 +167,38 @@ KIND_OUTPUT_SCHEMA_HINT = {
 def kind_output_hint(kind: str) -> str:
     from .rules import normalize_kind
     return KIND_OUTPUT_SCHEMA_HINT.get(normalize_kind(kind), "")
+
+
+def summary_knowledge_block(terms: "list[str] | None", md_text: str = "") -> str:
+    """D131-T21c：`summary` 批阅的「本堂课应掌握的知识点」依据。
+
+    有生效清单（`<ws>/materials/<chap>/知识点清单.md`）时把它给模型，
+    并要求返回 `knowledge_missing[]` + 启发式提问指向遗漏（用户诉求）。
+    没有清单时返回空串 —— 调用方据此保持 D130 原行为（不报错、不降级）。
+    """
+    terms_l = [str(t).strip() for t in (terms or []) if str(t).strip()]
+    if not terms_l and not str(md_text or "").strip():
+        return ""
+    parts = ["【本堂课应掌握的知识点（教师确认的课堂资料清单）】"]
+    if terms_l:
+        parts.append("、".join(terms_l))
+    if str(md_text or "").strip():
+        keep: list[str] = []
+        on = False
+        for line in str(md_text).splitlines():
+            if line.startswith("## "):
+                on = ("核心知识点" in line) or ("逻辑关系" in line)
+            if on and line.strip():
+                keep.append(line)
+        body = "\n".join(keep).strip()
+        if body:
+            parts.append(body[:2000])
+    parts.append(
+        "评阅本题时：\n"
+        "- `covered` 三项照常判定；\n"
+        "- `knowledge_missing` 列出学生**明显漏掉**的上表知识点（可留空）；\n"
+        "- `guidance` 的启发式提问**优先指向**遗漏的知识点，不要泛泛而谈。")
+    return "\n".join(parts)
 
 
 def knowledge_instruction(related: str = "", vocab: "list[str] | None" = None) -> str:
@@ -359,6 +394,9 @@ EVALUATION_SCHEMA = {
                             # copy / summary：检查项 → 是否达标
                             "copied": {"type": "object", "additionalProperties": {"type": "boolean"}},
                             "covered": {"type": "object", "additionalProperties": {"type": "boolean"}},
+                            # D131-T21c：summary 题漏掉的本章知识点
+                            "knowledge_missing": {"type": "array",
+                                                  "items": {"type": "string"}},
                             # distinguish / innovation / translation：长度档
                             "answer_chars": {"type": "integer"},
                             "relevance": {"type": "string",

@@ -2705,6 +2705,38 @@ class Handler(BaseHTTPRequestHandler):
                                               or stu.get("name") or ""))
             self._json(rep)
             return
+        elif u.path == "/materials/list":
+            # D131-T21d：课堂资料章节清单（PWA 只读展示；抽取/确认仍走 CLI 以保教师把关）
+            from .files import materials as _mat
+            ws_ = Path(self.ws).resolve()
+            chaps = []
+            for c in _mat.list_chaps(ws_):
+                d = _mat.chap_dir(ws_, c)
+                idx = _mat.read_index(ws_, c)
+                chaps.append({
+                    "chap": c,
+                    "sources": len(_mat.list_sources(ws_, c)),
+                    "extracted": len(idx.get("sources") or []),
+                    "chars": (idx.get("summary") or {}).get("chars", 0),
+                    "hasAiSuggest": (d / _mat.KNOW_AI).is_file(),
+                    "hasConfirmed": (d / _mat.KNOW_MD).is_file(),
+                })
+            self._json({"ok": True, "root": str(_mat.materials_root(ws_)),
+                        "chaps": chaps})
+            return
+        elif u.path == "/materials/knowledge":
+            # D131-T21d：某章节生效知识点清单（summary 批阅依据）
+            from .files import materials as _mat
+            q = urllib.parse.parse_qs(u.query)
+            chap = str((q.get("chap") or [""])[0])
+            try:
+                md = _mat.read_knowledge_md(Path(self.ws).resolve(), chap)
+                terms = _mat.knowledge_terms(Path(self.ws).resolve(), chap)
+            except Exception as exc:  # noqa: BLE001
+                self._json({"ok": False, "error": str(exc)[:200]}, 400)
+                return
+            self._json({"ok": bool(md), "chap": chap, "terms": terms, "markdown": md})
+            return
         elif u.path == "/rules":
             # D130-T9：评阅规则卡读取（默认值 + 当前值 + 校验范围 + 可读摘要）
             from .grading import rules as _rules

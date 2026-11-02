@@ -149,6 +149,26 @@ def build_user_prompt(items: list[dict], markdown_text: str, student: str = "",
             vocab = []
     parts.append(knowledge_instruction(",".join(related_all), vocab))
 
+    # D131-T21c：summary 题若本章有教师确认的课堂资料清单 → 作为批阅依据。
+    # 没有清单时完全不加（保持 D130 行为：不报错、不降级扣分）。
+    if "summary" in kinds and ws is not None:
+        try:
+            from ..files import materials as _mat
+            chaps = {str(it.get("chap") or "") for it in (items or [])
+                     if str(it.get("kind") or "") == "summary"}
+            from .prompts import summary_knowledge_block
+            block_parts: list[str] = []
+            for c in sorted(x for x in chaps if x):
+                terms = _mat.knowledge_terms(ws, c)
+                md = _mat.read_knowledge_md(ws, c)
+                b = summary_knowledge_block(terms, md)
+                if b:
+                    block_parts.append(b)
+            if block_parts:
+                parts.append("\n\n".join(block_parts))
+        except Exception:  # noqa: BLE001 —— 清单缺失/损坏不影响评阅
+            logger.debug("读取课堂资料知识点清单失败", exc_info=True)
+
     q_lines = []
     for it in items:
         n = it.get("序号") or it.get("index") or "?"
@@ -619,6 +639,15 @@ def evaluate_student(client: LLMClient, transcript_file: Path, items: list[dict]
                 if _k and _k not in _ks:
                     _ks.append(_k)
     result["knowledge"] = _ks
+    # D131-T21c：汇总学生**漏掉**的本章知识点（summary 题；供教师总结报告与报告标注）
+    _km: list[str] = []
+    for _q in (analysis.get("questions") or []):
+        for _k in (_q.get("knowledge_missing") or []):
+            _k = str(_k or "").strip()
+            if _k and _k not in _km:
+                _km.append(_k)
+    if _km:
+        result["knowledge_missing"] = _km
 
     out_dir.mkdir(parents=True, exist_ok=True)
     out = out_dir / f"{student}.json"
