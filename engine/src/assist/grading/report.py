@@ -262,10 +262,52 @@ def build_report_md(transcript_path: Path, eval_path: Path) -> str:
                       "。请对照上面的题目，确认自己是否做的是这份作业。", ""]
     if deductions:
         lines += ["", "**扣分明细：**", *[f"- {d}" for d in deductions]]
+    # D130：逐题标明**题目来源**与**适用规则**（教师可核对"这题按什么标准扣的"）
+    rule_lines = _rule_source_md(e_data)
+    if rule_lines:
+        lines += ["", "**评分依据（按题目来源）：**", *rule_lines]
     if feedback_md:
         lines += ["", feedback_md, ""]
     lines += ["---", f"*{_engine_ver()} - AI 辅助批阅*", ""]
     return "\n".join(lines)
+
+
+_KIND_LABEL = {
+    "problems": "计算/推导（逐处找错）",
+    "qa": "问答（要点完整性 + 示意图）",
+    "copy": "抄写（题目/过程/示意图）",
+    "distinguish": "辨析（长度档）",
+    "innovation": "创新（长度档、宽松）",
+    "translation": "翻译（长度档、宽松）",
+    "summary": "总结（知识点/公式/示意图）",
+}
+
+
+def _rule_source_md(e_data: dict) -> list[str]:
+    """D130：把 `per_question_rules` 渲染成报告里的"来源 + 适用规则"清单。
+
+    只列**有扣分**或**有明确规则**的题；缺失时返回空列表（旧评阅数据仍能出报告）。
+    """
+    rows = e_data.get("per_question_rules") or []
+    out: list[str] = []
+    for r in rows:
+        if not isinstance(r, dict):
+            continue
+        qid = r.get("id", "?")
+        kind = str(r.get("kind") or "")
+        src = str(r.get("source") or kind or "")
+        label = _KIND_LABEL.get(kind, kind)
+        rules = [str(x) for x in (r.get("rules") or []) if str(x).strip()]
+        deduct = r.get("deduct")
+        head = f"- 第{qid}题 · 来源：{src}（{label}）"
+        if rules:
+            head += f" · 规则：{' + '.join(rules)}"
+        if deduct:
+            head += f" · 扣{deduct:g}分"
+        out.append(head)
+    if e_data.get("all_brief"):
+        out.append("- 全份：整体过程简略，已按全局规则对总分一次性扣分")
+    return out
 
 
 def _engine_ver() -> str:

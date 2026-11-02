@@ -1344,6 +1344,89 @@ def roster_rain(obj, files, out, workspace, verbose):
     click.echo(_j.dumps(summary.get("rows", [])[:5], ensure_ascii=False, indent=1))
 
 
+@cli.group("rules", help="D130：评阅规则（全局 + 按题目来源分型；改数值后新批阅生效）")
+def rules_grp():
+    pass
+
+
+@rules_grp.command("show")
+@click.option("--workspace", "-w", default=None)
+@click.option("--verbose", "-v", is_flag=True)
+@click.pass_obj
+def rules_show(obj, workspace, verbose):
+    """显示当前生效规则（JSON，缺失即写默认）。"""
+    from .grading import rules as R
+    ws = _setup(verbose or obj.get("verbose"), workspace)
+    click.echo(json.dumps(R.read_rules(ws), ensure_ascii=False, indent=2))
+
+
+@rules_grp.command("defaults")
+@click.option("--workspace", "-w", default=None)
+@click.option("--verbose", "-v", is_flag=True)
+@click.pass_obj
+def rules_defaults(obj, workspace, verbose):
+    """显示**内置默认**规则（不改文件；供规则卡「恢复默认」对照）。"""
+    from .grading import rules as R
+    _setup(verbose or obj.get("verbose"), workspace)
+    click.echo(json.dumps(R.DEFAULT_RULES, ensure_ascii=False, indent=2))
+
+
+@rules_grp.command("summary")
+@click.option("--kind", default=None, help="题型（problems/qa/copy/…）；缺省全部")
+@click.option("--workspace", "-w", default=None)
+@click.option("--verbose", "-v", is_flag=True)
+@click.pass_obj
+def rules_summary(obj, kind, workspace, verbose):
+    """把规则渲染成可读摘要（= 进入评阅 prompt 的那份）。"""
+    from .grading import rules as R
+    ws = _setup(verbose or obj.get("verbose"), workspace)
+    kinds = [R.normalize_kind(kind)] if kind else list(R.SUPPORTED_KINDS)
+    for k in kinds:
+        click.echo(R.rule_summary(ws, k))
+        click.echo("")
+
+
+@rules_grp.command("set")
+@click.option("--path", required=True, help="字段路径，如 global.briefProcessDeduct 或 types.qa.perMissingPointDeduct")
+@click.option("--value", required=True, help="新值（自动按 JSON 解析数值/布尔/数组/字符串）")
+@click.option("--workspace", "-w", default=None)
+@click.option("--verbose", "-v", is_flag=True)
+@click.pass_obj
+def rules_set(obj, path, value, workspace, verbose):
+    """改一个规则数值/扩展项（带范围校验 + journal）。"""
+    from .grading import rules as R
+    ws = _setup(verbose or obj.get("verbose"), workspace)
+    data = R.read_rules(ws)
+    try:
+        parsed = json.loads(value)
+    except Exception:  # noqa: BLE001 —— 非 JSON 就按原字符串
+        parsed = value
+    cur = data
+    segs = [x for x in str(path).split(".") if x]
+    for seg in segs[:-1]:
+        if not isinstance(cur.get(seg), dict):
+            cur[seg] = {}
+        cur = cur[seg]
+    cur[segs[-1]] = parsed
+    res = R.write_rules(ws, data)
+    click.echo(json.dumps(res, ensure_ascii=False, indent=2))
+    if not res.get("ok"):
+        raise click.ClickException(res.get("error") or "写入失败")
+
+
+@rules_grp.command("reset")
+@click.option("--workspace", "-w", default=None)
+@click.option("--verbose", "-v", is_flag=True)
+@click.pass_obj
+def rules_reset(obj, workspace, verbose):
+    """恢复内置默认规则（改动记 journal）。"""
+    from .grading import rules as R
+    ws = _setup(verbose or obj.get("verbose"), workspace)
+    res = R.reset_rules(ws)
+    click.echo(json.dumps({"ok": res.get("ok"), "changes": res.get("changes"),
+                           "file": res.get("file")}, ensure_ascii=False, indent=2))
+
+
 @cli.command("grade-drafts")
 @click.option("--task", "task_path", required=True, help="任务包 JSON（定位 grading 产物）")
 @click.option("--class", "class_id", required=True, help="学习通班级 ID（草稿键用）")

@@ -50,9 +50,17 @@ def students_with_tags(ws, class_dir: str) -> list[dict]:
     return [s for s in out if s["name"]]
 
 
+def _task_default_kb(task: dict) -> str:
+    """D130-T0：任务包 item 未写 kb 时，取 items 里出现过的唯一 kb；否则 problems。"""
+    kinds = sorted({str(it.get("kb")) for it in (task.get("items") or [])
+                    if isinstance(it, dict) and it.get("kb")})
+    return kinds[0] if len(kinds) == 1 else "problems"
+
+
 def _questions_of(task: dict, ws=None) -> list[dict]:
     from ..paper.task import resolve_items
     from ..files.solutions import effective_solution
+    from .rules import normalize_kind
     # 用 items（含 tag/id）直接取题目，避免依赖 kb 展开（无 kb 时也能出题面）
     out: list[dict] = []
     for it in (task.get("items") or []):
@@ -71,7 +79,12 @@ def _questions_of(task: dict, ws=None) -> list[dict]:
                     "solution": sol,
                     "tag": str(it.get("tag") or task.get("target_tag") or ""),
                     # D127：题库已有「关联知识点」列（旧 2603 `related`），作为评阅时的知识点提示
-                    "related": str(it.get("related") or "")})
+                    "related": str(it.get("related") or ""),
+                    # D130-T0：题目来源透传（与 flow.expand_items 同口径）。
+                    # 任务包 item 缺 kb 时回落"任务包唯一 kb/或 problems"，与 expand_items 一致。
+                    "kb": str(it.get("kb") or _task_default_kb(task)),
+                    "kind": normalize_kind(str(it.get("kb") or _task_default_kb(task))),
+                    "chap": str(it.get("chap") or "")})
     return out
 
 

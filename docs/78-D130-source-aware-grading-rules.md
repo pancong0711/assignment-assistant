@@ -1,7 +1,7 @@
 # D130 需求单：按题目来源分型的评阅规则 + AI 生成评阅要点 + 知识点体系 + Assistopia（项目游乐城）
 
 > 日期：2026-10-30
-> 状态：**需求已定稿，分阶段实施（P1 先行）**
+> 状态：**已定稿；P1 拆三批执行（P1a → P1b → P1c），见 §4.1**
 > 关联：`docs/69-D119`、`docs/74-D125`、`docs/75-D126`、`docs/76-D127`、`docs/77-D129`、`docs/12`（D126-B 教师总结报告）
 
 ## 0. 一句话
@@ -163,6 +163,19 @@
 | T10 | PWA 逐生审核「📄 报告」页 + 生成后自动切换 |
 | T11 | 评阅 prompt 显式给出题库知识点标注，要求模型**优先使用同术语** |
 
+#### 4.1 P1 拆批（已确认）
+
+> 依据「耦合度优先」：强耦合的规则/计分主干由主 agent 连贯完成，旁支（词表/归一/前端卡片/报告预览）可独立验证，单独成批。
+> 顺序上把**独立的显示 bug 修复（原 T12）**提到最前（记为 **T12**，已在 P1c 内完成），再 P1a → P1b → P1c。
+
+| 批次 | 范围 | 任务 | 验收要点 |
+|---|---|---|---|
+| **P1a 主干**（强耦合，必须一起做） | 来源透传 → 规则结构 → prompt 分型 → 计分分派 → 全局规则 | T0 T1 T2 T3 T4 T11 | 验收 1/3/4；pytest 覆盖默认规则不变（历史 749 例不回归） |
+| **P1b 知识体系** | AI 生成要点（不置顶）+ 知识点标注 + 术语归一 + 受控词表 | T5 T6 T7 T8 | 验收 5/6/7 |
+| **P1c 前端** | 评阅规则卡 + 报告预览 + 显示 bug 修复 | T9 T10 T12 | 验收 2/8 |
+
+每批完成即跑「pytest / app build / selfcheck / 脱敏」四项，并单独提交推送（便于回滚）。
+
 ### P2（下一轮）
 
 | # | 任务 |
@@ -213,4 +226,22 @@
 
 ## 8. 实施记录
 
-（执行时逐项回填）
+### 8.1 P1a（T0/T1/T2/T3/T4/T11）— 2026-10-30 完成
+
+| 任务 | 落地 | 关键决定 |
+|---|---|---|
+| T0 | `flow.expand_items` / `inputs._questions_of` 输出 `kb`/`kind`/`chap` | `kind` 用 `rules.normalize_kind` 归一（copys/copyonly/copysp/punish→copy；未知→problems） |
+| T1 | **新增** `grading/rules.py`：`<ws>/grading-rules.json` + 缺失即写默认 + 损坏不覆盖 + 缺字段补默认 + 范围校验 + journal + reset | 规则文件不入库（`.gitignore`） |
+| T2 | `prompts.kind_instruction` / `kind_output_hint`；`evaluate.build_user_prompt(ws=)` 按**去重后的每种 kind** 注入"范式 + 规则摘要 + 输出要求" | 规则摘要与要点生成共用 `rules.rule_summary`；旧"整份只用第一个 tag 指令"改为逐 kind（混合来源不再串规则） |
+| T3 | `score_from_analysis(items=, ws=)` 按 `mode` 分派 `errorCount`/`missingPoints`/`checklist`/`lengthBased`；返回 `per_question_rules` | 扣分数值由 Python 统一算，**不信模型自报 deduct**（否则规则卡改数值对模型无效） |
+| T4 | 全局 `briefProcessDeduct` 逐题 + `≥allBriefRatio → 总分一次性 −allBriefDeduct` | 一次性规则不逐题累计（测试断言只出现 1 次） |
+| T11 | `prompts.knowledge_instruction`：题库 `related` + 受控词表 → 要求**优先沿用同术语** | 全份作业汇总一次（避免每题重复烧 token） |
+| 附带 | `report.build_report_md` 增「评分依据（按题目来源）」；CLI `assist rules show/defaults/summary/set/reset`；`grading/vocab.py`（T8 底座） | — |
+
+**实施中修正的两个真实缺陷**（测试先暴露，非拍脑袋改）：
+1. 长度档阈值原先**降序**遍历并 `break`，导致 <50% 也只得 −5 —— 改为**升序**取最严档（<50% → −10）；
+2. 模型自报 `answer_chars` 会覆盖 `Python 实算字数`（模型报 500、原文仅 5 字 → 不扣分）—— 改为**有转写原文时一律以原文重算**。
+
+**验证**：engine pytest **792 passed**（新增 `tests/test_d130_source_aware_rules.py` 43 例，含端到端"混合题型各按自身规则扣分 + 报告标注来源/规则"）；脱敏检查通过。
+
+**已知口径变更**：`problems` 缺示意图**不再**按"题数×5（上限 10）"另扣 —— 缺图在 `qa/copy/summary` 的题型规则内计，`problems` 视为提示不扣分（docs/78 §3.1 未要求计算题缺图扣分）。

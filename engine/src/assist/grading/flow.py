@@ -45,6 +45,7 @@ def expand_items(ws: Path, task: dict) -> list[dict]:
     D89-N3：solution **实时从 kb/solutions/<qid>.json 取最新置顶版**（无版本库时回落 xlsx 列）。
     """
     from ..files.solutions import effective_solution
+    from .rules import normalize_kind
     kb_dir = ws / "kb"
     kb_data = read_kb(kb_dir)
     out: list[dict] = []
@@ -78,7 +79,12 @@ def expand_items(ws: Path, task: dict) -> list[dict]:
                 out.append({"序号": idx, "content": e.get("content", ""),
                             "solution": sol_text, "tag": tag, "img": img,
                             # D127：题库「关联知识点」列 → 评阅时的知识点提示
-                            "related": str(e.get("related") or "")})
+                            "related": str(e.get("related") or ""),
+                            # D130-T0：**题目来源**（题库表名）→ 决定评阅范式与扣分算法。
+                            # 此前 `kind = spec.get("kb")` 已算出却没写入输出，评阅端拿不到。
+                            "kb": str(e.get("kb") or kind),
+                            "kind": normalize_kind(str(e.get("kb") or kind)),
+                            "chap": str(cname or "")})
     if not out:
         logger.warning("任务包未选中任何题目")
     return out
@@ -300,7 +306,8 @@ def _run_evaluate(ctx: dict, client, evaluations_dir: Path) -> list[Path]:
             continue
         try:
             outs.append(evaluate_student(client, tf, items or tasks_items, evaluations_dir,
-                                         homework_name=ctx.get("homework", ""), model=model))
+                                         homework_name=ctx.get("homework", ""), model=model,
+                                         ws=ctx.get("ws")))
             logger.info(f"[评阅] OK {tf.stem}")
         except Exception as e:  # noqa: BLE001 —— 单生失败不阻断全班
             logger.error(f"[评阅] FAIL {tf.stem}: {e}")
@@ -424,6 +431,7 @@ def run_task(task_path: Path, ws: Path, images_dir: Path | None = None,
         logger.warning("download（学习通下载）属阶段4 暂未实现，依赖 --images 本地图片目录。")
 
     ctx = {
+        "ws": ws,
         "task": task,
         "task_path": task_path,
         "homework": task.get("course", "") + " " + str(task.get("id", "")),

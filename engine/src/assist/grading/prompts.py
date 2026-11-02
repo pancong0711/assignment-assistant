@@ -112,9 +112,77 @@ TAG_INSTRUCTIONS = {
 def tag_instruction(tag: str) -> str:
     """按 tag 取差异化评阅指令（copyonly/copysp 归一到 copy；未知 tag 返回空）。"""
     t = str(tag or "").strip().lower()
-    if t in ("copyonly", "copysp"):
+    if t in ("copyonly", "copysp", "copys", "punish"):
         t = "copy"
     return TAG_INSTRUCTIONS.get(t, "")
+
+
+def kind_instruction(ws, kind: str) -> str:
+    """D130-T2：**按题目来源**给评阅侧重指令 + 该题型的**规则摘要**。
+
+    规则摘要与「生成评阅要点」共用同一份（`rules.rule_summary`），
+    保证要点粒度与扣分方式匹配（docs/78 §3.2）。
+    """
+    from .rules import normalize_kind, rule_summary
+    k = normalize_kind(kind)
+    return rule_summary(ws, k)
+
+
+# D130-T2：题型专用输出要求（让模型按评阅范式给出**可计分的结构**）
+# - qa        → 逐要点判定是否答到（供 missingPoints 计分）
+# - copy      → 逐项判定是否抄全（供 checklist 计分）
+# - 长度档     → 给出作答字数与相关性判定（供 lengthBased 计分）
+# - problems  → 逐处错误（沿用 errorCount）
+KIND_OUTPUT_SCHEMA_HINT = {
+    "qa": """【问答题输出要求】每题除通用字段外，必须给：
+- `key_points`: [{"point": "该答的要点", "answered": true/false, "evidence": "学生答到的原文或空"}]
+  覆盖题目参考答案中的全部要点（每个要点一条）；
+- `has_diagram`: 题目要求画图时，学生是否画了（题目不要求画图时一律填 true）。""",
+    "copy": """【抄写题输出要求】每题除通用字段外，必须给：
+- `copied`: {"题目": true/false, "解题过程": true/false, "示意图": true/false}
+  逐项判断是否**抄全**；题目本身没有图时 `示意图` 填 true（不作要求）。
+- **不要**评价推导对错、计算结果、逻辑推理。""",
+    "distinguish": """【辨析题输出要求】每题除通用字段外，必须给：
+- `answer_chars`: 学生本题作答字数（整数，只数作答正文，不数抄写的题干）；
+- `relevance`: "relevant" | "partial" | "irrelevant"（是否在回答问题本身）。
+**逻辑错误本身不扣分**，但必须针对该逻辑问题给出一条启发式提问（写在 errors[].guidance）。""",
+    "innovation": """【创新题输出要求】每题除通用字段外，必须给：
+- `answer_chars`: 学生本题作答字数（整数）；
+- `relevance`: "relevant" | "partial" | "irrelevant"。
+**逻辑瑕疵不扣分**（超纲设想只要自洽即可），但必须给出启发式提问引导完善。""",
+    "translation": """【翻译题输出要求】每题除通用字段外，必须给：
+- `answer_chars`: 学生本题作答字数（整数）；
+- `relevance`: "relevant" | "partial" | "irrelevant"（是否在翻译本题，而非答非所问）。
+术语/准确性错误按"逻辑问题"处理：只给启发式提问，**不额外扣分**。""",
+    "summary": """【总结题输出要求】每题除通用字段外，必须给：
+- `covered`: {"知识点与概念": true/false, "重要公式及推导": true/false, "示意图": true/false}
+  逐项判断是否讲到；题干没有要求画图时 `示意图` 填 true。""",
+    "problems": """【计算/推导题输出要求】每题除通用字段外，按通用格式给出 `errors`（逐处错误）。""",
+}
+
+
+def kind_output_hint(kind: str) -> str:
+    from .rules import normalize_kind
+    return KIND_OUTPUT_SCHEMA_HINT.get(normalize_kind(kind), "")
+
+
+def knowledge_instruction(related: str = "", vocab: "list[str] | None" = None) -> str:
+    """D130-T11：要求模型**优先沿用题库已有知识点术语**（避免同义漂移）。
+
+    题干/题库已标注 `related` 时，优先原样复用其中的表述；
+    传了受控词表时，优先选词表内的术语。
+    """
+    lines = ["知识点标注要求（用于跨班统计与后续术语归一）："]
+    rel = ", ".join(x.strip() for x in str(related or "").replace("，", ",").split(",") if x.strip())
+    if rel:
+        lines.append(f"- 本题库已标注知识点：{rel}；**优先原样使用这些术语**，"
+                     "确有必要再补充新术语（不要改写同义表述）。")
+    if vocab:
+        top = "、".join(list(vocab)[:40])
+        lines.append(f"- 受控词表（优先从中选取）：{top}")
+    lines.append("- 术语粒度统一到「物理概念名」（如 动量守恒、完全弹性碰撞、安培环路定理），"
+                 "不要带题号、不要写成整句。")
+    return "\n".join(lines)
 
 
 def format_questions(questions: list[dict]) -> str:
@@ -272,6 +340,31 @@ EVALUATION_SCHEMA = {
                             },
                             "confidence": {"type": "string", "enum": ["high", "medium", "low"]},
                             "has_diagram": {"type": "boolean"},
+                            # ---- D130-T2：按题型可计分的结构（非 strict 必须字段，
+                            #      由 Python 侧按 kind 判空；模型给就给，没给按"无信息"处理） ----
+                            # qa：逐要点是否答到
+                            "key_points": {
+                                "type": "array",
+                                "items": {
+                                    "type": "object",
+                                    "properties": {
+                                        "point": {"type": "string"},
+                                        "answered": {"type": "boolean"},
+                                        "evidence": {"type": "string"},
+                                    },
+                                    "required": ["point", "answered", "evidence"],
+                                    "additionalProperties": False,
+                                },
+                            },
+                            # copy / summary：检查项 → 是否达标
+                            "copied": {"type": "object", "additionalProperties": {"type": "boolean"}},
+                            "covered": {"type": "object", "additionalProperties": {"type": "boolean"}},
+                            # distinguish / innovation / translation：长度档
+                            "answer_chars": {"type": "integer"},
+                            "relevance": {"type": "string",
+                                          "enum": ["relevant", "partial", "irrelevant"]},
+                            # D130-T0：本题实际来源（便于报告标注"本题来源"）
+                            "kind": {"type": "string"},
                         },
                         "required": ["id", "reasoning", "correct_points", "errors",
                                      "confidence", "has_diagram"],

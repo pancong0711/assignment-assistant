@@ -76,3 +76,8 @@ app/public/katex/
 
 # selfcheck esbuild 产物（tests/）
 app/tests/*.bundle.mjs
+
+# D130：workspace 级评阅规则与知识点词表（教师本机配置，不入库）
+grading-rules.json
+grading-rules.journal.jsonl
+knowledge-terms.json

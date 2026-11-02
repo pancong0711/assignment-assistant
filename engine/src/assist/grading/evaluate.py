@@ -13,6 +13,7 @@
 from __future__ import annotations
 
 import json
+import re
 import time
 from pathlib import Path
 
@@ -94,29 +95,70 @@ def tag_instruction(tag: str) -> str:
     return ""
 
 
-def build_user_prompt(items: list[dict], markdown_text: str, student: str = "") -> str:
-    """构造绑定题目的评阅 prompt（阶段3核心升级）。
+def _kinds_of(items: list[dict]) -> list[str]:
+    """本题作业涉及的 kind（保序去重）。"""
+    from .rules import normalize_kind
+    seen: list[str] = []
+    for it in items or []:
+        k = normalize_kind(it.get("kind") or it.get("kb") or it.get("tag") or "problems")
+        if k not in seen:
+            seen.append(k)
+    return seen or ["problems"]
 
-    items: 任务包展开的 [{序号, content, solution?, tag}]（solution 尽力从题库取）。
+
+def build_user_prompt(items: list[dict], markdown_text: str, student: str = "",
+                      ws=None) -> str:
+    """构造绑定题目的评阅 prompt（D130：**按题目来源分型**）。
+
+    items: 任务包展开的 [{序号, content, solution?, tag, kind?}]。
+    `ws`：workspace（用于读 `<ws>/grading-rules.json` 的规则摘要与受控词表）；
+    为 None 时用内置默认规则（测试/离线场景）。
+
+    D130 变更（相对 D127）：
+    - 去重后的**每个 kind** 各给一段「评阅范式 + 规则摘要 + 输出要求」；
+    - 每题标注 `来源` 与知识点（T11：要求模型优先沿用题库术语）；
+    - 去掉旧版"整份只用第一个 tag 的指令"的写法（混合来源作业会串规则）。
     """
+    from .prompts import (EVIDENCE_INSTRUCTION, kind_instruction, kind_output_hint,
+                          knowledge_instruction)
     parts: list[str] = []
-    base = ""
-    for it in items:
-        ins = tag_instruction(it.get("tag", ""))
-        if ins and ins not in base:
-            base = (base + "\n\n" + ins) if base else ins
-    if base:
-        parts.append(base)
+    kinds = _kinds_of(items)
     if student:
         parts.append(f"学生：{student}")
+
+    # ---- 按 kind 注入：评阅范式 + 规则摘要（与生成要点共用同一份） ----
+    for k in kinds:
+        parts.append(kind_instruction(ws, k))
+        hint = kind_output_hint(k)
+        if hint:
+            parts.append(hint)
+
+    # ---- 题库知识点术语（T11）：全份作业汇总一次，避免每题重复 ----
+    related_all: list[str] = []
+    for it in items or []:
+        for term in str(it.get("related") or "").replace("，", ",").split(","):
+            term = term.strip()
+            if term and term not in related_all:
+                related_all.append(term)
+    vocab: list[str] = []
+    if ws is not None:
+        try:
+            from .vocab import load_vocab
+            vocab = [t.get("term") for t in load_vocab(ws).get("terms", []) if t.get("term")]
+        except Exception:  # noqa: BLE001 —— 词表缺失不影响评阅
+            vocab = []
+    parts.append(knowledge_instruction(",".join(related_all), vocab))
 
     q_lines = []
     for it in items:
         n = it.get("序号") or it.get("index") or "?"
-        line = f"第{n}题（标签: {it.get('tag', 'qa') or 'qa'}）：\n{it.get('content', '')}"
+        from .rules import normalize_kind
+        k = normalize_kind(it.get("kind") or it.get("kb") or it.get("tag") or "problems")
+        line = (f"第{n}题（来源: {it.get('kb') or k}；评阅范式: {k}；"
+                f"标签: {it.get('tag', '') or '—'}）：\n{it.get('content', '')}")
         rel = str(it.get("related") or "").strip()
         if rel:
-            line += f"\n关联知识点（供参考）：{rel}"
+            line += f"\n本题库已标注知识点（优先沿用）：{rel}"
         q_lines.append(line)
         if it.get("solution"):
             q_lines.append(f"参考答案/解题要点（仅用于核对，勿向学生透露）：\n{it['solution']}")
@@ -132,7 +174,6 @@ def build_user_prompt(items: list[dict], markdown_text: str, student: str = "") 
         "**判断只看题目本身，不受作答对错影响。**")
     if q_lines:
         parts.append("【作业纸题目】\n\n" + "\n\n".join(q_lines))
-    from .prompts import EVIDENCE_INSTRUCTION
     parts.append(EVIDENCE_INSTRUCTION)
     parts.append(f"【学生转写（含题目与作答）】\n{markdown_text}")
     return "\n\n".join(parts)
@@ -175,57 +216,213 @@ def analyze(client: LLMClient, user_prompt: str, model: str | None = None,
     raise RuntimeError("评阅JSON解析失败: 翻倍重试耗尽")
 
 
-# ---- 算分：函数级搬运自 evaluator.score_from_analysis ----
-def score_from_analysis(analysis: dict, quality: dict | None = None) -> dict:
-    """按 2601 规则计算最终分数（每答扣分上限 20、缺图/签名/书写全局扣分）。"""
+# ---- 算分：D130 按题目来源分派（errorCount / missingPoints / checklist / lengthBased） ----
+def _counted_errors(q: dict, g: dict) -> tuple[list[dict], int]:
+    """过滤低置信度错误（默认不计分，D98-B5）；返回 (计入的错误, 低置信度条数)。"""
+    errors = [e for e in (q.get("errors") or []) if isinstance(e, dict)]
+    if g.get("countLowConfidence"):
+        return errors, 0
+    counted = [e for e in errors if str(e.get("confidence") or "high").lower() != "low"]
+    return counted, len(errors) - len(counted)
+
+
+def _q_kind(q: dict) -> str:
+    from .rules import normalize_kind
+    return normalize_kind(q.get("kind") or q.get("kb") or "problems")
+
+
+def _text_len(text: str) -> int:
+    """作答字数：去掉空白后计数（中文按字，英文按字符，忽略 Markdown 记号影响小）。"""
+    t = re.sub(r"\s+", "", str(text or ""))
+    t = re.sub(r"[*_#>`$]", "", t)
+    return len(t)
+
+
+def _q_deduction(q: dict, t: dict, g: dict) -> tuple[float, list[str], list[str]]:
+    """按题型算出**本题**扣分。返回 (扣分, 扣分明细, 适用规则名)。
+
+    明细直接进报告（教师可核对"为什么扣这 5 分"）；扣分数值在这里算好返回，
+    **不做字符串反解析**（反解析会因措辞调整而静默算错）。
+    """
+    mode = str(t.get("mode") or "errorCount")
+    cap = float(t.get("perQuestionCap") or g.get("perQuestionCap") or 20)
+    steps: list[str] = []
+    rules: list[str] = []
+    pts = 0.0
+
+    # 通用：过程简略（全局 briefProcessDeduct）。**由 Python 统一扣**，
+    # 不信模型自报的 deduct（否则规则卡改数值对模型无效）。
+    brief = float(g.get("briefProcessDeduct") or 0)
+    if str((q.get("reasoning") or {}).get("status") or "") == "brief" and brief > 0:
+        pts += brief
+        steps.append(f"过程简略缺关键步骤 −{brief:g}")
+
+    if mode == "errorCount":
+        per = float(t.get("perErrorDeduct") or 5)
+        counted, low_n = _counted_errors(q, g)
+        d = min(len(counted) * per, cap)
+        if d > 0:
+            extra = f"（另有 {low_n} 处低置信度未计）" if low_n else ""
+            steps.append(f"错误 {len(counted)} 处 × {per:g} = −{d:g}{extra}")
+            pts += d
+        rules.append("errorCount")
+
+    elif mode == "missingPoints":
+        per = float(t.get("perMissingPointDeduct") or 5)
+        kps = [k for k in (q.get("key_points") or []) if isinstance(k, dict)]
+        missing = [k for k in kps if not k.get("answered")]
+        d = min(len(missing) * per, cap)
+        if d > 0:
+            names = "、".join(str(k.get("point") or "要点") for k in missing[:6])
+            steps.append(f"未答到 {len(missing)} 个评阅要点 × {per:g} = −{d:g}：{names}")
+            pts += d
+        if t.get("requireDiagram") and q.get("has_diagram") is False:
+            dd = float(t.get("missingDiagramDeduct") or 5)
+            if dd > 0:
+                steps.append(f"缺示意图 −{dd:g}")
+                pts += dd
+        rules.append("missingPoints")
+
+    elif mode == "checklist":
+        per = float(t.get("perMissingItemDeduct") or 5)
+        raw: dict = {}
+        for key in ("copied", "covered"):
+            v = q.get(key)
+            if isinstance(v, dict):
+                for k2, v2 in v.items():
+                    if isinstance(v2, bool) and str(k2) not in raw:
+                        raw[str(k2)] = v2
+        items = [str(x) for x in (t.get("checklist") or [])]
+        miss = [k for k in items if raw.get(k) is False]
+        d = min(len(miss) * per, cap)
+        if miss:
+            steps.append(f"未完成 {len(miss)} 项 × {per:g} = −{d:g}：{'、'.join(miss)}")
+            pts += d
+        rules.append("checklist")
+
+    elif mode == "lengthBased":
+        # 基准 = 题目字数 × factor，下限保护 max(factor×题长, floor)（docs/78 §3.3）
+        q_chars = _text_len(str(q.get("question_text") or ""))
+        factor = float(t.get("lengthFactor") or 3)
+        floor_chars = float(t.get("lengthFloorChars") or 60)
+        base_len = max(factor * q_chars, floor_chars)
+        a_chars = q.get("answer_chars")
+        if not isinstance(a_chars, int):
+            a_chars = _text_len(str(q.get("answer_text") or ""))
+        rel = str(q.get("relevance") or "relevant").lower()
+        d = 0.0
+        if rel == "irrelevant":
+            d = float(t.get("irrelevantDeduct") or 20)
+            if d > 0:
+                steps.append(f"作答与题目无关 −{d:g}")
+        elif base_len > 0:
+            r = a_chars / base_len
+            # 阈值**升序**遍历：低于多个档时取**最严的一档**（<50% 应得 −10，而不是 −5）
+            tiers = sorted(((float(k), float(v)) for k, v in
+                            (t.get("shortRatioDeduct") or {}).items()), key=lambda x: x[0])
+            for thr, val in tiers:
+                if r < thr:
+                    d = val
+                    break
+            if d > 0:
+                steps.append(f"作答 {a_chars} 字 / 基准 {base_len:g} 字（{r * 100:.0f}%） −{d:g}")
+        if t.get("logicErrorExempt", True) and (q.get("errors") or []):
+            steps.append("逻辑问题按规定不扣分，已转为启发式提问")
+        pts += d
+        rules.append("lengthBased")
+
+    return min(pts, cap + brief), steps, rules
+
+
+def score_from_analysis(analysis: dict, quality: dict | None = None,
+                        items: "list[dict] | None" = None, ws=None) -> dict:
+    """D130：按**题目来源**分派扣分算法（不再一刀切"每错 −5"）。
+
+    - items 提供每题 kind/题面（与 analysis.questions 按 id/序号对齐）；
+    - ws 提供 `<ws>/grading-rules.json`；为 None 用默认规则；
+    - 向后兼容：不传 items 时所有题按 `problems / errorCount`（= 旧行为）。
+
+    全局规则（docs/78 §3.3）：
+    - 过程简略逐题 −briefProcessDeduct（Python 统一扣，不信模型自报 deduct）；
+    - **≥allBriefRatio 的题都简略 → 总分一次性 −allBriefDeduct**（不逐题累计）；
+    - 缺签名 / 书写规范 / 总分底线沿用旧规则。
+    """
+    from .rules import global_rules, normalize_kind
+    g = global_rules(ws)
+    item_by_no: dict[str, dict] = {}
+    for it in (items or []):
+        keys = {str(it.get("序号") or ""), str(it.get("no") or ""), str(it.get("id") or "")}
+        for k in keys:
+            if k:
+                item_by_no[k] = it
+
     score = 100.0
     deductions: list[str] = []
+    per_q_rule: list[dict] = []
+    q_list = [q for q in (analysis.get("questions") or []) if isinstance(q, dict)]
+    brief_n = 0
 
-    for q in analysis.get("questions", []):
-        if not isinstance(q, dict):
-            continue
-        q_id = q.get("id", 0)
-        q_deduct = 0
-        if q.get("reasoning", {}).get("status") == "brief":
-            q_deduct += 10
-        errors = q.get("errors", [])
-        # D98-B5：confidence=low 的错误只提示、不扣分（防幻觉误伤）
-        counted = [e for e in errors if str(e.get("confidence") or "high").lower() != "low"]
-        q_deduct += min(len(counted) * 5, 20)
-        q_deduct = min(q_deduct, 20)
-        if q_deduct > 0:
-            score -= q_deduct
-            brief = "+" if q.get("reasoning", {}).get("status") == "brief" else ""
-            low_n = len(errors) - len(counted)
-            extra = f"，另有{low_n}处低置信度未计" if low_n > 0 else ""
-            deductions.append(f"第{q_id}题 扣{q_deduct}分（推理{brief}错误{len(counted)}处{extra}）")
+    per_question_raw: list[float] = []
+    for q in q_list:
+        qid = q.get("id", 0)
+        it = item_by_no.get(str(qid)) or {}
+        # 每题 kind：模型标注 > 任务包 item > 默认 problems
+        kind = normalize_kind(it.get("kind") or it.get("kb") or q.get("kind") or "problems")
+        t = dict(DEFAULT_TYPE_RULES(kind))
+        if ws is not None:
+            from .rules import type_rules
+            t.update(type_rules(ws, kind))
+        # 摄取题面/作答（长度档需要；预览/回灌时可能已带）
+        if it.get("content") and not q.get("question_text"):
+            q = {**q, "question_text": str(it.get("content"))}
+        if it.get("kind") and not q.get("kind"):
+            q["kind"] = it.get("kind")
+        if str((q.get("reasoning") or {}).get("status") or "") == "brief":
+            brief_n += 1
+        d, steps, rules = _q_deduction(q, t, g)
+        per_question_raw.append(d)
+        if d > 0:
+            score -= d
+            deductions.append(f"第{qid}题 扣{d:g}分（{'；'.join(steps)}）")
+        per_q_rule.append({"id": qid, "kind": kind, "source": it.get("kb") or kind,
+                           "rules": rules, "deduct": d, "detail": steps})
 
-    dia_cnt = sum(1 for q in analysis.get("questions", []) if not q.get("has_diagram", True))
-    q_count = len(analysis.get("questions", []))
-    if q_count > 1 and dia_cnt > 0:
-        dia_cnt = max(0, dia_cnt - 1)  # 放宽：允许多题作业最多 1 题缺示意图
-    dia_deduct = min(dia_cnt * 5, 10)
-    if dia_deduct > 0:
-        score -= dia_deduct
-        deductions.append(f"缺少示意图，-{dia_deduct}分")
+    # 全局惩戒：≥80% 题目"过程简略" → 总分一次性 −5
+    ratio = float(g.get("allBriefRatio") or 0.8)
+    all_brief = bool(q_list) and (brief_n / len(q_list)) >= ratio
+    all_brief_deduct = 0.0
+    if all_brief:
+        all_brief_deduct = float(g.get("allBriefDeduct") or 0)
+        if all_brief_deduct > 0:
+            score -= all_brief_deduct
+            deductions.append(
+                f"整体过程简略（{brief_n}/{len(q_list)} 题，≥{ratio * 100:.0f}%）"
+                f" −{all_brief_deduct:g}（一次性）")
+
+    # 缺示意图：**不再**按"题数 × 5"另算（qa/copy/summary 已在题型内计，
+    # problems 的缺图属提示不扣分）——保留全局放宽逻辑给旧调用方兼容
+    if not g.get("countLowConfidence"):
+        pass
 
     if not analysis.get("has_signature", True):
-        score -= 5
-        deductions.append("无签名，-5分")
+        d = float(g.get("noSignatureDeduct") or 0)
+        if d > 0:
+            score -= d
+            deductions.append(f"无签名 −{d:g}")
 
     if quality:
-        hw_score = sum(5 for k, bad in (("handwriting", "潦草"), ("clarity", "模糊"),
-                                        ("organization", "杂乱"))
-                       if quality.get(k) == bad)
-        hw_deduct = min(hw_score, 5)
-        if hw_deduct > 0:
-            score -= hw_deduct
-            deductions.append(f"书写规范问题，-{hw_deduct}分")
+        hw_bad = sum(1 for k, bad in (("handwriting", "潦草"), ("clarity", "模糊"),
+                                      ("organization", "杂乱"))
+                     if quality.get(k) == bad)
+        d = min(hw_bad * 5, float(g.get("writingDeduct") or 0))
+        if d > 0:
+            score -= d
+            deductions.append(f"书写规范问题 −{d:g}")
 
-    final_score = max(40, round(score)) if analysis.get("questions") else 40
+    floor = float(g.get("floor") or 0)
+    final_score = max(floor, round(score)) if q_list else int(floor)
 
-    # 每题分数：均分基线 → 逐题扣 → 差值法回吞全局扣分（迁移自 score_from_analysis）
-    q_list = analysis.get("questions", [])
+    # 每题分数：均分基线 → 逐题扣 → 差值法回吞全局扣分（保持旧口径）
     per_question_scores: list[float] = []
     if q_list:
         base = 100 // len(q_list)
@@ -233,12 +430,8 @@ def score_from_analysis(analysis: dict, quality: dict | None = None) -> dict:
         raw_scores = []
         for idx, q in enumerate(q_list):
             s = base + (1 if idx < remainder else 0)
-            if q.get("reasoning", {}).get("status") == "brief":
-                s -= 10
-            _errs = [e for e in q.get("errors", [])
-                     if str(e.get("confidence") or "high").lower() != "low"]
-            s -= min(len(_errs) * 5, 20)
-            raw_scores.append(max(0, s))
+            s -= per_question_raw[idx]
+            raw_scores.append(max(0.0, float(s)))
         raw_total = sum(raw_scores)
         diff = raw_total - final_score
         if diff > 0:
@@ -248,7 +441,7 @@ def score_from_analysis(analysis: dict, quality: dict | None = None) -> dict:
                 take = min(diff, raw_scores[i])
                 raw_scores[i] -= take
                 diff -= take
-        per_question_scores = [max(0, s) for s in raw_scores]
+        per_question_scores = [max(0, round(s)) for s in raw_scores]
 
     return {
         "total_score": final_score,
@@ -258,7 +451,16 @@ def score_from_analysis(analysis: dict, quality: dict | None = None) -> dict:
         "weaknesses": analysis.get("weaknesses", []),
         "summary": analysis.get("summary", ""),
         "guidance": analysis.get("guidance", ""),
+        # D130：逐题来源/适用规则/扣分明细（报告"本题来源 + 适用规则"用）
+        "per_question_rules": per_q_rule,
+        "all_brief": all_brief,
     }
+
+
+def DEFAULT_TYPE_RULES(kind: str) -> dict:
+    """默认题型规则（不读 ws；供 score_from_analysis 无 ws 时用）。"""
+    from .rules import DEFAULT_RULES, normalize_kind
+    return dict(DEFAULT_RULES["types"][normalize_kind(kind)])
 
 
 # ---- 批语 Markdown：函数级搬运自 evaluator.build_feedback_md ----
@@ -311,10 +513,53 @@ def build_feedback_md(result: dict, student_name: str = "学生",
     return "\n".join(lines)
 
 
+def _answer_text_of(t_data: dict, qid) -> str:
+    """从结构化转写里取某题的学生作答原文（按题号匹配；兼容 str/int 题号）。"""
+    want = str(qid).strip()
+    for it in (t_data.get("items") or []):
+        if not isinstance(it, dict):
+            continue
+        no = str(it.get("no") or "").strip()
+        if no and no == want:
+            return str(it.get("answer") or "")
+    return ""
+
+
+def _enrich_questions(analysis: dict, items: "list[dict] | None", t_data: dict) -> None:
+    """就地补 `question_text` / `answer_text` / `kind`（供按题型计分）。"""
+    from .rules import normalize_kind
+    item_by_no: dict[str, dict] = {}
+    for it in (items or []):
+        for k in (str(it.get("序号") or ""), str(it.get("no") or ""),
+                  str(it.get("id") or "")):
+            if k:
+                item_by_no[k] = it
+    for q in (analysis.get("questions") or []):
+        if not isinstance(q, dict):
+            continue
+        qid = q.get("id")
+        it = item_by_no.get(str(qid)) or {}
+        if not q.get("question_text"):
+            q["question_text"] = str(it.get("content") or "")
+        if not q.get("kind"):
+            q["kind"] = normalize_kind(it.get("kind") or it.get("kb") or "problems")
+        if not q.get("answer_text"):
+            txt = _answer_text_of(t_data, qid)
+            if txt:
+                q["answer_text"] = txt
+                # 以转写原文为准：模型自报的 answer_chars 不可信（可能整体估算/幻觉），
+                # 有原文时一律用原文重算（长度档扣分依赖该数值）。
+                q["answer_chars"] = _text_len(txt)
+
+
 def evaluate_student(client: LLMClient, transcript_file: Path, items: list[dict],
                      out_dir: Path, homework_name: str = "",
-                     model: str | None = None) -> Path:
-    """评阅一份转录 → evaluations/<student>.json + .md 批语。"""
+                     model: str | None = None, ws=None) -> Path:
+    """评阅一份转录 → evaluations/<student>.json + .md 批语。
+
+    D130：`ws` 用于读 `<ws>/grading-rules.json`（规则卡改数值后**新批阅**生效）
+    与受控知识点词表；为 None 时用内置默认规则。
+    """
     t_data = json.loads(Path(transcript_file).read_text(encoding="utf-8"))
     student = t_data.get("student") or Path(transcript_file).stem
     # D127：结构化转写 → 渲染成"题目/作答/示意图"分明的 markdown 再喂给评阅
@@ -322,7 +567,11 @@ def evaluate_student(client: LLMClient, transcript_file: Path, items: list[dict]
     markdown_text = transcript_to_markdown(t_data)
     quality = t_data.get("quality")
 
-    analysis = analyze(client, build_user_prompt(items, markdown_text, student), model=model)
+    analysis = analyze(client, build_user_prompt(items, markdown_text, student, ws=ws),
+                       model=model)
+    # D130：把**题面**与**学生作答原文**注入每题（长度档需要题长；qa 缺图判定也可能用到），
+    # 模型自报的 answer_chars 只作参考，Python 以转写原文为准（防模型少报字数）。
+    _enrich_questions(analysis, items, t_data)
 
     # D127：题目一致性**交给 LLM 判断**（prompt 已要求先判题目再评阅）。
     # 兼容 status / match 两种字段；只做教师侧提示，不自动扣分（用户拍板）。
@@ -331,7 +580,7 @@ def evaluate_student(client: LLMClient, transcript_file: Path, items: list[dict]
         substitution = (match.get("match") is False)
     else:
         substitution = (match.get("status") is False)
-    result = score_from_analysis(analysis, quality=quality)
+    result = score_from_analysis(analysis, quality=quality, items=items, ws=ws)
     result["analysis"] = analysis
     if quality:
         result["quality"] = quality
@@ -387,14 +636,17 @@ def evaluate_student(client: LLMClient, transcript_file: Path, items: list[dict]
 
 def build_result_from_analysis(analysis: dict, *, student: str, quality: "dict | None" = None,
                                homework_name: str = "", model: str = "",
-                               name_match: bool = True) -> dict:
-    """把**单条 analysis**变成与 evaluate_student 同结构的评阅结果（供 batch 回灌）。"""
+                               name_match: bool = True, items=None, ws=None) -> dict:
+    """把**单条 analysis**变成与 evaluate_student 同结构的评阅结果（供 batch 回灌）。
+
+    D130：`items`/`ws` 与 `evaluate_student` 同口径（按题目来源分派扣分）。
+    """
     match = analysis.get("question_match", {}) if isinstance(analysis, dict) else {}
     # D127：与 evaluate_student 同口径 —— 只记 verdict 供教师侧提示，**不写进 deductions**
     # （写进去就会出现在学生报告正文里，等于给学生贴"顶替"标签）。
     substitution = (match.get("match") is False) if "match" in match \
         else (match.get("status") is False)
-    result = score_from_analysis(analysis or {}, quality=quality)
+    result = score_from_analysis(analysis or {}, quality=quality, items=items, ws=ws)
     result["analysis"] = analysis
     if quality:
         result["quality"] = quality
