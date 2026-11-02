@@ -245,3 +245,18 @@
 **验证**：engine pytest **792 passed**（新增 `tests/test_d130_source_aware_rules.py` 43 例，含端到端"混合题型各按自身规则扣分 + 报告标注来源/规则"）；脱敏检查通过。
 
 **已知口径变更**：`problems` 缺示意图**不再**按"题数×5（上限 10）"另扣 —— 缺图在 `qa/copy/summary` 的题型规则内计，`problems` 视为提示不扣分（docs/78 §3.1 未要求计算题缺图扣分）。
+
+### 8.2 P1b（T5/T6/T7/T8）— 2026-10-30 完成
+
+| 任务 | 落地 | 关键决定 |
+|---|---|---|
+| T5 | **新增** `grading/rubric.py`：`build_rubric_prompt`（带**该题型规则摘要**）+ `generate_rubric` + `save_rubric_version` | 写入答案版本库 `source=ai`、**默认 pin=False**；教师 `kb solution pin` 后才成为生效答案（生效答案会被 `expand_items` 实时取用 → 自动进入后续批阅 prompt） |
+| T6 | `assist kb tag-knowledge`：四种粒度（全部/类型/章节/具体题目）+ `--only-empty`（默认）/`--force`/`--dry-run`；`rubric.plan_tagging` 集中判定三条口径 | 「为空可写 / 非空不覆盖 / `pinned_by:human` 后 AI 不碰」三态在 `plan_tagging` 一处判定，CLI 与未来 PWA 共用 |
+| T7 | **新增** `grading/termnorm.py` + `assist kb check-knowledge`：AI 只提议 → 教师勾选 → `--apply --mapping` → 变更日志 → `--rollback` | 默认**不全选**（置信 <0.9 或带 warning 的组不勾）；执行前 `impact()` 展示影响面；归一前先做分隔符标准化 |
+| T8 | **新增** `grading/vocab.py` + `assist kb vocab harvest/list/add`：`<ws>/knowledge-terms.json` | 汇总**保留**人工词条的别名与 source；标注时术语经 `canonical()` 归到词表正名 |
+
+**实施中修正的真实缺陷**：教师手写 mapping 文件（无 `selected` 字段）会让 `build_mapping` 静默产出空映射 → 改为"无任何 selected 字段时视为全部勾选"，但**显式 `selected:false` 仍不执行**（两者都有测试锁定）。
+
+**验证**：engine pytest **820 passed**（新增 `tests/test_d130_knowledge_rubric.py` 28 例）。
+
+**口径说明**：`related_meta` 不新增 xlsx 列，存 `<ws>/kb/knowledge-meta.json`（sidecar，`kb__chap__qid` 为键），避免改动题库表结构；写题库一律走 `write_chapters_preserving`（保样式）+ 写前 `snapshot`（可回滚）。

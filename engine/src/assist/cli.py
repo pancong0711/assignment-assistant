@@ -1349,6 +1349,250 @@ def rules_grp():
     pass
 
 
+def _rubric_client(ws):
+    from .grading.llm import LLMClient
+    return LLMClient(ws=ws)
+
+
+@rules_grp.command("generate")
+@click.option("--kind", "kb_kind", default="qa", help="题库 kind（决定评阅范式与规则摘要）")
+@click.option("--chap", default="", help="章节 sheet 名；缺省=整库")
+@click.option("--ids", default="", help="题号（逗号分隔）；缺省=该章全部")
+@click.option("--model", default="", help="覆盖模型")
+@click.option("--apply", is_flag=True, help="真正写入答案版本库（缺省 dry-run 只预览）")
+@click.option("--force", is_flag=True, help="copy/summary 等默认不生成要点的题型也强制生成")
+@click.option("--concurrency", default=2, type=int, show_default=True, help="并发题数")
+@click.option("--workspace", "-w", default=None)
+@click.option("--verbose", "-v", is_flag=True)
+@click.pass_obj
+def rules_generate(obj, kb_kind, chap, ids, model, apply, force, concurrency, workspace, verbose):
+    """D130-T5：AI 生成「参考解答 + 评阅要点 + 知识点」，写入答案版本库（**默认不置顶**）。"""
+    from concurrent.futures import ThreadPoolExecutor
+    from .files.kb_io import read_kb
+    from .grading import rubric as RB
+    from .grading.rules import normalize_kind, rubric_enabled
+    ws = _setup(verbose or obj.get("verbose"), workspace)
+    kind = normalize_kind(kb_kind)
+    if not rubric_enabled(ws, kind) and not force:
+        click.echo(json.dumps({"ok": True, "skipped": True,
+                               "reason": f"{kind} 按口径不生成 AI 评阅要点"
+                                         "（以原文/课堂资料为唯一依据；确需生成加 --force）"},
+                              ensure_ascii=False, indent=2))
+        return
+    kb_data = read_kb(ws / "kb")
+    targets = RB.select_questions(kb_data, kinds=[kb_kind],
+                                  chaps=[chap] if chap else None,
+                                  ids=[x for x in str(ids or "").split(",") if x.strip()])
+    if not targets:
+        raise click.ClickException("没有匹配的题目（检查 --kind/--chap/--ids）")
+    client = _rubric_client(ws)
+    model_name = model or getattr(client, "evaluation_model", "") or ""
+
+    def _one(t):
+        try:
+            r = RB.generate_rubric(client, ws=ws, kind=kind, content=t["content"],
+                                   solution=t["solution"], related=t["related"],
+                                   model=model or None)
+            return {"qid": t["qid"], "chap": t["chap"], "ok": True, "rubric": r,
+                    "text": RB.rubric_to_text(r)}
+        except Exception as exc:  # noqa: BLE001 —— 单题失败不阻断
+            return {"qid": t["qid"], "chap": t["chap"], "ok": False, "error": str(exc)[:300]}
+
+    with ThreadPoolExecutor(max_workers=max(1, int(concurrency))) as ex:
+        results = list(ex.map(_one, targets))
+
+    written = []
+    if apply:
+        for r in results:
+            if not r.get("ok"):
+                continue
+            res = RB.save_rubric_version(ws, kb=kb_kind, chap=r["chap"],
+                                         qid=r["qid"], rubric=r["rubric"],
+                                         model=model_name, pin=False)
+            written.append({"qid": r["qid"], "chap": r["chap"], "ok": res.get("ok"),
+                            "version": (res.get("added") or {}).get("id"),
+                            "pinned": (res.get("added") or {}).get("pinned")})
+    click.echo(json.dumps({
+        "ok": all(r.get("ok") for r in results),
+        "kind": kind, "apply": bool(apply), "total": len(results),
+        "failed": [r for r in results if not r.get("ok")],
+        "written": written,
+        "preview": [{"qid": r["qid"], "chap": r["chap"], "text": r.get("text", "")}
+                    for r in results if r.get("ok")],
+    }, ensure_ascii=False, indent=2))
+
+
+@kb.command("check-knowledge")
+@click.option("--model", default="", help="覆盖模型")
+@click.option("--apply", is_flag=True, help="执行归一（必须配合 --mapping 或 --select）")
+@click.option("--mapping", "mapping_file", default="", help="等价组 JSON（AI 提议结果；--apply 用）")
+@click.option("--select", "select_idx", default="", help="勾选的组号（从 1 起，逗号分隔；缺省=默认勾选）")
+@click.option("--dry-run", "dry_run", is_flag=True, help="只展示影响面，不写库")
+@click.option("--rollback", is_flag=True, help="按最后一条变更日志回滚")
+@click.option("--workspace", "-w", default=None)
+@click.option("--verbose", "-v", is_flag=True)
+@click.pass_obj
+def kb_check_knowledge(obj, model, apply, mapping_file, select_idx, dry_run, rollback,
+                       workspace, verbose):
+    """D130-T7：知识点术语归一（AI **只提议**；教师勾选后才执行；可回滚）。"""
+    from .files.kb_io import read_kb
+    from .grading import termnorm as TN
+    ws = _setup(verbose or obj.get("verbose"), workspace)
+    if rollback:
+        click.echo(json.dumps(TN.rollback(ws, dry_run=dry_run), ensure_ascii=False, indent=2))
+        return
+    if mapping_file:
+        data = json.loads(Path(mapping_file).expanduser().read_text(encoding="utf-8"))
+        groups = data.get("groups") if isinstance(data, dict) else data
+        groups = groups or []
+        if select_idx:
+            want = {int(x) for x in str(select_idx).split(",") if x.strip().isdigit()}
+            for i, g in enumerate(groups, start=1):
+                g["selected"] = i in want
+        mapping = TN.build_mapping(groups)
+        if not mapping:
+            raise click.ClickException("没有勾选任何等价组（用 --select 指定组号）")
+        if apply and not dry_run:
+            click.echo(json.dumps(TN.apply_mapping(ws, mapping), ensure_ascii=False, indent=2))
+        else:
+            click.echo(json.dumps(TN.impact(ws, mapping), ensure_ascii=False, indent=2))
+        return
+    # 无 mapping：让 AI 提议（只读，不改库）
+    kb_data = read_kb(ws / "kb")
+    terms = TN.collect_terms(kb_data)
+    if not terms:
+        click.echo(json.dumps({"ok": True, "groups": [],
+                               "hint": "题库里还没有任何 related 标注（先跑 kb tag-knowledge）"},
+                              ensure_ascii=False, indent=2))
+        return
+    client = _rubric_client(ws)
+    res = TN.propose_groups(client, terms, model=model or None)
+    res["ok"] = True
+    res["hint"] = ("AI 只提议，默认不全选；语义有风险的组默认不勾。"
+                   "确认后用 --mapping 保存的 JSON + --select 勾选组号 + --apply 执行。")
+    click.echo(json.dumps(res, ensure_ascii=False, indent=2))
+
+
+@kb.group("vocab", help="D130-T8：受控知识点词表 <ws>/knowledge-terms.json")
+def kb_vocab():
+    pass
+
+
+@kb_vocab.command("harvest")
+@click.option("--write", is_flag=True, help="写回词表（缺省 dry-run）")
+@click.option("--workspace", "-w", default=None)
+@click.option("--verbose", "-v", is_flag=True)
+@click.pass_obj
+def kb_vocab_harvest(obj, write, workspace, verbose):
+    """从题库 related 列自动汇总术语（保留人工维护的别名/来源）。"""
+    from .grading import vocab as V
+    ws = _setup(verbose or obj.get("verbose"), workspace)
+    click.echo(json.dumps(V.harvest(ws, write=write), ensure_ascii=False, indent=2))
+
+
+@kb_vocab.command("list")
+@click.option("--workspace", "-w", default=None)
+@click.option("--verbose", "-v", is_flag=True)
+@click.pass_obj
+def kb_vocab_list(obj, workspace, verbose):
+    """列出受控词表。"""
+    from .grading import vocab as V
+    ws = _setup(verbose or obj.get("verbose"), workspace)
+    click.echo(json.dumps(V.load_vocab(ws), ensure_ascii=False, indent=2))
+
+
+@kb_vocab.command("add")
+@click.option("--term", required=True)
+@click.option("--alias", "aliases", multiple=True, help="同义/别名（可多次）")
+@click.option("--workspace", "-w", default=None)
+@click.option("--verbose", "-v", is_flag=True)
+@click.pass_obj
+def kb_vocab_add(obj, term, aliases, workspace, verbose):
+    """人工新增/更新术语（同义词并入 aliases）。"""
+    from .grading import vocab as V
+    ws = _setup(verbose or obj.get("verbose"), workspace)
+    res = V.add_term(ws, term, aliases=list(aliases), source="human")
+    click.echo(json.dumps(res, ensure_ascii=False, indent=2))
+    if not res.get("ok"):
+        raise click.ClickException(res.get("error") or "写入失败")
+
+
+@kb.command("tag-knowledge")
+@click.option("--kb", "kb_kind", multiple=True,
+              help="题库 kind（可多次；缺省=全部题型）")
+@click.option("--chap", "chaps", multiple=True, help="章节 sheet 名（可多次）")
+@click.option("--ids", default="", help="具体题号（逗号分隔）")
+@click.option("--only-empty/--no-only-empty", default=True, show_default=True,
+              help="默认只标**未标注**的题")
+@click.option("--force", is_flag=True, help="覆盖已有知识点（默认不覆盖）")
+@click.option("--dry-run", "dry_run", is_flag=True, help="只预览，不写题库")
+@click.option("--model", default="", help="覆盖模型")
+@click.option("--concurrency", default=2, type=int, show_default=True)
+@click.option("--workspace", "-w", default=None)
+@click.option("--verbose", "-v", is_flag=True)
+@click.pass_obj
+def kb_tag_knowledge(obj, kb_kind, chaps, ids, only_empty, force, dry_run, model,
+                     concurrency, workspace, verbose):
+    """D130-T6：AI 为题目打**知识点**标签（四种粒度；默认只标未标注）。"""
+    from concurrent.futures import ThreadPoolExecutor
+    from .files.kb_io import read_kb
+    from .grading import rubric as RB
+    from .grading.vocab import canonical, join_terms, load_vocab
+    from .grading.rules import normalize_kind
+    ws = _setup(verbose or obj.get("verbose"), workspace)
+    kb_data = read_kb(ws / "kb")
+    targets = RB.select_questions(kb_data, kinds=list(kb_kind) or None,
+                                  chaps=list(chaps) or None,
+                                  ids=[x for x in str(ids or "").split(",") if x.strip()])
+    plan = RB.plan_tagging(ws, targets, only_empty=only_empty, force=force)
+    todo = plan["todo"]
+    if not todo:
+        click.echo(json.dumps({"ok": True, "todo": 0, "skipped": len(plan["skipped"]),
+                               "skipped_detail": plan["skipped"][:20]},
+                              ensure_ascii=False, indent=2))
+        return
+    client = _rubric_client(ws)
+    vocab = load_vocab(ws)
+
+    def _one(t):
+        try:
+            r = RB.generate_rubric(client, ws=ws, kind=normalize_kind(t["kb"]),
+                                   content=t["content"], solution=t["solution"],
+                                   related=t["related"], model=model or None)
+            terms = [canonical(vocab, x) for x in (r.get("knowledge") or []) if str(x).strip()]
+            terms = [x for x in dict.fromkeys(terms) if x]
+            return {**t, "ok": True, "terms": terms}
+        except Exception as exc:  # noqa: BLE001
+            return {**t, "ok": False, "error": str(exc)[:300]}
+
+    with ThreadPoolExecutor(max_workers=max(1, int(concurrency))) as ex:
+        results = list(ex.map(_one, todo))
+
+    updates = []
+    for r in results:
+        if not r.get("ok") or not r.get("terms"):
+            continue
+        updates.append({"kb": r["kb"], "chap": r["chap"], "qid": r["qid"],
+                        "related": join_terms(r["terms"]),
+                        "meta": {"source": "ai", "ai_suggested": join_terms(r["terms"]),
+                                 "pinned_by": ""}})
+    res = {"ok": all(r.get("ok") for r in results), "dry_run": bool(dry_run),
+           "todo": len(todo), "skipped": len(plan["skipped"]),
+           "updates": updates,
+           "failed": [r for r in results if not r.get("ok")],
+           "skipped_detail": plan["skipped"][:20]}
+    if not dry_run and updates:
+        writer = RB.apply_related(ws, updates)
+        res["written"] = writer
+        # 词表顺带汇总（新术语入库，来源 ai）
+        try:
+            from .grading import vocab as V
+            V.harvest(ws, write=True)
+        except Exception as exc:  # noqa: BLE001
+            res["vocab_error"] = str(exc)[:200]
+    click.echo(json.dumps(res, ensure_ascii=False, indent=2))
+
+
 @rules_grp.command("show")
 @click.option("--workspace", "-w", default=None)
 @click.option("--verbose", "-v", is_flag=True)
