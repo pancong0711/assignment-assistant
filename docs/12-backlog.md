@@ -769,5 +769,6 @@ rainclass 67/67，PWA↔engine 全等，仅末位浮点四舍五入噪声）。
 - ✅ **P3-1 已完成**：工具白名单（27 个）+ L0/L1/L2/L3 分级 + 参数白名单 +
   `extensions/` 只升不降 + 子进程执行器（超时/截断/journal）+ 护栏硬顶。
   `assist assistopia tools|run|journal`。
-- ⏳ **P3-2**：`limits.json` 写接口、扩展 `rules/`+词表覆盖、升级不触碰 extensions 的端到端测试。
+- ✅ **P3-2 已完成**：扩展覆盖（rules/ + knowledge-terms.json，深合并且算法名只读）、
+  `limits` 写接口（超硬顶拒绝）、升级不触碰 extensions 的快照比对。
 - ⏳ **P3-3**：LLM function calling（含 JSON 指令降级路径）、PWA Assistopia 工作区。

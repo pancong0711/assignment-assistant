@@ -170,7 +170,22 @@ def read_rules(ws) -> dict:
     except Exception as exc:  # noqa: BLE001
         logger.warning(f"[规则] {p.name} 解析失败（{str(exc)[:80]}），本次使用默认规则")
         return json.loads(json.dumps(DEFAULT_RULES))
-    return _fill_defaults(raw)
+    return _apply_extensions(p, _fill_defaults(raw))
+
+
+def _apply_extensions(path: Path, data: dict) -> dict:
+    """D132-T18：叠加 `<ws>/extensions/rules/grading-rules.json` 覆盖。
+
+    放在这里而不是 `read_rules` 开头，是为了保证"规则文件本身仍缺失即写默认"
+    的既有语义不变（扩展只**叠加**，不影响默认文件生成）。
+    """
+    try:
+        from ..assistopia import extensions as E
+        ws = path.parent
+        merged = E.effective_rules_from(ws, data)
+        return merged
+    except Exception:  # noqa: BLE001 —— 扩展异常绝不能影响评阅
+        return data
 
 
 def _fill_defaults(raw: dict) -> dict:

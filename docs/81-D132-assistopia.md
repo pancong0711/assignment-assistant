@@ -1,7 +1,7 @@
 # D132 需求单：Assistopia —— AI 调用本项目工具的安全工作区（P3）
 
 > 日期：2026-10-30
-> 状态：**P3-1（T15a/T15b）已完成；P3-2（T17 护栏收尾/T18）与 P3-3（T16/PWA）待做**
+> 状态：**P3-1 / P3-2 已完成；P3-3（T16 function calling / PWA 工作区）待做**
 > 关联：`docs/78-D130` §3.9（P3 T15–T18）、`docs/40-D88`（playground）、`docs/12`
 
 ## 0. 一句话
@@ -151,9 +151,33 @@ AI 调用本机工具的风险与"聊天"完全不同：
 **验证**：engine pytest **922 passed**（新增 `tests/test_d132_assistopia.py` 37 例）；
 app build 0 error；selfcheck 22 项全绿；脱敏通过。
 
-### 10.2 待做（P3-2 / P3-3）
+### 10.2 P3-2：扩展覆盖 + 护栏写接口 + 升级安全（T17/T18，2026-10-30 完成）
 
-- **P3-2**：`limits.json` 写入接口（教师可调但受硬顶）、扩展 `rules/` 与
-  `knowledge-terms.json` 覆盖（目前只做了 `tools/`）、升级流程的"不触碰 extensions"端到端测试。
-- **P3-3**：LLM function calling（T16，含不支持 tools 时的 JSON 指令降级，**降级路径同样受分级约束**）、
-  PWA Assistopia 工作区（工具列表 / 执行 / L2 二次确认 / journal 查看）。
+**新增** `assistopia/extensions.py`：
+- `rules/grading-rules.json` 覆盖 → 经 `rules._apply_extensions` 叠加进 `read_rules`，
+  因此**批阅/规则卡/要点生成全部自动生效**（无需各处改调用）；
+- `knowledge-terms.json` 覆盖 → 按 term 合并进 `load_vocab`（扩展优先）；
+- `snapshot()` / `assert_untouched()`：升级前后比对 extensions/ 文件 sha256，
+  用于**证明**升级没碰用户扩展；
+- `ensure()` **只新建不覆盖**（有测试锁死）。
+
+**`limits.write_limits()`**：教师可调护栏，但**超硬顶直接拒绝**（不是夹住后不吭声），
+并写 `assistopia/journal.jsonl`。
+
+**CLI**：`assist assistopia limits [--set k=v]`、`assist assistopia extensions [--init]`。
+
+**关键决定：算法名（`types.<kind>.mode`）不允许被扩展覆盖**——
+改了会让"计分算法"与"提示词规则摘要"不一致，属于只读项（docs/78 §3.4）。
+
+**实施中修的 1 个真实缺陷**：词表覆盖最初用 `p.parent.parent` 取 workspace 根，
+但 `knowledge-terms.json` **直接在 `<ws>/` 下**，父目录才是根 → 扩展词表静默不生效。
+已改 `p.parent`，测试锁定"扩展词表术语必须出现在 load_vocab 结果里"。
+
+**验证**：engine pytest **936 passed**（新增 `tests/test_d132_assistopia_ext.py` 14 例）；
+app build 0 error；selfcheck 22 项全绿；脱敏通过。
+
+### 10.3 待做（P3-3）
+
+- **T16 LLM function calling**：把工具层暴露成 `tools` 协议；provider 不支持时降级为
+  "模型输出 JSON 指令 → 我方校验并执行"，**降级路径同样受分级/护栏约束**。
+- **PWA Assistopia 工作区**：工具列表（按级别分组）/ 执行 / L2 二次确认 / journal 查看。

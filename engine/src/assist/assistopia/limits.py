@@ -92,3 +92,43 @@ class Session:
 
     def elapsed(self) -> float:
         return time.time() - self.started
+
+
+def write_limits(ws, patch: dict, *, journal: bool = True) -> dict:
+    """教师调整护栏（受**硬顶**约束；非法值拒绝而不是静默接受）。
+
+    docs/81 §4：数值可配，但不能配成"无限"——`HARD_CAPS` 是最后一道闸，
+    这里**直接拒绝**超硬顶的请求（而不是夹住后不吭声），让教师知道没生效。
+    """
+    cur = read_limits(ws)
+    bad: list[str] = []
+    for k, v in (patch or {}).items():
+        if k not in DEFAULTS:
+            bad.append(f"未知项：{k}（可选 {', '.join(DEFAULTS)}）")
+            continue
+        try:
+            iv = int(v)
+        except (TypeError, ValueError):
+            bad.append(f"{k} 必须是整数")
+            continue
+        if iv <= 0:
+            bad.append(f"{k} 必须 > 0")
+            continue
+        if iv > HARD_CAPS[k]:
+            bad.append(f"{k}={iv} 超过硬顶 {HARD_CAPS[k]}（护栏不允许配成无限）")
+            continue
+        cur[k] = iv
+    if bad:
+        return {"ok": False, "error": "；".join(bad), "errors": bad}
+    p = limits_path(ws)
+    p.parent.mkdir(parents=True, exist_ok=True)
+    p.write_text(json.dumps(cur, ensure_ascii=False, indent=1), encoding="utf-8")
+    if journal:
+        try:
+            with (p.parent / "journal.jsonl").open("a", encoding="utf-8") as f:
+                f.write(json.dumps({"ts": time.strftime("%Y-%m-%d %H:%M:%S"),
+                                    "action": "limits.write", "patch": patch,
+                                    "effective": cur}, ensure_ascii=False) + "\n")
+        except Exception as exc:  # noqa: BLE001
+            logger.warning(f"[assistopia] limits journal 写入失败：{exc}")
+    return {"ok": True, "limits": cur, "file": str(p)}

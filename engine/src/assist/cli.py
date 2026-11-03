@@ -1404,6 +1404,54 @@ def assistopia_run(obj, tool_name, args_json, confirmed_by, workspace, verbose):
             (rep['stderr'] or rep['stdout'])[:300]}")
 
 
+@assistopia_grp.command("limits")
+@click.option("--set", "set_pairs", multiple=True,
+              help="设置护栏，如 --set maxCallsPerSession=60（受硬顶约束）")
+@click.option("--workspace", "-w", default=None)
+@click.option("--verbose", "-v", is_flag=True)
+@click.pass_obj
+def assistopia_limits(obj, set_pairs, workspace, verbose):
+    """查看/调整护栏（调用次数、L1 成本、超时、会话时长）。"""
+    from .assistopia import limits as LM
+    ws = _setup(verbose or obj.get("verbose"), workspace)
+    if set_pairs:
+        patch = {}
+        for pair in set_pairs:
+            if "=" not in pair:
+                raise click.ClickException(f"--set 需要 k=v 形式：{pair}")
+            k, v = pair.split("=", 1)
+            patch[k.strip()] = v.strip()
+        rep = LM.write_limits(ws, patch)
+        click.echo(json.dumps(rep, ensure_ascii=False, indent=2))
+        if not rep.get("ok"):
+            raise click.ClickException(rep.get("error") or "设置失败")
+        return
+    click.echo(json.dumps({"ok": True, "limits": LM.read_limits(ws),
+                           "defaults": LM.DEFAULTS, "hardCaps": LM.HARD_CAPS,
+                           "hint": "用 --set key=value 调整；超过硬顶会被拒绝"},
+                          ensure_ascii=False, indent=2))
+
+
+@assistopia_grp.command("extensions")
+@click.option("--init", is_flag=True, help="创建 extensions/ 骨架（不覆盖已有内容）")
+@click.option("--workspace", "-w", default=None)
+@click.option("--verbose", "-v", is_flag=True)
+@click.pass_obj
+def assistopia_extensions(obj, init, workspace, verbose):
+    """查看/初始化用户扩展目录（升级**永不触碰**）。"""
+    from .assistopia import extensions as E
+    ws = _setup(verbose or obj.get("verbose"), workspace)
+    if init:
+        E.ensure(ws)
+    click.echo(json.dumps({
+        "ok": True, "root": str(E.root(ws)),
+        "files": sorted(E.snapshot(ws)),
+        "toolOverrides": __import__("assist.assistopia.registry", fromlist=["x"])
+                          .load_overrides(ws),
+        "hint": "tools/*.json 只能把级别**调高**；rules/ 与 knowledge-terms.json 可覆盖默认",
+    }, ensure_ascii=False, indent=2))
+
+
 @assistopia_grp.command("journal")
 @click.option("--limit", default=30, type=int, show_default=True)
 @click.option("--workspace", "-w", default=None)
