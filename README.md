@@ -42,6 +42,7 @@
 - `docs/33-D81-workspace-kb-doctor-published-cache.md` — **D81 班级发布判定缓存/Workspace-kb 管理/体检项清理**
 - `docs/78-D130-source-aware-grading-rules.md` — **D130 按题目来源分型的评阅规则 + AI 生成评阅要点 + 知识点体系 + Assistopia（项目游乐城）**
 - `docs/79-D131-materials-and-summary-grading.md` — **D131 课堂资料 `<ws>/materials/` → 知识点清单 → `summary` 批阅联动（P2）**
+- `docs/80-D126B-teacher-report.md` — **D126-B 教师总结报告：易错知识点汇总 + 共现 + 得分率**
 - `docs/34-D82-kb-read-order-image-upload-batch.md` — **D82 kb 多文件读取/题目排序/插图参数/草稿修复/上传试跑/batch**
 - `docs/16-xuexitong-integration.md` — **阶段6 学习通整合任务需求单**（登录/读取/下载/上传/发布）
 - `_legacy/` — 原始两项目解档（仅本地参考，已被 gitignore，永不推送）

@@ -333,6 +333,17 @@ def _run_report(ctx: dict, reports_dir: Path) -> list[Path]:
     g = generate_global_report(ctx["evaluations_dir"], reports_dir / "_global_report.md")
     if g:
         outs.append(g)
+    # D126-B：教师总结报告（易错知识点汇总 + 共现 + 得分率）——只给教师，不上传
+    try:
+        from .teacher_report import generate as _gen_teacher
+        tr = _gen_teacher(ctx["evaluations_dir"], reports_dir,
+                          title=str(ctx.get("homework") or ""),
+                          subtitle=str((ctx.get("plan") or {}).get("classDir") or ""))
+        if tr.get("ok"):
+            outs.append(Path(tr["md"]))
+            outs.append(Path(tr["stats"]))
+    except Exception as exc:  # noqa: BLE001 —— 教师报告失败不影响学生报告
+        logger.warning(f"[教师报告] 生成失败（不影响学生报告）：{str(exc)[:160]}")
     return outs
 
 

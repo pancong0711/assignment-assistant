@@ -1813,6 +1813,34 @@ def rules_reset(obj, workspace, verbose):
                            "file": res.get("file")}, ensure_ascii=False, indent=2))
 
 
+@cli.command("teacher-report")
+@click.option("--task", "task_path", required=True, help="任务包 JSON（定位 grading 产物）")
+@click.option("--top", "top_n", default=15, type=int, show_default=True,
+              help="易错知识点/共现各列几条")
+@click.option("--out", "out_dir", default="", help="输出目录（缺省 grading/<task>/reports）")
+@click.option("--workspace", "-w", default=None)
+@click.option("--verbose", "-v", is_flag=True)
+@click.pass_obj
+def teacher_report_cmd(obj, task_path, top_n, out_dir, workspace, verbose):
+    """D126-B：生成教师总结报告（易错知识点 + 共现 + 得分率；只给教师）。"""
+    from .grading import teacher_report as TR
+    from .grading.flow import grading_dir
+    ws = _setup(verbose or obj.get("verbose"), workspace)
+    task_file = Path(task_path).expanduser().resolve()
+    if not task_file.is_file():
+        raise click.ClickException(f"任务包不存在：{task_file}")
+    task = json.loads(task_file.read_text(encoding="utf-8"))
+    base = grading_dir(ws, task)
+    ev = base / "evaluations"
+    if not any(ev.glob("[!_]*.json")):
+        raise click.ClickException(f"没有评阅结果：{ev}（先跑批阅）")
+    out = Path(out_dir).expanduser() if out_dir else (base / "reports")
+    rep = TR.generate(ev, out, title=str(task.get("course") or task.get("id") or ""),
+                      subtitle=str(task.get("class_dir") or ""), top_n=top_n)
+    click.echo(json.dumps({k: v for k, v in rep.items() if k != "stat"},
+                          ensure_ascii=False, indent=2))
+
+
 @cli.command("grade-drafts")
 @click.option("--task", "task_path", required=True, help="任务包 JSON（定位 grading 产物）")
 @click.option("--class", "class_id", required=True, help="学习通班级 ID（草稿键用）")
