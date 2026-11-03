@@ -72,6 +72,10 @@ watch(kbKind, () => { kbChap.value = ''; kbIdsSel.value = [] })
 watch(kbChap, () => { kbIdsSel.value = [] })
 // D100-T3/T8：AI 作答默认置顶（生效答案）；取消勾选 = 只追加版本不抢原答案
 const kbPin = ref(true); const kbApply = ref(false)
+/* D133：同时生成「评阅要点 + 知识点」。
+ * 勾选后**默认不置顶**（要点未经教师确认不该抢生效答案，D130 验收 5），
+ * 教师可再显式勾「同时置顶」；不勾则只生成解答，行为与旧版一致。 */
+const kbWithRubric = ref(false); const kbPinRubric = ref(false)
 // D104：教师额外作答要求（可选）—— 例如「请画出示意图」「输出为 HTML 文档」
 const kbRequirement = ref('')
 /* D108：提示词模板库（保存/默认/删除；存储于 <ws>/prompts/ai-solve/，CLI 可复用） */
@@ -240,6 +244,8 @@ async function solveByKb() {
     const jobId = await startKbAiSolve(props.engineAddr, props.token, {
       kb: kbKind.value, chap: kbChap.value, ids, model: kbModel.value,
       pin: kbPin.value, apply: kbApply.value,
+      withRubric: kbWithRubric.value,
+      pinRubric: kbWithRubric.value && kbPinRubric.value,
       // 真正的"整库"仅在显式确认后下发
       all: !ids.length && !kbChap.value,
       requirement: kbRequirement.value.trim(),
@@ -254,7 +260,10 @@ async function solveByKb() {
         if (kbApply.value) {
           // D100-T8：作答写回版本库 → 刷新生效答案索引（题库表格/作业纸预览立即跟随）
           await kbStore.bumpSolutions()
-          kbSolveMsg.value = `作答并写回完成（${kbPin.value ? '已置顶为生效答案' : '未置顶，仅追加版本'}）：`
+          const pinDesc = kbWithRubric.value
+            ? (kbPinRubric.value ? '已置顶（含要点）' : '未置顶（要点待你确认后再置顶）')
+            : (kbPin.value ? '已置顶为生效答案' : '未置顶，仅追加版本')
+          kbSolveMsg.value = `作答并写回完成（${pinDesc}）：`
             + (lines.slice(-2).join(' ') || '')
           return
         }
@@ -1025,7 +1034,19 @@ onMounted(async () => {
       <label class="field" title="不勾=仅 dry-run 预览将作答哪些题；勾=真正调 LLM 并写回 kb/solutions/">
         <input type="checkbox" v-model="kbApply" /> 真正作答并写回
       </label>
+      <label class="field"
+             title="一次产出「参考解答 + 评阅要点 + 知识点」（带该题型规则摘要），写入同一版本">
+        <input type="checkbox" v-model="kbWithRubric" /> 同时生成评阅要点
+      </label>
+      <label v-if="kbWithRubric" class="field"
+             title="默认不置顶：AI 要点未经教师确认，不该抢生效答案（D130 验收 5）">
+        <input type="checkbox" v-model="kbPinRubric" /> 同时置顶（跳过确认）
+      </label>
     </div>
+    <p v-if="kbWithRubric" class="hint" style="margin:2px 0 0">
+      ⓘ 要点与解答**同一次生成**（口径一致）。默认<b>不置顶</b>：先在题库表格里核对要点，
+      确认无误再「置顶」为生效答案；`copy`/`summary` 按口径不生成 AI 要点。
+    </p>
     <div style="margin:6px 0">
       <!-- D108：提示词模板库 -->
       <div style="display:flex; gap:6px; align-items:center; flex-wrap:wrap; margin-bottom:4px">

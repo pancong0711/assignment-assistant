@@ -456,11 +456,17 @@ def kb_snapshot(obj, workspace, verbose):
 @click.option("--all", "all_questions", is_flag=True,
               help="D110：显式确认「整库作答」。未给 --chap 且未给 --ids 时必须加此开关，"
                    "避免空选择被误解成整库而误刷全库答案")
+@click.option("--with-rubric/--no-with-rubric", "with_rubric", default=False,
+              help="D133：同时生成「评阅要点 + 知识点」（带该题型规则摘要），"
+                   "写入同一版本。**默认不置顶**，教师确认后才生效")
+@click.option("--pin-rubric", is_flag=True,
+              help="配合 --with-rubric：生成后**直接置顶**（默认不置顶，需教师确认）")
 @click.option("--workspace", "-w", default=None)
 @click.option("--verbose", "-v", is_flag=True)
 @click.pass_obj
 def kb_ai_solve(obj, kb_kind, chap, ids, model, pin, apply, concurrency, requirement,
-                requirement_template, all_questions, workspace, verbose):
+                requirement_template, all_questions, with_rubric, pin_rubric,
+                workspace, verbose):
     """D89-N5/D100：对题库题目做 AI 作答（**不覆盖**原答案，新增版本并默认置顶；默认 dry-run）。"""
     from .grading import solve as solve_mod
     ws = _setup(verbose or obj.get("verbose"), workspace)
@@ -477,11 +483,24 @@ def kb_ai_solve(obj, kb_kind, chap, ids, model, pin, apply, concurrency, require
     # D108：模板优先；无模板则用单次输入
     from .files.prompts import requirement_text
     req_text = requirement_text(ws, requirement_template, requirement)
-    res = solve_mod.solve_targets(ws, targets, model=model, apply=apply, pin=pin,
+    # D133：带要点时**默认不置顶**（未确认的要点不该抢生效答案，D130 验收 5）；
+    # 教师要"生成即生效"需显式 --pin-rubric。
+    eff_pin = bool(pin)
+    if with_rubric and not pin_rubric:
+        eff_pin = False
+    if kb_kind in ("copy", "summary") and with_rubric:
+        from .grading.rules import rubric_enabled
+        if not rubric_enabled(ws, kb_kind):
+            click.echo(f"提示：{kb_kind} 按口径不生成 AI 评阅要点（以原文/课堂资料为唯一依据），"
+                       f"本次只生成参考解答。", err=True)
+            with_rubric = False
+    res = solve_mod.solve_targets(ws, targets, model=model, apply=apply, pin=eff_pin,
                                   dry_run=True, concurrency=concurrency,
-                                  requirement=req_text)
+                                  requirement=req_text, with_rubric=with_rubric)
     if res.get("dryRun"):
         click.echo(json.dumps({"dryRun": True, "planned": res["planned"],
+                               "withRubric": bool(with_rubric),
+                               "pin": eff_pin,
                                "ids": [p["id"] for p in res.get("plans", [])]},
                               ensure_ascii=False, indent=2))
         click.echo("（dry-run：加 --apply 才真正作答并写回 kb/solutions/）")

@@ -1760,7 +1760,11 @@ export async function startKbAiSolve(
     /** D108：提示词模板 id（优先于 requirement） */
     requirementTemplate?: string
     /** D110：显式确认「整库作答」（未给 chap/ids 时必须为 true，否则引擎 400） */
-    all?: boolean },
+    all?: boolean
+    /** D133：同时生成「评阅要点 + 知识点」（带题型规则摘要，写入同一版本） */
+    withRubric?: boolean
+    /** D133：生成后直接置顶（默认**不**置顶——未确认的要点不该抢生效答案） */
+    pinRubric?: boolean },
 ): Promise<string> {
   const base = normalizeEngineAddr(engineAddr)
   const res = await fetch(engineUrlWithToken(base, '/kb/ai-solve', token), {

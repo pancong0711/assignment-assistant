@@ -1626,6 +1626,11 @@ class Handler(BaseHTTPRequestHandler):
             # D108：提示词模板（优先于 requirement）
             if str(payload.get("requirementTemplate") or "").strip():
                 args += ["--requirement-template", str(payload.get("requirementTemplate"))]
+            # D133：可选同时生成评阅要点（带题型规则摘要）
+            if payload.get("withRubric") is True:
+                args += ["--with-rubric"]
+                if payload.get("pinRubric") is True:
+                    args += ["--pin-rubric"]
             # D100-T3：AI 作答默认置顶（生效答案）；显式 pin=false 才保持"不抢原答案"。
             if payload.get("pin", True) is False:
                 args += ["--no-pin"]

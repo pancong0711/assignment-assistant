@@ -33,7 +33,7 @@
 2. PWA「题库 AI 作答」按钮加勾选项「同时生成评阅要点」；
 3. 默认**仍不置顶要点版**（与 D130 验收 5 一致），由教师确认。
 
-> 未在本轮实施：属于**功能变更**（改 AI 作答的产出契约），需要你拍板默认值。
+> **已实施（D133，见 §3）** —— 用户确认后按"默认不置顶"落地。
 
 ## 2. 刷新后「逐生审核」tag / AI 状态不显示（已修复）
 
@@ -78,3 +78,34 @@ B taskId=''    → []          ← 刷新后的真实情况
   —— 挂载**真实面板**（不选作业包 = 刷新后的状态）+ 真实引擎 + 真实名单/草稿，
   断言 tag 列、AI 状态「已评阅」、AI 分、「读取状态」按钮均正常。
 - 全量：engine pytest **962 passed**；build 0 error；selfcheck **24 项全绿**；脱敏通过。
+
+## 3. D133：AI 作答同时生成评阅要点（已实施 2026-10-30）
+
+### 3.1 改动
+
+| 层 | 改动 |
+|---|---|
+| `grading/solve.py` | `solve_targets(..., with_rubric=False)`：走 `rubric.generate_rubric`（**带题型规则摘要**）+ `rubric_to_text`，一次产出「参考解答 + 评阅要点 + 知识点」，写入同一答案版本 |
+| `cli.py` | `kb ai-solve --with-rubric [--pin-rubric]`；`copy/summary` 按口径自动跳过要点并给出提示 |
+| `serve.py` | `/kb/ai-solve` 接受 `withRubric` / `pinRubric` |
+| `AiGradingPanel.vue` | 「⑦ 题库 AI 作答」新增勾选项「同时生成评阅要点」+（勾选后出现）「同时置顶（跳过确认）」 |
+
+### 3.2 默认值（关键口径）
+
+- **`--with-rubric` 时默认 `pin=False`**：要点未经教师确认，不该抢生效答案（D130 验收 5）。
+  要"生成即生效"必须显式 `--pin-rubric` / 勾"同时置顶"。
+- 不带 `--with-rubric` 时**行为与旧版完全一致**（纯解答 + 默认置顶），有测试锁定。
+- `copy` / `summary` **不生成** AI 要点（以原文/课堂资料为唯一依据，docs/78 §3.1）。
+
+### 3.3 闭环验证
+
+`test_pinned_rubric_feeds_grading_prompt`：教师置顶后，`expand_items` 取到的
+"参考答案"就是这份带要点的文本 → **批阅 prompt 里真的出现评阅要点**。
+
+### 3.4 测试
+
+`tests/test_d133_ai_solve_with_rubric.py` **11 例**：解答+要点同源产出 / prompt 带规则摘要 /
+不带选项时行为不变 / 默认不置顶 / 显式可置顶 / 置顶后进批阅 prompt /
+dry-run 标记 / 空要点报错 / CLI 三种情形（默认不置顶、显式置顶、copy 自动跳过）。
+
+**验证**：engine pytest **973 passed**；build 0 error；selfcheck 24 项全绿；脱敏通过。

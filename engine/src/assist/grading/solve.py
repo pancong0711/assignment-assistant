@@ -81,23 +81,57 @@ def _client(ws: Path, model: str = ""):
 
 def solve_targets(ws: Path, targets: list[dict], *, model: str = "", apply: bool = False,
                   pin: bool = True, dry_run: bool = True, concurrency: int = 3,
-                  requirement: str = "") -> dict:
+                  requirement: str = "", with_rubric: bool = False) -> dict:
     """对 targets AI 作答（D98：并发）；apply=False 只预览。返回 {ok, planned, written, results[]}。
 
     D100-T3：`pin=True`（默认）= 作答后置顶为新生效答案（"AI 生成内容默认置顶"）；
     传 False 则只追加版本（等价旧行为，不抢原答案）。
+
+    D133：`with_rubric=True` → 一次产出「参考解答 + 评阅要点 + 知识点」，
+    写入答案版本库（走 `rubric.build_rubric_prompt`，**带该题型规则摘要**）。
+    要点与解答**同源同次生成**，避免"答案一套口径、要点另一套口径"。
+    注意：要点未经教师确认，按 D130 验收 5 **默认不置顶**；
+    是否置顶仍由 `pin` 决定，因此 CLI/serve 在 with_rubric 时应显式传 `pin=False`
+    （除非教师明确要求"生成即生效"）。
     """
     plans = [{"id": t["id"], "prompt": build_question_prompt(t.get("content", ""),
                                                              t.get("related", ""), t.get("type", ""),
                                                              requirement),
+              "content": t.get("content", ""), "related": t.get("related", ""),
               "kb": t.get("kb", ""), "chap": t.get("chap", "")} for t in targets]
     if dry_run and not apply:
-        return {"ok": True, "dryRun": True, "planned": len(plans), "plans": plans}
+        return {"ok": True, "dryRun": True, "planned": len(plans), "plans": plans,
+                "withRubric": bool(with_rubric)}
     client, used_model = _client(ws, model)
 
     def _one(p: dict) -> dict:
         """单题作答（每调用独立请求）。"""
         try:
+            if with_rubric:
+                # D133：一次调用产出「解答 + 要点 + 知识点」（带题型规则摘要）
+                from . import rubric as RB
+                rub = RB.generate_rubric(
+                    client, ws=ws, kind=str(p.get("kb") or "problems"),
+                    content=str(p.get("content") or ""),
+                    related=str(p.get("related") or ""), model=model or None)
+                text = RB.rubric_to_text(rub)
+                if not text.strip():
+                    return {"id": p["id"], "ok": False, "error": "模型未给出参考解答/要点"}
+                points = len([x for x in (rub.get("rubric_points") or [])
+                              if isinstance(x, dict)])
+                if apply:
+                    # D133：要点版**默认不置顶**（未经教师确认，见 D130 验收 5）。
+                    # 置顶与否完全由调用方的 `pin` 决定——调用方不传 pin=False 就置顶，
+                    # 所以 CLI/serve 在 with_rubric 时必须显式传 pin=False（默认）。
+                    r = sol.add_version(ws, p["id"], text, source="ai", model=used_model,
+                                        kb=p.get("kb", ""), chap=p.get("chap", ""),
+                                        pin=bool(pin))
+                    return {"id": p["id"], "ok": bool(r.get("ok")), "chars": len(text),
+                            "model": used_model, "withRubric": True,
+                            "rubricPoints": points, "pinned": bool(pin),
+                            "error": r.get("error")}
+                return {"id": p["id"], "ok": True, "chars": len(text),
+                        "model": used_model, "withRubric": True, "rubricPoints": points}
             text = client.chat(system_prompt=SOLVE_SYSTEM_PROMPT, user_text=p["prompt"],
                                step="evaluation")
             if apply:
