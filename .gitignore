@@ -80,6 +80,8 @@ app/tests/*.bundle.mjs
 app/tests/.d130-*
 app/tests/.d131-*
 app/tests/.d126b-*
+app/tests/.d132-*
+app/tests/_d132.*.html
 app/tests/_d131.*.html
 app/tests/_d130.*.html
 app/tests/*-*.vue

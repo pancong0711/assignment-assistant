@@ -2081,3 +2081,47 @@ export async function fetchMaterialsKnowledge(
   return (await getJson2(engineUrlWithToken(
     base, `/materials/knowledge?${qs.toString()}`, token))) as any
 }
+
+/* ========== D132：Assistopia（工具白名单 / 执行 / 审计） ========== */
+
+export interface AssistopiaTool {
+  name: string
+  level: 'L0' | 'L1' | 'L2' | 'L3'
+  levelLabel: string
+  summary: string
+  argv: string[]
+  allowedArgs: Record<string, string>
+}
+
+export async function fetchAssistopiaTools(
+  engineAddr: string, token: string | undefined,
+): Promise<{ ok?: boolean; levels?: Record<string, string>; tools?: AssistopiaTool[]
+             limits?: Record<string, number>; hardCaps?: Record<string, number>
+             extensions?: string; error?: string }> {
+  const base = normalizeEngineAddr(engineAddr)
+  return (await getJson2(engineUrlWithToken(base, '/assistopia/tools', token))) as any
+}
+
+export async function runAssistopiaTool(
+  engineAddr: string, token: string | undefined,
+  payload: { tool: string; args?: Record<string, any>; confirm?: string; session?: string },
+): Promise<{ ok?: boolean; error?: string; denied?: boolean; limited?: boolean
+             status?: string; level?: string; exit?: number; ms?: number
+             stdout?: string; stderr?: string }> {
+  const base = normalizeEngineAddr(engineAddr)
+  const res = await fetch(engineUrlWithToken(base, '/assistopia/run', token), {
+    method: 'POST', headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(payload),
+  })
+  const o = (await res.json().catch(() => ({}))) as any
+  if (!res.ok && !o?.error) throw new Error(`HTTP ${res.status}`)
+  return o
+}
+
+export async function fetchAssistopiaJournal(
+  engineAddr: string, token: string | undefined, limit = 100,
+): Promise<{ ok?: boolean; records?: any[]; error?: string }> {
+  const base = normalizeEngineAddr(engineAddr)
+  return (await getJson2(engineUrlWithToken(
+    base, `/assistopia/journal?limit=${limit}`, token))) as any
+}

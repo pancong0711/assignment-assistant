@@ -1907,6 +1907,37 @@ class Handler(BaseHTTPRequestHandler):
                                                    "taskId": task_id, "kind": kind})
             self._json({"ok": True, "job_id": job_id})
             return
+        if u.path == "/assistopia/run":
+            # D132：执行一个工具。**L2 必须带 confirm**（教师在前端点了确认），
+            # L3 一律拒绝（由 runner 保证）；每次调用写 journal。
+            payload: dict = {}
+            try:
+                length = int(self.headers.get("Content-Length") or 0)
+                if length:
+                    payload = json.loads(self.rfile.read(length).decode("utf-8")) or {}
+            except Exception as exc:  # noqa: BLE001
+                self._json({"ok": False, "error": f"bad json: {exc}"}, 400)
+                return
+            from .assistopia import limits as _al2
+            from .assistopia import runner as _arn2
+            from .assistopia.registry import ToolDenied as _TD
+            ws_ = Path(self.ws).resolve()
+            tool = str(payload.get("tool") or "")
+            args = payload.get("args") if isinstance(payload.get("args"), dict) else {}
+            confirm = str(payload.get("confirm") or "")
+            sess = _al2.Session(session_id=str(payload.get("session") or "pwa"),
+                                limits=_al2.read_limits(ws_))
+            try:
+                rep = _arn2.run_tool(ws_, tool, args, session=sess,
+                                     confirmed_by=confirm)
+            except _TD as exc:
+                self._json({"ok": False, "error": str(exc), "denied": True}, 403)
+                return
+            except _al2.LimitExceeded as exc:
+                self._json({"ok": False, "error": str(exc), "limited": True}, 429)
+                return
+            self._json(rep, 200 if rep.get("ok") else 400)
+            return
         if u.path == "/rules/save":
             payload: dict = {}
             try:
@@ -2704,6 +2735,25 @@ class Handler(BaseHTTPRequestHandler):
                     stu.setdefault("key", str(stu.get("workAnswerId")
                                               or stu.get("name") or ""))
             self._json(rep)
+            return
+        elif u.path == "/assistopia/tools":
+            # D132：工具白名单 + 分级（含扩展覆盖后的生效级别）
+            from .assistopia import limits as _al
+            from .assistopia import registry as _ar
+            ws_ = Path(self.ws).resolve()
+            self._json({"ok": True,
+                        "levels": _ar.LEVEL_LABEL,
+                        "limits": _al.read_limits(ws_),
+                        "hardCaps": _al.HARD_CAPS,
+                        "extensions": str(_ar.extensions_dir(ws_)),
+                        "tools": [t.to_dict() for t in _ar.effective_tools(ws_)]})
+            return
+        elif u.path == "/assistopia/journal":
+            from .assistopia import runner as _arn
+            q = urllib.parse.parse_qs(u.query)
+            limit = int((q.get("limit") or ["100"])[0] or 100)
+            self._json({"ok": True, "records": _arn.read_journal(
+                Path(self.ws).resolve(), limit=max(1, min(limit, 500)))})
             return
         elif u.path == "/materials/list":
             # D131-T21d：课堂资料章节清单（PWA 只读展示；抽取/确认仍走 CLI 以保教师把关）

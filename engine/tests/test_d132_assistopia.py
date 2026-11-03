@@ -292,3 +292,77 @@ def test_cli_l3_denied(ws: Path):
     out = CliRunner().invoke(cli, ["assistopia", "run", "--tool", "migrate.apply",
                                    "-w", str(ws)])
     assert out.exit_code != 0 and "L3" in out.output
+
+
+# ---------------- serve 接口（真实 HTTP） ----------------
+def _serve(ws):
+    import socket, threading, time
+    from assist import serve as S
+    S.Handler.ws = ws
+    S.Handler.token = ""
+    s0 = socket.socket(); s0.bind(("127.0.0.1", 0)); port = s0.getsockname()[1]; s0.close()
+    httpd = S.ThreadingHTTPServer(("127.0.0.1", port), S.Handler)
+    threading.Thread(target=httpd.serve_forever, daemon=True).start()
+    time.sleep(0.2)
+    return f"http://127.0.0.1:{port}", httpd
+
+
+def test_serve_tools_and_journal(ws: Path):
+    import json as _j
+    import urllib.request
+    base, httpd = _serve(ws)
+    try:
+        with urllib.request.urlopen(f"{base}/assistopia/tools", timeout=5) as r:
+            o = _j.loads(r.read().decode())
+        assert o["ok"] and any(t["name"] == "kb.stats" for t in o["tools"])
+        assert o["levels"]["L2"].startswith("写入")
+        with urllib.request.urlopen(f"{base}/assistopia/journal", timeout=5) as r:
+            j = _j.loads(r.read().decode())
+        assert j["ok"] and isinstance(j["records"], list)
+    finally:
+        httpd.shutdown()
+
+
+def test_serve_run_l3_forbidden(ws: Path):
+    import json as _j
+    import urllib.error, urllib.request
+
+    base, httpd = _serve(ws)
+    try:
+        req = urllib.request.Request(
+            f"{base}/assistopia/run", method="POST",
+            data=_j.dumps({"tool": "migrate.apply"}).encode(),
+            headers={"Content-Type": "application/json"})
+        import pytest as _pt
+        with _pt.raises(urllib.error.HTTPError) as ei:
+            urllib.request.urlopen(req, timeout=5)
+        assert ei.value.code == 403
+        assert "L3" in _j.loads(ei.value.read().decode())["error"]
+    finally:
+        httpd.shutdown()
+
+
+def test_serve_run_l2_requires_confirm(ws: Path):
+    import json as _j
+    import urllib.error, urllib.request
+
+    base, httpd = _serve(ws)
+    try:
+        req = urllib.request.Request(
+            f"{base}/assistopia/run", method="POST",
+            data=_j.dumps({"tool": "rules.reset"}).encode(),
+            headers={"Content-Type": "application/json"})
+        import pytest as _pt
+        with _pt.raises(urllib.error.HTTPError) as ei:
+            urllib.request.urlopen(req, timeout=5)
+        assert ei.value.code == 403
+
+        req2 = urllib.request.Request(
+            f"{base}/assistopia/run", method="POST",
+            data=_j.dumps({"tool": "rules.reset", "confirm": "teacher:pwa"}).encode(),
+            headers={"Content-Type": "application/json"})
+        with urllib.request.urlopen(req2, timeout=15) as r:
+            o = _j.loads(r.read().decode())
+        assert o["ok"] is True
+    finally:
+        httpd.shutdown()
