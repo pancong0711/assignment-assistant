@@ -773,4 +773,5 @@ rainclass 67/67，PWA↔engine 全等，仅末位浮点四舍五入噪声）。
   `limits` 写接口（超硬顶拒绝）、升级不触碰 extensions 的快照比对。
 - ✅ **T16 已完成**：`assist assistopia ask` JSON 指令会话，与 CLI 共用同一 Gate
   （L3 拒绝 / L2 二次确认 / 护栏），非 JSON 回复不猜意图。
-- ⏳ **PWA Assistopia 工作区**：工具列表/执行/确认/journal 查看（引擎侧已就绪）。
+- ✅ **PWA Assistopia 工作区已完成**：工具分组 / L2 二次确认 / 审计日志；
+  真实浏览器回归验证「确认前未执行」。P3 全部完成。

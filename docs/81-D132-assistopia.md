@@ -1,7 +1,7 @@
 # D132 需求单：Assistopia —— AI 调用本项目工具的安全工作区（P3）
 
 > 日期：2026-10-30
-> 状态：**P3-1 / P3-2 / T16 已完成；PWA 工作区界面待做**
+> 状态：**P3 全部完成（P3-1 / P3-2 / T16 / PWA 工作区）**
 > 关联：`docs/78-D130` §3.9（P3 T15–T18）、`docs/40-D88`（playground）、`docs/12`
 
 ## 0. 一句话
@@ -202,7 +202,43 @@ app build 0 error；selfcheck 22 项全绿；脱敏通过。
 
 **验证**：engine pytest **951 passed**；build 0 error；selfcheck 22 项全绿；脱敏通过。
 
-### 10.4 待做
+### 10.4 PWA Assistopia 工作区（2026-10-30 完成）
 
-- **PWA Assistopia 工作区**：工具列表（按级别分组）/ 执行 / L2 二次确认 / journal 查看。
-  引擎侧已全部就绪（`/assistopia/tools`、`/assistopia/run`、`/assistopia/journal` 尚需 expose）。
+**serve 接口**：
+- `GET /assistopia/tools`：工具白名单 + 生效级别（含扩展覆盖）+ 护栏
+- `GET /assistopia/journal?limit=`：审计日志
+- `POST /assistopia/run`：执行；**L3 → 403**、**L2 无 confirm → 403**、护栏超限 → 429
+
+**前端** `AssistopiaPanel.vue`（挂在批阅面板底部）：
+- 工具按级别分组（L0/L1/L2 可点；**L3 折叠并明确标「不开放」**，连执行按钮都不给）；
+- 参数按允许项自动生成模板；
+- **L2 二次确认**：点执行后先弹出「将要执行的工具 + 参数」，教师点「我确认执行」才发请求；
+- 执行结果显示 stdout/stderr；下方审计日志（时间/工具/级别/状态/耗时/**确认来源**）。
+
+**真实浏览器回归**（`app/tests/run-d132-assistopia-browser.sh`）断言：
+工具列表渲染 / L3 标明不开放 / L0 直接执行 / **L2 确认前未执行**（查引擎 journal）/
+确认后执行且 `confirmed_by=teacher:pwa` / 审计日志可见 / 无 JS 报错。
+
+> 其中「**确认前未执行**」这条特意查**引擎侧 journal**，而不是只看界面文案——
+> 界面说「请确认」但背后已经执行，是这类确认流程最典型的假安全。
+
+**验证**：engine pytest **954 passed**；build 0 error；selfcheck **23 项全绿**；脱敏通过。
+
+### 10.5 P3 完成度对照（docs/81 §8）
+
+| # | 验收项 | 状态 | 依据 |
+|---|---|---|---|
+| 1 | 未登记命令一律拒绝 | ✅ | `test_unregistered_tool_denied`（registry 与 agent 各一例） |
+| 2 | L3 无法被任何配置开通 | ✅ | `test_l3_cannot_be_opened_by_extensions` / `test_serve_run_l3_forbidden` |
+| 3 | L2 未确认不得执行；确认记 journal | ✅ | `test_l2_requires_confirmation` / `test_l2_confirmation_recorded_in_journal` + 浏览器回归 |
+| 4 | L0/L1 直接执行且留 journal（前 500 字） | ✅ | `test_l0_runs_and_journals` / `test_journal_truncates_long_output` |
+| 5 | 超上限/超时 → 拒绝或 kill 且有可读原因 | ✅ | `test_limit_call_count` / `test_timeout_kills_and_journals` / `test_write_limits_rejects_over_hard_cap` |
+| 6 | extensions 覆盖生效但只能更严 | ✅ | `test_extension_can_raise_level` / `test_extension_cannot_lower_level` / `test_extension_cannot_register_new_tool` |
+| 7 | 升级不触碰 extensions | ✅ | `test_snapshot_and_untouched` / `test_assert_untouched_detects_modification` |
+| 8 | pytest / build / selfcheck / 脱敏 全绿 | ✅ | 954 / 0 / 23 / 通过 |
+
+### 10.6 已知限制
+
+- **未接原生 `tools` 协议**：会话用 JSON 指令协议（理由见 §10.3）。若将来某些 provider
+  更适配原生 tools，可在 `agent.run_session` 增加原生分支，**Gate 复用不变**。
+- `--yes` 会自动同意 L2（仅供教师本人在终端使用），仍有 `confirmed_by` 记录可审计。
