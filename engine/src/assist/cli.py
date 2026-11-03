@@ -1404,6 +1404,42 @@ def assistopia_run(obj, tool_name, args_json, confirmed_by, workspace, verbose):
             (rep['stderr'] or rep['stdout'])[:300]}")
 
 
+@assistopia_grp.command("ask")
+@click.argument("task")
+@click.option("--model", default="", help="覆盖模型")
+@click.option("--yes", "auto_yes", is_flag=True,
+              help="对 L2 写入工具自动确认（**仅供教师本人在终端使用**；仍不做 L3）")
+@click.option("--max-turns", default=6, type=int, show_default=True)
+@click.option("--workspace", "-w", default=None)
+@click.option("--verbose", "-v", is_flag=True)
+@click.pass_obj
+def assistopia_ask(obj, task, model, auto_yes, max_turns, workspace, verbose):
+    """让 AI 在本项目工具上完成一个任务（受分级/护栏/审计约束）。"""
+    from .assistopia import agent as AG
+    from .assistopia import limits as LM
+    from .grading.llm import LLMClient
+    ws = _setup(verbose or obj.get("verbose"), workspace)
+    client = _rubric_client(ws)
+    sess = LM.Session(session_id=f"ask-{id(obj)}", limits=LM.read_limits(ws))
+
+    def _confirm(tool_name: str, args: dict) -> str:
+        # L2 二次确认：终端里逐次问（--yes 才自动同意，仍然逐次记账）
+        if auto_yes:
+            click.echo(f"[确认] 自动同意 {tool_name} {json.dumps(args, ensure_ascii=False)}",
+                       err=True)
+            return "teacher:cli:--yes"
+        ok = click.confirm(
+            f"\nAI 请求执行写操作：{tool_name}\n  参数：{json.dumps(args, ensure_ascii=False)}"
+            f"\n确认执行？（会修改工作区数据）", default=False)
+        return "teacher:cli:confirm" if ok else ""
+
+    rep = AG.run_session(client, ws, task, model=model or None, session=sess,
+                         confirm=_confirm, max_turns=max_turns)
+    click.echo(json.dumps(rep, ensure_ascii=False, indent=2))
+    if not rep.get("ok"):
+        raise click.ClickException(rep.get("error") or "会话失败")
+
+
 @assistopia_grp.command("limits")
 @click.option("--set", "set_pairs", multiple=True,
               help="设置护栏，如 --set maxCallsPerSession=60（受硬顶约束）")

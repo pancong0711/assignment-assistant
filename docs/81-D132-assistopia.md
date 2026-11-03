@@ -1,7 +1,7 @@
 # D132 需求单：Assistopia —— AI 调用本项目工具的安全工作区（P3）
 
 > 日期：2026-10-30
-> 状态：**P3-1 / P3-2 已完成；P3-3（T16 function calling / PWA 工作区）待做**
+> 状态：**P3-1 / P3-2 / T16 已完成；PWA 工作区界面待做**
 > 关联：`docs/78-D130` §3.9（P3 T15–T18）、`docs/40-D88`（playground）、`docs/12`
 
 ## 0. 一句话
@@ -176,8 +176,33 @@ app build 0 error；selfcheck 22 项全绿；脱敏通过。
 **验证**：engine pytest **936 passed**（新增 `tests/test_d132_assistopia_ext.py` 14 例）；
 app build 0 error；selfcheck 22 项全绿；脱敏通过。
 
-### 10.3 待做（P3-3）
+### 10.3 T16：LLM function calling 会话（2026-10-30 完成）
 
-- **T16 LLM function calling**：把工具层暴露成 `tools` 协议；provider 不支持时降级为
-  "模型输出 JSON 指令 → 我方校验并执行"，**降级路径同样受分级/护栏约束**。
+**新增** `assistopia/agent.py`：`run_session()` 多轮会话循环。
+
+- 采用**JSON 指令协议**（`{"action":"tool"|"final", ...}`）而非先做原生 `tools`：
+  本项目所有 LLM 客户端都是 `chat(system,user_text)` 单轮接口，JSON 指令**在所有
+  provider 上都可用**，不需要为原生 tools 改造客户端；
+- 每轮把「工具结果」回喂模型（否则多轮等于瞎跑）；
+- **统一 Gate**：两条路径最终都调同一个 `runner.run_tool()`
+  → L3 拒绝 / L2 二次确认 / 参数白名单 / 护栏**全部照旧生效**；
+- 模型没按 JSON 回复 → 当**最终回答**，**不猜测意图执行工具**（防幻觉触发写操作）；
+- 容忍 ```json 围栏与前后废话（`_parse_json_reply`）。
+
+**CLI**：`assist assistopia ask "<任务>" [--yes] [--max-turns N]`
+（`--yes` = 教师本人终端自动同意 L2，仍不做 L3，且逐次记账）。
+
+**测试锁定的 6 条安全性质**（`tests/test_d132_assistopia_agent.py` 15 例）：
+1. 模型请求 L3 → 拒绝，且**不写 journal**（压根没执行）；
+2. 模型请求未登记工具 → 拒绝；
+3. L2 无确认通道 → 拒绝；教师拒绝 → 拒绝；教师同意 → 执行且 journal 记 `confirmed_by`；
+4. 扩展把 L0 提成 L2 后，会话里**同样**要求确认（提级不被绕过）；
+5. 护栏超限 → 会话中止；
+6. 非 JSON 回复 → 当回答，不执行任何工具。
+
+**验证**：engine pytest **951 passed**；build 0 error；selfcheck 22 项全绿；脱敏通过。
+
+### 10.4 待做
+
 - **PWA Assistopia 工作区**：工具列表（按级别分组）/ 执行 / L2 二次确认 / journal 查看。
+  引擎侧已全部就绪（`/assistopia/tools`、`/assistopia/run`、`/assistopia/journal` 尚需 expose）。
