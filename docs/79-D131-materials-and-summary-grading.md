@@ -196,15 +196,15 @@
 
 ### 10.4 P2 未做（已记录）
 
-- **PWA 界面**：本轮只做引擎 + CLI + 只读 serve 接口；PWA 的"资料管理页/知识点勾选确认"
-  留待下一轮（设计上刻意让**确认动作走 CLI**，避免 AI 直接改生效清单）。
+- ~~PWA 界面~~ → **只读版已完成**（`MaterialsView.vue`，见 §10.6）；
+  "勾选知识点 → 确认"仍**刻意留在 CLI**（避免 AI/脚本静默改 `summary` 批阅依据）。
 - ~~PDF 多模态抽取未接入 LLM~~ → **已补**（见 §10.5）。
 - LibreOffice 回退在本机不可用（`/run/user/1002` 只读），仅作最后兜底；`officecli` 是主路径。
 
 ## 11. 下一步建议（优先级）
 
 1. ~~图片/扫描型资料的 suggest 多模态化~~ → **已完成**（§10.5）；
-2. **PWA 资料页**：列章节 → 看抽取状态 → 勾选知识点 → 确认（写 journal）；
+2. ~~PWA 资料页~~ → **已完成只读版**（§10.6）；"勾选→确认"仍留 CLI；
 3. **D126-B 教师总结报告**：聚合 `evaluations[].knowledge[]` 与 `knowledge_missing[]`，
    输出"全班最薄弱知识点 Top N"，正是本轮数据层已备好的能力。
 
@@ -229,3 +229,13 @@
 **扫描件→多模态→确认→summary prompt 端到端**。
 
 **验证**：engine pytest **864 passed**；build 0 error；selfcheck 21 项全绿；脱敏通过。
+
+### 10.6 PWA 资料页（只读，2026-10-30 完成）
+
+- `app/src/views/MaterialsView.vue`：顶级页签「课堂资料」（题库编辑器之后）。
+- 展示：章节列表（原件数 / 已抽取 / 字数 / **状态徽标**）、当前章节的**下一步命令**、
+  生效知识点清单（术语胶囊 + 原文折叠）。
+- 状态徽标把"卡在哪一步"直接说清：空章节 → 待抽取 → 已抽取 → 待确认 → ✅ 已生效。
+- serve 接口 `GET /materials/list`、`GET /materials/knowledge`。
+- **刻意不做** PWA 端"确认"：确认决定的是 `summary` 批阅依据，必须教师在 CLI 亲自执行。
+- 真实浏览器回归：`app/tests/run-d126b-d131-pages-browser.sh`（真实组件 + 真实引擎 + Chromium）。
