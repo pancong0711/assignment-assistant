@@ -82,6 +82,9 @@ app/tests/.d131-*
 app/tests/.d126b-*
 app/tests/.d132-*
 app/tests/_d132.*.html
+app/tests/_d130fix2.*.html
+app/tests/.d130fix2-*
+app/src/components/*.compiled-*.ts
 app/tests/_d131.*.html
 app/tests/_d130.*.html
 app/tests/*-*.vue

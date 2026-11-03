@@ -2651,15 +2651,30 @@ class Handler(BaseHTTPRequestHandler):
             qd = urllib.parse.parse_qs(u.query)
             # D126-FIX：统一归一为双套结构，前端按 ai.transcript / ai.comment 取值
             # D127-FIX：支持 altTaskId 兼容回落（历史上目录键在 padId / packId 间漂移过）
-            _alt = [a for a in (qd.get("altTaskId") or []) if str(a).strip()]
+            # D130-FIX2：允许逗号分隔的多个兼容键（前端一次带多个反查结果）
+            _alt = [x.strip() for a in (qd.get("altTaskId") or [])
+                    for x in str(a).split(",") if x.strip()]
+            _task_id = (qd.get("taskId") or [""])[0]
+            _cdir = (qd.get("classDir") or [""])[0]
+            # D130-FIX2：前端没传 taskId（刷新后 packId/padId 为空）时，
+            # 由引擎**从磁盘反查**该作业的批阅目录，避免"表里全空、弹窗有内容"。
+            _discovered: list[str] = []
+            if not str(_task_id).strip() and _cdir:
+                _discovered = grade_store.discover_draft_scopes(
+                    Path(self.ws).resolve(), _cdir, m.group(2))
+                if _discovered:
+                    _task_id = _discovered[0]
+                    _alt = _alt + _discovered[1:]
             drafts = grade_store.read_drafts_normalized(
                 _xxt_home(), m.group(1), m.group(2),
                 ws=Path(self.ws).resolve(),
-                class_dir=(qd.get("classDir") or [""])[0],
-                task_id=(qd.get("taskId") or [""])[0],
+                class_dir=_cdir,
+                task_id=_task_id,
                 alt_task_ids=_alt)
             self._json({"ok": True, "classId": m.group(1), "workId": m.group(2),
-                        "count": len(drafts), "drafts": drafts})
+                        "count": len(drafts), "drafts": drafts,
+                        "resolvedTaskId": _task_id,
+                        "draftScopes": _discovered})
         elif u.path == "/xxt/work/list":
             from .xxt.work import list_works
             q = urllib.parse.parse_qs(u.query)
@@ -2710,6 +2725,32 @@ class Handler(BaseHTTPRequestHandler):
                             stu.setdefault("workAnswerId", hit["workAnswerId"])
             except Exception:  # noqa: BLE001 —— 补齐失败不影响列表
                 logger.debug("补充作答图文件名失败", exc_info=True)
+            # D130-FIX2：**补 tag**。学习通列表页只有姓名/分数，没有分层 tag；
+            # tag 是本校名单里的概念（roster），必须由引擎按姓名 join 回去，
+            # 否则前端「tag」列永远空白（此前 preview_students 根本不返回 tag 字段）。
+            try:
+                from .grading import inputs as _gi2
+                _q_tag = urllib.parse.parse_qs(u.query)
+                _cdir_tag = (_q_tag.get("classDir") or [""])[0]
+                if _cdir_tag:
+                    _tags = {str(x.get("name")): str(x.get("tag") or "")
+                             for x in _gi2.students_with_tags(
+                                 Path(self.ws).resolve(), _cdir_tag)}
+                    for stu in rep.get("students") or []:
+                        stu["tag"] = _tags.get(str(stu.get("name") or ""), "")
+            except Exception:  # noqa: BLE001 —— 无名单/读取失败时留空即可
+                logger.debug("补充 tag 失败", exc_info=True)
+            # D130-FIX2：**服务端自己找批阅目录**（刷新后前端 packId/padId 为空）。
+            # 否则 taskId='' → 读不到草稿 → 「AI 状态」全空，而弹窗又有内容。
+            try:
+                from .xxt import grade_store as _gs2
+                _q3 = urllib.parse.parse_qs(u.query)
+                rep["draftScopes"] = _gs2.discover_draft_scopes(
+                    Path(self.ws).resolve(),
+                    (_q3.get("classDir") or [""])[0], m_prev.group(2))
+            except Exception:  # noqa: BLE001
+                rep["draftScopes"] = []
+                logger.debug("反查批阅目录失败", exc_info=True)
             # D130-T12：**服务端**给出统一的草稿键 `key`（前端不得再自行拼接）。
             # 草稿历史上可能按 workAnswerId 写、也可能按姓名写（批阅清单未解析到 id 时），
             # 前端若固定用 "workAnswerId || name" 取，就会"表里显示未跑、点开却有内容"。
@@ -2719,7 +2760,8 @@ class Handler(BaseHTTPRequestHandler):
                 _q2 = urllib.parse.parse_qs(u.query)
                 # 用与前端同口径的参数定位草稿：taskId / altTaskId / classDir
                 _task_id = (_q2.get("taskId") or [""])[0]
-                _alt = [a for a in (_q2.get("altTaskId") or []) if str(a).strip()]
+                _alt = [x.strip() for a in (_q2.get("altTaskId") or [])
+                        for x in str(a).split(",") if x.strip()]
                 _cdir = (_q2.get("classDir") or [""])[0]
                 _drafts: dict = {}
                 if _task_id:

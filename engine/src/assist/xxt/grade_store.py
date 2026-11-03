@@ -16,12 +16,22 @@ _SAFE = re.compile(r"[0-9A-Za-z\-_]{1,40}")
 
 
 def drafts_root(home=None) -> Path:
-    """**旧布局**根目录 `<xxt_home>/grade-drafts`（仅为兼容/迁移保留）。"""
+    """**旧布局**根目录 `<xxt_home>/grade-drafts`（仅为兼容/迁移保留）。
+
+    D130-FIX2：**不再无条件 mkdir**。读路径（读草稿）也会走到这里，
+    若 `home` 落在只读目录（如打包环境的 XXT_HOME），mkdir 会抛
+    `OSError: Read-only file system` → 整个读草稿接口 500。
+    改成：能建就建，建不了也照常返回路径（读的时候不存在就是没有草稿）。
+    """
     if home is None:
         from .session import xxt_home
         home = xxt_home()
     d = Path(home) / "grade-drafts"
-    d.mkdir(parents=True, exist_ok=True)
+    try:
+        d.mkdir(parents=True, exist_ok=True)
+    except OSError:
+        # 只读/无权限：不在这里报错，由调用方按"文件不存在"处理
+        pass
     return d
 
 
@@ -299,3 +309,35 @@ def resolve_draft_key(student: dict, drafts: dict) -> str:
     if nm and nm in drafts:
         return nm
     return wa or nm
+
+
+def discover_draft_scopes(ws, class_dir: str, work_id: str) -> list[str]:
+    """D130-FIX2：**从磁盘反查**某班级目录下有哪些批阅目录含该 workId 的草稿。
+
+    背景：前端刷新后 `packId`/`padId` 为空（它们只来自「作业包/作业纸」下拉框，
+    刷新即丢），于是读草稿时 `taskId=''` → 读不到任何草稿 → 「AI 状态」全空，
+    可点开弹窗又有内容（弹窗另有兜底）。让前端先选一遍再点"读取"对教师很别扭。
+
+    这里由引擎**自己找**：扫 `<ws>/<class_dir>/grading/*/drafts/<workId>.json`，
+    返回存在的任务目录名（按 mtime 新→旧）。前端拿到后直接按它读，无需教师手选。
+    """
+    cd = str(class_dir or "").strip().strip("/")
+    wid = str(work_id or "").strip()
+    if not cd or not wid or not _SAFE.fullmatch(wid):
+        return []
+    root = Path(ws).resolve() / cd / "grading"
+    if not root.is_dir():
+        return []
+    hits: list[tuple[float, str]] = []
+    try:
+        for task_dir in root.iterdir():
+            if not task_dir.is_dir():
+                continue
+            f = task_dir / "drafts" / f"{wid}.json"
+            if f.is_file():
+                hits.append((f.stat().st_mtime, task_dir.name))
+    except Exception as exc:  # noqa: BLE001
+        logger.warning(f"[草稿] 反查批阅目录失败：{str(exc)[:120]}")
+        return []
+    hits.sort(reverse=True)
+    return [name for _m, name in hits]

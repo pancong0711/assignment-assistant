@@ -296,6 +296,8 @@ function openReview(i: number) { reviewIndex.value = i; reviewOpen.value = true 
  *  点「一键生成批阅报告」时若逐生审核**已打开**，直接让弹窗切页；
  *  未打开则记住意图，等他打开**第一位**学生时再切（不擅自弹窗打断教师）。 */
 const reviewModal = ref<{ showReportTab?: () => void } | null>(null)
+/** D130-FIX2：本次实际读取草稿用的批阅目录（刷新后由引擎反查得到） */
+const resolvedScope = ref('')
 const autoReportPending = ref(false)
 /** D126-B：自增即让教师总结报告重新汇总（生成/重生成报告后调用）。 */
 const reportReloadKey = ref(0)
@@ -428,12 +430,26 @@ async function loadStudents() {
     // D130-T12：作业包（packId）优先；兼容回落作业纸 id（历史上目录键漂移过）
     const scope = { taskId: packId.value || padId.value, classDir: curWorkDir.value,
                     altTaskId: packId.value ? padId.value : '' }
-    const [st, dr] = await Promise.all([
+    const [st, dr0] = await Promise.all([
       // 把 scope 一并传给**学生清单**：引擎据此解析 `students[].key`（表与弹窗同源）
       fetchXxtReviewStudents(props.engineAddr, props.token, w.classId, w.workId,
                              undefined, scope),
       fetchXxtGradeDrafts(props.engineAddr, props.token, w.classId, w.workId, scope),
     ])
+    let dr = dr0
+    // D130-FIX2：刷新后 packId/padId 为空 → 上面读不到草稿。
+    // 引擎会在学生清单里带回 `draftScopes`（从磁盘反查的批阅目录），用它再读一次，
+    // 这样**不需要教师先手选作业包**也能看到 AI 状态。
+    const scopes = (st as any)?.draftScopes as string[] | undefined
+    if (!Object.keys((dr0?.drafts || {})).length && scopes?.length) {
+      const t = scopes[0]!
+      dr = await fetchXxtGradeDrafts(props.engineAddr, props.token, w.classId, w.workId,
+                                     { ...scope, taskId: t,
+                                       altTaskId: scopes.slice(1).join(',') })
+      resolvedScope.value = t
+    } else if (scopes?.length && !(packId.value || padId.value)) {
+      resolvedScope.value = (dr0 as any)?.resolvedTaskId || scopes[0] || ''
+    }
     drafts.value = (dr.drafts || {}) as Record<string, any>
     students.value = (st.students || []).map((s: any) => ({
       // D130-T12：**优先用引擎给的 key**（它知道草稿实际写在哪个键下）；
@@ -898,6 +914,27 @@ onMounted(async () => {
     </p>
     <!-- D127-FIX：固定高度 + 表头粘性 + 滚轮滚动（与「班级与标签」名单表同口径），
          避免几十人时整页被拉长、需要滚到页底才能看到下面的按钮。 -->
+    <!-- D130-FIX2：「读取」按钮。刷新后作业包/作业纸下拉是空的，
+         状态与 tag 依赖引擎反查批阅目录；给教师一个明确的"重新读取"入口，
+         并显示这次实际读的是哪个批阅目录（否则空状态无从排查）。 -->
+    <div v-if="curWork || students.length" class="review-tools">
+      <button class="btn small" type="button" :disabled="studentsLoading" @click="loadStudents()">
+        🔄 读取状态
+      </button>
+      <span class="hint" style="margin:0">
+        <template v-if="studentsLoading">正在读取…</template>
+        <template v-else>
+          已读取 {{ students.length }} 名学生
+          <template v-if="resolvedScope">（批阅目录：<code>{{ resolvedScope }}</code>）</template>
+          <template v-else-if="students.length">（未指定作业包/作业纸）</template>
+        </template>
+      </span>
+      <span v-if="!packId && !padId && students.length" class="hint" style="margin:0;color:#b45309">
+        · 未选作业包/作业纸：tag 与 AI 状态按<b>引擎自动识别的批阅目录</b>显示；
+        如需指定具体批次，请在 ③ 区选择。
+      </span>
+    </div>
+
     <div v-if="students.length" class="review-list-scroll">
       <table class="review-list-table">
         <thead>
@@ -1053,6 +1090,8 @@ onMounted(async () => {
 
 <style scoped>
 /* D127-FIX：逐生审核名单 —— 固定高度 + 滚轮 + 粘性表头（与「班级与标签」名单表同口径）。 */
+.review-tools { display: flex; gap: 8px; align-items: center; flex-wrap: wrap;
+                margin: 8px 0 4px; }
 .review-list-scroll {
   max-height: 420px;
   overflow: auto;

@@ -789,6 +789,8 @@ export interface XxtReviewStudents {
   source?: string
   error?: string
   hint?: string
+  /** D130-FIX2：引擎从磁盘反查到的批阅目录（刷新后 packId 为空时可直接用） */
+  draftScopes?: string[]
 }
 
 // ---------------- D85 §3：本地人工批阅草稿 + 上传 ----------------
@@ -806,6 +808,9 @@ export interface XxtGradeDrafts {
   count?: number
   drafts?: Record<string, XxtGradeDraft>
   error?: string
+  /** D130-FIX2：引擎实际使用的批阅目录（前端未传 taskId 时由磁盘反查得到） */
+  resolvedTaskId?: string
+  draftScopes?: string[]
 }
 
 /** GET /xxt/grade/drafts/<classId>/<workId>：读本地人工批阅草稿。 */
