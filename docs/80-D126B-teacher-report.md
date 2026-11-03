@@ -72,10 +72,38 @@
 
 **验证**：engine pytest **882 passed**；app build 0 error；selfcheck 21 项全绿；脱敏通过。
 
-## 7. 未做 / 后续
+## 7. PWA 可视化（已实施 2026-10-30）
 
-- **PWA 可视化**（知识点共现矩阵 + 得分率图）：`.stats.json` 已备好数据，
-  但界面未做（本轮只保证数据与文本报告可用）。
+- **新增** `app/src/components/TeacherReportCard.vue`：挂在「AI 辅助批阅」面板规则卡下方，
+  展示 ① 易错知识点表 ② **知识点共现矩阵**（SVG 热力格）③ **逐题得分率柱状图**（SVG）
+  ④ 分数段柱状 ⑤ 题型维度 ⑥ 本章遗漏 ⑦ Markdown 原文折叠。
+  - **纯 SVG 手绘**，不引入图表库（离线可用、体积零增长）；
+  - 共现矩阵取 Top 8 知识点（再多不可读），颜色深浅=同时出错人数；
+  - 生成/重生成报告后 `reportReloadKey` 自增 → 卡片自动重新汇总。
+- **新增** serve `GET /grade/teacher-report?classDir=&taskId=[&rebuild=1]`：
+  返回 `{stat, markdown}`；`rebuild=1` 时现算。路径经 `resolve()` 校验防穿越，
+  无评阅结果时 404 + 可读提示。
+
+## 8. 未做 / 后续
+
 - 跨**多次作业**的趋势对比（同一知识点在多份作业里反复出错）：当前每次作业独立统计；
   需要先定"作业序列"口径，留待后续。
-- 导出 PNG/PDF 版教师报告：目前只有 MD + JSON（学生报告已有 PNG 链路可复用）。
+- 导出 PNG/PDF 版教师报告：目前只有 MD + JSON + 网页（学生报告已有 PNG 链路可复用）。
+
+## 9. 验证记录（2026-10-30）
+
+| 项 | 结果 |
+|---|---|
+| engine pytest | **885 passed** |
+| app build | 0 error |
+| app selfcheck | **22 项全绿**（新增 `run-d126b-d131-pages-browser.sh`） |
+| 脱敏 | 通过 |
+
+**真实浏览器回归**（`app/tests/run-d126b-d131-pages-browser.sh`）：
+用 `@vue/compiler-sfc` 编译**真实组件**，挂载到真实 Chromium，连**真实引擎**，
+断言：易错知识点渲染 / 共现矩阵 SVG 存在 / 得分率柱 ≥1 / 分数段渲染 /
+"只给教师"声明存在 / 无 JS 报错。
+
+> 实现要点：`MaterialsView` 用 `useSettingsStore()`，测试挂载时必须
+> `app.use(createPinia())` 并把 `engineUrl` 指到临时端口，否则会 "Failed to fetch"。
+> 这类问题只有**真挂真跑**才会暴露，源码级 selfcheck 发现不了。

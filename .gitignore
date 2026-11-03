@@ -78,6 +78,9 @@ app/public/katex/
 app/tests/*.bundle.mjs
 # D130：浏览器回归的临时产物（SFC 编译/打包/落地页，脚本自行清理）
 app/tests/.d130-*
+app/tests/.d131-*
+app/tests/.d126b-*
+app/tests/_d131.*.html
 app/tests/_d130.*.html
 app/tests/*-*.vue
 

@@ -3,6 +3,7 @@ import { computed, onMounted, onUnmounted, ref } from 'vue'
 import { useSettingsStore } from './stores/settings'
 import SettingsView from './views/SettingsView.vue'
 import KbEditorView from './views/KbEditorView.vue'
+import MaterialsView from './views/MaterialsView.vue'
 import SheetDesignView from './views/SheetDesignView.vue'
 import RosterView from './views/RosterView.vue'
 import GradingView from './views/GradingView.vue'
@@ -19,6 +20,7 @@ const settings = useSettingsStore()
 const TABS = [
   { key: 'settings', label: '设置中心', component: SettingsView },
   { key: 'kb', label: '题库编辑器', component: KbEditorView },
+  { key: 'materials', label: '课堂资料', component: MaterialsView },
   { key: 'design', label: '作业纸设计', component: SheetDesignView },
   { key: 'roster', label: '班级与标签', component: RosterView },
   { key: 'xxetong', label: '作业预览-学习通', component: XxetongView },

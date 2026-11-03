@@ -2749,6 +2749,49 @@ class Handler(BaseHTTPRequestHandler):
                         "numericRanges": {k: list(v) for k, v in _rules._NUM_RANGES.items()},
                         "file": str(_rules.rules_path(ws_))})
             return
+        elif u.path == "/grade/teacher-report":
+            # D126-B：教师总结报告（统计 JSON + Markdown 正文，供 PWA 画共现矩阵/得分率）
+            # 路径：/grade/teacher-report?classDir=classes/化工25&taskId=pack1&rebuild=1
+            from .grading import teacher_report as _tr
+            q = urllib.parse.parse_qs(u.query)
+            class_dir = str((q.get("classDir") or [""])[0]).strip().strip("/")
+            task_id = str((q.get("taskId") or [""])[0]).strip()
+            rebuild = str((q.get("rebuild") or [""])[0]) in ("1", "true", "yes")
+            if not (class_dir and task_id):
+                self._json({"ok": False, "error": "classDir/taskId 必填"}, 400)
+                return
+            ws_ = Path(self.ws).resolve()
+            safe_task = re.sub(r"[\\/:*?\"<>|]", "_", task_id).strip(" .") or "task"
+            base = ws_ / class_dir / "grading" / safe_task
+            try:
+                base.resolve().relative_to((ws_ / "classes").resolve())
+            except Exception:  # noqa: BLE001
+                self._json({"ok": False, "error": "路径越界"}, 400)
+                return
+            ev = base / "evaluations"
+            stats_p = base / "reports" / "_teacher_report.stats.json"
+            md_p = base / "reports" / "_teacher_report.md"
+            if rebuild or not stats_p.is_file():
+                if not any(ev.glob("[!_]*.json")):
+                    self._json({"ok": False, "error": "没有评阅结果",
+                                "hint": "先跑批阅（转写+评阅）再生成教师报告",
+                                "dir": str(ev)}, 404)
+                    return
+                try:
+                    _tr.generate(ev, base / "reports", title=task_id,
+                                 subtitle=class_dir)
+                except Exception as exc:  # noqa: BLE001
+                    self._json({"ok": False, "error": f"生成失败：{str(exc)[:200]}"}, 500)
+                    return
+            try:
+                stat = json.loads(stats_p.read_text(encoding="utf-8"))
+            except Exception as exc:  # noqa: BLE001
+                self._json({"ok": False, "error": f"读取统计失败：{str(exc)[:160]}"}, 500)
+                return
+            md = md_p.read_text(encoding="utf-8", errors="replace") if md_p.is_file() else ""
+            self._json({"ok": True, "stat": stat, "markdown": md,
+                        "statsFile": str(stats_p), "mdFile": str(md_p)})
+            return
         elif u.path.startswith("/grade/report/"):
             # D130-T10：逐生审核「报告」页——返回已生成的报告 HTML 供 iframe 预览。
             # 路径：/grade/report/<classDir>?taskId=&student=

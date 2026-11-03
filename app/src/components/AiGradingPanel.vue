@@ -25,6 +25,7 @@ import { useRosterStore } from '../stores/roster'
 import PlaygroundPanel from './PlaygroundPanel.vue'
 import StudentReviewModal from './StudentReviewModal.vue'
 import GradingRulesCard from './GradingRulesCard.vue'
+import TeacherReportCard from './TeacherReportCard.vue'
 const packStore = usePackStore()
 const rosterStore = useRosterStore()
 
@@ -295,6 +296,8 @@ function openReview(i: number) { reviewIndex.value = i; reviewOpen.value = true 
  *  未打开则记住意图，等他打开**第一位**学生时再切（不擅自弹窗打断教师）。 */
 const reviewModal = ref<{ showReportTab?: () => void } | null>(null)
 const autoReportPending = ref(false)
+/** D126-B：自增即让教师总结报告重新汇总（生成/重生成报告后调用）。 */
+const reportReloadKey = ref(0)
 function onReviewOpen(i: number) {
   openReview(i)
   if (autoReportPending.value) {
@@ -658,6 +661,8 @@ async function renderReports() {
       const types = Array.from(new Set((r.reports || []).map((x) => x.kind))).join('/')
       progress.value = `✅ 已生成 ${n} 份报告（类型：${types || '自动'}）；写入本地草稿（含报告图）`
       await loadStudents()
+      // D126-B：让教师总结报告跟着刷新（评阅结果没变也会重算，成本很低：纯统计）
+      reportReloadKey.value += 1
       // D130-T10：生成后自动切到报告页（弹窗已开则立即切，否则等下次打开）
       if (reviewOpen.value) {
         await nextTick()
@@ -938,6 +943,11 @@ onMounted(async () => {
     <!-- D130-T9：评阅规则卡（教师可见/可改评分口径；此前完全硬编码） -->
     <GradingRulesCard :engine-addr="props.engineAddr" :token="props.token"
                       @notify="(m) => { progress = m }" />
+
+    <!-- D126-B：教师总结报告（易错知识点 + 共现矩阵 + 得分率；只给教师） -->
+    <TeacherReportCard :engine-addr="props.engineAddr" :token="props.token"
+                       :class-dir="curWorkDir" :task-id="packId || padId"
+                       :reload-key="reportReloadKey" />
   </div>
 
     <h3 style="margin-top:14px">⑦ 题库 AI 作答（对题目生成参考答案；不覆盖、可多版本）</h3>

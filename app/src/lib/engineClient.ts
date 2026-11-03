@@ -2020,3 +2020,64 @@ export function xxtGradeReportUrl(
   return engineUrlWithToken(
     base, `/grade/report/${encodeURIComponent(opts.classDir)}?${qs.toString()}`, token)
 }
+
+/* ========== D126-B：教师总结报告（统计数据供绘图；只给教师） ========== */
+
+export interface TeacherReportStat {
+  students: number
+  avg: number
+  min: number
+  max: number
+  manual: number
+  substitution: number
+  segments: Record<string, number>
+  knowledge_errors: { term: string; students: number; rate: number
+                      questions: string[]; examples: string[] }[]
+  cooccurrence: { a: string; b: string; students: number; rate: number }[]
+  question_rates: { id: string; students: number; avg_score: number
+                    max_possible: number; rate: number }[]
+  kind_stats: { kind: string; questions: number; avg_deduct: number
+                total_deduct: number }[]
+  missing: { term: string; students: number; rate: number }[]
+  students_detail: { student: string; score: number; verdict: string }[]
+}
+
+export async function fetchTeacherReport(
+  engineAddr: string, token: string | undefined,
+  opts: { classDir: string; taskId: string; rebuild?: boolean },
+): Promise<{ ok?: boolean; error?: string; hint?: string; stat?: TeacherReportStat
+             markdown?: string }> {
+  const base = normalizeEngineAddr(engineAddr)
+  const qs = new URLSearchParams({ classDir: opts.classDir, taskId: opts.taskId })
+  if (opts.rebuild) qs.set('rebuild', '1')
+  return (await getJson2(engineUrlWithToken(
+    base, `/grade/teacher-report?${qs.toString()}`, token))) as any
+}
+
+/* ========== D131：课堂资料（章节清单 + 生效知识点清单，只读） ========== */
+
+export interface MaterialsChap {
+  chap: string
+  sources: number
+  extracted: number
+  chars: number
+  hasAiSuggest: boolean
+  hasConfirmed: boolean
+}
+
+export async function fetchMaterialsList(
+  engineAddr: string, token: string | undefined,
+): Promise<{ ok?: boolean; root?: string; chaps?: MaterialsChap[]; error?: string }> {
+  const base = normalizeEngineAddr(engineAddr)
+  return (await getJson2(engineUrlWithToken(base, '/materials/list', token))) as any
+}
+
+export async function fetchMaterialsKnowledge(
+  engineAddr: string, token: string | undefined, chap: string,
+): Promise<{ ok?: boolean; chap?: string; terms?: string[]; markdown?: string
+             error?: string }> {
+  const base = normalizeEngineAddr(engineAddr)
+  const qs = new URLSearchParams({ chap })
+  return (await getJson2(engineUrlWithToken(
+    base, `/materials/knowledge?${qs.toString()}`, token))) as any
+}

@@ -240,3 +240,85 @@ def test_cli_teacher_report_requires_evaluations(tmp_path: Path):
                                    "-w", str(tmp_path)])
     assert out.exit_code != 0
     assert "没有评阅结果" in out.output
+
+
+# ---------------- serve 接口（真实 HTTP） ----------------
+def test_serve_teacher_report_endpoint(tmp_path: Path):
+    import socket, threading, time, urllib.parse, urllib.request
+    from assist import serve as S
+    from assist.grading.flow import grading_dir
+
+    ws = tmp_path
+    task = {"id": "pack1", "class_dir": "classes/化工25", "items": []}
+    ev = grading_dir(ws, task) / "evaluations"
+    ev.mkdir(parents=True, exist_ok=True)
+    for stu, score in (("张三", 80), ("李四", 60)):
+        (ev / f"{stu}.json").write_text(
+            json.dumps(_rec(stu, score, errs=[["动量守恒"]]), ensure_ascii=False),
+            encoding="utf-8")
+
+    S.Handler.ws = ws
+    S.Handler.token = ""
+    s0 = socket.socket(); s0.bind(("127.0.0.1", 0)); port = s0.getsockname()[1]; s0.close()
+    httpd = S.ThreadingHTTPServer(("127.0.0.1", port), S.Handler)
+    threading.Thread(target=httpd.serve_forever, daemon=True).start()
+    time.sleep(0.2)
+    base = f"http://127.0.0.1:{port}"
+    try:
+        url = (f"{base}/grade/teacher-report?"
+               + urllib.parse.urlencode({"classDir": "classes/化工25",
+                                         "taskId": "pack1", "rebuild": "1"}))
+        with urllib.request.urlopen(url, timeout=10) as r:
+            o = json.loads(r.read().decode())
+        assert o["ok"]
+        assert o["stat"]["students"] == 2
+        assert o["stat"]["knowledge_errors"][0]["term"] == "动量守恒"
+        assert "教师总结报告" in o["markdown"]
+    finally:
+        httpd.shutdown()
+
+
+def test_serve_teacher_report_404_without_evaluations(tmp_path: Path):
+    import socket, threading, time, urllib.error, urllib.parse, urllib.request
+    from assist import serve as S
+    from assist.grading.flow import grading_dir
+
+    task = {"id": "pack2", "class_dir": "classes/化工25", "items": []}
+    grading_dir(tmp_path, task)      # 建目录但**不放** evaluations
+    S.Handler.ws = tmp_path
+    S.Handler.token = ""
+    s0 = socket.socket(); s0.bind(("127.0.0.1", 0)); port = s0.getsockname()[1]; s0.close()
+    httpd = S.ThreadingHTTPServer(("127.0.0.1", port), S.Handler)
+    threading.Thread(target=httpd.serve_forever, daemon=True).start()
+    time.sleep(0.2)
+    try:
+        url = (f"http://127.0.0.1:{port}/grade/teacher-report?"
+               + urllib.parse.urlencode({"classDir": "classes/化工25",
+                                         "taskId": "pack2"}))
+        with pytest.raises(urllib.error.HTTPError) as ei:
+            urllib.request.urlopen(url, timeout=10)
+        assert ei.value.code == 404
+        body = json.loads(ei.value.read().decode())
+        assert "没有评阅结果" in body["error"]
+    finally:
+        httpd.shutdown()
+
+
+def test_serve_teacher_report_rejects_traversal(tmp_path: Path):
+    import socket, threading, time, urllib.error, urllib.request
+    from assist import serve as S
+
+    S.Handler.ws = tmp_path
+    S.Handler.token = ""
+    s0 = socket.socket(); s0.bind(("127.0.0.1", 0)); port = s0.getsockname()[1]; s0.close()
+    httpd = S.ThreadingHTTPServer(("127.0.0.1", port), S.Handler)
+    threading.Thread(target=httpd.serve_forever, daemon=True).start()
+    time.sleep(0.2)
+    try:
+        url = (f"http://127.0.0.1:{port}/grade/teacher-report"
+               f"?classDir=..%2F..%2F..&taskId=pack1")
+        with pytest.raises(urllib.error.HTTPError) as ei:
+            urllib.request.urlopen(url, timeout=10)
+        assert ei.value.code in (400, 404)
+    finally:
+        httpd.shutdown()
