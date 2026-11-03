@@ -348,6 +348,43 @@ def read_source_text(ws, chap: str, *, max_chars: int = 0) -> dict:
             "has_index": bool((idx.get("sources") or []))}
 
 
+# 文本少于该字数、且有页图 → 认为"文字不足，需要看图"
+_VISION_TEXT_THRESHOLD = 200
+# 单次最多送多少张图（控 token/成本；超出部分在 notes 里提示教师）
+_VISION_MAX_IMAGES = 20
+
+
+def read_source_images(ws, chap: str, *, max_images: int = _VISION_MAX_IMAGES) -> dict:
+    """汇总本章可送多模态的图片（PDF 页图 + 教师直接放的图片）。
+
+    只返回**已渲染好且在盘上**的图片；被删掉的缓存自动跳过。
+    """
+    idx = read_index(ws, chap)
+    d = chap_dir(ws, chap)
+    out: list[str] = []
+    for s in idx.get("sources") or []:
+        ex = s.get("extract") or {}
+        cand = list(ex.get("images") or [])
+        for one in cand:
+            p = Path(str(one))
+            if not p.is_file():
+                p2 = d / str(one)
+                if not p2.is_file():
+                    continue
+                p = p2
+            out.append(str(p))
+    # 稳定排序（页序：lecture02-1.png, -2, -10 需按数字排）
+    import re as _re
+
+    def _key(path: str):
+        name = Path(path).name
+        nums = _re.findall(r"\d+", name)
+        return (str(Path(path).parent), [int(n) for n in nums], name)
+
+    out = sorted(dict.fromkeys(out), key=_key)
+    return {"images": out, "count": len(out), "max_images": max_images}
+
+
 # ---------------- T21a：AI 抽取「本章知识点 + 逻辑关系」 ----------------
 KNOWN_PROMPT = """你是大学物理教研组老师。下面是一门课的**课堂资料文本**（授课 PPT / 讲义 / 授课计划）。
 请抽出这一章学生应当掌握的**知识点**及其**逻辑关系**，供教师核对后作为作业批阅依据。
@@ -383,25 +420,51 @@ def build_knowledge_prompt(text: str, *, chap: str, terms: "list[str] | None" = 
 
 
 def suggest_knowledge(client, ws, chap: str, *, model: "str | None" = None,
-                      max_chars: int = 60000) -> dict:
+                      max_chars: int = 60000,
+                      max_images: int = _VISION_MAX_IMAGES) -> dict:
     """读抽取文本 → LLM 抽知识点 → 写 `知识点清单.ai.json`（**不**生成生效 .md）。"""
     from ..grading.transcribe import parse_llm_json
     from ..grading.vocab import load_vocab
 
     src = read_source_text(ws, chap, max_chars=max_chars)
-    if not src["text"].strip():
+    # D131 补漏：图片型/扫描型 PDF 抽不到文字（`pdftotext` 给空），但 `pdftoppm`
+    # 已把页图渲染出来。此时必须走**多模态**，否则"能抽取但 AI 看不到内容"。
+    vision = read_source_images(ws, chap, max_images=max_images)
+    if not src["text"].strip() and not vision["images"]:
         raise MaterialsError(
-            f"章节 {chap} 没有可用的抽取文本。请先 `assist materials extract --chap {chap}`，"
+            f"章节 {chap} 没有可用的抽取文本或页图。请先 "
+            f"`assist materials extract --chap {chap}`，"
             f"并把 PPT/PDF 放进 {chap_dir(ws, chap) / SOURCE}。")
     try:
         vocab_terms = [t.get("term") for t in load_vocab(ws).get("terms", []) if t.get("term")]
     except Exception:  # noqa: BLE001
         vocab_terms = []
-    prompt = build_knowledge_prompt(src["text"], chap=chap, terms=vocab_terms)
-    raw = client.chat(
-        system_prompt="这是大学物理教学资料整理，内容完全学术。只输出严格 JSON。",
-        user_text=prompt, model=model, temperature=0.2,
-        response_format={"type": "json_object"}, max_tokens=8192, step="materials")
+    # 纯图片资料：文本为空，只能靠多模态看图（PPT/PDF 里的公式与受力图本来也抽不成文字）
+    use_vision = bool(vision["images"]) and len(src["text"].strip()) < _VISION_TEXT_THRESHOLD
+    if use_vision:
+        imgs = vision["images"][:vision["max_images"]]
+        prompt = build_knowledge_prompt(
+            src["text"] or "（本章资料以图片/扫描件为主，文字很少；请**依据所附图片**抽取）",
+            chap=chap, terms=vocab_terms)
+        n_total = len(vision["images"])
+        n_used = len(imgs)
+        prompt += ("\n\n【重要】本章资料主要是图片/扫描件：请仔细看所附每一页图片，"
+                   "把图中出现的公式、定义、示意图所表达的物理概念都纳入知识点，"
+                   "`evidence` 请注明「第 N 页/图」。")
+        if n_total > n_used:
+            # 不静默截断：明确告诉教师"只看了一部分"，避免以为覆盖全章
+            prompt += (f"\n【注意】本章共 {n_total} 张页图，本次仅提供了前 {n_used} 张；"
+                       f"如后半部分另有知识点，请用 `--max-images` 调大后重跑。")
+        raw = client.chat_with_images(
+            system_prompt="这是大学物理教学资料整理，内容完全学术。只输出严格 JSON。",
+            user_text=prompt, image_paths=imgs, model=model,
+            temperature=0.2, max_tokens=8192, step="materials")
+    else:
+        prompt = build_knowledge_prompt(src["text"], chap=chap, terms=vocab_terms)
+        raw = client.chat(
+            system_prompt="这是大学物理教学资料整理，内容完全学术。只输出严格 JSON。",
+            user_text=prompt, model=model, temperature=0.2,
+            response_format={"type": "json_object"}, max_tokens=8192, step="materials")
     data = parse_llm_json(raw)
     if not isinstance(data, dict):
         raise MaterialsError("AI 返回的不是 JSON 对象")
@@ -422,7 +485,11 @@ def suggest_knowledge(client, ws, chap: str, *, model: "str | None" = None,
            "logic": [x for x in (data.get("logic") or []) if isinstance(x, dict)],
            "notes": str(data.get("notes") or ""),
            "source": {"files": src["files"], "chars": src["chars"],
-                      "truncated": src["truncated"]},
+                      "truncated": src["truncated"],
+                      # 审计：本次是"纯文本"还是"看图"抽取（教师据此判断可信度）
+                      "mode": "vision" if use_vision else "text",
+                      "images_used": (len(vision["images"][:vision["max_images"]])
+                                      if use_vision else 0)},
            "generatedAt": time.strftime("%Y-%m-%d %H:%M:%S")}
     p = chap_dir(ws, chap) / KNOW_AI
     p.parent.mkdir(parents=True, exist_ok=True)

@@ -395,3 +395,127 @@ def test_serve_materials_endpoints(ws: Path):
         assert k["ok"] and "动量守恒" in k["terms"] and "核心知识点" in k["markdown"]
     finally:
         httpd.shutdown()
+
+
+# ---------------- T21 补漏：图片/扫描件走多模态 ----------------
+class _VisionClient:
+    """假 LLM：区分文本/看图两条通道，记录调用与图数。"""
+    evaluation_model = "fake"
+
+    def __init__(self):
+        self.text_calls: list[str] = []
+        self.vision_calls: list[list[str]] = []
+        self.vision_prompts: list[str] = []
+
+    def chat(self, *, system_prompt, user_text, model=None, **kw):
+        self.text_calls.append(user_text)
+        return json.dumps({"knowledge": [
+            {"term": "动量守恒", "aliases": [], "importance": "core",
+             "evidence": "文字来源"}], "logic": []}, ensure_ascii=False)
+
+    def chat_with_images(self, *, system_prompt, user_text, image_paths, model=None, **kw):
+        self.vision_calls.append([str(p) for p in image_paths])
+        self.vision_prompts.append(user_text)
+        return json.dumps({"knowledge": [
+            {"term": "完全弹性碰撞", "aliases": [], "importance": "core",
+             "evidence": "第 1 页图"}], "logic": []}, ensure_ascii=False)
+
+
+def test_scanned_pdf_uses_vision(ws: Path):
+    """核心缺口：图片型 PDF 抽不到文字，必须走多模态，而不是报"没有可用文本"。"""
+    d = M.ensure_chap(ws, "chap11")
+    _make_pdf(d / "_source" / "scan.pdf", pages=3)
+    M.extract_chap(ws, "chap11")
+    assert M.read_source_text(ws, "chap11")["chars"] == 0     # 确认没有文字层
+    c = _VisionClient()
+    rep = M.suggest_knowledge(c, ws, "chap11")
+    assert len(c.text_calls) == 0, "不应走纯文本通道"
+    assert len(c.vision_calls) == 1 and len(c.vision_calls[0]) == 3
+    assert rep["source"]["mode"] == "vision" and rep["source"]["images_used"] == 3
+    assert rep["knowledge"][0]["term"] == "完全弹性碰撞"
+
+
+def test_vision_path_sends_real_page_images(ws: Path):
+    d = M.ensure_chap(ws, "chap12")
+    _make_pdf(d / "_source" / "scan.pdf", pages=2)
+    M.extract_chap(ws, "chap12")
+    c = _VisionClient()
+    M.suggest_knowledge(c, ws, "chap12")
+    sent = c.vision_calls[0]
+    assert all(Path(p).is_file() for p in sent), "送出的必须是真实存在的页图文件"
+    assert all(p.endswith(".png") for p in sent)
+
+
+def test_rich_text_prefers_text_mode(ws: Path):
+    """文字充足时不该花成本看图（避免每章都多模态）。"""
+    _prep_chap_with_text(ws)
+    c = _VisionClient()
+    rep = M.suggest_knowledge(c, ws, "chap04")
+    assert len(c.vision_calls) == 0 and len(c.text_calls) == 1
+    assert rep["source"]["mode"] == "text"
+
+
+def test_vision_image_cap_is_reported_not_silent(ws: Path):
+    """超过 --max-images 时：只送前 N 张，且 prompt 里明确告知（不静默截断）。"""
+    d = M.ensure_chap(ws, "chap13")
+    _make_pdf(d / "_source" / "scan.pdf", pages=4)
+    M.extract_chap(ws, "chap13")
+    c = _VisionClient()
+    rep = M.suggest_knowledge(c, ws, "chap13", max_images=2)
+    assert len(c.vision_calls[0]) == 2
+    assert rep["source"]["images_used"] == 2
+    # 截断必须在**送给模型的 prompt** 里明说（否则模型以为自己看了全章）
+    prompt = c.vision_prompts[0]
+    assert "仅提供了前 2 张" in prompt and "共 4 张" in prompt, prompt[-300:]
+
+
+def test_no_text_no_images_raises_readable(ws: Path):
+    """既无文本也无页图 → 明确报错（不静默产出空清单）。"""
+    d = M.ensure_chap(ws, "chap14")
+    (d / "_source" / "empty.md").write_text("   ", encoding="utf-8")
+    M.extract_chap(ws, "chap14")
+    with pytest.raises(M.MaterialsError) as ei:
+        M.suggest_knowledge(_VisionClient(), ws, "chap14")
+    assert "extract" in str(ei.value)
+
+
+def test_read_source_images_orders_pages_numerically(ws: Path):
+    """页序必须按数字排（-2 在 -10 之前），否则知识点 evidence 会标错页。"""
+    d = M.ensure_chap(ws, "chap15")
+    pages = d / M.EXTRACT / "scan.pages"
+    pages.mkdir(parents=True, exist_ok=True)
+    for n in (1, 2, 10, 11):
+        (pages / f"scan-{n}.png").write_bytes(b"\x89PNG\r\n\x1a\n")
+    M.write_index(ws, "chap15", {"version": 1, "chap": "chap15", "sources": [
+        {"file": "_source/scan.pdf", "kind": "pdf",
+         "extract": {"engine": "pdftoppm",
+                     "images": [str(pages / f"scan-{n}.png") for n in (10, 1, 11, 2)]}}]})
+    imgs = M.read_source_images(ws, "chap15")["images"]
+    assert [Path(p).name for p in imgs] == ["scan-1.png", "scan-2.png",
+                                            "scan-10.png", "scan-11.png"]
+
+
+def test_read_source_images_skips_missing_cache(ws: Path):
+    """缓存被删（_extract 可删）时不能崩，只跳过。"""
+    d = M.ensure_chap(ws, "chap16")
+    M.write_index(ws, "chap16", {"version": 1, "chap": "chap16", "sources": [
+        {"file": "_source/x.pdf", "kind": "pdf",
+         "extract": {"images": [str(d / "_extract" / "gone-1.png")]}}]})
+    assert M.read_source_images(ws, "chap16")["images"] == []
+
+
+def test_vision_suggest_feeds_summary_prompt_end_to_end(ws: Path):
+    """扫描版资料 → 多模态抽知识点 → 教师确认 → summary 批阅 prompt 里真的有。"""
+    from assist.grading.evaluate import build_user_prompt
+
+    d = M.ensure_chap(ws, "chap17")
+    _make_pdf(d / "_source" / "scan.pdf", pages=1)
+    M.extract_chap(ws, "chap17")
+    M.suggest_knowledge(_VisionClient(), ws, "chap17")
+    assert M.confirm_knowledge(ws, "chap17")["ok"]
+
+    items = [{"序号": 1, "content": "总结本章", "kind": "summary",
+              "kb": "summary", "chap": "chap17"}]
+    p = build_user_prompt(items, "学生作答", ws=ws)
+    assert "【本堂课应掌握的知识点（教师确认的课堂资料清单）】" in p
+    assert "完全弹性碰撞" in p

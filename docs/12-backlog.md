@@ -754,5 +754,6 @@ rainclass 67/67，PWA↔engine 全等，仅末位浮点四舍五入噪声）。
   sha256 增量。
 - 知识点：`materials suggest`（AI 建议，**不自动生效**）→ `materials confirm`（教师确认，AI 不覆盖）
   → `summary` 批阅时进 prompt，产出 `knowledge_missing[]` 且启发式提问指向遗漏知识点。
-- **已知缺口**：图片/扫描型 PDF 的 suggest 尚未走多模态（页图已产出但没喂模型）；
-  PWA 资料页未做（确认动作刻意留在 CLI）。详见 docs/79 §10.4 / §11。
+- ✅ 图片/扫描型 PDF 已接入**多模态**（文本 <200 字且有页图 → 看图；超限提示不静默），
+  详见 docs/79 §10.5。
+- **未做**：PWA 资料页（确认动作刻意留在 CLI，避免 AI 直接改生效清单）。

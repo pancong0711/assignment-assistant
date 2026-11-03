@@ -1429,17 +1429,19 @@ def materials_show(obj, chap, show_text, workspace, verbose):
 @click.option("--model", default="", help="覆盖模型")
 @click.option("--max-chars", default=60000, type=int, show_default=True,
               help="送入模型的文本上限（超出截断并标记）")
+@click.option("--max-images", default=20, type=int, show_default=True,
+              help="图片/扫描件走多模态时最多送几张页图")
 @click.option("--workspace", "-w", default=None)
 @click.option("--verbose", "-v", is_flag=True)
 @click.pass_obj
-def materials_suggest(obj, chap, model, max_chars, workspace, verbose):
+def materials_suggest(obj, chap, model, max_chars, max_images, workspace, verbose):
     """AI 抽取「本章知识点 + 逻辑关系」→ `知识点清单.ai.json`（**不**自动生效）。"""
     from .files import materials as M
     ws = _setup(verbose or obj.get("verbose"), workspace)
     client = _rubric_client(ws)
     try:
         rep = M.suggest_knowledge(client, ws, chap, model=model or None,
-                                  max_chars=max_chars)
+                                  max_chars=max_chars, max_images=max_images)
     except M.MaterialsError as exc:
         raise click.ClickException(str(exc))
     click.echo(json.dumps(rep, ensure_ascii=False, indent=2))
