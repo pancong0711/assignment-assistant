@@ -759,3 +759,15 @@ rainclass 67/67，PWA↔engine 全等，仅末位浮点四舍五入噪声）。
 - ✅ 图片/扫描型 PDF 已接入**多模态**（文本 <200 字且有页图 → 看图；超限提示不静默），
   详见 docs/79 §10.5。
 - **未做**：PWA 资料页（确认动作刻意留在 CLI，避免 AI 直接改生效清单）。
+
+---
+
+## D132 · Assistopia（AI 调用本项目工具的安全工作区，P3，2026-10-30 起）
+
+> 需求单：`docs/81-D132-assistopia.md`。
+
+- ✅ **P3-1 已完成**：工具白名单（27 个）+ L0/L1/L2/L3 分级 + 参数白名单 +
+  `extensions/` 只升不降 + 子进程执行器（超时/截断/journal）+ 护栏硬顶。
+  `assist assistopia tools|run|journal`。
+- ⏳ **P3-2**：`limits.json` 写接口、扩展 `rules/`+词表覆盖、升级不触碰 extensions 的端到端测试。
+- ⏳ **P3-3**：LLM function calling（含 JSON 指令降级路径）、PWA Assistopia 工作区。

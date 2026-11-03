@@ -1344,6 +1344,80 @@ def roster_rain(obj, files, out, workspace, verbose):
     click.echo(_j.dumps(summary.get("rows", [])[:5], ensure_ascii=False, indent=1))
 
 
+@cli.group("assistopia", help="D132：AI 调用本项目工具的安全工作区（工具白名单 + 分级 + 审计）")
+def assistopia_grp():
+    pass
+
+
+@assistopia_grp.command("tools")
+@click.option("--workspace", "-w", default=None)
+@click.option("--verbose", "-v", is_flag=True)
+@click.pass_obj
+def assistopia_tools(obj, workspace, verbose):
+    """列出工具白名单与风险级别（含 extensions/ 覆盖后的生效级别）。"""
+    from .assistopia import registry as R
+    from .assistopia import limits as LM
+    ws = _setup(verbose or obj.get("verbose"), workspace)
+    tools = R.effective_tools(ws)
+    click.echo(json.dumps({
+        "ok": True,
+        "levels": R.LEVEL_LABEL,
+        "limits": LM.read_limits(ws),
+        "hardCaps": LM.HARD_CAPS,
+        "extensions": str(R.extensions_dir(ws)),
+        "tools": [t.to_dict() for t in tools],
+    }, ensure_ascii=False, indent=2))
+
+
+@assistopia_grp.command("run")
+@click.option("--tool", "tool_name", required=True, help="工具 id（见 assistopia tools）")
+@click.option("--args", "args_json", default="{}", help="参数 JSON，如 '{\"kind\": \"qa\"}'")
+@click.option("--confirm", "confirmed_by", default="",
+              help="L2 写入工具的教师确认来源（如 teacher:cli）；不填则拒绝")
+@click.option("--workspace", "-w", default=None)
+@click.option("--verbose", "-v", is_flag=True)
+@click.pass_obj
+def assistopia_run(obj, tool_name, args_json, confirmed_by, workspace, verbose):
+    """执行一个 L0/L1（或已确认的 L2）工具；L3 一律拒绝。"""
+    from .assistopia import limits as LM
+    from .assistopia import runner as RN
+    from .assistopia.registry import ToolDenied
+    ws = _setup(verbose or obj.get("verbose"), workspace)
+    try:
+        args = json.loads(args_json or "{}")
+        if not isinstance(args, dict):
+            raise click.ClickException("--args 必须是 JSON 对象")
+    except json.JSONDecodeError as exc:
+        raise click.ClickException(f"--args 不是合法 JSON：{exc}")
+    sess = LM.Session(session_id=f"cli-{id(obj)}", limits=LM.read_limits(ws))
+    try:
+        rep = RN.run_tool(ws, tool_name, args, session=sess,
+                          confirmed_by=confirmed_by)
+    except ToolDenied as exc:
+        raise click.ClickException(str(exc))
+    except LM.LimitExceeded as exc:
+        raise click.ClickException(str(exc))
+    click.echo(json.dumps({**rep, "stdout": rep["stdout"], "stderr": rep["stderr"]},
+                          ensure_ascii=False, indent=2))
+    if not rep["ok"]:
+        raise click.ClickException(f"工具执行失败（{rep['status']}）：{
+            (rep['stderr'] or rep['stdout'])[:300]}")
+
+
+@assistopia_grp.command("journal")
+@click.option("--limit", default=30, type=int, show_default=True)
+@click.option("--workspace", "-w", default=None)
+@click.option("--verbose", "-v", is_flag=True)
+@click.pass_obj
+def assistopia_journal(obj, limit, workspace, verbose):
+    """查看审计日志（最近 N 条）。"""
+    from .assistopia import runner as RN
+    ws = _setup(verbose or obj.get("verbose"), workspace)
+    recs = RN.read_journal(ws, limit=limit)
+    click.echo(json.dumps({"ok": True, "count": len(recs), "records": recs},
+                          ensure_ascii=False, indent=2))
+
+
 @cli.group("materials", help="D131：课堂资料库 <ws>/materials/<chap>/（PPT/PDF/讲义 → 知识点清单）")
 def materials_grp():
     pass
