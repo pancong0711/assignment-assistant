@@ -2091,6 +2091,60 @@ export async function fetchMaterialsKnowledge(
     base, `/materials/knowledge?${qs.toString()}`, token))) as any
 }
 
+/* ========== D134：课堂资料上传 / 文件管理 ========== */
+
+export interface MaterialsFile {
+  file: string
+  name: string
+  dir: string
+  bytes: number
+  mtime: string
+  kind: string
+  sha256?: string
+  error?: string
+}
+
+/** 允许上传的扩展名（与引擎 `materials.UPLOAD_EXTS` 保持一致）。 */
+export const MATERIALS_UPLOAD_EXTS = [
+  '.pptx', '.ppt', '.pdf', '.docx', '.doc', '.png', '.jpg', '.jpeg', '.md', '.txt', '.markdown',
+]
+
+export async function fetchMaterialsFiles(
+  engineAddr: string, token: string | undefined, chap: string, includeTrash = false,
+): Promise<{ ok?: boolean; chap?: string; count?: number; files?: MaterialsFile[]
+             error?: string }> {
+  const base = normalizeEngineAddr(engineAddr)
+  const qs = new URLSearchParams({ chap })
+  if (includeTrash) qs.set('trash', '1')
+  return (await getJson2(engineUrlWithToken(
+    base, `/materials/files?${qs.toString()}`, token))) as any
+}
+
+/** 上传附件到 `materials/<chap>/_source/`（引擎侧同名不覆盖，自动 -2）。 */
+export async function uploadMaterialsFiles(
+  engineAddr: string, token: string | undefined, chap: string,
+  items: { name: string; data_b64: string }[],
+): Promise<{ ok?: boolean; saved?: any[]; skipped?: any[]; files?: MaterialsFile[]
+             error?: string }> {
+  const base = normalizeEngineAddr(engineAddr)
+  const res = await fetch(engineUrlWithToken(base, '/materials/upload', token), {
+    method: 'POST', headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ chap, items }),
+  })
+  const o = (await res.json().catch(() => ({}))) as any
+  if (!res.ok && !o?.error) throw new Error(`HTTP ${res.status}`)
+  return o
+}
+
+/** 把文件移入 `_source/_trash/`（不真删）。经 Atopia 工具执行 → 需教师确认。 */
+export async function removeMaterialsFile(
+  engineAddr: string, token: string | undefined, chap: string, file: string,
+  confirm: string,
+): Promise<{ ok?: boolean; error?: string; moved?: string; to?: string }> {
+  return runAtopiaTool(engineAddr, token,
+                       { tool: 'materials.remove', args: { chap, file }, confirm }) as any
+}
+
 /* ========== D132：Atopia（工具白名单 / 执行 / 审计） ========== */
 
 export interface AtopiaTool {

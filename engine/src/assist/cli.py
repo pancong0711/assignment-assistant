@@ -1646,6 +1646,44 @@ def materials_extract(obj, chap, force, workspace, verbose):
         raise click.ClickException("部分资料抽取失败（见 errors）")
 
 
+@materials_grp.command("files")
+@click.option("--chap", required=True)
+@click.option("--trash", is_flag=True, help="同时列出回收站 `_source/_trash/`")
+@click.option("--workspace", "-w", default=None)
+@click.option("--verbose", "-v", is_flag=True)
+@click.pass_obj
+def materials_files(obj, chap, trash, workspace, verbose):
+    """D134-T3b：列出某章 `_source/` 的原件（文件名/大小/时间/sha）。"""
+    from .files import materials as M
+    ws = _setup(verbose or obj.get("verbose"), workspace)
+    try:
+        rows = M.files_of(ws, chap, include_trash=trash)
+    except M.MaterialsError as exc:
+        raise click.ClickException(str(exc))
+    click.echo(json.dumps({"ok": True, "chap": chap,
+                           "source": str(M.chap_dir(ws, chap) / M.SOURCE),
+                           "count": len(rows), "files": rows},
+                          ensure_ascii=False, indent=2))
+
+
+@materials_grp.command("remove")
+@click.option("--chap", required=True)
+@click.option("--file", "file_name", required=True,
+              help="相对 `_source/` 的文件名（如 lecture01.pptx）")
+@click.option("--workspace", "-w", default=None)
+@click.option("--verbose", "-v", is_flag=True)
+@click.pass_obj
+def materials_remove(obj, chap, file_name, workspace, verbose):
+    """D134-T3c：把文件移入 `_source/_trash/`（**不真删**，可人工找回）。"""
+    from .files import materials as M
+    ws = _setup(verbose or obj.get("verbose"), workspace)
+    try:
+        rep = M.remove_source(ws, chap, file_name)
+    except M.MaterialsError as exc:
+        raise click.ClickException(str(exc))
+    click.echo(json.dumps(rep, ensure_ascii=False, indent=2))
+
+
 @materials_grp.command("show")
 @click.option("--chap", required=True)
 @click.option("--text", "show_text", is_flag=True, help="打印抽取到的文本（前 4000 字）")

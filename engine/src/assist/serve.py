@@ -939,6 +939,29 @@ class Handler(BaseHTTPRequestHandler):
                             "detail": xxt_err,
                             "hint": "关闭引擎窗口 → 删除 workspace/_engine → 重新双击 start.bat；见 docs/24 §14"}, 503)
                 return
+        if u.path == "/materials/upload":
+            # D134-T3a：PWA 上传附件 → materials/<chap>/_source/（同名不覆盖）
+            try:
+                length = int(self.headers.get("Content-Length") or 0)
+                payload = json.loads(self.rfile.read(length).decode("utf-8")) \
+                    if length else {}
+            except Exception as exc:  # noqa: BLE001
+                self._json({"ok": False, "error": f"bad json: {exc}"}, 400)
+                return
+            from .files import materials as _mup
+            chap = str(payload.get("chap") or "").strip()
+            if not chap:
+                self._json({"ok": False, "error": "缺少 chap（章节名）"}, 400)
+                return
+            try:
+                rep = _mup.save_uploads(Path(self.ws).resolve(), chap,
+                                        payload.get("items") or [])
+            except _mup.MaterialsError as exc:
+                self._json({"ok": False, "error": str(exc)}, 400)
+                return
+            rep["files"] = _mup.files_of(Path(self.ws).resolve(), chap)
+            self._json(rep)
+            return
         if u.path == "/roster/write":
             # D120：名单落盘（路径由引擎权威决定：<ws>/<class_dir>/roster/roster.xlsx）
             payload: dict = {}
@@ -2836,6 +2859,22 @@ class Handler(BaseHTTPRequestHandler):
             limit = int((q.get("limit") or ["100"])[0] or 100)
             self._json({"ok": True, "records": _arn.read_journal(
                 Path(self.ws).resolve(), limit=max(1, min(limit, 500)))})
+            return
+        elif u.path == "/materials/files":
+            # D134-T3b：某章 _source/ 原件清单（只读）
+            from .files import materials as _mfl
+            q = urllib.parse.parse_qs(u.query)
+            chap = str((q.get("chap") or [""])[0]).strip()
+            if not chap:
+                self._json({"ok": False, "error": "缺少 chap"}, 400)
+                return
+            try:
+                rows = _mfl.files_of(Path(self.ws).resolve(), chap,
+                                     include_trash=bool(q.get("trash")))
+            except _mfl.MaterialsError as exc:
+                self._json({"ok": False, "error": str(exc)}, 400)
+                return
+            self._json({"ok": True, "chap": chap, "count": len(rows), "files": rows})
             return
         elif u.path == "/materials/list":
             # D131-T21d：课堂资料章节清单（PWA 只读展示；抽取/确认仍走 CLI 以保教师把关）

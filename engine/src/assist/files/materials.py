@@ -38,6 +38,11 @@ INDEX = "索引.json"
 KNOW_MD = "知识点清单.md"
 KNOW_AI = "知识点清单.ai.json"
 KNOW_JOURNAL = "知识点清单.journal.jsonl"
+TRASH = "_trash"          # D134-T3：remove 的回收站（**不真删**）
+UPLOAD_EXTS = {".pptx", ".ppt", ".pdf", ".docx", ".doc", ".png", ".jpg", ".jpeg",
+               ".md", ".txt", ".markdown"}
+UPLOAD_MAX_BYTES = 20 * 1024 * 1024
+UPLOAD_MAX_ITEMS = 20
 
 TEXT_LIKE = {".md", ".txt", ".markdown"}
 IMAGE_LIKE = {".png", ".jpg", ".jpeg", ".webp", ".gif", ".bmp"}
@@ -133,6 +138,134 @@ def list_sources(ws, chap: str) -> list[Path]:
         return []
     return sorted((p for p in d.rglob("*") if p.is_file() and not p.name.startswith(".")),
                   key=lambda p: str(p))
+
+
+def files_of(ws, chap: str, *, include_trash: bool = False) -> list[dict]:
+    """D134-T3b：列出 `_source/` 里的原件（文件名/大小/时间/sha/类型）。
+
+    只读操作；**不修改**任何文件。`include_trash=True` 时一并列出回收站里的。
+    """
+    d = chap_dir(ws, chap)
+    out: list[dict] = []
+    dirs = [(SOURCE, d / SOURCE)]
+    if include_trash:
+        dirs.append((f"{SOURCE}/{TRASH}", d / SOURCE / TRASH))
+    for label, base in dirs:
+        if not base.is_dir():
+            continue
+        for p in sorted((x for x in base.rglob("*") if x.is_file()
+                         and not x.name.startswith(".")), key=lambda x: str(x)):
+            try:
+                st = p.stat()
+                entry = {"file": str(p.relative_to(d)).replace("\\", "/"),
+                         "name": p.name, "dir": label,
+                         "bytes": st.st_size,
+                         "mtime": time.strftime("%Y-%m-%d %H:%M:%S", time.localtime(st.st_mtime)),
+                         "kind": classify(p)}
+                if label == SOURCE:
+                    entry["sha256"] = sha256_of(p)
+                out.append(entry)
+            except OSError as exc:
+                out.append({"file": str(p.name), "dir": label,
+                            "error": str(exc)[:120]})
+    return out
+
+
+def save_uploads(ws, chap: str, items: "list[dict]") -> dict:
+    """D134-T3a：把 PWA base64 上传的附件落到 `_source/`（**同名不覆盖**）。
+
+    items: `[{name, data_b64}]`。
+    安全约束（docs/83 §4 T3a / §6）：
+    - 扩展名白名单（`UPLOAD_EXTS`），其余一律拒收（不收 .exe/.sh/.zip 等）；
+    - 单文件 ≤ `UPLOAD_MAX_BYTES`，一次最多 `UPLOAD_MAX_ITEMS` 个；
+    - 文件名清洗（去掉路径分隔符/控制字符）；
+    - **同名不覆盖**：自动改名为 `name-2.ext`、`name-3.ext` …；
+    - 只写 `_source/`，不碰 `_extract/` 与知识点清单。
+    """
+    import base64
+    import re as _re
+
+    d = ensure_chap(ws, chap)
+    src = d / SOURCE
+    saved: list[dict] = []
+    skipped: list[dict] = []
+    for it in (items or [])[:UPLOAD_MAX_ITEMS]:
+        raw_name = str((it or {}).get("name") or "").strip()
+        # 只保留安全字符；去掉任何路径成分（防 ../ 写出 _source/）
+        name = _re.sub(r"[^0-9A-Za-z\u4e00-\u9fff._()（）+\- ]", "_",
+                       Path(raw_name).name)[:120].strip()
+        if not name or name in (".", ".."):
+            skipped.append({"name": raw_name, "reason": "文件名非法"})
+            continue
+        ext = Path(name).suffix.lower()
+        if ext not in UPLOAD_EXTS:
+            skipped.append({"name": name,
+                            "reason": f"扩展名 {ext or '(无)'} 不在允许列表"
+                                      f"（{' '.join(sorted(UPLOAD_EXTS))}）"})
+            continue
+        b64 = str((it or {}).get("data_b64") or "")
+        if not b64:
+            skipped.append({"name": name, "reason": "缺少文件内容"})
+            continue
+        try:
+            blob = base64.b64decode(b64, validate=False)
+        except Exception as exc:  # noqa: BLE001
+            skipped.append({"name": name, "reason": f"base64 解码失败：{exc}"})
+            continue
+        if len(blob) > UPLOAD_MAX_BYTES:
+            skipped.append({"name": name,
+                            "reason": f"超过大小上限 {UPLOAD_MAX_BYTES // (1024 * 1024)}MB"})
+            continue
+        # 同名不覆盖：自动加序号（教师原件永不被静默替换）
+        dest = src / name
+        n = 2
+        while dest.exists():
+            dest = src / f"{Path(name).stem}-{n}{Path(name).suffix}"
+            n += 1
+        try:
+            dest.write_bytes(blob)
+        except OSError as exc:
+            skipped.append({"name": name, "reason": f"写入失败：{exc}"})
+            continue
+        saved.append({"name": dest.name, "requested": name,
+                      "file": str(dest.relative_to(d)).replace("\\", "/"),
+                      "bytes": len(blob), "renamed": dest.name != name})
+    return {"ok": True, "chap": chap, "saved": saved, "skipped": skipped,
+            "source": str(src)}
+
+
+def remove_source(ws, chap: str, file_name: str) -> dict:
+    """D134-T3c：把 `_source/` 里的文件**移入回收站** `_source/_trash/`（不真删）。
+
+    为什么不真删：`_source/` 是教师原件（唯一真源，D131 硬规则 1）；
+    误删不可恢复。移入回收站可人工找回，且教师能看到"哪些被移走过"。
+    """
+    import shutil as _sh
+
+    d = chap_dir(ws, chap)
+    src = d / SOURCE
+    rel = str(file_name or "").strip().replace("\\", "/").lstrip("/")
+    if not rel:
+        raise MaterialsError("文件名不能为空")
+    target = (src / rel)
+    try:
+        target = target.resolve()
+        target.relative_to(src.resolve())
+    except Exception:  # noqa: BLE001
+        raise MaterialsError(f"文件必须位于 {SOURCE}/ 内：{file_name!r}") from None
+    if not target.is_file():
+        raise MaterialsError(f"文件不存在：{rel}")
+    trash = src / TRASH
+    trash.mkdir(parents=True, exist_ok=True)
+    dest = trash / target.name
+    n = 2
+    while dest.exists():
+        dest = trash / f"{target.stem}-{n}{target.suffix}"
+        n += 1
+    _sh.move(str(target), str(dest))
+    return {"ok": True, "moved": rel,
+            "to": str(dest.relative_to(d)).replace("\\", "/"),
+            "hint": "已移入回收站（未删除）；需要时从 _source/_trash/ 移回"}
 
 
 def classify(p: Path) -> str:

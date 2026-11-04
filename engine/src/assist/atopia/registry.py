@@ -73,6 +73,9 @@ BUILTIN_TOOLS: tuple[Tool, ...] = (
        {"chap": "str"}),
     _t("materials.knowledge", ("materials", "knowledge"), L0, "查看某章生效知识点清单",
        {"chap": "str"}),
+    _t("materials.files", ("materials", "files"), L0,
+       "列出某章 _source/ 原件（文件名/大小/sha；含回收站可选）",
+       {"chap": "str"}),
     _t("kb.vocab.list", ("kb", "vocab", "list"), L0, "查看受控知识点词表"),
     _t("prompt.list", ("prompt", "list"), L0, "列出提示词模板"),
     # ---- L1 预览（只读但花 LLM 成本） ----
@@ -96,6 +99,9 @@ BUILTIN_TOOLS: tuple[Tool, ...] = (
        "执行知识点术语归一（改写题库 related）", {"mapping": "path_in_ws"}),
     _t("materials.confirm", ("materials", "confirm"), L2,
        "把 AI 知识点建议固化为生效清单", {"chap": "str"}),
+    _t("materials.remove", ("materials", "remove"), L2,
+       "把 _source/ 里的原件**移入回收站**（不真删，可人工找回）",
+       {"chap": "str", "file": "str"}),
     _t("rules.set", ("rules", "set"), L2, "修改评阅规则数值", {"path": "str",
                                                               "value": "str"}),
     _t("rules.reset", ("rules", "reset"), L2, "恢复默认评阅规则"),
@@ -131,8 +137,8 @@ def is_denied(tool: Tool) -> bool:
 
 
 # ---------------- 参数校验 ----------------
-_SAFE_STR = re.compile(r"^[^\\x00-\\x1f]{0,2000}$")
-_INT_RE = re.compile(r"^-?\\d{1,9}$")
+_SAFE_STR = re.compile("^[^\x00-\x1f]{0,2000}$")
+_INT_RE = re.compile(r"^-?\d{1,9}$")
 
 
 def validate_args(tool: Tool, ws, args: "dict | None") -> dict:
@@ -217,6 +223,7 @@ _ARG_FLAG = {
     "value": "--value",
     "id": "--id",
     "text": "--text",
+    "file": "--file",
 }
 
 
