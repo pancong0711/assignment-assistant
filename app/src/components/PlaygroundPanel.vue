@@ -247,6 +247,12 @@ onMounted(() => { loadProviders(); loadRecords(); loadDraft() })
   <div>
     <h3 style="margin-top:14px">⑧ Playground（单次调用大模型 · 无多轮上下文）</h3>
     <p class="hint" style="margin:0 0 6px">
+      这里只做<b>单次调用</b>：测模型/测连通性/看一次回答的质量，<b>不保存上下文</b>，
+      也<b>不会</b>调用本项目的工具。
+      需要<b>多轮对话</b>或让 AI <b>使用本项目工具</b>，请到顶部
+      <b>Atopia</b> 选项卡（所有工具调用都会经过安全 Gate）。
+    </p>
+    <p class="hint" style="margin:0 0 6px">
       提问（文本 + 图片/文档附件）→ 一次调用 → 呈现回复；支持批量；问题与答案**本地留档**（<code>&lt;ws&gt;/playground/</code>）。
       文档支持 pdf/docx/txt（旧版 .doc 请转 docx/pdf）。输入内容**自动保存到本浏览器**（刷新不丢）。
     </p>

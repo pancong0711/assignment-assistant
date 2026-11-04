@@ -12,6 +12,7 @@ import PublishView from './views/PublishView.vue'
 import TransferView from './views/TransferView.vue'
 import HelpView from './views/HelpView.vue'
 import JournalView from './views/JournalView.vue'
+import AtopiaView from './views/AtopiaView.vue'
 
 const settings = useSettingsStore()
 
@@ -26,6 +27,8 @@ const TABS = [
   { key: 'xxetong', label: '作业预览-学习通', component: XxetongView },
   { key: 'publish', label: '发布-学习通', component: PublishView },
   { key: 'grading', label: 'AI 辅助批阅', component: GradingView },
+  // D140：Atopia 独立选项卡（AI 用本项目工具的唯一入口；多轮对话 + 工具）
+  { key: 'atopia', label: 'Atopia', component: AtopiaView },
   { key: 'transfer', label: '导入导出', component: TransferView },
   { key: 'help', label: '使用说明', component: HelpView },
   { key: 'journal', label: '操作记录', component: JournalView },

@@ -49,6 +49,7 @@
 - `docs/86-D136-opencode-go-session-header.md` — **D136 opencode-go 会话头（x-opencode-session）+ provider 级自定义请求头（白名单）**
 - `docs/87-D137-pwa-cli-parity.md` — **D137 PWA ↔ CLI 能力对齐（provider 请求头 / 资料页三动作 / Atopia 护栏）**
 - `docs/88-D138-knowledge-topic-layer.md` — **D138 知识点两层分类（章 → 主题 → 术语；不做 parent/child）**
+- `docs/89-D140-atopia-chat-tab.md` — **D140 Atopia 独立选项卡 + 对话模式（Playground 保持单次）**
 - `docs/85-D135-knowledge-hierarchy.md` — **D135 待决：知识点层级（上位/下位概念）方案与取舍**
 - `docs/34-D82-kb-read-order-image-upload-batch.md` — **D82 kb 多文件读取/题目排序/插图参数/草稿修复/上传试跑/batch**
 - `docs/16-xuexitong-integration.md` — **阶段6 学习通整合任务需求单**（登录/读取/下载/上传/发布）

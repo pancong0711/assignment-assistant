@@ -27,7 +27,6 @@ import StudentReviewModal from './StudentReviewModal.vue'
 import GradingRulesCard from './GradingRulesCard.vue'
 import TeacherReportCard from './TeacherReportCard.vue'
 import TrendCard from './TrendCard.vue'
-import AtopiaPanel from './AtopiaPanel.vue'
 const packStore = usePackStore()
 const rosterStore = useRosterStore()
 
@@ -1113,8 +1112,11 @@ onMounted(async () => {
     <TrendCard :engine-addr="props.engineAddr" :token="props.token"
                :class-dir="curWorkDir" :reload-key="reportReloadKey" />
 
-    <!-- D132：Atopia（AI 可调用本项目工具；L2 写入逐次确认，L3 不开放） -->
-    <AtopiaPanel :engine-addr="props.engineAddr" :token="props.token" />
+    <!-- D140：Atopia 已独立为顶层选项卡，这里只留指路提示（避免双入口） -->
+    <p class="hint" style="margin-top:12px">
+      🤖 想让 AI 用本项目工具（多轮对话 / 读题库 / 抽知识点 / 写回）？
+      请到顶部 <b>Atopia</b> 选项卡 —— 每次调用都会经过安全 Gate。
+    </p>
   </div>
 
     <h3 style="margin-top:14px">⑦ 题库 AI 作答（对题目生成参考答案；不覆盖、可多版本）</h3>

@@ -862,3 +862,22 @@ rainclass 67/67，PWA↔engine 全等，仅末位浮点四舍五入噪声）。
 - ✅ `knowledge_terms()` 兼容新旧格式；`## 逻辑关系` 段的 `A → B` 不再误当术语。
 - ✅ 教师报告 / 趋势报告按主题分组（无主题时**行为与之前完全一致**）。
 - ✅ PWA：资料页与教师报告卡均按主题分组展示。
+
+---
+
+## D140 · Atopia 独立选项卡 + 对话模式（2026-10-31 完成）
+
+> 需求单：`docs/89-D140-atopia-chat-tab.md`。
+
+分工定稿：**Playground = 单次调用测模型（不给工具）**；
+**Atopia = 唯一能调工具的入口（多轮对话 + L2 确认 + 审计 + 护栏）**。
+
+- ✅ Atopia 独立为顶层选项卡，含「💬 对话 / 🧰 单一工具执行」两个页签；
+  原 `AiGradingPanel` 底部内嵌面板移除（无双入口）。
+- ✅ `POST /atopia/ask`：多轮 + 工具，全部经 `run_tool()` 同一 Gate；
+  原生 tools 优先、不支持时自动降级 JSON 指令协议。
+- ✅ L2 确认用「拒绝 + 返回 pendingConfirm + 前端弹窗 + 带 confirmed=true 重发」，
+  避免在 HTTP 线程里阻塞等待。
+- ✅ 会话历史落 `<ws>/atopia/sessions/*.jsonl`（可整体删除），可回看。
+- ✅ Playground 加了分工说明。
+- 已知限制：无流式输出；L2 确认粒度为"本次请求全部确认"。

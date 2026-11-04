@@ -1610,6 +1610,118 @@ class Handler(BaseHTTPRequestHandler):
             rep["confirmed_by"] = confirm
             self._json(rep)
             return
+        if u.path == "/atopia/ask":
+            # D140：Atopia 对话（多轮 + 工具调用，全部经同一 Gate）
+            # 安全：L3 拒绝、L2 必须教师确认（confirmed=true 才放行）、护栏照旧。
+            payload: dict = {}
+            try:
+                length = int(self.headers.get("Content-Length") or 0)
+                if length:
+                    payload = json.loads(self.rfile.read(length).decode("utf-8")) or {}
+            except Exception as exc:  # noqa: BLE001
+                self._json({"ok": False, "error": f"bad json: {exc}"}, 400)
+                return
+            task = str(payload.get("task") or "").strip()
+            if not task:
+                self._json({"ok": False, "error": "请输入要 AI 做的事（task）"}, 400)
+                return
+            from .atopia import agent as _ag
+            from .atopia import limits as _al3
+            from .atopia.registry import ToolDenied as _TD3
+            from .grading.llm import LLMClient, LLMConfigError
+            ws_ = Path(self.ws).resolve()
+            sess = _al3.Session(session_id=str(payload.get("session") or "pwa-chat"),
+                                limits=_al3.read_limits(ws_))
+            confirmed = payload.get("confirmed") is True
+            conf_note = str(payload.get("confirmedBy") or "teacher:pwa")
+
+            def _confirm(tool_name: str, args: dict) -> str:
+                # PWA 是**异步**的：不能在请求线程里等教师点确认。
+                # 因此这里只在"本次请求已带确认"时放行；否则拒绝并让前端弹窗后重发。
+                return conf_note if confirmed else ""
+
+            try:
+                client = LLMClient(ws=ws_)
+            except LLMConfigError as exc:
+                self._json({"ok": False, "error": f"LLM 未配置：{exc}"}, 400)
+                return
+            # D136：一次对话 = 一个 session id（前端传则复用，保证 prompt 缓存命中）
+            if payload.get("sessionId"):
+                client.set_session_id(str(payload.get("sessionId")))
+            try:
+                rep = _ag.run_session_auto(
+                    client, ws_, task, model=str(payload.get("model") or "") or None,
+                    session=sess, confirm=_confirm,
+                    max_turns=int(payload.get("maxTurns") or 6),
+                    prefer=str(payload.get("protocol") or "native"))
+            except _TD3 as exc:
+                self._json({"ok": False, "denied": True, "error": str(exc)}, 403)
+                return
+            except _al3.LimitExceeded as exc:
+                self._json({"ok": False, "limited": True, "error": str(exc)}, 429)
+                return
+            except Exception as exc:  # noqa: BLE001
+                self._json({"ok": False, "error": str(exc)[:400]}, 500)
+                return
+            # 若被拒是因为 L2 未确认 → 让前端弹窗（带上工具名与参数）
+            steps = rep.get("steps") or []
+            pend = None
+            for st in steps:
+                if st.get("denied") and "教师确认" in str(st.get("reason") or ""):
+                    pend = {"tool": st.get("tool"), "args": st.get("args") or {},
+                            "reason": st.get("reason")}
+            if pend:
+                rep["pendingConfirm"] = pend
+            rep["sessionId"] = client.session_id
+            # D140-B4：会话历史落 <ws>/atopia/sessions/（可整体删除）
+            try:
+                import time as _t
+                sd = ws_ / "atopia" / "sessions"
+                sd.mkdir(parents=True, exist_ok=True)
+                with (sd / f"{client.session_id or 'default'}.jsonl").open(
+                        "a", encoding="utf-8") as f:
+                    f.write(json.dumps({"ts": _t.strftime("%Y-%m-%d %H:%M:%S"),
+                                        "task": task, "ok": bool(rep.get("ok")),
+                                        "answer": str(rep.get("answer") or "")[:1000],
+                                        "steps": steps}, ensure_ascii=False) + "\n")
+            except OSError as exc:
+                logger.warning(f"[atopia] 会话历史写入失败：{exc}")
+            self._json(rep)
+            return
+        if u.path == "/atopia/sessions":
+            # D140-B4：列出/回看会话历史
+            from .atopia import agent as _ag2  # noqa: F401 —— 保持导入一致
+            ws_ = Path(self.ws).resolve()
+            sd = ws_ / "atopia" / "sessions"
+            q = urllib.parse.parse_qs(u.query)
+            sid = str((q.get("id") or [""])[0]).strip()
+            if sid:
+                f = sd / f"{sid}.jsonl"
+                if not f.is_file():
+                    self._json({"ok": False, "error": f"会话不存在：{sid}"}, 404)
+                    return
+                recs = []
+                for line in f.read_text(encoding="utf-8", errors="replace").splitlines():
+                    try:
+                        recs.append(json.loads(line))
+                    except json.JSONDecodeError:
+                        continue
+                self._json({"ok": True, "id": sid, "records": recs})
+                return
+            items = []
+            if sd.is_dir():
+                for f in sorted(sd.glob("*.jsonl"), key=lambda x: x.stat().st_mtime,
+                                reverse=True):
+                    try:
+                        n = sum(1 for _ in f.open(encoding="utf-8", errors="replace"))
+                    except OSError:
+                        n = 0
+                    items.append({"id": f.stem, "turns": n,
+                                  "mtime": time.strftime(
+                                      "%Y-%m-%d %H:%M:%S",
+                                      time.localtime(f.stat().st_mtime))})
+            self._json({"ok": True, "sessions": items[:50]})
+            return
         if u.path == "/atopia/limits":
             # D137：教师调整护栏（受 HARD_CAPS 硬顶约束；超限直接拒绝并说明原因）
             payload: dict = {}

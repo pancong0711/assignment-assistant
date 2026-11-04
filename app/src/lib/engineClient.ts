@@ -2289,6 +2289,45 @@ export async function runAtopiaTool(
   return o
 }
 
+/** D140：Atopia 对话（多轮 + 工具；全部经同一 Gate）。 */
+export interface AtopiaStep {
+  turn?: number; action?: string; tool?: string; args?: Record<string, any>
+  ok?: boolean; status?: string; exit?: number; ms?: number
+  out?: string; err?: string; denied?: boolean; reason?: string
+}
+export interface AtopiaAskResult {
+  ok?: boolean; answer?: string; error?: string; steps?: AtopiaStep[]
+  protocol?: string; degraded?: boolean; degradedReason?: string
+  sessionId?: string
+  /** L2 工具待教师确认（前端弹窗后带 confirmed=true 重发） */
+  pendingConfirm?: { tool?: string; args?: Record<string, any>; reason?: string } | null
+}
+
+export async function askAtopia(
+  engineAddr: string, token: string | undefined,
+  payload: { task: string; sessionId?: string; confirmed?: boolean; confirmedBy?: string
+             protocol?: 'native' | 'json'; maxTurns?: number; model?: string },
+): Promise<AtopiaAskResult> {
+  const base = normalizeEngineAddr(engineAddr)
+  const res = await fetch(engineUrlWithToken(base, '/atopia/ask', token), {
+    method: 'POST', headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(payload),
+  })
+  const o = (await res.json().catch(() => ({}))) as any
+  if (!res.ok && !o?.error) throw new Error(`HTTP ${res.status}`)
+  return o
+}
+
+/** D140：列出 Atopia 会话 / 回看某个会话。 */
+export async function fetchAtopiaSessions(
+  engineAddr: string, token: string | undefined, id = '',
+): Promise<{ ok?: boolean; sessions?: { id: string; turns: number; mtime: string }[]
+             records?: any[]; error?: string }> {
+  const base = normalizeEngineAddr(engineAddr)
+  const qs = id ? `?id=${encodeURIComponent(id)}` : ''
+  return (await getJson2(engineUrlWithToken(base, `/atopia/sessions${qs}`, token))) as any
+}
+
 /** D137：调整 Atopia 护栏（受硬顶约束；超限由引擎拒绝并返回原因）。 */
 export async function postAtopiaLimits(
   engineAddr: string, token: string | undefined, limits: Record<string, number>,
