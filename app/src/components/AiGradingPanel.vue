@@ -462,8 +462,11 @@ async function runOne(s: any, mode: 'transcribe' | 'evaluate' | 'full') {
       taskpad,
       ...(padsPayload && padsPayload.length > 1 ? { pads: padsPayload } : {}),
       mode: 'optimized',
-      tags: s.tag ? [s.tag] : undefined,
+      // D156：**不再传 tags**——`students` 已精确到人；若同时传 tags，
+      // plan 装配会把该 tag 下所有学生都装进来（曾导致"批张紫涵却报张松"）。
       students: [s.name],
+      // D157：逐生补批**强制重跑**（否则会因已有转写/评阅而跳过，表现为"结果没变"）
+      force: true,
       steps,
       imageMode: imageMode.value, svgRedraw: svgRedraw.value,
       allowPartial: true,
@@ -1251,7 +1254,12 @@ onMounted(async () => {
           <tr v-for="(s, i) in students" :key="s.key">
             <td>{{ s.name }}</td>
             <td class="c">{{ s.tag || '—' }}</td>
-            <td class="c"><b :style="{ color: aiState(s).color }">{{ aiState(s).label }}</b></td>
+            <td class="c">
+              <b :style="{ color: aiState(s).color }">{{ aiState(s).label }}</b>
+              <div v-if="draftOf(s).ai?.at" class="hint" style="font-size:11px">
+                {{ draftOf(s).ai.at }}
+              </div>
+            </td>
             <td class="c">{{ draftOf(s).ai?.score ?? draftOf(s).score ?? '—' }}</td>
             <td class="c">{{ draftOf(s).human?.used ? (draftOf(s).human.score ?? '✓') : '—' }}</td>
             <td class="c">{{ reportMode(s) }}</td>

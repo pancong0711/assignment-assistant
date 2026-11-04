@@ -10,6 +10,92 @@
 """
 from __future__ import annotations
 
+# D160：转写输出 schema（与 TRANSCRIPTION_PROMPT 的输出格式一致）
+TRANSCRIPTION_SCHEMA = {
+    "type": "json_schema",
+    "json_schema": {
+        "name": "transcription",
+        "strict": True,
+        "schema": {
+            "type": "object",
+            "properties": {
+                "items": {
+                    "type": "array",
+                    "items": {
+                        "type": "object",
+                        "properties": {
+                            "no": {"type": "string"},
+                            "printed_question": {"type": "string"},
+                            "answer": {"type": "string"},
+                            "diagrams": {
+                                "type": "array",
+                                "items": {
+                                    "type": "object",
+                                    "properties": {
+                                        "for_question": {"type": "string"},
+                                        "kind": {"type": "string"},
+                                        "description": {"type": "string"},
+                                    },
+                                    "required": ["for_question", "kind", "description"],
+                                    "additionalProperties": False,
+                                },
+                            },
+                        },
+                        "required": ["no", "printed_question", "answer", "diagrams"],
+                        "additionalProperties": False,
+                    },
+                },
+                "unmatched_notes": {"type": "string"},
+                "quality": {
+                    "type": "object",
+                    "properties": {
+                        "handwriting": {"type": "string"},
+                        "clarity": {"type": "string"},
+                        "organization": {"type": "string"},
+                    },
+                    "required": ["handwriting", "clarity", "organization"],
+                    "additionalProperties": False,
+                },
+            },
+            "required": ["items", "unmatched_notes", "quality"],
+            "additionalProperties": False,
+        },
+    },
+}
+
+
+def validate_transcription(data: dict) -> "list[str]":
+    """D160：转写结果的结构校验（解析成功 ≠ 内容合格）。
+
+    返回问题列表（空 = 合格）。不合格应重试，而不是把半成品写进 transcripts。
+    """
+    errs: list[str] = []
+    if not isinstance(data, dict):
+        return ["顶层不是 JSON 对象"]
+    items = data.get("items")
+    # 兼容旧格式（v1）：`{"markdown": "...", "quality": {...}}` 仍可接受
+    if not isinstance(items, list) and not str(data.get("markdown") or "").strip():
+        errs.append("缺少 items 数组（也没有旧的 markdown 字段）")
+        items = []
+    elif not isinstance(items, list):
+        items = []
+    if isinstance(data.get("items"), list) and not items \
+            and not str(data.get("markdown") or "").strip():
+        errs.append("items 为空（没有转写出任何题目）")
+    for i, it in enumerate(items, 1):
+        if not isinstance(it, dict):
+            errs.append(f"第{i}条不是对象")
+            continue
+        if "no" not in it:
+            errs.append(f"第{i}条缺少 no")
+        if "answer" not in it:
+            errs.append(f"第{i}条缺少 answer")
+    q = data.get("quality")
+    if not isinstance(q, dict):
+        errs.append("缺少 quality 对象")
+    return errs
+
+
 # D127：转写结构化 —— **题目与作答分开**，示意图只做语义描述（不画图）。
 #         注意：本阶段**绝不**发送任何作业纸/题干信息，避免模型用题干"脑补"笔迹。
 TRANSCRIPTION_PROMPT = """你是一位物理作业转录助手。你的任务是把学生提交的手写作业图片**精确转录**为结构化 JSON。
@@ -403,7 +489,9 @@ EVALUATION_SCHEMA = {
                                         "knowledge": {"type": "array",
                                                       "items": {"type": "string"}},
                                     },
-                                    "required": ["step", "description", "guidance", "deduct",
+                                    # D158：`deduct` 改为**可选**——分数由系统按规则算，
+                                    # 模型自报的 deduct 本来就没人用（且会误导提示词）。
+                                    "required": ["step", "description", "guidance",
                                                  "evidence", "confidence", "why", "knowledge"],
                                     "additionalProperties": False,
                                 },

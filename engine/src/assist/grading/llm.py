@@ -549,7 +549,13 @@ class LLMClient:
                          image_paths: list[str | Path], model: str | None = None,
                          temperature: float | None = None,
                          max_tokens: int = 8192,
-                         step: str = "transcription") -> str:
+                         step: str = "transcription",
+                         response_format: dict | None = None) -> str:
+        """多模态：图片 base64 data-url + 文本。
+
+        D160：新增 `response_format`——转写也能用 json_schema 强制结构化输出
+        （此前只有评阅有，转写纯靠提示词，字段缺失要到后面才炸）。
+        """
         """多模态：图片 base64 data-url + 文本（迁移自 client.chat_with_images）。"""
         content: list[dict] = [{"type": "text", "text": user_text}]
         # D106：分段压缩（mode='original' 可关闭，便于对比转录效果）；原图永不修改
@@ -571,7 +577,7 @@ class LLMClient:
             [{"role": "system", "content": system_prompt},
              {"role": "user", "content": content}],
             model=model or self.transcription_model, temperature=temperature,
-            max_tokens=max_tokens, step=step)
+            max_tokens=max_tokens, step=step, response_format=response_format)
         return self.extract_text(data)
 
     # ---- D82-F: batch API -------------------------------------------------

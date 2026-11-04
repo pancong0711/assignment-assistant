@@ -979,7 +979,9 @@ export async function startXxtGradeAi(
     /** D125：转录有学生失败时仍继续（默认中止） */
     allowPartial?: boolean
     /** D148：只处理这些学生（逐生补批） */
-    students?: string[] },
+    students?: string[]
+    /** D157：强制重跑（已有转写/评阅也重新生成） */
+    force?: boolean },
 ): Promise<string> {
   const base = normalizeEngineAddr(engineAddr)
   const res = await fetch(engineUrlWithToken(base, '/xxt/grade/ai-run', token), {

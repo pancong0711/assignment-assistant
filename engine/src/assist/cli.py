@@ -2612,12 +2612,15 @@ def llm_batch(task_path, jsonl_path, provider_name, limit, submit, poll_id, down
               help="只处理前 N 名**有作答**的学生（0=全部；D148 修正语义）")
 @click.option("--students", "students", default="",
               help="D148：只处理这些学生（逗号分隔的姓名）——逐生补批用")
+@click.option("--force-rerun", "force", is_flag=True,
+              help="D157：强制重跑（已有转写/评阅也重新生成）")
 @click.option("--dry-plan", "dry_plan", is_flag=True, default=False, help="只装配并打印 plan 摘要，不调 LLM")
 @click.option("--workspace", "-w", default=None)
 @click.option("--verbose", "-v", is_flag=True)
 @click.pass_obj
 def grade(obj, task_path, pads_dir, images_dir, rerun, steps, allow_partial, xxt_class, work_id,
-          plan_path, mode, tags, limit, students, dry_plan, scope_id, workspace, verbose):
+          plan_path, mode, tags, limit, students, force, dry_plan, scope_id, workspace,
+          verbose):
     """AI 批阅：transcribe → evaluate → report（阶段3；download/upload 属阶段4）。
 
     任务包 grade.steps 驱动；journal 运行记录写入
@@ -2685,6 +2688,8 @@ def grade(obj, task_path, pads_dir, images_dir, rerun, steps, allow_partial, xxt
     _stu = [x.strip() for x in str(students or "").split(",") if x.strip()]
     if _stu:
         kwargs["students"] = _stu
+    if force:
+        kwargs["force"] = True
     if allow_partial:
         kwargs["allow_partial"] = True
     if plan:

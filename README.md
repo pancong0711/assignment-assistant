@@ -58,6 +58,12 @@
 - `docs/95-D148-atopia-read-project.md` — **D148 Atopia 只读文件能力（fs.ls/read/search）+ 知识点选项卡 + 逐生补批**
 - `docs/96-D149-grading-as-score-source.md` — **D149 AI 批阅成绩作为成绩源（每包一列，未批阅记 0）**
 - `docs/97-D150-plan-atopia-workspace.md` — **D150 规划：Atopia 工作区 + 拷贝到课堂资料（未实施）**
+- `docs/98-D151-prompt-templates.md` — **D151 提示词模板中心（5 类 system prompt 可改/可存/可删）**
+- `docs/99-D152-ai-workbench-move.md` — **D152「题库AI+」整合题库 AI 作答（部分实施）**
+- `docs/100-D153-report-multi-select.md` — **D153 教师报告多选班级/作业包/tag（待实施）**
+- `docs/101-D154-per-student-button-feedback.md` — **D154 逐生审核按钮反馈修复**
+- `docs/102-D155-materials-feature-name.md` — **D155 课堂资料按特征名管理 + 上传按类型归档**
+- `docs/103-D156-D160-grading-quality.md` — **D156–D160 批阅正确性与质量（落错人/结果不变/太简略/转写 schema）**
 - `docs/85-D135-knowledge-hierarchy.md` — **D135 待决：知识点层级（上位/下位概念）方案与取舍**
 - `docs/34-D82-kb-read-order-image-upload-batch.md` — **D82 kb 多文件读取/题目排序/插图参数/草稿修复/上传试跑/batch**
 - `docs/16-xuexitong-integration.md` — **阶段6 学习通整合任务需求单**（登录/读取/下载/上传/发布）

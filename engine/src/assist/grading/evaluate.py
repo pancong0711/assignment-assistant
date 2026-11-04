@@ -22,52 +22,86 @@ from loguru import logger
 from .llm import LLMAPIError, LLMClient
 from .transcribe import parse_llm_json
 
-# ---- 迁移自 _legacy/2601playwright/src/llm/evaluator.py ANALYSIS_PROMPT ----
-ANALYSIS_PROMPT = """这是大学物理作业评阅，内容完全学术，请基于物理知识进行专业评阅。
+# ---- D158：批阅 system prompt（专业评阅规范） ----
+# 此前是旧项目迁移的简化版（只有"逐题分析、输出 JSON"），导致评阅结果信息量很低：
+# 模型倾向写"思路清晰/有计算错误"这类空话。现改为**评阅规范**：
+# 强制引用原文证据、说明物理依据、给出可追问的问题。
+ANALYSIS_PROMPT = """这是大学物理作业评阅，内容完全学术。你是这门课的**资深评阅教师**，
+负责逐题判断学生作答的物理正确性与完整性。你**只负责发现问题，不负责算分**（分数由系统按规则计算）。
 
-你是一位大学物理助教。请逐题分析学生作业，输出结构化发现。
+【评阅铁律（违反即为无效评阅）】
+1. **必须引用原文**：每条 errors 的 `evidence` 必须是学生作答中的**逐字片段**
+   （公式原样、文字原样）。找不到原文就**不要报这条错**。
+2. **必须说明物理依据**：每条 errors 的 `why` 要指出对应的物理原理/定律/公式，
+   （如"动量守恒要求合外力为零，本题有摩擦力做功，系统动量不守恒"），
+   不能只写"计算错误""思路不对"。
+3. **宁缺毋滥**：不确定的判定标 `confidence: "low"`，系统会提示而不是扣分。
+   不要为了凑数编造错误。
+4. **具体到步骤**：`step` 指出在推导的第几步/哪一问出问题（如"第2步，代入速度时漏了负号"）。
+5. **启发而非给答案**：`guidance` 用**苏格拉底式追问**引导学生自己发现，
+   禁止直接写出正确结果。
 
-评分流程（你只负责发现，不负责算分）：
-1. 检查作业纸是否与题目匹配（防止学生答非所问）
-2. 每题分别分析：推理思路是否完整，是否有计算错误
-3. 检查每题是否画了示意图
-4. 检查是否有签名
+【逐题评阅视角（按题目类型套用）】
+- **计算/推导题**：①物理模型是否正确（受力分析/守恒条件是否成立）；
+  ②方程是否守恒律/定律的正确表达；③量纲与单位；④有效数字与符号约定；
+  ⑤结论是否与所问一致。
+- **问答题**：逐条核对参考答案中的要点是否答到（`key_points`），
+  学生答到的要在 `evidence` 引用原句。
+- **抄写题**：只看是否抄全（题目/过程/示意图），**不评价对错**。
+- **辨析/创新/翻译题**：看概念区分/独立思考/术语准确，**逻辑瑕疵不扣分**但要给追问。
+- **总结题**：看是否归纳了知识点、是否有公式或推导、示意图是否画出、篇幅是否过短。
 
-输出格式（严格 JSON，不要其他内容）：
+【示意图】
+`has_diagram` 判断学生**是否画了图**；若画了，还需在 `errors` 中指出
+方向/坐标轴/标注与结论不符之处（这类问题往往比算错更关键）。
+
+【完整性与签名的判定】
+- `reasoning.status`：`"ok"` 思路完整；`"brief"` 关键步骤缺失（如只写结果不写过程）。
+- `has_signature`：是否有学生签名。
+
+【输出格式（严格 JSON，不要输出其他内容）】
 ```json
 {
   "question_match": {"status": true, "note": "题目匹配正常"},
   "questions": [
     {
       "id": 1,
-      "reasoning": {"status": "ok", "note": "思路清晰"},
+      "reasoning": {"status": "ok", "note": "先说清物理模型，再用动量守恒列式，最后代入求解"},
+      "correct_points": ["正确判断了系统合外力为零", "方程列式正确"],
       "errors": [
         {
           "step": "第2步",
-          "description": "描述错误",
-          "guidance": "引导性问题，不要直接给答案",
-          "deduct": 5
+          "description": "代入速度时漏了负号，导致末速度方向相反",
+          "evidence": "v = 4.0 m/s（原文）",
+          "why": "碰后小球反弹，速度应与初速度反向，符号约定需一致",
+          "guidance": "碰后小球是沿原方向还是反方向运动？你的符号和这个方向一致吗？",
+          "confidence": "high"
         }
       ],
       "has_diagram": true
     }
   ],
   "has_signature": true,
-  "summary": "整体评价",
-  "guidance": "给学生2-3个启发性问题，引导他自己发现错误",
-  "strengths": ["优点"],
-  "weaknesses": ["不足"]
+  "summary": "整体评价（2-3 句，说清这份作业的主要问题在哪一块知识）",
+  "guidance": "给学生 2-3 个启发性问题，引导他自己发现错误",
+  "strengths": ["具体优点，要能对应到某题某步"],
+  "weaknesses": ["具体不足，要能对应到某题某步"]
 }
 ```
 
-各项说明：
-- reasoning.status: "ok" 思路完整 | "brief" 过于简略
-- errors[].guidance: 苏格拉底式追问，不直接给答案
-- errors[].deduct: 每处扣5分
-- has_diagram: 每题是否画了示意图
-- has_signature: 是否有签名
-- question_match.status 为 false 表示学生作答与给定题目无关（答非所问/顶替作业）；
-  此时 questions 可为空列表，note 中说明判断依据。"""
+【字段说明】
+- `correct_points`：**必须给出学生做对的地方**（至少 1 条，除非该题完全空白）——
+  这是学生最需要的正向反馈；写具体，不要写"整体不错"。
+- `errors[].confidence`：`high` / `medium` / `low`。
+- `errors[].deduct`：**不需要填**（分数由系统按规则算，模型自报会被忽略）。
+- `question_match.status=false` 表示学生作答与给定题目无关（答非所问/顶替作业），
+  此时 `questions` 可为空列表，`note` 中说明判断依据（需引用原文片段）。
+
+【质量自查（输出前逐条过一遍）】
+- 每道题是否至少给了 `correct_points` 或 `errors` 之一？（都没有 = 这条评阅没价值）
+- 每条 errors 是否都有 `evidence` 逐字引用？
+- `why` 是否写了物理原理，而不是"算错了"？
+- `guidance` 是否是在**问**，而不是在**答**？"""
 
 # ---- 标签差异化指令：逐段迁移自 evaluator.evaluate_markdown ----
 _TAG_INSTRUCTIONS = {
@@ -215,7 +249,9 @@ def build_user_prompt(items: list[dict], markdown_text: str, student: str = "",
 
 
 def analyze(client: LLMClient, user_prompt: str, model: str | None = None,
-            max_tokens: int = 8192, *, strict_schema: bool = True,
+            # D158：批阅要求更详细（correct_points/why/evidence），
+            # 8192 容易截断；提到 12288（截断时仍会翻倍重试）。
+            max_tokens: int = 12288, *, strict_schema: bool = True,
             ws=None) -> dict:
     """调用 LLM 得到结构化分析 JSON。
 
@@ -418,6 +454,10 @@ def _aggregate_summary_meta(result: dict, analysis: dict) -> None:
     bases.discard("")
     if bases:
         result["summary_basis"] = "materials" if bases == {"materials"} else "heuristic"
+    # D159：标记"信息量不足"的题（供报告与教师复核）
+    thin = thin_questions(analysis)
+    if thin:
+        result["thin_questions"] = thin
 
 
 def score_from_analysis(analysis: dict, quality: dict | None = None,
@@ -550,6 +590,26 @@ def DEFAULT_TYPE_RULES(kind: str) -> dict:
 
 
 # ---- 批语 Markdown：函数级搬运自 evaluator.build_feedback_md ----
+def thin_questions(analysis: dict, *, min_note: int = 12) -> list[str]:
+    """D159：找出"信息量不足"的题目（教师反馈批阅太简略）。
+
+    判定：某题**既没有 correct_points，也没有 errors**，
+    且 `reasoning.note` 短于 `min_note` 字 —— 这条评阅等于没写。
+
+    返回题号列表（供报告标注"本题评阅信息不足，建议复核"）。
+    """
+    out: list[str] = []
+    for q in ((analysis or {}).get("questions") or []):
+        if not isinstance(q, dict):
+            continue
+        has_cp = any(str(x).strip() for x in (q.get("correct_points") or []))
+        has_err = bool(q.get("errors"))
+        note = str((q.get("reasoning") or {}).get("note") or "").strip()
+        if not has_cp and not has_err and len(note) < min_note:
+            out.append(str(q.get("id") or "?"))
+    return out
+
+
 def build_feedback_md(result: dict, student_name: str = "学生",
                       homework_name: str = "", analysis: dict | None = None) -> str:
     lines: list[str] = []
@@ -585,6 +645,11 @@ def build_feedback_md(result: dict, student_name: str = "学生",
                 lines.append(f"  - **想一想：**{e['guidance']}")
         if not q.get("has_diagram", True):
             lines.append("- 提示：缺少示意图，请补上。")
+    _thin = result.get("thin_questions") or []
+    if _thin:
+        lines += ["", "---", "## 关于本次批阅",
+                  f"第 {'、'.join(_thin)} 题的自动评阅**信息量偏少**（未给出具体做对/做错之处），"
+                  "建议教师复核后补充批语。"]
     if str(result.get("summary_basis") or "") == "heuristic":
         lines += ["", "---", "## 关于总结题",
                   "本次总结题按**通用标准**评阅（未结合本堂课授课资料），"

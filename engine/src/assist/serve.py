@@ -2299,6 +2299,9 @@ class Handler(BaseHTTPRequestHandler):
                 args += ["--students", ",".join(str(x) for x in stu_)]
             elif isinstance(stu_, str) and stu_.strip():
                 args += ["--students", stu_]
+            # D157：强制重跑（逐生补批必须能覆盖已有结果）
+            if payload.get("force") is True:
+                args += ["--force-rerun"]
             # D125：分步批阅（仅转录 / 仅评阅 / 转录+评阅）与"允许部分失败"
             steps_ = payload.get("steps")
             if isinstance(steps_, list) and steps_:

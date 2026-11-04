@@ -246,6 +246,13 @@ def transcribe_student(client: LLMClient, images: list[Path], student: str,
                        out_dir: Path, model: str | None = None) -> Path:
     """转录单个学生的一组图片 → transcripts/<student>.json（含 v1 版本号）。"""
     last_err: Exception | None = None
+    # D160：先用 json_schema 强制结构化；不支持则逐级回退。
+    # 顺序：json_schema → json_object → 纯提示词。每级失败都换下一级重试。
+    from .prompts import TRANSCRIPTION_SCHEMA, validate_transcription
+    _formats: "list[dict | None]" = [TRANSCRIPTION_SCHEMA,
+                                     {"type": "json_object"},
+                                     None]
+    _fi = 0
     for attempt in range(_TRANSCRIBE_ATTEMPTS):
         try:
             raw = client.chat_with_images(
@@ -253,11 +260,22 @@ def transcribe_student(client: LLMClient, images: list[Path], student: str,
                 user_text=TRANSCRIBE_USER_TEXT,
                 image_paths=[str(p) for p in images],
                 model=model, temperature=0.1, step="transcription",
+                response_format=_formats[min(_fi, len(_formats) - 1)],
             )
             data = parse_llm_json(raw)
+            # D160：结构校验——不合格就当失败，换下一档重试（不写半成品）
+            errs = validate_transcription(data)
+            if errs:
+                raise RuntimeError("转写结构不合格：" + "；".join(errs[:4]))
             break
         except Exception as e:  # noqa: BLE001 —— 沿用旧版"转录失败重试再判断"语义
             last_err = e
+            msg = str(e).lower()
+            # provider 不支持该 response_format → 降一档（不要在同一档反复重试）
+            if _fi < len(_formats) - 1 and ("schema" in msg or "response_format" in msg
+                                            or "unsupported" in msg or "400" in msg):
+                _fi += 1
+                logger.warning(f"转录[{student}] 不支持当前输出格式，降级到第 {_fi + 1} 档：{e}")
             if attempt < _TRANSCRIBE_ATTEMPTS - 1:
                 logger.warning(f"转录[{student}] 第{attempt+1}次尝试失败: {e}")
                 time.sleep(1)

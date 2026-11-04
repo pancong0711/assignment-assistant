@@ -240,6 +240,15 @@ def _run_transcribe(ctx: dict, client, transcripts_dir: Path) -> list[Path]:
             logger.warning(f"图片目录为空（无 .png/.jpg 等文件），跳过转录: {images_dir}")
             return []
 
+    # D157：**强制重跑**时才覆盖已有转写；否则保留（省额度）。
+    # 但这会让"两次结果一样"——所以默认在 UI 上明确标注"历史结果"。
+    if not ctx.get("force"):
+        _before = len(groups)
+        groups = {stu: imgs for stu, imgs in groups.items()
+                  if not (transcripts_dir / f"{stu}.json").is_file()}
+        if _before != len(groups):
+            logger.info(f"[转录] 跳过 {_before - len(groups)} 名已有转写的学生"
+                        f"（要重跑请用「强制重跑」）")
     items = normalize_items([
         {"id": student, "question": "请转录这份物理作业图片", "images": [str(p) for p in imgs]}
         for student, imgs in sorted(groups.items())
@@ -268,6 +277,14 @@ def _run_transcribe(ctx: dict, client, transcripts_dir: Path) -> list[Path]:
     return [Path(it["out"]) for it in (report.get("items") or []) if it.get("ok") and it.get("out")]
 
 
+def _only_students(ctx: dict) -> "set[str]":
+    """D156：本次只处理哪些学生（`--students` / plan 已被裁到这些人）。
+
+    为空 = 不限（全部）。
+    """
+    return {str(x) for x in (ctx.get("only_students") or []) if str(x).strip()}
+
+
 def _plan_items_for(ctx: dict, student: str) -> "list[dict] | None":
     """plan 模式下该生的题目（转成 evaluate 期望的 {序号,content,solution,tag} 形状）。"""
     for stu in ((ctx.get("plan") or {}).get("students") or []):
@@ -289,8 +306,20 @@ def _run_evaluate(ctx: dict, client, evaluations_dir: Path) -> list[Path]:
     """
     tasks_items = ctx["items"]
     model = (ctx["task"].get("grade", {}).get("models", {}) or {}).get("evaluation")
+    only = _only_students(ctx)
     outs = []
     for tf in sorted(ctx["transcripts_dir"].glob("[!_]*.json")):
+        # D156：**只评阅指定学生**（此前进度只过滤了转写，评阅会扫描整个
+        # transcripts 目录 → 出现"批张紫涵却报张松"的困惑）。
+        if only and tf.stem not in only:
+            logger.debug(f"[评阅] 跳过 {tf.stem}（不在本次指定名单）")
+            continue
+        # D157：默认跳过"已有评阅结果"的学生（省额度）；强制重跑时覆盖。
+        _ev = evaluations_dir / f"{tf.stem}.json"
+        if _ev.is_file() and not ctx.get("force"):
+            logger.info(f"[评阅] 跳过 {tf.stem}（已有评阅结果；要重跑请用「强制重跑」）")
+            outs.append(_ev)
+            continue
         items = _plan_items_for(ctx, tf.stem) if ctx.get("plan") else None
         if ctx.get("plan") and not items:
             # D127：plan 模式下必须能定位该生对应作业纸的题目
@@ -377,7 +406,7 @@ def _persist_transcripts(ws, task: dict, plan: "dict | None", transcripts_dir) -
 def run_task(task_path: Path, ws: Path, images_dir: Path | None = None,
              rerun: str | None = None, plan: "dict | None" = None,
              mode: str = "", class_dir: str = "", allow_partial: bool = False,
-             students: "list[str] | None" = None) -> dict:
+             students: "list[str] | None" = None, force: bool = False) -> dict:
     """任务包 grade 节驱动的执行入口。
 
     Args:
@@ -387,6 +416,7 @@ def run_task(task_path: Path, ws: Path, images_dir: Path | None = None,
         rerun: 指定单个 step 名 → 只重跑该步（参数 Recovery 自 journal）。
         class_dir: D124：班级目录（`classes/<班级>`）。**优先级最高**。
         students: D148：**只处理这些学生**（逐生补批）。为空=全部。
+        force: D157：强制重跑（即使已存在转写/评阅也重新生成；默认 False）。
             用途：`--limit` 只批了前 N 名后，可对漏掉的学生单独补批，
             不必整批重跑（否则已批过的学生要重新转写/评阅，浪费额度）。
 
@@ -471,6 +501,9 @@ def run_task(task_path: Path, ws: Path, images_dir: Path | None = None,
         "journal": journal,
         "run_id": run_id,
         "plan": plan,
+        # D156：本次只处理这些人（逐生补批）；D157：强制重跑
+        "only_students": [str(x).strip() for x in (students or []) if str(x).strip()],
+        "force": bool(force),
         "mode": (str(mode) or (plan or {}).get("mode") or "optimized"),
         "diag": base / "diagnostics.jsonl",
         "report_kind": (plan or {}).get("reportKind") or "ai",
