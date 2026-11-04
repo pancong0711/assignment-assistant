@@ -114,7 +114,8 @@ def _fix_latex_in_json(body: str) -> str:
     r"""把 JSON 文本里"会被误当转义"的 LaTeX 命令改写成 `\命令`。
 
     例：`"rac{1}{2}"` → `"\frac{1}{2}"`（JSON 解析后得到字面 `rac`）。
-    只有 `  	  
+    只有 `  	 
+ 
 ` 后面**紧跟已知 LaTeX 结尾**时才改，
     避免把真正的换行/制表符改坏。
     """
@@ -174,7 +175,10 @@ def _system_prompt() -> str:
     try:
         from .prompts import transcription_prompt
         on = str(os.environ.get("ASSIST_SVG_REDRAW") or "0") not in ("0", "", "false", "False")
-        return transcription_prompt(svg_redraw=on)
+        base = transcription_prompt(svg_redraw=on)
+        # D151：转录 system prompt 可被模板覆盖（不选模板 = 内置）
+        from ..files.prompts import system_prompt_env
+        return system_prompt_env("transcribe", base)
     except Exception:  # noqa: BLE001
         return TRANSCRIPTION_PROMPT
 

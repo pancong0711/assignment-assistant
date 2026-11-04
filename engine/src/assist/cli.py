@@ -617,21 +617,26 @@ def kb_solution_rm(obj, qid, version_id, kb, chap, workspace, verbose):
         raise click.ClickException(res.get("error") or "删除失败")
 
 
-@cli.group("prompt", help="D108：AI 作答要求「提示词模板」库（保存/默认/删除）")
+@cli.group("prompt", help="D151：提示词模板库（作答要求 + 5 类 system prompt；可存/可改/可删）")
 def prompt_grp():
     pass
 
 
 @prompt_grp.command("list")
+@click.option("--category", default="ai-solve", show_default=True,
+              type=click.Choice(["ai-solve", "transcribe", "evaluate", "solve",
+                                "rubric", "termnorm"]),
+              help="D151：模板类别（system prompt 或作答要求）")
 @click.option("--workspace", "-w", default=None)
 @click.option("--verbose", "-v", is_flag=True)
 @click.pass_obj
-def prompt_list(obj, workspace, verbose):
-    """列出全部提示词模板（JSON）。"""
+def prompt_list(obj, category, workspace, verbose):
+    """列出某类提示词模板（JSON）。"""
     from .files import prompts as P
     ws = _setup(verbose or obj.get("verbose"), workspace)
-    click.echo(json.dumps({"ok": True, "items": P.list_templates(ws),
-                           "default": (P.default_template(ws) or {}).get("id", "")},
+    click.echo(json.dumps({"ok": True, "category": category,
+                           "items": P.list_templates(ws, category),
+                           "default": (P.default_template(ws, category) or {}).get("id", "")},
                           ensure_ascii=False, indent=1))
 
 
@@ -641,16 +646,21 @@ def prompt_list(obj, workspace, verbose):
 @click.option("--text", default=None, help="模板内容（或 --file）")
 @click.option("--file", "file_", default=None, help="从文件读模板内容")
 @click.option("--default", "make_default", is_flag=True, help="同时设为默认模板")
+@click.option("--category", default="ai-solve", show_default=True,
+              type=click.Choice(["ai-solve", "transcribe", "evaluate", "solve",
+                                "rubric", "termnorm"]),
+              help="D151：模板类别（system prompt 或作答要求）")
 @click.option("--workspace", "-w", default=None)
 @click.option("--verbose", "-v", is_flag=True)
 @click.pass_obj
-def prompt_save(obj, pid, name, text, file_, make_default, workspace, verbose):
+def prompt_save(obj, pid, name, text, file_, make_default, category, workspace, verbose):
     """新建/更新提示词模板。"""
     from .files import prompts as P
     ws = _setup(verbose or obj.get("verbose"), workspace)
     body = text if text is not None else (
         Path(file_).expanduser().read_text(encoding="utf-8") if file_ else "")
-    res = P.save_template(ws, pid=pid, name=name, text=body, make_default=make_default)
+    res = P.save_template(ws, pid=pid, name=name, text=body,
+                          make_default=make_default, category=category)
     click.echo(json.dumps(res, ensure_ascii=False, indent=1))
     if not res.get("ok"):
         raise click.ClickException(res.get("error") or "保存失败")
@@ -658,14 +668,18 @@ def prompt_save(obj, pid, name, text, file_, make_default, workspace, verbose):
 
 @prompt_grp.command("delete")
 @click.option("--id", "pid", required=True)
+@click.option("--category", default="ai-solve", show_default=True,
+              type=click.Choice(["ai-solve", "transcribe", "evaluate", "solve",
+                                "rubric", "termnorm"]),
+              help="D151：模板类别（system prompt 或作答要求）")
 @click.option("--workspace", "-w", default=None)
 @click.option("--verbose", "-v", is_flag=True)
 @click.pass_obj
-def prompt_delete(obj, pid, workspace, verbose):
+def prompt_delete(obj, pid, category, workspace, verbose):
     """删除提示词模板（内置模板不可删）。"""
     from .files import prompts as P
     ws = _setup(verbose or obj.get("verbose"), workspace)
-    res = P.delete_template(ws, pid)
+    res = P.delete_template(ws, pid, category)
     click.echo(json.dumps(res, ensure_ascii=False, indent=1))
     if not res.get("ok"):
         raise click.ClickException(res.get("error") or "删除失败")
@@ -673,14 +687,18 @@ def prompt_delete(obj, pid, workspace, verbose):
 
 @prompt_grp.command("use")
 @click.option("--id", "pid", required=True)
+@click.option("--category", default="ai-solve", show_default=True,
+              type=click.Choice(["ai-solve", "transcribe", "evaluate", "solve",
+                                "rubric", "termnorm"]),
+              help="D151：模板类别（system prompt 或作答要求）")
 @click.option("--workspace", "-w", default=None)
 @click.option("--verbose", "-v", is_flag=True)
 @click.pass_obj
-def prompt_use(obj, pid, workspace, verbose):
+def prompt_use(obj, pid, category, workspace, verbose):
     """把某模板设为默认。"""
     from .files import prompts as P
     ws = _setup(verbose or obj.get("verbose"), workspace)
-    res = P.set_default(ws, pid)
+    res = P.set_default(ws, pid, category)
     click.echo(json.dumps(res, ensure_ascii=False, indent=1))
     if not res.get("ok"):
         raise click.ClickException(res.get("error") or "设置默认失败")

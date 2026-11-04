@@ -154,8 +154,13 @@ def build_user_prompt(items: list[dict], markdown_text: str, student: str = "",
     if "summary" in kinds and ws is not None:
         try:
             from ..files import materials as _mat
-            chaps = {str(it.get("chap") or "") for it in (items or [])
+            # D155：**优先用教师显式指定的"特征名"**（如 26C1），
+            # 没有则按题目 chap 回落（兼容旧的 materials/<chap>/ 结构）。
+            feats = {str(it.get("feature") or "") for it in (items or [])
                      if str(it.get("kind") or "") == "summary"}
+            feats = {x for x in feats if x}
+            chaps = feats or {str(it.get("chap") or "") for it in (items or [])
+                              if str(it.get("kind") or "") == "summary"}
             from .prompts import summary_fallback_block, summary_knowledge_block
             from .rules import summary_fallback
             block_parts: list[str] = []
@@ -210,7 +215,8 @@ def build_user_prompt(items: list[dict], markdown_text: str, student: str = "",
 
 
 def analyze(client: LLMClient, user_prompt: str, model: str | None = None,
-            max_tokens: int = 8192, *, strict_schema: bool = True) -> dict:
+            max_tokens: int = 8192, *, strict_schema: bool = True,
+            ws=None) -> dict:
     """调用 LLM 得到结构化分析 JSON。
 
     D98-B5：优先用 `json_schema`（严格结构，含 evidence/confidence）；
@@ -218,12 +224,20 @@ def analyze(client: LLMClient, user_prompt: str, model: str | None = None,
     截断时 max_tokens 翻倍重试（迁移自 evaluator.evaluate_markdown）。
     """
     from .prompts import EVALUATION_SCHEMA
+    # D151：批阅 system prompt 可用模板覆盖（不选模板 = 用内置 ANALYSIS_PROMPT）
+    sys_prompt = ANALYSIS_PROMPT
+    if ws is not None:
+        try:
+            from ..files.prompts import system_prompt as _sp
+            sys_prompt = _sp(ws, "evaluate", ANALYSIS_PROMPT)
+        except Exception:  # noqa: BLE001 —— 模板读取失败不影响批阅
+            sys_prompt = ANALYSIS_PROMPT
     _mt = max_tokens
     use_schema = strict_schema
     for _ in range(4):
         rf = EVALUATION_SCHEMA if use_schema else {"type": "json_object"}
         try:
-            raw = client.chat(system_prompt=ANALYSIS_PROMPT, user_text=user_prompt,
+            raw = client.chat(system_prompt=sys_prompt, user_text=user_prompt,
                               model=model, temperature=0.2, response_format=rf,
                               max_tokens=_mt, step="evaluation")
             return parse_llm_json(raw)
@@ -645,6 +659,7 @@ def evaluate_student(client: LLMClient, transcript_file: Path, items: list[dict]
     quality = t_data.get("quality")
 
     analysis = analyze(client, build_user_prompt(items, markdown_text, student, ws=ws),
+                       ws=ws,
                        model=model)
     # D130：把**题面**与**学生作答原文**注入每题（长度档需要题长；qa 缺图判定也可能用到），
     # 模型自报的 answer_chars 只作参考，Python 以转写原文为准（防模型少报字数）。

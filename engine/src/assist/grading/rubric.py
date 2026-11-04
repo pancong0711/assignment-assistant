@@ -188,8 +188,14 @@ def generate_rubric(client, *, ws, kind: str, content: str, solution: str = "",
         vocab_terms = []
     prompt = build_rubric_prompt(ws=ws, kind=kind, content=content, solution=solution,
                                  related=related, vocab_terms=vocab_terms)
+    # D151：要点 system prompt 可用模板覆盖（不选模板 = 内置）
     system = ("这是大学物理教研工作，内容完全学术。你是命题与评阅经验丰富的物理教师，"
               "只输出严格 JSON。")
+    try:
+        from ..files.prompts import system_prompt as _sp
+        system = _sp(ws, "rubric", system)
+    except Exception:  # noqa: BLE001
+        pass
     try:
         raw = client.chat(system_prompt=system, user_text=prompt, model=model,
                           temperature=0.2, response_format=RUBRIC_SCHEMA,

@@ -1,4 +1,4 @@
-"""prompts.py — D108：AI 作答要求「提示词模板」库。
+"""prompts.py — 提示词模板库（D151：扩展到 5 类 system prompt）。
 
 存储：`<ws>/prompts/ai-solve/<id>.json`
 
@@ -18,7 +18,10 @@ from pathlib import Path
 from loguru import logger
 
 PROMPTS_DIR = "prompts"
-SUBDIR = "ai-solve"
+DEFAULT_SUBDIR = "ai-solve"
+# D151：5 类 system prompt + 原有的"作答要求"片段
+CATEGORIES = ("ai-solve", "transcribe", "evaluate", "solve", "rubric", "termnorm")
+SUBDIR = DEFAULT_SUBDIR          # 兼容旧引用（= ai-solve）
 MAX_TEXT_LEN = 2000
 MAX_NAME_LEN = 60
 # id 同时是 `<id>.json` 文件名：允许中文（与 grading/items.py 的 id 规则一致），
@@ -94,21 +97,103 @@ BUILTIN: list[dict] = [
 ]
 
 
-def prompts_dir(ws) -> Path:
-    d = Path(ws).resolve() / PROMPTS_DIR / SUBDIR
+# ---------------- D151：5 类 system prompt 的内置默认 ----------------
+# 这些文本**必须与代码里的原硬编码一致**（首次落盘后教师可改）。
+BUILTIN_BY_CATEGORY: dict[str, list[dict]] = {
+    "transcribe": [{
+        "id": "standard",
+        "name": "标准转录（内置）",
+        "text": "",      # 空 = 用代码内置（见 prompts.TRANSCRIPTION_PROMPT）
+        "default": True,
+    }],
+    "evaluate": [{
+        "id": "standard",
+        "name": "标准批阅（内置）",
+        "text": "",
+        "default": True,
+    }],
+    "solve": [{
+        "id": "standard",
+        "name": "标准作答（内置）",
+        "text": "",
+        "default": True,
+    }],
+    "rubric": [{
+        "id": "standard",
+        "name": "标准要点（内置）",
+        "text": "",
+        "default": True,
+    }],
+    "termnorm": [{
+        "id": "standard",
+        "name": "标准术语归一（内置）",
+        "text": "",
+        "default": True,
+    }],
+}
+
+
+def builtins_for(category: str) -> list[dict]:
+    """某类的内置模板（ai-solve 用原有 BUILTIN）。"""
+    cat = str(category or DEFAULT_SUBDIR).strip()
+    if cat == DEFAULT_SUBDIR:
+        return BUILTIN
+    return BUILTIN_BY_CATEGORY.get(cat, [{
+        "id": "standard", "name": "标准（内置）", "text": "", "default": True,
+    }])
+
+
+def system_prompt(ws, category: str, fallback: str) -> str:
+    """D151：取某类"生效的 system prompt"。
+
+    - 有默认模板且其 `text` 非空 → 用模板文本；
+    - 否则 → 用代码内置 `fallback`（**不选模板 = 现状**，向后兼容）。
+    """
+    cat = str(category or "").strip()
+    if cat not in CATEGORIES:
+        return fallback
+    try:
+        d = default_template(ws, cat)
+    except Exception:  # noqa: BLE001
+        return fallback
+    text = str((d or {}).get("text") or "").strip()
+    return text or fallback
+
+
+def system_prompt_env(category: str, fallback: str) -> str:
+    """D151：不知道 ws 时的取模板入口（用 `ASSIST_WORKSPACE` 环境变量）。
+
+    供 transcribe / termnorm 这类没有 ws 参数的旧函数使用；取不到就用内置。
+    """
+    import os
+    ws = os.environ.get("ASSIST_WORKSPACE")
+    if not ws:
+        return fallback
+    try:
+        return system_prompt(ws, category, fallback)
+    except Exception:  # noqa: BLE001
+        return fallback
+
+
+def prompts_dir(ws, category: str = DEFAULT_SUBDIR) -> Path:
+    """某类模板目录（D151：category ∈ CATEGORIES）。"""
+    cat = str(category or DEFAULT_SUBDIR).strip()
+    if cat not in CATEGORIES:
+        cat = DEFAULT_SUBDIR
+    d = Path(ws).resolve() / PROMPTS_DIR / cat
     d.mkdir(parents=True, exist_ok=True)
     return d
 
 
-def _path(ws, pid: str) -> "Path | None":
+def _path(ws, pid: str, category: str = DEFAULT_SUBDIR) -> "Path | None":
     s = str(pid or "").strip()
-    return prompts_dir(ws) / f"{s}.json" if _ID_RE.match(s) else None
+    return prompts_dir(ws, category) / f"{s}.json" if _ID_RE.match(s) else None
 
 
-def _seed_builtins(ws) -> None:
+def _seed_builtins(ws, category: str = DEFAULT_SUBDIR) -> None:
     """首次访问时把内置模板落盘（已存在的不覆盖，保留用户修改）。"""
-    d = prompts_dir(ws)
-    for tpl in BUILTIN:
+    d = prompts_dir(ws, category)
+    for tpl in builtins_for(category):
         p = d / f"{tpl['id']}.json"
         if p.exists():
             continue
@@ -121,11 +206,11 @@ def _seed_builtins(ws) -> None:
             logger.warning(f"写入内置提示词模板失败 {tpl['id']}: {exc}")
 
 
-def list_templates(ws) -> list[dict]:
-    """列出全部模板（内置在前，按 default/name 排序）。"""
-    _seed_builtins(ws)
+def list_templates(ws, category: str = DEFAULT_SUBDIR) -> list[dict]:
+    """列出某类模板（内置在前，按 default/name 排序）。"""
+    _seed_builtins(ws, category)
     out: list[dict] = []
-    for f in sorted(prompts_dir(ws).glob("*.json")):
+    for f in sorted(prompts_dir(ws, category).glob("*.json")):
         try:
             d = json.loads(f.read_text(encoding="utf-8"))
         except Exception:  # noqa: BLE001
@@ -142,8 +227,8 @@ def list_templates(ws) -> list[dict]:
     return out
 
 
-def _clear_other_defaults(ws, keep_id: str) -> None:
-    for f in prompts_dir(ws).glob("*.json"):
+def _clear_other_defaults(ws, keep_id: str, category: str = DEFAULT_SUBDIR) -> None:
+    for f in prompts_dir(ws, category).glob("*.json"):
         if f.stem == keep_id:
             continue
         try:
@@ -156,9 +241,9 @@ def _clear_other_defaults(ws, keep_id: str) -> None:
             atomic_write_text(f, json.dumps(d, ensure_ascii=False, indent=1))
 
 
-def default_template(ws) -> "dict | None":
-    """返回默认模板；无 default 时返回内置 standard（或第一条）。"""
-    items = list_templates(ws)
+def default_template(ws, category: str = DEFAULT_SUBDIR) -> "dict | None":
+    """返回**该类**的默认模板；无 default 时返回内置 standard（或第一条）。"""
+    items = list_templates(ws, category)
     for t in items:
         if t.get("default"):
             return t
@@ -168,9 +253,9 @@ def default_template(ws) -> "dict | None":
     return items[0] if items else None
 
 
-def get_template(ws, pid: str) -> "dict | None":
-    _seed_builtins(ws)          # 保证内置模板存在（首次访问即落盘）
-    p = _path(ws, pid)
+def get_template(ws, pid: str, category: str = DEFAULT_SUBDIR) -> "dict | None":
+    _seed_builtins(ws, category)     # 保证该类内置模板存在（首次访问即落盘）
+    p = _path(ws, pid, category)
     if not p or not p.is_file():
         return None
     try:
@@ -185,7 +270,8 @@ def get_template(ws, pid: str) -> "dict | None":
 
 
 def save_template(ws, *, pid: str, name: str, text: str,
-                  make_default: bool = False, overwrite_builtin_text: bool = True) -> dict:
+                  make_default: bool = False, overwrite_builtin_text: bool = True,
+                  category: str = DEFAULT_SUBDIR) -> dict:
     """新建或更新模板（含校验）。"""
     sid = str(pid or "").strip()
     if not sid:
@@ -198,10 +284,10 @@ def save_template(ws, *, pid: str, name: str, text: str,
         return {"ok": False, "error": "模板内容为空"}
     if len(body) > MAX_TEXT_LEN:
         return {"ok": False, "error": f"模板内容过长（{len(body)} > {MAX_TEXT_LEN} 字）"}
-    _seed_builtins(ws)
-    p = _path(ws, sid)
+    _seed_builtins(ws, category)
+    p = _path(ws, sid, category)
     assert p is not None
-    existing = get_template(ws, sid) or {}
+    existing = get_template(ws, sid, category) or {}
     # 内置模板：允许改内容/名称、允许设默认，但不允许把 builtin 标记抹掉
     payload = {
         "id": sid,
@@ -214,53 +300,54 @@ def save_template(ws, *, pid: str, name: str, text: str,
     from ..filelock import atomic_write_text
     atomic_write_text(p, json.dumps(payload, ensure_ascii=False, indent=1))
     if payload["default"]:
-        _clear_other_defaults(ws, sid)
+        _clear_other_defaults(ws, sid, category)
     return {"ok": True, "template": payload}
 
 
-def delete_template(ws, pid: str) -> dict:
+def delete_template(ws, pid: str, category: str = DEFAULT_SUBDIR) -> dict:
     """删除模板；内置模板不可删。"""
     sid = str(pid or "").strip()
     if not sid:
         return {"ok": False, "error": "缺少模板 id（未选中要删除的模板）"}
     if not _ID_RE.match(sid):
         return {"ok": False, "error": f"{ID_HINT}：{sid!r}"}
-    tpl = get_template(ws, sid)
+    tpl = get_template(ws, sid, category)
     if not tpl:
         return {"ok": False, "error": f"模板不存在：{sid}"}
     if tpl.get("builtin"):
         return {"ok": False, "error": f"内置模板不可删除（可「另存为新模板」后编辑）：{sid}"}
-    p = _path(ws, sid)
+    p = _path(ws, sid, category)
     if not p:
         return {"ok": False, "error": f"{ID_HINT}：{sid!r}"}
     was_default = bool(tpl.get("default"))
     p.unlink(missing_ok=True)
     if was_default:
         # 默认被删 → 回落到内置 standard
-        std = get_template(ws, "standard")
+        std = get_template(ws, "standard", category)
         if std:
             save_template(ws, pid="standard", name=std.get("name") or "standard",
-                          text=std.get("text") or "", make_default=True)
+                          text=std.get("text") or "", make_default=True,
+                          category=category)
     return {"ok": True, "deleted": pid}
 
 
-def set_default(ws, pid: str) -> dict:
+def set_default(ws, pid: str, category: str = DEFAULT_SUBDIR) -> dict:
     sid = str(pid or "").strip()
     if not sid:
         return {"ok": False, "error": "缺少模板 id（未选中要设为默认的模板）"}
     if not _ID_RE.match(sid):
         return {"ok": False, "error": f"{ID_HINT}：{sid!r}"}
-    tpl = get_template(ws, sid)
+    tpl = get_template(ws, sid, category)
     if not tpl:
         return {"ok": False, "error": f"模板不存在：{sid}"}
-    p = _path(ws, sid)
+    p = _path(ws, sid, category)
     assert p is not None
     d = dict(tpl)
     d["default"] = True
     d["updatedAt"] = time.strftime("%Y-%m-%d %H:%M:%S")
     from ..filelock import atomic_write_text
     atomic_write_text(p, json.dumps(d, ensure_ascii=False, indent=1))
-    _clear_other_defaults(ws, sid)
+    _clear_other_defaults(ws, sid, category)
     return {"ok": True, "default": sid}
 
 

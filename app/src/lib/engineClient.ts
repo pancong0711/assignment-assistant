@@ -2120,6 +2120,40 @@ export async function restoreMaterialsFile(
                        { tool: 'materials.restore', args: { chap, file }, confirm }) as any
 }
 
+/* ========== D151：提示词模板（多类别） ========== */
+
+export const PROMPT_CATEGORIES = [
+  'ai-solve', 'transcribe', 'evaluate', 'solve', 'rubric', 'termnorm',
+] as const
+export type PromptCategory = (typeof PROMPT_CATEGORIES)[number]
+
+export const PROMPT_CATEGORY_LABELS: Record<PromptCategory, string> = {
+  'ai-solve': 'AI 作答要求（附加片段）',
+  transcribe: '转录 system prompt',
+  evaluate: '批阅 system prompt',
+  solve: 'AI 作答 system prompt',
+  rubric: '评阅要点 system prompt',
+  termnorm: '术语归一 system prompt',
+}
+
+export async function fetchPromptTemplatesByCategory(
+  base: string, token: string | undefined, category: string,
+): Promise<{ ok?: boolean; category?: string; items?: PromptTemplate[]
+             default?: string; categories?: string[]; error?: string }> {
+  const qs = new URLSearchParams({ category })
+  return (await getJson2(engineUrlWithToken(
+    normalizeEngineAddr(base), `/prompts/templates?${qs.toString()}`, token))) as any
+}
+
+export async function postPromptTemplateCategory(
+  base: string, token: string | undefined,
+  payload: { category: string; action?: 'save' | 'delete' | 'default'; id: string
+             name?: string; text?: string; makeDefault?: boolean },
+): Promise<{ ok?: boolean; error?: string; items?: PromptTemplate[] }> {
+  return postCliJson(engineUrlWithToken(normalizeEngineAddr(base),
+                                        '/prompts/save', token), payload)
+}
+
 /* ========== D149：AI 批阅成绩作为成绩源 ========== */
 
 export interface GradingPack {
@@ -2255,12 +2289,14 @@ export async function fetchMaterialsFiles(
 export async function uploadMaterialsFiles(
   engineAddr: string, token: string | undefined, chap: string,
   items: { name: string; data_b64: string }[],
+  /** D155：资料类型（plan/ppt/textbook/other）→ `_source/<类型>/` */
+  kind = '',
 ): Promise<{ ok?: boolean; saved?: any[]; skipped?: any[]; files?: MaterialsFile[]
              error?: string }> {
   const base = normalizeEngineAddr(engineAddr)
   const res = await fetch(engineUrlWithToken(base, '/materials/upload', token), {
     method: 'POST', headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ chap, items }),
+    body: JSON.stringify({ chap, items, kind }),
   })
   const o = (await res.json().catch(() => ({}))) as any
   if (!res.ok && !o?.error) throw new Error(`HTTP ${res.status}`)

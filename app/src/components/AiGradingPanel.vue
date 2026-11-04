@@ -427,14 +427,20 @@ const curWorkDir = computed<string>(() => {
  *  漏掉的学生此前只能整批重跑（已批过的要重转写/重评阅，浪费额度）。
  *  这里传 `students:[姓名]`，引擎只处理这一人。 */
 const rowBusy = ref('')
+/* D154：行内状态（此前进度写在页面顶部 msg，滚在下面的教师根本看不到） */
+const rowMsg = ref<Record<string, string>>({})
 async function runOne(s: any, mode: 'transcribe' | 'evaluate' | 'full') {
   const w = curWork.value
-  if (!w) { msg.value = '请先在 ③ 区选择作业'; return }
+  if (!w) {
+    // D154：写在**行内**，而不是页面顶部的 msg（教师看不到）
+    rowMsg.value = { ...rowMsg.value, [s.name]: '⚠ 请先在 ③ 区选择作业（含作业包/作业纸）' }
+    return
+  }
   const steps = mode === 'full' ? ['transcribe', 'evaluate']
     : mode === 'transcribe' ? ['transcribe'] : ['evaluate']
   const label = mode === 'full' ? '完整批阅' : mode === 'transcribe' ? '转写' : '批阅'
   rowBusy.value = s.name
-  msg.value = `正在对「${s.name}」执行${label}…`
+  rowMsg.value = { ...rowMsg.value, [s.name]: `⏳ ${label}中…` }
   try {
     // 与「③ 任务」区**同一套装配逻辑**（避免两处口径漂移）
     const packPadList = packPads.value.map((p2) => {
@@ -462,30 +468,37 @@ async function runOne(s: any, mode: 'transcribe' | 'evaluate' | 'full') {
       imageMode: imageMode.value, svgRedraw: svgRedraw.value,
       allowPartial: true,
     })
-    await pollJob(jobId, `「${s.name}」${label}`)
+    await pollJob(jobId, `「${s.name}」${label}`, s.name)
     await loadStudents()
   } catch (e) {
-    msg.value = `❌ 「${s.name}」${label}失败：${String((e as Error).message || e)}`
+    rowMsg.value = { ...rowMsg.value,
+      [s.name]: `❌ ${label}失败：${String((e as Error).message || e)}` }
   } finally {
     rowBusy.value = ''
   }
 }
 
-/** 轮询 job 直到结束（逐生补批共用）。 */
-async function pollJob(jobId: string, label: string) {
+/** 轮询 job 直到结束（逐生补批共用；D154：结果写**行内**）。 */
+async function pollJob(jobId: string, label: string, rowName = '') {
   for (let i = 0; i < 600; i++) {
     await new Promise((r) => window.setTimeout(r, 2000))
     const job = await fetchXxtLoginJob(props.engineAddr, props.token, jobId)
     const line = (job.lines || []).slice(-1)[0] || ''
-    msg.value = `${label}：${line.slice(-160)}`
+    const text = `${label}：${line.slice(-160)}`
+    if (rowName) rowMsg.value = { ...rowMsg.value, [rowName]: text }
+    else msg.value = text
     if (job.status !== 'running') {
-      msg.value = job.status === 'done'
-        ? `✅ ${label}完成`
+      const done = job.status === 'done'
+      const final = done ? `✅ ${label}完成`
         : `❌ ${label}失败：${(job.lines || []).slice(-2).join(' ')}`
+      if (rowName) rowMsg.value = { ...rowMsg.value, [rowName]: final }
+      else msg.value = final
       return
     }
   }
-  msg.value = `⚠️ ${label}超时（仍在后台执行）`
+  const to = `⚠️ ${label}超时（仍在后台执行）`
+  if (rowName) rowMsg.value = { ...rowMsg.value, [rowName]: to }
+  else msg.value = to
 }
 
 const students = ref<Array<{ name: string; key: string; tag?: string; images?: string[] }>>([])
@@ -1243,15 +1256,21 @@ onMounted(async () => {
             <td class="c">{{ draftOf(s).human?.used ? (draftOf(s).human.score ?? '✓') : '—' }}</td>
             <td class="c">{{ reportMode(s) }}</td>
             <td class="c" style="white-space:nowrap">
-              <button class="btn small" :disabled="rowBusy !== ''"
-                      title="只转写这一名学生" @click="runOne(s, 'transcribe')">转写</button>
-              <button class="btn small" :disabled="rowBusy !== ''"
-                      title="用已有转写评阅这一名学生" @click="runOne(s, 'evaluate')">批阅</button>
-              <button class="btn small" :disabled="rowBusy !== ''"
-                      title="转写+评阅这一名学生" @click="runOne(s, 'full')">
+              <button class="btn small" :disabled="rowBusy !== '' || !curWork"
+                      :title="curWork ? '只转写这一名学生' : '请先在 ③ 区选择作业'"
+                      @click="runOne(s, 'transcribe')">转写</button>
+              <button class="btn small" :disabled="rowBusy !== '' || !curWork"
+                      :title="curWork ? '用已有转写评阅这一名学生' : '请先在 ③ 区选择作业'"
+                      @click="runOne(s, 'evaluate')">批阅</button>
+              <button class="btn small" :disabled="rowBusy !== '' || !curWork"
+                      :title="curWork ? '转写+评阅这一名学生' : '请先在 ③ 区选择作业'"
+                      @click="runOne(s, 'full')">
                 {{ rowBusy === s.name ? '…' : '完整' }}
               </button>
               ｜<button class="btn small" @click="onReviewOpen(i)">审核</button>
+              <div v-if="rowMsg[s.name]" class="hint" style="margin-top:2px; white-space:normal">
+                {{ rowMsg[s.name] }}
+              </div>
             </td>
           </tr>
         </tbody>

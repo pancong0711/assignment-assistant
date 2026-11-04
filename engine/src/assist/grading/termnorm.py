@@ -70,8 +70,12 @@ def propose_groups(client, terms: dict[str, dict], *, model: str | None = None) 
     from .transcribe import parse_llm_json
     listing = "\n".join(f"- {t}（出现 {v['count']} 次）"
                         for t, v in sorted(terms.items(), key=lambda x: -x[1]["count"]))
+    # D151：术语归一 system prompt 可被模板覆盖（不选模板 = 内置）
+    from ..files.prompts import system_prompt_env
+    _sys = system_prompt_env(
+        "termnorm", "这是大学物理题库术语整理工作，内容完全学术。只输出严格 JSON。")
     raw = client.chat(
-        system_prompt="这是大学物理题库术语整理工作，内容完全学术。只输出严格 JSON。",
+        system_prompt=_sys,
         user_text=f"{NORMALIZE_PROMPT}\n\n【题库术语】\n{listing}",
         model=model, temperature=0.1,
         response_format={"type": "json_object"}, max_tokens=4096, step="termnorm")

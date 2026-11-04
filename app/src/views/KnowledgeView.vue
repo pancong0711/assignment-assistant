@@ -10,8 +10,9 @@ import { computed, onMounted, ref } from 'vue'
 import { useSettingsStore } from '../stores/settings'
 import { KB_KINDS, KB_KIND_LABELS, type KbKind } from '../lib/kb'
 import {
-  fetchKbCatalog, fetchKnowledgeVocab, generateRubricBatch, tagKnowledge,
-  type KnowledgeTerm,
+  PROMPT_CATEGORIES, PROMPT_CATEGORY_LABELS, fetchKbCatalog, fetchKnowledgeVocab,
+  fetchPromptTemplatesByCategory, generateRubricBatch, postPromptTemplateCategory,
+  tagKnowledge, type KnowledgeTerm, type PromptCategory, type PromptTemplate,
 } from '../lib/engineClient'
 
 const settings = useSettingsStore()
@@ -43,7 +44,86 @@ async function loadChaps() {
   } catch { chaps.value = [] }
 }
 
-onMounted(async () => { await loadVocab(); await loadChaps() })
+onMounted(async () => { await loadVocab(); await loadChaps(); await loadTemplates() })
+
+/* ---------- ④ 提示词模板（D151：5 类 system prompt 可改/可存/可删） ---------- */
+const tplCat = ref<PromptCategory>('evaluate')
+const tplItems = ref<PromptTemplate[]>([])
+const tplSel = ref('')
+const tplText = ref('')
+const tplName = ref('')
+const tplBusy = ref(false)
+const tplMsg = ref('')
+
+const tplCurrent = computed(() => tplItems.value.find((t) => t.id === tplSel.value) || null)
+const tplIsBuiltin = computed(() => !!tplCurrent.value?.builtin)
+
+async function loadTemplates() {
+  try {
+    const r = await fetchPromptTemplatesByCategory(settings.engineUrl, settings.engineToken,
+                                                   tplCat.value)
+    tplItems.value = r?.items || []
+    if (!tplSel.value || !tplItems.value.some((t) => t.id === tplSel.value)) {
+      tplSel.value = r?.default || tplItems.value[0]?.id || ''
+    }
+    pickTemplate()
+  } catch { tplItems.value = [] }
+}
+
+function pickTemplate() {
+  const t = tplCurrent.value
+  tplName.value = t?.name || ''
+  tplText.value = t?.text || ''
+  tplMsg.value = t?.text ? '' : '（内容为空 = 使用代码内置默认；填写后覆盖）'
+}
+
+async function onTplCatChange() { tplSel.value = ''; await loadTemplates() }
+
+async function saveTpl(asNew: boolean) {
+  if (!tplText.value.trim()) { tplMsg.value = '内容为空'; return }
+  const id = asNew ? `custom-${Date.now().toString(36)}` : tplSel.value
+  if (!id) { tplMsg.value = '请先选择模板'; return }
+  tplBusy.value = true
+  try {
+    const r = await postPromptTemplateCategory(settings.engineUrl, settings.engineToken, {
+      category: tplCat.value, action: 'save', id,
+      name: tplName.value || id, text: tplText.value,
+    })
+    if (!r?.ok) { tplMsg.value = `❌ ${r?.error || '保存失败'}`; return }
+    tplSel.value = id
+    tplItems.value = r.items || []
+    tplMsg.value = '✅ 已保存（下次调用生效）'
+  } catch (e) { tplMsg.value = `保存失败：${String((e as Error).message || e)}` }
+  finally { tplBusy.value = false }
+}
+
+async function setTplDefault() {
+  if (!tplSel.value) return
+  tplBusy.value = true
+  try {
+    const r = await postPromptTemplateCategory(settings.engineUrl, settings.engineToken, {
+      category: tplCat.value, action: 'default', id: tplSel.value,
+    })
+    tplItems.value = r?.items || tplItems.value
+    tplMsg.value = r?.ok ? '✅ 已设为该类默认' : `❌ ${r?.error || ''}`
+  } finally { tplBusy.value = false }
+}
+
+async function deleteTpl() {
+  if (!tplSel.value || tplIsBuiltin.value) return
+  if (!window.confirm('删除该模板？（不影响其他类别）')) return
+  tplBusy.value = true
+  try {
+    const r = await postPromptTemplateCategory(settings.engineUrl, settings.engineToken, {
+      category: tplCat.value, action: 'delete', id: tplSel.value,
+    })
+    if (!r?.ok) { tplMsg.value = `❌ ${r?.error || ''}`; return }
+    tplItems.value = r.items || []
+    tplSel.value = ''
+    await loadTemplates()
+    tplMsg.value = '✅ 已删除'
+  } finally { tplBusy.value = false }
+}
 
 const termByChapter = computed(() => {
   const m: Record<string, KnowledgeTerm[]> = {}
@@ -224,6 +304,46 @@ async function doRubricApply() {
           <summary class="hint" style="cursor:pointer">预览 {{ rubPreview.length }} 题</summary>
           <pre class="md">{{ rubPreview.slice(0, 3).map((x) => x.text).join('\n\n---\n\n') }}</pre>
         </details>
+      </section>
+
+      <!-- ④ 提示词模板（D151） -->
+      <section class="card">
+        <h3>④ 提示词模板（可改 / 可存 / 可另存 / 可删）</h3>
+        <p class="hint">
+          不选模板 = 使用<b>内置默认</b>（与改动前完全一致）。
+          <code>转录</code>/<code>批阅</code> 两类改完请先跑一次试跑验证。
+        </p>
+        <div class="row">
+          <label class="field">类别
+            <select :value="tplCat" @change="tplCat = ($event.target as HTMLSelectElement).value as PromptCategory; onTplCatChange()">
+              <option v-for="c in PROMPT_CATEGORIES" :key="c" :value="c">
+                {{ PROMPT_CATEGORY_LABELS[c] }}
+              </option>
+            </select>
+          </label>
+          <label class="field">模板
+            <select v-model="tplSel" @change="pickTemplate">
+              <option v-for="t in tplItems" :key="t.id" :value="t.id">
+                {{ t.default ? '★ ' : '' }}{{ t.name }}{{ t.builtin ? '（内置）' : '' }}
+              </option>
+            </select>
+          </label>
+          <span v-if="tplIsBuiltin" class="hint">内置模板不可删（可"另存为"后修改）</span>
+        </div>
+        <label class="field" style="display:block; margin:4px 0">
+          名称 <input v-model="tplName" style="width:260px" />
+        </label>
+        <textarea v-model="tplText" rows="6"
+                  placeholder="留空 = 使用代码内置默认"
+                  style="width:100%; max-width:820px; font-family:monospace; font-size:12px;
+                         padding:6px 8px; border:1px solid #d1d5db; border-radius:6px"></textarea>
+        <p style="margin:6px 0">
+          <button class="btn" :disabled="tplBusy" @click="saveTpl(false)">💾 保存</button>
+          <button class="btn" :disabled="tplBusy" @click="saveTpl(true)">＋ 另存为</button>
+          <button class="btn" :disabled="tplBusy || !tplSel" @click="setTplDefault">设为默认</button>
+          <button class="btn" :disabled="tplBusy || !tplSel || tplIsBuiltin" @click="deleteTpl">🗑 删除</button>
+          <span v-if="tplMsg" class="hint" style="margin-left:8px">{{ tplMsg }}</span>
+        </p>
       </section>
 
       <!-- ③ 词表 -->

@@ -3,8 +3,9 @@ import { computed, onMounted, ref } from 'vue'
 import { useSettingsStore } from '/home/bot2603/Projects/2609-assignment-assistant/app/src/stores/settings'
 import { KB_KINDS, KB_KIND_LABELS, type KbKind } from '/home/bot2603/Projects/2609-assignment-assistant/app/src/lib/kb'
 import {
-  fetchKbCatalog, fetchKnowledgeVocab, generateRubricBatch, tagKnowledge,
-  type KnowledgeTerm,
+  PROMPT_CATEGORIES, PROMPT_CATEGORY_LABELS, fetchKbCatalog, fetchKnowledgeVocab,
+  fetchPromptTemplatesByCategory, generateRubricBatch, postPromptTemplateCategory,
+  tagKnowledge, type KnowledgeTerm, type PromptCategory, type PromptTemplate,
 } from '/home/bot2603/Projects/2609-assignment-assistant/app/src/lib/engineClient'
 
 
@@ -49,7 +50,86 @@ async function loadChaps() {
   } catch { chaps.value = [] }
 }
 
-onMounted(async () => { await loadVocab(); await loadChaps() })
+onMounted(async () => { await loadVocab(); await loadChaps(); await loadTemplates() })
+
+/* ---------- ④ 提示词模板（D151：5 类 system prompt 可改/可存/可删） ---------- */
+const tplCat = ref<PromptCategory>('evaluate')
+const tplItems = ref<PromptTemplate[]>([])
+const tplSel = ref('')
+const tplText = ref('')
+const tplName = ref('')
+const tplBusy = ref(false)
+const tplMsg = ref('')
+
+const tplCurrent = computed(() => tplItems.value.find((t) => t.id === tplSel.value) || null)
+const tplIsBuiltin = computed(() => !!tplCurrent.value?.builtin)
+
+async function loadTemplates() {
+  try {
+    const r = await fetchPromptTemplatesByCategory(settings.engineUrl, settings.engineToken,
+                                                   tplCat.value)
+    tplItems.value = r?.items || []
+    if (!tplSel.value || !tplItems.value.some((t) => t.id === tplSel.value)) {
+      tplSel.value = r?.default || tplItems.value[0]?.id || ''
+    }
+    pickTemplate()
+  } catch { tplItems.value = [] }
+}
+
+function pickTemplate() {
+  const t = tplCurrent.value
+  tplName.value = t?.name || ''
+  tplText.value = t?.text || ''
+  tplMsg.value = t?.text ? '' : '（内容为空 = 使用代码内置默认；填写后覆盖）'
+}
+
+async function onTplCatChange() { tplSel.value = ''; await loadTemplates() }
+
+async function saveTpl(asNew: boolean) {
+  if (!tplText.value.trim()) { tplMsg.value = '内容为空'; return }
+  const id = asNew ? `custom-${Date.now().toString(36)}` : tplSel.value
+  if (!id) { tplMsg.value = '请先选择模板'; return }
+  tplBusy.value = true
+  try {
+    const r = await postPromptTemplateCategory(settings.engineUrl, settings.engineToken, {
+      category: tplCat.value, action: 'save', id,
+      name: tplName.value || id, text: tplText.value,
+    })
+    if (!r?.ok) { tplMsg.value = `❌ ${r?.error || '保存失败'}`; return }
+    tplSel.value = id
+    tplItems.value = r.items || []
+    tplMsg.value = '✅ 已保存（下次调用生效）'
+  } catch (e) { tplMsg.value = `保存失败：${String((e as Error).message || e)}` }
+  finally { tplBusy.value = false }
+}
+
+async function setTplDefault() {
+  if (!tplSel.value) return
+  tplBusy.value = true
+  try {
+    const r = await postPromptTemplateCategory(settings.engineUrl, settings.engineToken, {
+      category: tplCat.value, action: 'default', id: tplSel.value,
+    })
+    tplItems.value = r?.items || tplItems.value
+    tplMsg.value = r?.ok ? '✅ 已设为该类默认' : `❌ ${r?.error || ''}`
+  } finally { tplBusy.value = false }
+}
+
+async function deleteTpl() {
+  if (!tplSel.value || tplIsBuiltin.value) return
+  if (!window.confirm('删除该模板？（不影响其他类别）')) return
+  tplBusy.value = true
+  try {
+    const r = await postPromptTemplateCategory(settings.engineUrl, settings.engineToken, {
+      category: tplCat.value, action: 'delete', id: tplSel.value,
+    })
+    if (!r?.ok) { tplMsg.value = `❌ ${r?.error || ''}`; return }
+    tplItems.value = r.items || []
+    tplSel.value = ''
+    await loadTemplates()
+    tplMsg.value = '✅ 已删除'
+  } finally { tplBusy.value = false }
+}
 
 const termByChapter = computed(() => {
   const m: Record<string, KnowledgeTerm[]> = {}
@@ -145,13 +225,13 @@ async function doRubricApply() {
   finally { busy.value = '' }
 }
 
-const __returned__ = { settings, msg, busy, terms, chaps, kind, chap, loadVocab, loadChaps, termByChapter, tagDry, tagForce, doTagPreview, doTagApply, rubKind, rubChap, rubForce, rubPreview, doRubricPreview, doRubricApply, get KB_KINDS() { return KB_KINDS }, get KB_KIND_LABELS() { return KB_KIND_LABELS } }
+const __returned__ = { settings, msg, busy, terms, chaps, kind, chap, loadVocab, loadChaps, tplCat, tplItems, tplSel, tplText, tplName, tplBusy, tplMsg, tplCurrent, tplIsBuiltin, loadTemplates, pickTemplate, onTplCatChange, saveTpl, setTplDefault, deleteTpl, termByChapter, tagDry, tagForce, doTagPreview, doTagApply, rubKind, rubChap, rubForce, rubPreview, doRubricPreview, doRubricApply, get KB_KINDS() { return KB_KINDS }, get KB_KIND_LABELS() { return KB_KIND_LABELS }, get PROMPT_CATEGORIES() { return PROMPT_CATEGORIES }, get PROMPT_CATEGORY_LABELS() { return PROMPT_CATEGORY_LABELS } }
 Object.defineProperty(__returned__, '__isScriptSetup', { enumerable: false, value: true })
 return __returned__
 }
 
 })
-import { createElementVNode as _createElementVNode, createTextVNode as _createTextVNode, toDisplayString as _toDisplayString, openBlock as _openBlock, createElementBlock as _createElementBlock, createCommentVNode as _createCommentVNode, renderList as _renderList, Fragment as _Fragment, vModelSelect as _vModelSelect, withDirectives as _withDirectives, vModelCheckbox as _vModelCheckbox } from "vue"
+import { createElementVNode as _createElementVNode, createTextVNode as _createTextVNode, toDisplayString as _toDisplayString, openBlock as _openBlock, createElementBlock as _createElementBlock, createCommentVNode as _createCommentVNode, renderList as _renderList, Fragment as _Fragment, vModelSelect as _vModelSelect, withDirectives as _withDirectives, vModelCheckbox as _vModelCheckbox, vModelText as _vModelText } from "vue"
 
 const _hoisted_1 = { class: "wrap" }
 const _hoisted_2 = {
@@ -192,21 +272,46 @@ const _hoisted_27 = {
 }
 const _hoisted_28 = { class: "md" }
 const _hoisted_29 = { class: "card" }
-const _hoisted_30 = { class: "hint" }
-const _hoisted_31 = {
+const _hoisted_30 = { class: "row" }
+const _hoisted_31 = { class: "field" }
+const _hoisted_32 = ["value"]
+const _hoisted_33 = ["value"]
+const _hoisted_34 = { class: "field" }
+const _hoisted_35 = ["value"]
+const _hoisted_36 = {
   key: 0,
   class: "hint"
 }
-const _hoisted_32 = {
+const _hoisted_37 = {
+  class: "field",
+  style: {"display":"block","margin":"4px 0"}
+}
+const _hoisted_38 = { style: {"margin":"6px 0"} }
+const _hoisted_39 = ["disabled"]
+const _hoisted_40 = ["disabled"]
+const _hoisted_41 = ["disabled"]
+const _hoisted_42 = ["disabled"]
+const _hoisted_43 = {
+  key: 0,
+  class: "hint",
+  style: {"margin-left":"8px"}
+}
+const _hoisted_44 = { class: "card" }
+const _hoisted_45 = { class: "hint" }
+const _hoisted_46 = {
+  key: 0,
+  class: "hint"
+}
+const _hoisted_47 = {
   class: "hint",
   style: {"cursor":"pointer"}
 }
-const _hoisted_33 = { class: "terms" }
+const _hoisted_48 = { class: "terms" }
 
 export function render(_ctx, _cache, $props, $setup, $data, $options) {
   return (_openBlock(), _createElementBlock("div", _hoisted_1, [
-    _cache[21] || (_cache[21] = _createElementVNode("h2", { style: {"margin":"0 0 4px"} }, "知识点（AI 标注 / 题库 AI 作答 / 词表）", -1 /* CACHED */)),
-    _cache[22] || (_cache[22] = _createElementVNode("p", {
+    _cache[32] || (_cache[32] = _createElementVNode("h2", { style: {"margin":"0 0 4px"} }, "知识点（AI 标注 / 题库 AI 作答 / 词表）", -1 /* CACHED */)),
+    _cache[33] || (_cache[33] = _createElementVNode("p", {
       class: "hint",
       style: {"margin":"0 0 8px"}
     }, [
@@ -220,8 +325,8 @@ export function render(_ctx, _cache, $props, $setup, $data, $options) {
     _createElementVNode("div", _hoisted_3, [
       _createCommentVNode(" ① 标注 "),
       _createElementVNode("section", _hoisted_4, [
-        _cache[11] || (_cache[11] = _createElementVNode("h3", null, "① AI 知识点标注", -1 /* CACHED */)),
-        _cache[12] || (_cache[12] = _createElementVNode("p", { class: "hint" }, [
+        _cache[17] || (_cache[17] = _createElementVNode("h3", null, "① AI 知识点标注", -1 /* CACHED */)),
+        _cache[18] || (_cache[18] = _createElementVNode("p", { class: "hint" }, [
           _createTextVNode(" 让 AI 读题目，把物理概念写进题库的 "),
           _createElementVNode("code", null, "related"),
           _createTextVNode(" 列。 默认"),
@@ -230,7 +335,7 @@ export function render(_ctx, _cache, $props, $setup, $data, $options) {
         ], -1 /* CACHED */)),
         _createElementVNode("div", _hoisted_5, [
           _createElementVNode("label", _hoisted_6, [
-            _cache[6] || (_cache[6] = _createTextVNode("题型 ", -1 /* CACHED */)),
+            _cache[12] || (_cache[12] = _createTextVNode("题型 ", -1 /* CACHED */)),
             _withDirectives(_createElementVNode("select", {
               "onUpdate:modelValue": _cache[0] || (_cache[0] = $event => (($setup.kind) = $event))
             }, [
@@ -245,11 +350,11 @@ export function render(_ctx, _cache, $props, $setup, $data, $options) {
             ])
           ]),
           _createElementVNode("label", _hoisted_8, [
-            _cache[8] || (_cache[8] = _createTextVNode("章节 ", -1 /* CACHED */)),
+            _cache[14] || (_cache[14] = _createTextVNode("章节 ", -1 /* CACHED */)),
             _withDirectives(_createElementVNode("select", {
               "onUpdate:modelValue": _cache[1] || (_cache[1] = $event => (($setup.chap) = $event))
             }, [
-              _cache[7] || (_cache[7] = _createElementVNode("option", { value: "" }, "（全部章节）", -1 /* CACHED */)),
+              _cache[13] || (_cache[13] = _createElementVNode("option", { value: "" }, "（全部章节）", -1 /* CACHED */)),
               (_openBlock(true), _createElementBlock(_Fragment, null, _renderList($setup.chaps, (c) => {
                 return (_openBlock(), _createElementBlock("option", {
                   key: c,
@@ -267,7 +372,7 @@ export function render(_ctx, _cache, $props, $setup, $data, $options) {
             }, null, 512 /* NEED_PATCH */), [
               [_vModelCheckbox, $setup.tagForce]
             ]),
-            _cache[9] || (_cache[9] = _createTextVNode(" 覆盖已有标注", -1 /* CACHED */))
+            _cache[15] || (_cache[15] = _createTextVNode(" 覆盖已有标注", -1 /* CACHED */))
           ])
         ]),
         _createElementVNode("p", _hoisted_11, [
@@ -286,7 +391,7 @@ export function render(_ctx, _cache, $props, $setup, $data, $options) {
           ? (_openBlock(), _createElementBlock(_Fragment, { key: 0 }, [
               _createElementVNode("p", _hoisted_14, "将更新 " + _toDisplayString($setup.tagDry.updates) + " 题，示例：", 1 /* TEXT */),
               _createElementVNode("table", _hoisted_15, [
-                _cache[10] || (_cache[10] = _createElementVNode("thead", null, [
+                _cache[16] || (_cache[16] = _createElementVNode("thead", null, [
                   _createElementVNode("tr", null, [
                     _createElementVNode("th", null, "题号"),
                     _createElementVNode("th", null, "建议知识点")
@@ -306,15 +411,15 @@ export function render(_ctx, _cache, $props, $setup, $data, $options) {
       ]),
       _createCommentVNode(" ② 要点 "),
       _createElementVNode("section", _hoisted_16, [
-        _cache[17] || (_cache[17] = _createElementVNode("h3", null, "② 题库 AI 作答（参考解答 + 评阅要点）", -1 /* CACHED */)),
-        _cache[18] || (_cache[18] = _createElementVNode("p", { class: "hint" }, [
+        _cache[23] || (_cache[23] = _createElementVNode("h3", null, "② 题库 AI 作答（参考解答 + 评阅要点）", -1 /* CACHED */)),
+        _cache[24] || (_cache[24] = _createElementVNode("p", { class: "hint" }, [
           _createTextVNode(" 一次产出「参考解答 + 评阅要点 + 知识点」，写入答案版本库； "),
           _createElementVNode("b", null, "默认不置顶"),
           _createTextVNode("（你核对后再置顶才生效）。 ")
         ], -1 /* CACHED */)),
         _createElementVNode("div", _hoisted_17, [
           _createElementVNode("label", _hoisted_18, [
-            _cache[13] || (_cache[13] = _createTextVNode("题型 ", -1 /* CACHED */)),
+            _cache[19] || (_cache[19] = _createTextVNode("题型 ", -1 /* CACHED */)),
             _withDirectives(_createElementVNode("select", {
               "onUpdate:modelValue": _cache[3] || (_cache[3] = $event => (($setup.rubKind) = $event))
             }, [
@@ -329,11 +434,11 @@ export function render(_ctx, _cache, $props, $setup, $data, $options) {
             ])
           ]),
           _createElementVNode("label", _hoisted_20, [
-            _cache[15] || (_cache[15] = _createTextVNode("章节 ", -1 /* CACHED */)),
+            _cache[21] || (_cache[21] = _createTextVNode("章节 ", -1 /* CACHED */)),
             _withDirectives(_createElementVNode("select", {
               "onUpdate:modelValue": _cache[4] || (_cache[4] = $event => (($setup.rubChap) = $event))
             }, [
-              _cache[14] || (_cache[14] = _createElementVNode("option", { value: "" }, "（全部章节）", -1 /* CACHED */)),
+              _cache[20] || (_cache[20] = _createElementVNode("option", { value: "" }, "（全部章节）", -1 /* CACHED */)),
               (_openBlock(true), _createElementBlock(_Fragment, null, _renderList($setup.chaps, (c) => {
                 return (_openBlock(), _createElementBlock("option", {
                   key: c,
@@ -351,7 +456,7 @@ export function render(_ctx, _cache, $props, $setup, $data, $options) {
             }, null, 512 /* NEED_PATCH */), [
               [_vModelCheckbox, $setup.rubForce]
             ]),
-            _cache[16] || (_cache[16] = _createTextVNode(" 强制（copy/summary）", -1 /* CACHED */))
+            _cache[22] || (_cache[22] = _createTextVNode(" 强制（copy/summary）", -1 /* CACHED */))
           ])
         ]),
         _createElementVNode("p", _hoisted_23, [
@@ -373,12 +478,102 @@ export function render(_ctx, _cache, $props, $setup, $data, $options) {
             ]))
           : _createCommentVNode("v-if", true)
       ]),
-      _createCommentVNode(" ③ 词表 "),
+      _createCommentVNode(" ④ 提示词模板（D151） "),
       _createElementVNode("section", _hoisted_29, [
-        _cache[20] || (_cache[20] = _createElementVNode("h3", null, "③ 受控知识点词表", -1 /* CACHED */)),
-        _createElementVNode("p", _hoisted_30, " 共 " + _toDisplayString($setup.terms.length) + " 个术语（按章分组）。AI 标注时优先沿用这里的写法，避免同义漂移。 ", 1 /* TEXT */),
+        _cache[28] || (_cache[28] = _createElementVNode("h3", null, "④ 提示词模板（可改 / 可存 / 可另存 / 可删）", -1 /* CACHED */)),
+        _cache[29] || (_cache[29] = _createElementVNode("p", { class: "hint" }, [
+          _createTextVNode(" 不选模板 = 使用"),
+          _createElementVNode("b", null, "内置默认"),
+          _createTextVNode("（与改动前完全一致）。 "),
+          _createElementVNode("code", null, "转录"),
+          _createTextVNode("/"),
+          _createElementVNode("code", null, "批阅"),
+          _createTextVNode(" 两类改完请先跑一次试跑验证。 ")
+        ], -1 /* CACHED */)),
+        _createElementVNode("div", _hoisted_30, [
+          _createElementVNode("label", _hoisted_31, [
+            _cache[25] || (_cache[25] = _createTextVNode("类别 ", -1 /* CACHED */)),
+            _createElementVNode("select", {
+              value: $setup.tplCat,
+              onChange: _cache[6] || (_cache[6] = $event => {$setup.tplCat = ($event.target as HTMLSelectElement).value as PromptCategory; $setup.onTplCatChange()})
+            }, [
+              (_openBlock(true), _createElementBlock(_Fragment, null, _renderList($setup.PROMPT_CATEGORIES, (c) => {
+                return (_openBlock(), _createElementBlock("option", {
+                  key: c,
+                  value: c
+                }, _toDisplayString($setup.PROMPT_CATEGORY_LABELS[c]), 9 /* TEXT, PROPS */, _hoisted_33))
+              }), 128 /* KEYED_FRAGMENT */))
+            ], 40 /* PROPS, NEED_HYDRATION */, _hoisted_32)
+          ]),
+          _createElementVNode("label", _hoisted_34, [
+            _cache[26] || (_cache[26] = _createTextVNode("模板 ", -1 /* CACHED */)),
+            _withDirectives(_createElementVNode("select", {
+              "onUpdate:modelValue": _cache[7] || (_cache[7] = $event => (($setup.tplSel) = $event)),
+              onChange: $setup.pickTemplate
+            }, [
+              (_openBlock(true), _createElementBlock(_Fragment, null, _renderList($setup.tplItems, (t) => {
+                return (_openBlock(), _createElementBlock("option", {
+                  key: t.id,
+                  value: t.id
+                }, _toDisplayString(t.default ? '★ ' : '') + _toDisplayString(t.name) + _toDisplayString(t.builtin ? '（内置）' : ''), 9 /* TEXT, PROPS */, _hoisted_35))
+              }), 128 /* KEYED_FRAGMENT */))
+            ], 544 /* NEED_HYDRATION, NEED_PATCH */), [
+              [_vModelSelect, $setup.tplSel]
+            ])
+          ]),
+          ($setup.tplIsBuiltin)
+            ? (_openBlock(), _createElementBlock("span", _hoisted_36, "内置模板不可删（可\"另存为\"后修改）"))
+            : _createCommentVNode("v-if", true)
+        ]),
+        _createElementVNode("label", _hoisted_37, [
+          _cache[27] || (_cache[27] = _createTextVNode(" 名称 ", -1 /* CACHED */)),
+          _withDirectives(_createElementVNode("input", {
+            "onUpdate:modelValue": _cache[8] || (_cache[8] = $event => (($setup.tplName) = $event)),
+            style: {"width":"260px"}
+          }, null, 512 /* NEED_PATCH */), [
+            [_vModelText, $setup.tplName]
+          ])
+        ]),
+        _withDirectives(_createElementVNode("textarea", {
+          "onUpdate:modelValue": _cache[9] || (_cache[9] = $event => (($setup.tplText) = $event)),
+          rows: "6",
+          placeholder: "留空 = 使用代码内置默认",
+          style: {"width":"100%","max-width":"820px","font-family":"monospace","font-size":"12px","padding":"6px 8px","border":"1px solid #d1d5db","border-radius":"6px"}
+        }, null, 512 /* NEED_PATCH */), [
+          [_vModelText, $setup.tplText]
+        ]),
+        _createElementVNode("p", _hoisted_38, [
+          _createElementVNode("button", {
+            class: "btn",
+            disabled: $setup.tplBusy,
+            onClick: _cache[10] || (_cache[10] = $event => ($setup.saveTpl(false)))
+          }, "💾 保存", 8 /* PROPS */, _hoisted_39),
+          _createElementVNode("button", {
+            class: "btn",
+            disabled: $setup.tplBusy,
+            onClick: _cache[11] || (_cache[11] = $event => ($setup.saveTpl(true)))
+          }, "＋ 另存为", 8 /* PROPS */, _hoisted_40),
+          _createElementVNode("button", {
+            class: "btn",
+            disabled: $setup.tplBusy || !$setup.tplSel,
+            onClick: $setup.setTplDefault
+          }, "设为默认", 8 /* PROPS */, _hoisted_41),
+          _createElementVNode("button", {
+            class: "btn",
+            disabled: $setup.tplBusy || !$setup.tplSel || $setup.tplIsBuiltin,
+            onClick: $setup.deleteTpl
+          }, "🗑 删除", 8 /* PROPS */, _hoisted_42),
+          ($setup.tplMsg)
+            ? (_openBlock(), _createElementBlock("span", _hoisted_43, _toDisplayString($setup.tplMsg), 1 /* TEXT */))
+            : _createCommentVNode("v-if", true)
+        ])
+      ]),
+      _createCommentVNode(" ③ 词表 "),
+      _createElementVNode("section", _hoisted_44, [
+        _cache[31] || (_cache[31] = _createElementVNode("h3", null, "③ 受控知识点词表", -1 /* CACHED */)),
+        _createElementVNode("p", _hoisted_45, " 共 " + _toDisplayString($setup.terms.length) + " 个术语（按章分组）。AI 标注时优先沿用这里的写法，避免同义漂移。 ", 1 /* TEXT */),
         (!$setup.terms.length)
-          ? (_openBlock(), _createElementBlock("p", _hoisted_31, [...(_cache[19] || (_cache[19] = [
+          ? (_openBlock(), _createElementBlock("p", _hoisted_46, [...(_cache[30] || (_cache[30] = [
               _createTextVNode(" （还没有词表：先做一次「① AI 知识点标注」，或 CLI ", -1 /* CACHED */),
               _createElementVNode("code", null, "kb vocab harvest", -1 /* CACHED */),
               _createTextVNode("。） ", -1 /* CACHED */)
@@ -386,8 +581,8 @@ export function render(_ctx, _cache, $props, $setup, $data, $options) {
           : _createCommentVNode("v-if", true),
         (_openBlock(true), _createElementBlock(_Fragment, null, _renderList($setup.termByChapter, (ts, c) => {
           return (_openBlock(), _createElementBlock("details", { key: c }, [
-            _createElementVNode("summary", _hoisted_32, _toDisplayString(c) + "（" + _toDisplayString(ts.length) + "）", 1 /* TEXT */),
-            _createElementVNode("div", _hoisted_33, [
+            _createElementVNode("summary", _hoisted_47, _toDisplayString(c) + "（" + _toDisplayString(ts.length) + "）", 1 /* TEXT */),
+            _createElementVNode("div", _hoisted_48, [
               (_openBlock(true), _createElementBlock(_Fragment, null, _renderList(ts, (t) => {
                 return (_openBlock(), _createElementBlock("span", {
                   key: t.term,

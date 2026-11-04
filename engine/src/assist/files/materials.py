@@ -38,7 +38,9 @@ INDEX = "索引.json"
 KNOW_MD = "知识点清单.md"
 KNOW_AI = "知识点清单.ai.json"
 KNOW_JOURNAL = "知识点清单.journal.jsonl"
-TRASH = "_trash"          # D134-T3：remove 的回收站（**不真删**）
+TRASH = "_trash"
+# D155：资料类型（只影响 `_source/<类型>/` 子目录与索引标注）
+KINDS = {"plan": "授课计划", "ppt": "PPT/讲义", "textbook": "教材", "other": "其他"}          # D134-T3：remove 的回收站（**不真删**）
 UPLOAD_EXTS = {".pptx", ".ppt", ".pdf", ".docx", ".doc", ".png", ".jpg", ".jpeg",
                ".md", ".txt", ".markdown"}
 UPLOAD_MAX_BYTES = 20 * 1024 * 1024
@@ -159,6 +161,8 @@ def files_of(ws, chap: str, *, include_trash: bool = False) -> list[dict]:
                 st = p.stat()
                 entry = {"file": str(p.relative_to(d)).replace("\\", "/"),
                          "name": p.name, "dir": label,
+                         "kindDir": (p.parent.name if p.parent != (d / SOURCE)
+                                     else ""),
                          "bytes": st.st_size,
                          "mtime": time.strftime("%Y-%m-%d %H:%M:%S", time.localtime(st.st_mtime)),
                          "kind": classify(p)}
@@ -171,7 +175,7 @@ def files_of(ws, chap: str, *, include_trash: bool = False) -> list[dict]:
     return out
 
 
-def save_uploads(ws, chap: str, items: "list[dict]") -> dict:
+def save_uploads(ws, chap: str, items: "list[dict]", *, kind: str = "") -> dict:
     """D134-T3a：把 PWA base64 上传的附件落到 `_source/`（**同名不覆盖**）。
 
     items: `[{name, data_b64}]`。
@@ -186,7 +190,10 @@ def save_uploads(ws, chap: str, items: "list[dict]") -> dict:
     import re as _re
 
     d = ensure_chap(ws, chap)
-    src = d / SOURCE
+    # D155：按资料类型落 `_source/<类型>/`（kind 为空 = 直接落 `_source/`，兼容旧行为）
+    k = str(kind or "").strip()
+    src = (d / SOURCE / k) if k in KINDS else (d / SOURCE)
+    src.mkdir(parents=True, exist_ok=True)
     saved: list[dict] = []
     skipped: list[dict] = []
     for it in (items or [])[:UPLOAD_MAX_ITEMS]:
@@ -229,7 +236,7 @@ def save_uploads(ws, chap: str, items: "list[dict]") -> dict:
             continue
         saved.append({"name": dest.name, "requested": name,
                       "file": str(dest.relative_to(d)).replace("\\", "/"),
-                      "bytes": len(blob), "renamed": dest.name != name})
+                      "kind": k, "bytes": len(blob), "renamed": dest.name != name})
     return {"ok": True, "chap": chap, "saved": saved, "skipped": skipped,
             "source": str(src)}
 

@@ -146,7 +146,10 @@ def solve_targets(ws: Path, targets: list[dict], *, model: str = "", apply: bool
                             "error": r.get("error")}
                 return {"id": p["id"], "ok": True, "chars": len(text),
                         "model": used_model, "withRubric": True, "rubricPoints": points}
-            text = cli.chat(system_prompt=SOLVE_SYSTEM_PROMPT, user_text=p["prompt"],
+            # D151：作答 system prompt 可用模板覆盖（不选模板 = 内置）
+            from ..files.prompts import system_prompt as _sp
+            _sys = _sp(ws, "solve", SOLVE_SYSTEM_PROMPT)
+            text = cli.chat(system_prompt=_sys, user_text=p["prompt"],
                             step="evaluation")
             if apply:
                 r = sol.add_version(ws, p["id"], text, source="ai", model=used_model,

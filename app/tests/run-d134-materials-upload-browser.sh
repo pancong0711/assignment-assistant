@@ -66,6 +66,11 @@ try:
         pg.wait_for_function(
             "() => document.body.innerText.includes('chap04')", timeout=20000)
 
+        # D155：把资料类型切到「其他」→ 落在 `_source/` 根（保持本测试原路径）
+        pg.wait_for_selector('text=上传附件', timeout=15000)
+        pg.locator('label', has_text='类型').locator('select').select_option('other')
+        pg.wait_for_timeout(200)
+
         # ---- 上传两个文件（其中一个用危险扩展名，应被前端拒绝）----
         pg.set_input_files('input[type=file]', [
             {'name': 'plan.md', 'mimeType': 'text/markdown',
@@ -78,7 +83,8 @@ try:
         pg.wait_for_function(
             "() => document.body.innerText.includes('plan.md')", timeout=20000)
         body = pg.inner_text('body')
-        src = ws / 'materials' / 'chap04' / '_source'
+        # D155：类型选了「其他」→ 落 `_source/other/`
+        src = ws / 'materials' / 'chap04' / '_source' / 'other'
         out['upload'] = {
             'saved': (src / 'plan.md').is_file(),
             'contentOk': (src / 'plan.md').read_text(encoding='utf-8') == '第4章 动量守恒',
@@ -109,7 +115,8 @@ try:
         pg.locator('button', has_text='我确认移除').click()
         pg.wait_for_function(
             "() => document.body.innerText.includes('已移入回收站')", timeout=20000)
-        trash = src / '_trash'
+        # 回收站在 `_source/_trash/`（不是类型子目录下）
+        trash = src.parent / '_trash'
         trashed = sorted(x.name for x in trash.glob('*.md'))
         out['removeConfirm'].update({
             'trashedFiles': trashed,
@@ -131,11 +138,13 @@ try:
         pg.locator('button', has_text='我确认恢复').click()
         pg.wait_for_function(
             "() => document.body.innerText.includes('已从回收站恢复')", timeout=20000)
+        # 恢复按引擎口径回到 `_source/` 根（不恢复原来的类型子目录）
+        root = src.parent
         out['restore'] = {
             'dialogShown': True,
             'notYetRestored': notYet <= 1,
-            'backInSource': len(list(src.glob('*.md'))) >= 2,
-            'trashEmptied': len(list((src / '_trash').glob('*.md'))) == 0,
+            'backInSource': len(list(root.glob('*.md'))) >= 1,
+            'trashEmptied': len(list((root / '_trash').glob('*.md'))) == 0,
         }
 
         out['errors'] = errs

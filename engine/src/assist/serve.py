@@ -1004,7 +1004,8 @@ class Handler(BaseHTTPRequestHandler):
                 return
             try:
                 rep = _mup.save_uploads(Path(self.ws).resolve(), chap,
-                                        payload.get("items") or [])
+                                        payload.get("items") or [],
+                                        kind=str(payload.get("kind") or ""))
             except _mup.MaterialsError as exc:
                 self._json({"ok": False, "error": str(exc)}, 400)
                 return
@@ -1659,6 +1660,21 @@ class Handler(BaseHTTPRequestHandler):
             rep["confirmed_by"] = confirm
             self._json(rep)
             return
+        # ---------------- D151：提示词模板（多类别 system prompt） ----------------
+        if u.path == "/prompts/templates":
+            # GET /prompts/templates?category=evaluate
+            from .files import prompts as _pp
+            q = urllib.parse.parse_qs(u.query)
+            cat = str((q.get("category") or ["ai-solve"])[0])
+            ws_ = Path(self.ws).resolve()
+            if cat not in _pp.CATEGORIES:
+                self._json({"ok": False, "error": f"未知类别：{cat}"}, 400)
+                return
+            self._json({"ok": True, "category": cat,
+                        "categories": list(_pp.CATEGORIES),
+                        "items": _pp.list_templates(ws_, cat),
+                        "default": (_pp.default_template(ws_, cat) or {}).get("id", "")})
+            return
         # ---------------- D148：知识点（标注 / 词表 / 要点生成） ----------------
         if u.path == "/knowledge/tag":
             # AI 为题目打知识点标签（默认只标未标注；dryRun 只预览）
@@ -1739,6 +1755,32 @@ class Handler(BaseHTTPRequestHandler):
                 self._json(json.loads(proc.stdout))
             except json.JSONDecodeError:
                 self._json({"ok": True, "raw": proc.stdout[-2000:]})
+            return
+        if u.path == "/prompts/save":
+            payload: dict = {}
+            try:
+                length = int(self.headers.get("Content-Length") or 0)
+                if length:
+                    payload = json.loads(self.rfile.read(length).decode("utf-8")) or {}
+            except Exception as exc:  # noqa: BLE001
+                self._json({"ok": False, "error": f"bad json: {exc}"}, 400)
+                return
+            from .files import prompts as _pp
+            ws_ = Path(self.ws).resolve()
+            cat = str(payload.get("category") or "ai-solve")
+            action = str(payload.get("action") or "save")
+            if action == "delete":
+                rep = _pp.delete_template(ws_, str(payload.get("id") or ""), cat)
+            elif action == "default":
+                rep = _pp.set_default(ws_, str(payload.get("id") or ""), cat)
+            else:
+                rep = _pp.save_template(ws_, pid=str(payload.get("id") or ""),
+                                        name=str(payload.get("name") or ""),
+                                        text=str(payload.get("text") or ""),
+                                        make_default=payload.get("makeDefault") is True,
+                                        category=cat)
+            rep["items"] = _pp.list_templates(ws_, cat)
+            self._json(rep, 200 if rep.get("ok") else 400)
             return
         if u.path == "/atopia/ask":
             # D140：Atopia 对话（多轮 + 工具调用，全部经同一 Gate）

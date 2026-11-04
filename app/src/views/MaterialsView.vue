@@ -29,6 +29,14 @@ const knowTopics = ref<Record<string, string[]>>({})
 const files = ref<MaterialsFile[]>([])
 const showTrash = ref(false)
 const uploading = ref(false)
+/* D155：资料类型（只影响 `_source/<类型>/` 子目录） */
+const upKind = ref<'plan' | 'ppt' | 'textbook' | 'other'>('plan')
+const UP_KINDS = [
+  { v: 'plan', label: '授课计划' },
+  { v: 'ppt', label: 'PPT/讲义' },
+  { v: 'textbook', label: '教材' },
+  { v: 'other', label: '其他' },
+] as const
 const fileMsg = ref('')
 const pendingRemove = ref<MaterialsFile | null>(null)
 const pendingRestore = ref<MaterialsFile | null>(null)
@@ -188,7 +196,7 @@ async function onFilesPicked(ev: Event) {
     let renamed: string[] = []
     if (items.length) {
       const r = await uploadMaterialsFiles(settings.engineUrl, settings.engineToken,
-                                           active.value, items)
+                                           active.value, items, upKind.value)
       if (!r?.ok) { fileMsg.value = `上传失败：${r?.error || '未知错误'}`; return }
       okN = (r.saved || []).length
       renamed = (r.saved || []).filter((x: any) => x.renamed).map((x: any) => x.name)
@@ -322,6 +330,11 @@ defineExpose({ refresh })
         <!-- D134-T3e：上传与文件管理（同名不覆盖；移除只进回收站） -->
         <h4 style="margin:4px 0">原件（`_source/`）</h4>
         <div style="display:flex; gap:8px; align-items:center; flex-wrap:wrap; margin:6px 0">
+          <label class="field">类型
+            <select v-model="upKind" style="font-size:13px">
+              <option v-for="k in UP_KINDS" :key="k.v" :value="k.v">{{ k.label }}</option>
+            </select>
+          </label>
           <button class="btn" :disabled="uploading" @click="pickFiles">
             {{ uploading ? '上传中…' : '⬆️ 上传附件' }}
           </button>
