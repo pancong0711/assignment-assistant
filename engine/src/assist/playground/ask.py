@@ -8,6 +8,7 @@
 from __future__ import annotations
 
 from pathlib import Path
+import uuid
 
 from loguru import logger
 
@@ -24,6 +25,12 @@ def _client(ws: Path, provider: str = "", model: str = ""):
     """
     from ..grading.llm import LLMClient
     from ..grading import providers as prov
+
+    def _with_session(c):
+        # D136：**一次 playground 会话 = 一个对话** → 同一个 session id，
+        # 让 opencode-go 的 prompt 缓存能命中（不是每次请求换新 id）。
+        c.set_session_id(f"playground-{uuid.uuid4().hex[:16]}")
+        return c
     if provider:
         p = prov.get_provider(ws, provider)
         if not p:
@@ -34,10 +41,11 @@ def _client(ws: Path, provider: str = "", model: str = ""):
             if not key:
                 raise RuntimeError(f"provider「{provider}」未配置 api_key")
         settings = {**p, "model": model or (p.get("models") or [""])[0] or ""}
-        return LLMClient(settings=settings), (model or (p.get("models") or [""])[0] or "")
+        client = _with_session(LLMClient(settings=settings))
+        return client, (model or (p.get("models") or [""])[0] or "")
     ep = prov.stage_endpoint(ws, "evaluation")
     settings = {**ep, "model": model or ep.get("model") or ""}
-    return LLMClient(settings=settings), (model or ep.get("model") or "")
+    return _with_session(LLMClient(settings=settings)), (model or ep.get("model") or "")
 
 
 def _build_user_text(question: str, attach_paths: "list[str] | None") -> "tuple[str, list[str], list[str]]":

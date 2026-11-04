@@ -85,6 +85,23 @@ def _parse_json_reply(raw: str) -> "dict | None":
     return None
 
 
+def _ensure_session_id(client, prefix: str) -> str:
+    """D136：给本次**会话**分配一个稳定的 session id（多轮复用同一个）。
+
+    若调用方已设置（例如上层需要跨多次 run 复用），保持不动。
+    """
+    import uuid
+    cur = str(getattr(client, "session_id", "") or "")
+    if cur:
+        return cur
+    sid = f"{prefix}-{uuid.uuid4().hex[:16]}"
+    try:
+        client.set_session_id(sid)
+    except Exception:  # noqa: BLE001 —— 老客户端/测试替身没有该方法
+        pass
+    return sid
+
+
 def run_session(client, ws, task: str, *, model: "str | None" = None,
                 session: "L.Session | None" = None,
                 confirm: "callable | None" = None,
@@ -95,6 +112,7 @@ def run_session(client, ws, task: str, *, model: "str | None" = None,
     没有传 `confirm` 时，**L2 工具一律拒绝**（默认不批准）。
     """
     ws_p = Path(ws).resolve()
+    _ensure_session_id(client, "atopia")
     sess = session or L.Session(session_id="agent", limits=L.read_limits(ws_p))
     tools = effective_tools(ws_p)
     usable = [t for t in tools if t.level != L3]
@@ -232,6 +250,7 @@ def run_session_native(client, ws, task: str, *, model: "str | None" = None,
     from .registry import L2
 
     ws_p = Path(ws).resolve()
+    _ensure_session_id(client, "atopia")
     sess = session or L.Session(session_id="agent", limits=L.read_limits(ws_p))
     tools = effective_tools(ws_p)
     usable = [t for t in tools if t.level != L3]

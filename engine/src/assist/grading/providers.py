@@ -4,13 +4,17 @@
 - **api_key 每 provider 一份**，存 `settings.local.secrets.json → llm.providers{name: key}`（0600）；
 - 两段式：`llm.stages.transcription / evaluation = {provider, model, batch?}`；
 - 模型名"填写即记录"：按 provider 累积 `models[]`（去重，上限 20），供下次下拉勾选；
-- 兼容旧配置 `llm.base_url / api_key / model` → 迁移为 `providers[0]`（name="默认"）。
+- 兼容旧配置 `llm.base_url / api_key / model` → 迁移为 `providers[0]`（name="默认"）；
+- D136：可选 `headers`（仅 x-* 与 user-agent，白名单）与 `user_agent`，
+  供 opencode-go 这类"要求客户端标识/会话头"的 provider 使用。
 
 安全：对外只回显掩码 `sk-****abcd`；日志只记 provider 名与 base_url host，绝不记 key。
 """
 from __future__ import annotations
 
 from pathlib import Path
+
+from loguru import logger
 
 MAX_MODELS = 20
 DEFAULT_BASE_URL = "https://dashscope.aliyuncs.com/compatible-mode/v1"
@@ -45,6 +49,65 @@ def _providers_out(data: dict) -> list[dict]:
     return [dict(p) for p in raw if isinstance(p, dict)]
 
 
+# ---------------- D136：provider 级自定义请求头（白名单） ----------------
+# 为什么需要：opencode-go 的 `/go` 路由要求每个对话带稳定的
+# `x-opencode-session`，并用**自有 user agent** 标识客户端（不要通用 SDK 名）。
+# 为什么必须是白名单：请求头直接决定"发到哪、以谁的身份发"——
+# 若允许配置 `Authorization` / `Host` / `Cookie`，改一个 JSON 就能劫持鉴权或
+# 把请求指向别的服务，等于给配置文件开了提权口（同 D132 扩展不能提权）。
+_FORBIDDEN_HEADERS = {
+    "authorization", "host", "cookie", "set-cookie", "content-length",
+    "content-type", "accept-encoding", "connection", "transfer-encoding",
+    "proxy-authorization", "x-api-key", "api-key",
+}
+_SESSION_PLACEHOLDER = "{session}"
+
+
+def validate_headers(raw) -> "tuple[dict, list[str]]":
+    """校验 provider 的自定义请求头。返回 (合法头, 错误列表)。
+
+    规则：
+    - 头名：`x-*` 自定义头，或 `user-agent`；其余一律拒绝；
+    - 值：字符串、≤512 字符、不含控制字符；
+    - 明确禁止上面的 `_FORBIDDEN_HEADERS`（即使以 x- 开头也不放过关键项）。
+    """
+    headers: dict = {}
+    errors: list[str] = []
+    if raw is None:
+        return headers, errors
+    if not isinstance(raw, dict):
+        return headers, ["headers 必须是对象（头名 → 值）"]
+    for k, v in raw.items():
+        name = str(k or "").strip()
+        low = name.lower()
+        if not name:
+            errors.append("headers 里出现空头名")
+            continue
+        if low in _FORBIDDEN_HEADERS:
+            errors.append(f"headers 不允许设置 {name}（会劫持鉴权/路由，禁止）")
+            continue
+        if not (low.startswith("x-") or low == "user-agent"):
+            errors.append(f"headers 只允许 x-* 自定义头或 user-agent，收到 {name}")
+            continue
+        val = str(v if v is not None else "")
+        if len(val) > 512:
+            errors.append(f"headers.{name} 过长（>512）")
+            continue
+        if any(ord(c) < 32 for c in val):
+            errors.append(f"headers.{name} 含控制字符")
+            continue
+        headers[name] = val
+    return headers, errors
+
+
+def _provider_headers(p: dict) -> dict:
+    """取某 provider 的合法自定义头（非法项**丢弃并告警**，不阻断其它功能）。"""
+    hdrs, errs = validate_headers(p.get("headers"))
+    for e in errs:
+        logger.warning(f"[provider:{p.get('name')}] {e}")
+    return hdrs
+
+
 def _secrets_map(sec: dict) -> dict:
     raw = ((sec.get("llm") or {}).get("providers")) or {}
     return {str(k): str(v) for k, v in raw.items()} if isinstance(raw, dict) else {}
@@ -73,6 +136,9 @@ def list_providers(ws=None, *, mask: bool = True) -> list[dict]:
             "batch_support": bool(p.get("batch_support")),
             "api_key": mask_key(key) if mask else key,
             "has_key": bool(key),
+            # D136：自定义请求头 / user-agent（只读展示；写入走 save_provider）
+            "headers": _provider_headers(p),
+            "user_agent": str(p.get("user_agent") or ""),
         })
     return out
 
@@ -213,7 +279,8 @@ def save_provider(ws, name: str, *, base_url: str = "", api_key: "str | None" = 
                   batch_support: "bool | None" = None, model: str = "",
                   forget_model: str = "", provider_type: str = "", cmd: "list[str] | None" = None,
                   input_mode: str = "", output_mode: str = "",
-                  timeout_s: "int | None" = None, supports_images: "bool | None" = None) -> dict:
+                  timeout_s: "int | None" = None, supports_images: "bool | None" = None,
+                  headers: "dict | None" = None, user_agent: "str | None" = None) -> dict:
     """新增/更新一个 provider。api_key=None 表示不改；'' 表示清除。
 
     支持 `provider_type="api"|"command"`：command 型用 `cmd` 回环调用外部 agent CLI
@@ -234,6 +301,21 @@ def save_provider(ws, name: str, *, base_url: str = "", api_key: "str | None" = 
             provs.append(cur)
         if base_url:
             cur["base_url"] = str(base_url)
+        # D136：自定义请求头（白名单校验；传空 dict 表示清除）
+        if headers is not None:
+            ok_headers, errs = validate_headers(headers)
+            if errs:
+                holder["errors"] = errs
+            if ok_headers:
+                cur["headers"] = ok_headers
+            else:
+                cur.pop("headers", None)
+        if user_agent is not None:
+            ua = str(user_agent).strip()
+            if ua:
+                cur["user_agent"] = ua[:200]
+            else:
+                cur.pop("user_agent", None)
         if provider_type:
             if provider_type not in ("api", "command"):
                 holder["error"] = f"provider_type 只能是 api/command：{provider_type}"
@@ -275,6 +357,10 @@ def save_provider(ws, name: str, *, base_url: str = "", api_key: "str | None" = 
         update_secrets(ws, _sfn)
     if holder.get("error"):
         return {"ok": False, "error": holder["error"]}
+    if holder.get("errors"):
+        # D136：自定义头非法 → **整单失败**（不静默丢弃，否则教师以为配好了）
+        return {"ok": False, "error": "自定义请求头不合法：" + "；".join(holder["errors"]),
+                "errors": holder["errors"]}
     return {"ok": True, "provider": {k: v for k, v in holder.get("provider", {}).items() if k != "api_key"}}
 
 
@@ -346,6 +432,9 @@ def stage_endpoint(ws, stage: str) -> dict:
     model = str(st.get("model") or llm.get(f"{stage}_model") or llm.get("model") or "")
     return {"provider": name, "base_url": base, "api_key": key or str(llm.get("api_key") or ""),
             "model": model, "batch": bool(st.get("batch")), "host": host_of(base),
+            # D136：opencode-go 需要 x-opencode-session；其它 provider 通常不配
+            "headers": _provider_headers(prov),
+            "user_agent": str(prov.get("user_agent") or ""),
             # D98-B3：command 型 provider（无 key 回环），供 LLMClient 判定走子进程
             "type": str(prov.get("type") or "api"),
             "cmd": [str(x) for x in (prov.get("cmd") or [])] if isinstance(prov.get("cmd"), list) else [],

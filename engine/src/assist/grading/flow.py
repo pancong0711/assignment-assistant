@@ -488,6 +488,9 @@ def run_task(task_path: Path, ws: Path, images_dir: Path | None = None,
                 # transcribe 需要有效 LLM 配置；images 为空则告警跳过
                 from .llm import LLMClient
                 client = LLMClient(ws=ws)
+                # D136：**每份作业 = 一个对话**（一次批阅 N 份 → N 个 session），
+                # 由 `_run_transcribe` 逐份设置；这里只在单份场景兜底。
+                _session_per_student(client, ctx)
                 try:
                     produced = [str(x) for x in _run_transcribe(ctx, client, p["transcripts"])]
                     _accum_usage(ctx, "transcribe", client)
@@ -501,6 +504,8 @@ def run_task(task_path: Path, ws: Path, images_dir: Path | None = None,
                     raise RuntimeNotFoundError(ctx["transcripts_dir"])
                 from .llm import LLMClient
                 client = LLMClient(ws=ws)
+                # D136：同 transcribe —— 按学生切分会话（见 _session_per_student）
+                _session_per_student(client, ctx)
                 produced = [str(x) for x in _run_evaluate(ctx, client, p["evaluations"])]
                 _accum_usage(ctx, "evaluate", client)
             elif step == "report":
@@ -543,6 +548,24 @@ def run_task(task_path: Path, ws: Path, images_dir: Path | None = None,
                    "bucket": str(base), "usage": ctx.get("usage") or {}}
     journal_append(journal, summary_rec)
     return summary_rec
+
+
+def _session_per_student(client, ctx) -> None:
+    """D136：批阅会话粒度 = **每份作业一个**（docs/86 §2）。
+
+    批量场景下一次批阅 N 份 → N 个 session，而不是"全局固定一个"
+    （那会让 opencode-go 的路由把无关作业归成一坨），
+    也不是"每次请求换新"（那会丢掉 prompt 缓存收益）。
+    """
+    try:
+        names = sorted(p.stem for p in Path(ctx["transcripts_dir"]).glob("*.json"))
+    except Exception:  # noqa: BLE001
+        names = []
+    tag = names[0] if len(names) == 1 else f"batch{len(names)}"
+    try:
+        client.set_session_id(f"grade-{tag}")
+    except Exception:  # noqa: BLE001
+        pass
 
 
 def _accum_usage(ctx: dict, step: str, client) -> None:

@@ -813,3 +813,20 @@ rainclass 67/67，PWA↔engine 全等，仅末位浮点四舍五入噪声）。
 - 口径：只用 `errors[].knowledge[]`（排除低置信度）；用**出错率**判定改善
   （班额可能变化）；不做按章节串（缺可靠映射）。
 - **未做**：跨班级对比；知识点同义词需先 `kb check-knowledge` 归一。
+
+---
+
+## D136 · opencode-go 会话头 + provider 级自定义请求头（2026-10-31 完成）
+
+> 需求单：`docs/86-D136-opencode-go-session-header.md`。
+
+- 现象：`/inference/go/openai/v1` 报 `MissingSessionID`。**根因是服务端对 go 路由
+  新增要求**（curl 实测：旧 `/zen/go/v1` 同样报错），不是改 URL 改坏的。
+- 官方要求：客户端**用自己的 UA** + 每个**对话**带稳定的 `x-opencode-session`。
+- ✅ provider 支持 `headers` / `user_agent`（**白名单**：只 `x-*` 与 `user-agent`，
+  禁止 `Authorization`/`Host` 等，防配置即提权）。
+- ✅ `LLMClient`：`{session}` 占位替换；缺 session 报 `LLMConfigError` 且不发请求；
+  默认 UA `assignment-assistant/<版本>`。
+- ✅ 会话粒度：Playground/Atopia 一会话一 id；批阅按作业切分。
+- ✅ 修复 `provider=-`（报错定位字段取错）与语义化错误提示。
+- **明确不做**：自动给 opencode 补默认 session（显式配置、缺失即报错）。

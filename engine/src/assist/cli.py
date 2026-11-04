@@ -2303,10 +2303,14 @@ def llm_config(migrate, workspace):
 @click.option("--batch", "batch_support", is_flag=True, default=False, help="该 provider 支持 batch")
 @click.option("--model", default="", help="模型名（会记入该 provider 的模型历史）")
 @click.option("--stage", default="", type=click.Choice(["", "transcription", "evaluation"]))
+@click.option("--header", "headers", multiple=True,
+              help="D136：自定义请求头，形如 x-opencode-session={session}（只允许 x-* 与 user-agent）")
+@click.option("--user-agent", "user_agent", default=None,
+              help="D136：自定义 user-agent（缺省 assignment-assistant/<版本>）")
 @click.option("--workspace", "-w", default=None)
 def llm_provider(action, name, provider_type, cmd, input_mode, output_mode, timeout_s,
                  supports_images, base_url, api_key, clear_key, batch_support, model, stage,
-                 workspace):
+                 headers, user_agent, workspace):
     """D86 §2：provider 管理（list/set/delete/stage）。key 只掩码回显，绝不入日志。
 
     D98-B3：`--type command --cmd ...` 可配置"回环外部 agent CLI"（无 API key 也能转录/批阅）。
@@ -2323,12 +2327,23 @@ def llm_provider(action, name, provider_type, cmd, input_mode, output_mode, time
                                   batch=(True if batch_support else None))
     else:
         key_arg = "" if clear_key else api_key
+        # D136：--header name=value（可多次）；缺 '=' 直接报错，避免静默丢弃
+        hmap: "dict | None" = None
+        if headers:
+            hmap = {}
+            for item in headers:
+                if "=" not in str(item):
+                    raise click.ClickException(
+                        f"--header 需要 name=value 形式，收到 {item!r}")
+                k, v = str(item).split("=", 1)
+                hmap[k.strip()] = v.strip()
         rep = providers.save_provider(
             ws, name, base_url=base_url, api_key=key_arg,
             batch_support=(True if batch_support else None), model=model,
             provider_type=provider_type, cmd=list(cmd) if cmd else None,
             input_mode=input_mode, output_mode=output_mode, timeout_s=timeout_s,
-            supports_images=supports_images)
+            supports_images=supports_images,
+            headers=hmap, user_agent=user_agent)
     click.echo(json.dumps(rep, ensure_ascii=False, indent=1))
     raise SystemExit(0 if rep.get("ok") else 2)
 

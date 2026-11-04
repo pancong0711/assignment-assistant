@@ -894,6 +894,10 @@ export interface LlmProvider {
   batch_support?: boolean
   api_key?: string
   has_key?: boolean
+  /** D136：自定义请求头（仅 x-* 与 user-agent）；如 opencode-go 的 x-opencode-session */
+  headers?: Record<string, string>
+  /** D136：自定义 user-agent */
+  user_agent?: string
 }
 export interface LlmStageCfg { provider?: string; model?: string; batch?: boolean }
 export interface LlmConfig {

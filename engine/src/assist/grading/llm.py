@@ -25,6 +25,15 @@ from pathlib import Path
 import httpx
 from loguru import logger
 
+
+def _version() -> str:
+    """D136：默认 User-Agent 用（官方要求客户端标识自己，而不是通用 SDK 名）。"""
+    try:
+        from .. import __version__ as v
+        return str(v or "0.1.0")
+    except Exception:  # noqa: BLE001
+        return "0.1.0"
+
 DEFAULT_BASE_URL = "https://api.deepseek.com/v1"
 DEFAULT_MODEL = "deepseek-chat"
 DEFAULT_VISION_MODEL = "glm-5v"
@@ -120,6 +129,32 @@ def _settings_from_workspace(ws: Path, *, stage: str = "") -> dict:
     return load_llm_settings(ws)
 
 
+def _error_hint(body: str) -> str:
+    """D136：把 provider 的**语义化错误**翻译成可操作提示（读 `error.type`）。
+
+    只做"加一句怎么办"，不改变错误本身（body 仍原样保留，便于核对原文）。
+    """
+    try:
+        data = json.loads(body) if body.strip().startswith("{") else {}
+    except json.JSONDecodeError:
+        data = {}
+    err = data.get("error") if isinstance(data, dict) else None
+    etype = ""
+    if isinstance(err, dict):
+        etype = str(err.get("type") or "")
+    elif isinstance(data, dict):
+        etype = str(data.get("type") or "")
+    low = (etype + " " + body).lower()
+    if "missingsessionid" in low or "x-opencode-session" in low:
+        return ("该 provider 要求会话头 x-opencode-session（opencode-go 的 /go 路由要求"
+                "每个对话带稳定会话 id）。请在 provider 配置里加 "
+                "headers: {\"x-opencode-session\": \"{session}\"}，"
+                "并由调用方按对话粒度传 session_id（见 docs/86 §2）。")
+    if "model is unavailable" in low or "model_not_found" in low or "does not exist" in low:
+        return "模型在该 provider 不可用：核对 model 名与套餐权限（不要与本 provider 的 models 列表混用）。"
+    return ""
+
+
 class LLMClient:
     """OpenAI 兼容 chat completions 客户端（文本 + 多模态图片）。"""
 
@@ -157,6 +192,51 @@ class LLMClient:
         # D98：token 用量累计（用于"省 token"度量；provider 不返回 usage 时则为 None）
         self.usage: dict = {"prompt_tokens": 0, "completion_tokens": 0, "total_tokens": 0,
                             "calls": 0, "calls_with_usage": 0}
+        # D136：opencode-go 等 provider 要求"按对话稳定"的会话头。
+        # `session_id` 由调用方按对话粒度传入（默认 None = 不发该头）。
+        self.session_id: str = ""
+        self.set_session_id(settings.get("session_id"))
+        # D136：真实 provider 名（用于报错定位；此前恒为 '-'，见 docs/86 §3.3）
+        self.provider = str(settings.get("provider") or "")
+        # D136：provider 级自定义头（已由 providers.validate_headers 白名单过滤）
+        self.extra_headers: dict = {
+            str(k): str(v) for k, v in (settings.get("headers") or {}).items()
+            if isinstance(k, str) and isinstance(v, (str, int, float))
+        }
+        self.user_agent = str(settings.get("user_agent") or "").strip()
+        for _msg in (settings.get("header_errors") or []):
+            logger.warning(f"[LLM] {_msg}")
+
+    # ---- D136：会话 id -------------------------------------------------
+    def set_session_id(self, session_id) -> None:
+        """设置本次**对话**的会话 id（空/None = 不发 `x-opencode-session`）。"""
+        self.session_id = str(session_id or "").strip()[:200]
+
+    def _headers_for(self, api_key: str, step_ep: dict) -> dict:
+        """组装最终请求头：鉴权 + 默认 UA + provider 自定义头（含 `{session}` 替换）。
+
+        **只有 provider 显式配置了 headers 才会附加**——其它 provider 的请求头
+        与本次改动前逐字节一致（验收 3，有测试锁定）。
+        """
+        headers = {"Authorization": f"Bearer {api_key}",
+                   "Content-Type": "application/json"}
+        ua = str(step_ep.get("user_agent") or self.user_agent or "").strip() \
+            or f"assignment-assistant/{_version()}"
+        headers["User-Agent"] = ua
+        extra = step_ep.get("headers") or self.extra_headers or {}
+        for name, val in extra.items():
+            sval = str(val)
+            if "{session}" in sval:
+                if not self.session_id:
+                    raise LLMConfigError(
+                        f"provider 需要会话头 `{name}`（含 {{session}} 占位），"
+                        f"但本次调用没有传 session_id。"
+                        f"opencode-go 的 /go 路由要求每个对话带稳定的 "
+                        f"x-opencode-session（docs/86 §2）；"
+                        f"多轮会话请复用同一个 id，单次调用请每次新建。")
+                sval = sval.replace("{session}", self.session_id)
+            headers[name] = sval
+        return headers
 
     def _step_cfg(self, step: str | None) -> dict:
         """取某段的**完整** endpoint 配置（D125）。
@@ -230,14 +310,14 @@ class LLMClient:
 
         last_err = None
         # D125：报错带上「用的哪一段/哪个 provider/base/model」，便于一眼定位配置错配
-        where = (f"（step={step or 'evaluation'}, provider={step_ep.get('provider') or '-'}, "
+        _prov_name = (step_ep.get("provider") or self.provider or "-")
+        where = (f"（step={step or 'evaluation'}, provider={_prov_name}, "
                  f"base_url={base_url}, model={payload.get('model')}）")
         for attempt in range(self.retries + 1):
             try:
                 resp = httpx.post(
                     f"{base_url}/chat/completions",
-                    headers={"Authorization": f"Bearer {api_key}",
-                             "Content-Type": "application/json"},
+                    headers=self._headers_for(api_key, step_ep),
                     json=payload, timeout=self.timeout,
                 )
                 if resp.status_code == 200:
@@ -252,6 +332,9 @@ class LLMClient:
                     continue
                 # D125：**确定性错误不重试**（模型不可用/请求非法/鉴权失败，重试毫无意义）
                 body = resp.text[:400]
+                hint = _error_hint(body)
+                if hint:
+                    body = f"{body}\n【怎么办】{hint}"
                 if resp.status_code in (400, 401, 403, 404) or "Model is unavailable" in body:
                     raise LLMAPIError(
                         f"LLM API 请求失败(status={resp.status_code}): {body}{where}")
