@@ -1450,10 +1450,13 @@ def atopia_run(obj, tool_name, args_json, confirmed_by, workspace, verbose):
 @click.option("--yes", "auto_yes", is_flag=True,
               help="对 L2 写入工具自动确认（**仅供教师本人在终端使用**；仍不做 L3）")
 @click.option("--max-turns", default=6, type=int, show_default=True)
+@click.option("--protocol", type=click.Choice(["native", "json"]), default="native",
+              show_default=True,
+              help="native=原生 tools 协议（不支持时自动降级）；json=强制 JSON 指令协议")
 @click.option("--workspace", "-w", default=None)
 @click.option("--verbose", "-v", is_flag=True)
 @click.pass_obj
-def atopia_ask(obj, task, model, auto_yes, max_turns, workspace, verbose):
+def atopia_ask(obj, task, model, auto_yes, max_turns, protocol, workspace, verbose):
     """让 AI 在本项目工具上完成一个任务（受分级/护栏/审计约束）。"""
     from .atopia import agent as AG
     from .atopia import limits as LM
@@ -1473,8 +1476,11 @@ def atopia_ask(obj, task, model, auto_yes, max_turns, workspace, verbose):
             f"\n确认执行？（会修改工作区数据）", default=False)
         return "teacher:cli:confirm" if ok else ""
 
-    rep = AG.run_session(client, ws, task, model=model or None, session=sess,
-                         confirm=_confirm, max_turns=max_turns)
+    # D135：默认走原生 tools 协议，provider 不支持时自动降级到 JSON 指令协议；
+    # 两条路径共用同一个 Gate（run_tool），安全口径完全一致。
+    rep = AG.run_session_auto(client, ws, task, model=model or None, session=sess,
+                              confirm=_confirm, max_turns=max_turns,
+                              prefer=protocol)
     click.echo(json.dumps(rep, ensure_ascii=False, indent=2))
     if not rep.get("ok"):
         raise click.ClickException(rep.get("error") or "会话失败")

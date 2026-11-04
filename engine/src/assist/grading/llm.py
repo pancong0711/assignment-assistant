@@ -202,7 +202,9 @@ class LLMClient:
     def request(self, messages: list[dict], model: str | None = None,
                 temperature: float | None = None,
                 response_format: dict | None = None,
-                max_tokens: int = 8192, step: str | None = None) -> dict:
+                max_tokens: int = 8192, step: str | None = None,
+                tools: "list[dict] | None" = None,
+                tool_choice: "str | dict | None" = None) -> dict:
         """发送请求并返回原始响应 dict；重试 retries 次，错误信息脱敏。
 
         provider_type=command 时不走 HTTP，改为子进程回环（每次新进程=天然隔离）。
@@ -221,6 +223,10 @@ class LLMClient:
         }
         if response_format:
             payload["response_format"] = response_format
+        # D135：原生 function calling（OpenAI 兼容 tools 协议）
+        if tools:
+            payload["tools"] = tools
+            payload["tool_choice"] = tool_choice or "auto"
 
         last_err = None
         # D125：报错带上「用的哪一段/哪个 provider/base/model」，便于一眼定位配置错配
@@ -348,6 +354,29 @@ class LLMClient:
     def usage_summary(self) -> dict:
         """本次 client 生命周期内的用量摘要（供 batch-report / CLI 打印）。"""
         return dict(self.usage)
+
+    def chat_with_tools(self, messages: list[dict], tools: list[dict], *,
+                        model: str | None = None, temperature: float | None = None,
+                        max_tokens: int = 2048, step: str = "atopia",
+                        tool_choice: "str | dict | None" = None) -> dict:
+        """D135：原生 tools 协议调用，返回**原始响应**（含 `tool_calls`）。
+
+        不做文本提取：调用方要判断模型是"要调工具"还是"直接回答"。
+        provider 不支持 tools 时会抛 `LLMAPIError`（由调用方降级到 JSON 指令协议）。
+        """
+        return self.request(messages, model=model or self.evaluation_model,
+                            temperature=temperature, max_tokens=max_tokens,
+                            step=step, tools=tools, tool_choice=tool_choice)
+
+    @staticmethod
+    def tool_calls_of(data: dict) -> list[dict]:
+        """从响应里取 `tool_calls`（OpenAI 兼容；取不到返回空列表）。"""
+        try:
+            msg = data["choices"][0]["message"]
+        except (KeyError, IndexError, TypeError):
+            return []
+        calls = msg.get("tool_calls") if isinstance(msg, dict) else None
+        return [c for c in (calls or []) if isinstance(c, dict)]
 
     def extract_text(self, data: dict) -> str:
         try:
