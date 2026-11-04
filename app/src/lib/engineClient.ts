@@ -919,7 +919,11 @@ export async function postLlmProvider(
   engineAddr: string, token: string | undefined,
   payload: { action?: 'set' | 'delete' | 'stage'
     name?: string; base_url?: string; api_key?: string | null; batch_support?: boolean
-    model?: string; stage?: string; provider?: string; batch?: boolean; forget_model?: string },
+    model?: string; stage?: string; provider?: string; batch?: boolean; forget_model?: string
+    /** D137：自定义请求头（仅 x-* 与 user-agent，引擎白名单强校验） */
+    headers?: Record<string, string>
+    /** D137：自定义 user-agent */
+    user_agent?: string },
 ): Promise<LlmConfig & { ok?: boolean; error?: string }> {
   const base = normalizeEngineAddr(engineAddr)
   const res = await fetch(engineUrlWithToken(base, '/llm/provider', token), {
@@ -2178,6 +2182,60 @@ export async function uploadMaterialsFiles(
   return o
 }
 
+/** D137：抽取某章资料（无 LLM 成本）。 */
+export async function extractMaterials(
+  engineAddr: string, token: string | undefined, chap: string, force = false,
+): Promise<{ ok?: boolean; error?: string; chap?: string }> {
+  const base = normalizeEngineAddr(engineAddr)
+  const res = await fetch(engineUrlWithToken(base, '/materials/extract', token), {
+    method: 'POST', headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ chap, force }),
+  })
+  const o = (await res.json().catch(() => ({}))) as any
+  if (!res.ok && !o?.error) throw new Error(`HTTP ${res.status}`)
+  return o
+}
+
+/** D137：AI 抽取知识点建议（**会花模型钱**；只写 .ai.json，不生效）。 */
+export async function suggestMaterials(
+  engineAddr: string, token: string | undefined, chap: string, model = '',
+): Promise<{ ok?: boolean; error?: string; chap?: string }> {
+  const base = normalizeEngineAddr(engineAddr)
+  const res = await fetch(engineUrlWithToken(base, '/materials/suggest', token), {
+    method: 'POST', headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ chap, model }),
+  })
+  const o = (await res.json().catch(() => ({}))) as any
+  if (!res.ok && !o?.error) throw new Error(`HTTP ${res.status}`)
+  return o
+}
+
+/** D137：待确认 AI 建议的全文预览（确认弹窗用）。 */
+export async function fetchMaterialsSuggestPreview(
+  engineAddr: string, token: string | undefined, chap: string,
+): Promise<{ ok?: boolean; error?: string; hasAiSuggest?: boolean; hasConfirmed?: boolean
+             preview?: string; terms?: string[] }> {
+  const base = normalizeEngineAddr(engineAddr)
+  const qs = new URLSearchParams({ chap })
+  return (await getJson2(engineUrlWithToken(
+    base, `/materials/suggest-preview?${qs.toString()}`, token))) as any
+}
+
+/** D137：把 AI 建议固化为**生效**清单（必须传 confirm=教师确认来源）。 */
+export async function confirmMaterials(
+  engineAddr: string, token: string | undefined, chap: string,
+  opts: { confirm: string; force?: boolean },
+): Promise<{ ok?: boolean; error?: string; chap?: string }> {
+  const base = normalizeEngineAddr(engineAddr)
+  const res = await fetch(engineUrlWithToken(base, '/materials/confirm', token), {
+    method: 'POST', headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ chap, confirm: opts.confirm, force: !!opts.force }),
+  })
+  const o = (await res.json().catch(() => ({}))) as any
+  if (!res.ok && !o?.error) throw new Error(`HTTP ${res.status}`)
+  return o
+}
+
 /** 把文件移入 `_source/_trash/`（不真删）。经 Atopia 工具执行 → 需教师确认。 */
 export async function removeMaterialsFile(
   engineAddr: string, token: string | undefined, chap: string, file: string,
@@ -2217,6 +2275,21 @@ export async function runAtopiaTool(
   const res = await fetch(engineUrlWithToken(base, '/atopia/run', token), {
     method: 'POST', headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify(payload),
+  })
+  const o = (await res.json().catch(() => ({}))) as any
+  if (!res.ok && !o?.error) throw new Error(`HTTP ${res.status}`)
+  return o
+}
+
+/** D137：调整 Atopia 护栏（受硬顶约束；超限由引擎拒绝并返回原因）。 */
+export async function postAtopiaLimits(
+  engineAddr: string, token: string | undefined, limits: Record<string, number>,
+): Promise<{ ok?: boolean; error?: string; limits?: Record<string, number>
+             hardCaps?: Record<string, number> }> {
+  const base = normalizeEngineAddr(engineAddr)
+  const res = await fetch(engineUrlWithToken(base, '/atopia/limits', token), {
+    method: 'POST', headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ limits }),
   })
   const o = (await res.json().catch(() => ({}))) as any
   if (!res.ok && !o?.error) throw new Error(`HTTP ${res.status}`)

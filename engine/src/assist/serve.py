@@ -1506,14 +1506,126 @@ class Handler(BaseHTTPRequestHandler):
                                           batch=payload.get("batch"))
             else:
                 key = payload.get("api_key")
+                # D137：PWA 可编辑自定义请求头 / user-agent（白名单由 providers 强校验）
+                hdrs = payload.get("headers")
                 rep = providers.save_provider(
                     ws, str(payload.get("name") or ""),
                     base_url=str(payload.get("base_url") or ""),
                     api_key=(None if key is None else str(key)),
                     batch_support=payload.get("batch_support"),
                     model=str(payload.get("model") or ""),
-                    forget_model=str(payload.get("forget_model") or ""))
+                    forget_model=str(payload.get("forget_model") or ""),
+                    headers=(dict(hdrs) if isinstance(hdrs, dict) else None),
+                    user_agent=(str(payload["user_agent"])
+                                if "user_agent" in payload else None))
             rep["config"] = providers.public_config(ws)
+            self._json(rep, 200 if rep.get("ok") else 400)
+            return
+        if u.path == "/materials/extract":
+            # D137：抽取某章资料（无 LLM 成本）
+            payload: dict = {}
+            try:
+                length = int(self.headers.get("Content-Length") or 0)
+                if length:
+                    payload = json.loads(self.rfile.read(length).decode("utf-8")) or {}
+            except Exception as exc:  # noqa: BLE001
+                self._json({"ok": False, "error": f"bad json: {exc}"}, 400)
+                return
+            from .files import materials as _mx
+            chap = str(payload.get("chap") or "").strip()
+            if not chap:
+                self._json({"ok": False, "error": "缺少 chap"}, 400)
+                return
+            try:
+                rep = _mx.extract_chap(Path(self.ws).resolve(), chap,
+                                       force=bool(payload.get("force")))
+            except _mx.MaterialsError as exc:
+                self._json({"ok": False, "error": str(exc)}, 400)
+                return
+            rep["chap"] = chap
+            self._json(rep, 200 if rep.get("ok") else 400)
+            return
+        if u.path == "/materials/suggest":
+            # D137：AI 抽取知识点建议（**会花模型钱**，只写 .ai.json，不生效）
+            payload: dict = {}
+            try:
+                length = int(self.headers.get("Content-Length") or 0)
+                if length:
+                    payload = json.loads(self.rfile.read(length).decode("utf-8")) or {}
+            except Exception as exc:  # noqa: BLE001
+                self._json({"ok": False, "error": f"bad json: {exc}"}, 400)
+                return
+            from .files import materials as _ms
+            from .grading.llm import LLMConfigError, LLMClient
+            chap = str(payload.get("chap") or "").strip()
+            if not chap:
+                self._json({"ok": False, "error": "缺少 chap"}, 400)
+                return
+            ws_ = Path(self.ws).resolve()
+            try:
+                client = LLMClient(ws=ws_)
+                rep = _ms.suggest_knowledge(client, ws_, chap,
+                                            model=str(payload.get("model") or "") or None)
+            except _ms.MaterialsError as exc:
+                self._json({"ok": False, "error": str(exc)}, 400)
+                return
+            except LLMConfigError as exc:
+                self._json({"ok": False, "error": f"LLM 未配置：{exc}"}, 400)
+                return
+            except Exception as exc:  # noqa: BLE001
+                self._json({"ok": False, "error": str(exc)[:400]}, 500)
+                return
+            rep["chap"] = chap
+            self._json(rep)
+            return
+        if u.path == "/materials/confirm":
+            # D137：把 AI 建议固化为**生效**清单。
+            # 安全口径（D131 原意不放松）：教师显式点击 + 弹窗先看全文 +
+            # 默认不覆盖已有 .md（需显式 force）。
+            payload: dict = {}
+            try:
+                length = int(self.headers.get("Content-Length") or 0)
+                if length:
+                    payload = json.loads(self.rfile.read(length).decode("utf-8")) or {}
+            except Exception as exc:  # noqa: BLE001
+                self._json({"ok": False, "error": f"bad json: {exc}"}, 400)
+                return
+            confirm = str(payload.get("confirm") or "").strip()
+            if not confirm:
+                self._json({"ok": False, "denied": True,
+                            "error": "确认生效必须由教师显式确认（缺少 confirm）"}, 403)
+                return
+            from .files import materials as _mc
+            chap = str(payload.get("chap") or "").strip()
+            if not chap:
+                self._json({"ok": False, "error": "缺少 chap"}, 400)
+                return
+            try:
+                rep = _mc.confirm_knowledge(Path(self.ws).resolve(), chap,
+                                            force=bool(payload.get("force")))
+            except _mc.MaterialsError as exc:
+                self._json({"ok": False, "error": str(exc)}, 400)
+                return
+            rep["chap"] = chap
+            rep["confirmed_by"] = confirm
+            self._json(rep)
+            return
+        if u.path == "/atopia/limits":
+            # D137：教师调整护栏（受 HARD_CAPS 硬顶约束；超限直接拒绝并说明原因）
+            payload: dict = {}
+            try:
+                length = int(self.headers.get("Content-Length") or 0)
+                if length:
+                    payload = json.loads(self.rfile.read(length).decode("utf-8")) or {}
+            except Exception as exc:  # noqa: BLE001
+                self._json({"ok": False, "error": f"bad json: {exc}"}, 400)
+                return
+            from .atopia import limits as _alm
+            ws_ = Path(self.ws).resolve()
+            patch = payload.get("limits") if isinstance(payload.get("limits"), dict) else {}
+            rep = _alm.write_limits(ws_, patch)
+            rep["limits"] = _alm.read_limits(ws_)
+            rep["hardCaps"] = _alm.HARD_CAPS
             self._json(rep, 200 if rep.get("ok") else 400)
             return
         if u.path == "/llm/migrate":
@@ -2859,6 +2971,37 @@ class Handler(BaseHTTPRequestHandler):
             limit = int((q.get("limit") or ["100"])[0] or 100)
             self._json({"ok": True, "records": _arn.read_journal(
                 Path(self.ws).resolve(), limit=max(1, min(limit, 500)))})
+            return
+        elif u.path == "/materials/suggest-preview":
+            # D137：待确认的 AI 建议**全文预览**（确认弹窗必须让教师看清将生效什么）
+            from .files import materials as _mp
+            q = urllib.parse.parse_qs(u.query)
+            chap = str((q.get("chap") or [""])[0]).strip()
+            if not chap:
+                self._json({"ok": False, "error": "缺少 chap"}, 400)
+                return
+            ws_ = Path(self.ws).resolve()
+            try:
+                d = _mp.chap_dir(ws_, chap)
+            except _mp.MaterialsError as exc:
+                self._json({"ok": False, "error": str(exc)}, 400)
+                return
+            ai = d / _mp.KNOW_AI
+            md = d / _mp.KNOW_MD
+            out: dict = {"ok": True, "chap": chap,
+                         "hasAiSuggest": ai.is_file(),
+                         "hasConfirmed": md.is_file()}
+            if ai.is_file():
+                try:
+                    data = json.loads(ai.read_text(encoding="utf-8"))
+                    out["data"] = data
+                    out["preview"] = _mp.render_knowledge_md(data)
+                    out["terms"] = [str(k.get("term")) for k in (data.get("knowledge") or [])
+                                    if isinstance(k, dict) and k.get("term")]
+                except Exception as exc:  # noqa: BLE001
+                    out["ok"] = False
+                    out["error"] = f"AI 建议文件损坏：{exc}"
+            self._json(out)
             return
         elif u.path == "/materials/files":
             # D134-T3b：某章 _source/ 原件清单（只读）

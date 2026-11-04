@@ -9,7 +9,8 @@ import { computed, onMounted, ref } from 'vue'
 import { useSettingsStore } from '../stores/settings'
 import {
   MATERIALS_UPLOAD_EXTS, fetchMaterialsFiles, fetchMaterialsKnowledge,
-  fetchMaterialsList, removeMaterialsFile, restoreMaterialsFile, uploadMaterialsFiles,
+  confirmMaterials, extractMaterials, fetchMaterialsList, fetchMaterialsSuggestPreview,
+  removeMaterialsFile, restoreMaterialsFile, suggestMaterials, uploadMaterialsFiles,
   type MaterialsChap, type MaterialsFile,
 } from '../lib/engineClient'
 
@@ -29,6 +30,84 @@ const uploading = ref(false)
 const fileMsg = ref('')
 const pendingRemove = ref<MaterialsFile | null>(null)
 const pendingRestore = ref<MaterialsFile | null>(null)
+
+/* D137：抽取 / AI 建议 / 确认生效 */
+const stepBusy = ref<'extract' | 'suggest' | 'confirm' | ''>('')
+const stepMsg = ref('')
+const pendingConfirm = ref<{ preview: string; terms: string[]; hasConfirmed: boolean } | null>(null)
+const confirmOverwrite = ref(false)
+
+async function doExtract() {
+  if (!active.value) return
+  stepBusy.value = 'extract'
+  stepMsg.value = ''
+  try {
+    const r = await extractMaterials(settings.engineUrl, settings.engineToken, active.value)
+    stepMsg.value = r?.ok ? '✅ 已抽取（可继续「AI 建议知识点」）' : `❌ ${r?.error || '抽取失败'}`
+    await refresh()
+  } catch (e) {
+    stepMsg.value = `抽取失败：${String((e as Error).message || e)}`
+  } finally { stepBusy.value = '' }
+}
+
+async function doSuggest() {
+  if (!active.value) return
+  if (!window.confirm('「AI 建议知识点」会**调用模型**（产生费用），继续？')) return
+  stepBusy.value = 'suggest'
+  stepMsg.value = '正在让 AI 抽取知识点，请稍候…'
+  try {
+    const r = await suggestMaterials(settings.engineUrl, settings.engineToken, active.value)
+    stepMsg.value = r?.ok
+      ? '✅ 已生成 AI 建议（尚未生效，请核对后点「确认生效」）'
+      : `❌ ${r?.error || '生成失败'}`
+    await refresh()
+  } catch (e) {
+    stepMsg.value = `生成失败：${String((e as Error).message || e)}`
+  } finally { stepBusy.value = '' }
+}
+
+/** 确认前**先取全文**：必须让教师看清将生效的内容才允许点确认。 */
+async function askConfirm() {
+  if (!active.value) return
+  stepBusy.value = 'confirm'
+  stepMsg.value = ''
+  try {
+    const r = await fetchMaterialsSuggestPreview(settings.engineUrl, settings.engineToken,
+                                                 active.value)
+    if (!r?.ok || !r.hasAiSuggest) {
+      stepMsg.value = `❌ ${r?.error || '没有待确认的 AI 建议（先点「AI 建议知识点」）'}`
+      return
+    }
+    confirmOverwrite.value = false
+    pendingConfirm.value = {
+      preview: String(r.preview || ''), terms: r.terms || [],
+      hasConfirmed: !!r.hasConfirmed,
+    }
+  } catch (e) {
+    stepMsg.value = `读取建议失败：${String((e as Error).message || e)}`
+  } finally { stepBusy.value = '' }
+}
+
+async function confirmApply() {
+  const p = pendingConfirm.value
+  pendingConfirm.value = null
+  if (!p || !active.value) return
+  if (p.hasConfirmed && !confirmOverwrite.value) {
+    stepMsg.value = '已有生效清单：如需覆盖请勾选「覆盖已有清单」'
+    return
+  }
+  stepBusy.value = 'confirm'
+  try {
+    const r = await confirmMaterials(settings.engineUrl, settings.engineToken, active.value,
+                                     { confirm: 'teacher:pwa', force: confirmOverwrite.value })
+    stepMsg.value = r?.ok
+      ? '✅ 已确认生效：summary 批阅将以此为依据'
+      : `❌ ${r?.error || '确认失败'}`
+    await refresh()
+  } catch (e) {
+    stepMsg.value = `确认失败：${String((e as Error).message || e)}`
+  } finally { stepBusy.value = '' }
+}
 const fileInput = ref<HTMLInputElement | null>(null)
 
 const cur = computed(() => chaps.value.find((c) => c.chap === active.value) || null)
@@ -275,7 +354,22 @@ defineExpose({ refresh })
         </table>
 
         <h4 style="margin:4px 0">下一步</h4>
-        <pre class="cmd">{{ nextStep(cur) }}</pre>
+        <div style="display:flex; gap:8px; flex-wrap:wrap; align-items:center; margin:4px 0">
+          <button class="btn" :disabled="stepBusy !== '' || !cur.sources" @click="doExtract">
+            {{ stepBusy === 'extract' ? '抽取中…' : '① 抽取' }}
+          </button>
+          <button class="btn" :disabled="stepBusy !== '' || !cur.extracted" @click="doSuggest">
+            {{ stepBusy === 'suggest' ? '生成中…' : '② AI 建议知识点' }}
+          </button>
+          <button class="btn primary" :disabled="stepBusy !== '' || !cur.hasAiSuggest"
+                  @click="askConfirm">
+            {{ stepBusy === 'confirm' ? '处理中…' : '③ 确认生效' }}
+          </button>
+        </div>
+        <p v-if="stepMsg" class="hint" style="margin:2px 0">{{ stepMsg }}</p>
+        <p class="hint" style="margin:2px 0">
+          {{ nextStep(cur) }}
+        </p>
 
         <h4 style="margin:12px 0 4px">生效知识点清单</h4>
         <p v-if="!knowTerms.length" class="hint">
@@ -293,6 +387,27 @@ defineExpose({ refresh })
             <pre class="md">{{ knowMd }}</pre>
           </details>
         </template>
+      </div>
+    </div>
+
+    <!-- D137：确认生效 —— **必须展示全文**，教师看清后才点 -->
+    <div v-if="pendingConfirm" class="mask">
+      <div class="dlg wide">
+        <h3 style="margin:0 0 8px">确认让这份清单成为批阅依据？</h3>
+        <p class="hint" style="margin:0 0 6px">
+          确认后 <code>summary</code> 类作业会**以此清单核对**学生是否讲到这些知识点。
+          共 {{ pendingConfirm.terms.length }} 个知识点：
+        </p>
+        <pre class="md" style="max-height:300px">{{ pendingConfirm.preview }}</pre>
+        <label v-if="pendingConfirm.hasConfirmed" style="display:flex; gap:6px;
+               align-items:center; font-size:13px; margin:6px 0">
+          <input v-model="confirmOverwrite" type="checkbox" />
+          覆盖已有生效清单（<code>知识点清单.md</code>）
+        </label>
+        <div style="display:flex; gap:8px; justify-content:flex-end; margin-top:6px">
+          <button class="btn" @click="pendingConfirm = null">取消</button>
+          <button class="btn primary" @click="confirmApply">我确认生效</button>
+        </div>
       </div>
     </div>
 
@@ -353,6 +468,7 @@ defineExpose({ refresh })
 .btn.danger { background: #fee2e2; border-color: #fca5a5; color: #991b1b; }
 .mask { position: fixed; inset: 0; background: rgba(15, 23, 42, .45);
         display: flex; align-items: center; justify-content: center; z-index: 50; }
+.dlg.wide { width: min(720px, 94vw); }
 .dlg { background: #fff; border-radius: 10px; padding: 16px 18px; width: min(520px, 92vw);
        box-shadow: 0 12px 40px rgba(0, 0, 0, .25); }
 </style>

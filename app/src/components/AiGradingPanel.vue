@@ -281,6 +281,27 @@ async function solveByKb() {
 
 /* ① LLM 设置 */
 const llmConfig = ref<{ providers?: any[]; stages?: Record<string, any>; default_base_url?: string }>({})
+
+/* D137：provider 高级请求头（只有 provider 明确要求时才填，如 opencode-go 的
+   x-opencode-session）。保存前必须二次确认并列出实际内容。 */
+const pHdrText = ref('')          // 多行 name=value
+const pUserAgent = ref('')
+const showAdv = ref(false)
+const pendingProvider = ref<{ name: string; base_url: string; headers: Record<string, string>
+                              user_agent: string } | null>(null)
+
+/** 解析 `name=value` 多行文本 → 对象（不合法直接报错，不静默丢弃）。 */
+function parseHeaders(text: string): Record<string, string> | { error: string } {
+  const out: Record<string, string> = {}
+  for (const raw of String(text || '').split('\n')) {
+    const line = raw.trim()
+    if (!line || line.startsWith('#')) continue
+    const i = line.indexOf('=')
+    if (i <= 0) return { error: `请求头格式应为 name=value，收到：${line}` }
+    out[line.slice(0, i).trim()] = line.slice(i + 1).trim()
+  }
+  return out
+}
 const pName = ref(''); const pBase = ref(''); const pKey = ref(''); const pBatch = ref(false)
 const stProvider = ref<Record<string, string>>({ transcription: '', evaluation: '' })
 const stModel = ref<Record<string, string>>({ transcription: '', evaluation: '' })
@@ -524,13 +545,45 @@ async function saveDir() {
 }
 async function saveProvider() {
   if (!pName.value.trim()) { msg.value = '请填 provider 名称'; return }
+  const parsed = parseHeaders(pHdrText.value)
+  if ('error' in parsed) { msg.value = parsed.error; return }
+  const hasHdr = Object.keys(parsed).length > 0 || pUserAgent.value.trim() !== ''
+  if (hasHdr) {
+    // D137：请求头会随**每次调用**发到该 provider → 保存前让教师看清实际内容
+    pendingProvider.value = { name: pName.value.trim(), base_url: pBase.value.trim(),
+                              headers: parsed, user_agent: pUserAgent.value.trim() }
+    return
+  }
+  await doSaveProvider(parsed, '')
+}
+
+async function doSaveProvider(headers: Record<string, string>, ua: string) {
   const rep = await postLlmProvider(props.engineAddr, props.token, {
     action: 'set', name: pName.value.trim(), base_url: pBase.value.trim(),
     api_key: pKey.value ? pKey.value : undefined, batch_support: pBatch.value,
+    headers, user_agent: ua,
   })
   msg.value = rep?.ok ? `provider「${pName.value}」已保存（key 只掩码显示）` : `保存失败：${rep?.error || ''}`
   pKey.value = ''
   await loadConfig()
+}
+
+async function confirmSaveProvider() {
+  const p = pendingProvider.value
+  pendingProvider.value = null
+  if (!p) return
+  await doSaveProvider(p.headers, p.user_agent)
+}
+
+/** 点「编辑」时把该 provider 已存的请求头回填到输入框。 */
+function editProvider(p: any) {
+  pName.value = p.name
+  pBase.value = p.base_url
+  pBatch.value = !!p.batch_support
+  const hdrs = (p.headers || {}) as Record<string, string>
+  pHdrText.value = Object.entries(hdrs).map(([k, v]) => `${k}=${v}`).join('\n')
+  pUserAgent.value = String(p.user_agent || '')
+  showAdv.value = Object.keys(hdrs).length > 0 || !!p.user_agent
 }
 async function delProvider(name: string) {
   if (!window.confirm(`删除 provider「${name}」及其本地 key？`)) return
@@ -773,15 +826,19 @@ onMounted(async () => {
     <h3>① LLM 设置（provider 统一管理 + 两段式勾选）</h3>
     <table style="width:100%; border-collapse:collapse">
       <thead><tr><th style="text-align:left">provider</th><th style="text-align:left">base_url</th>
-        <th>batch</th><th>key</th><th></th></tr></thead>
+        <th>batch</th><th>key</th><th>请求头</th><th></th></tr></thead>
       <tbody>
         <tr v-for="p in (llmConfig.providers || [])" :key="p.name">
           <td>{{ p.name }}</td>
           <td class="hint">{{ p.base_url }}</td>
           <td style="text-align:center">{{ p.batch_support ? '✓' : '' }}</td>
           <td style="text-align:center">{{ p.api_key || '（未设置）' }}</td>
+          <td style="text-align:center" class="hint">
+            {{ Object.keys(p.headers || {}).length }} 项
+            <template v-if="p.user_agent">·UA</template>
+          </td>
           <td style="text-align:center">
-            <a href="javascript:;" @click="pName = p.name; pBase = p.base_url; pBatch = !!p.batch_support">编辑</a>
+            <a href="javascript:;" @click="editProvider(p)">编辑</a>
             ｜<a href="javascript:;" @click="delProvider(p.name)">删除</a>
           </td>
         </tr>
@@ -793,6 +850,49 @@ onMounted(async () => {
       <label class="field">api_key <input v-model="pKey" type="password" placeholder="留空=不修改（只存掩码）" style="width:200px" /></label>
       <label class="field"><input type="checkbox" v-model="pBatch" /> 支持 batch</label>
       <button class="btn" @click="saveProvider">保存 provider</button>
+    </div>
+
+    <!-- D137：高级请求头（默认折叠；只有 provider 明确要求时才填） -->
+    <details :open="showAdv" style="margin-top:6px"
+             @toggle="showAdv = ($event.target as HTMLDetailsElement).open">
+      <summary class="hint" style="cursor:pointer">
+        ⚙️ 高级：自定义请求头 / user-agent（按需，如 opencode-go 的 x-opencode-session）
+      </summary>
+      <div style="margin-top:6px; display:flex; flex-direction:column; gap:6px">
+        <label class="field">user-agent
+          <input v-model="pUserAgent" placeholder="留空=使用 assignment-assistant/<版本>"
+                 style="width:320px" />
+        </label>
+        <label class="field" style="align-items:flex-start">请求头（每行 name=value）
+          <textarea v-model="pHdrText" rows="3" style="width:420px; font-family:monospace"
+                    placeholder="x-opencode-session={session}"></textarea>
+        </label>
+        <p class="hint" style="margin:0">
+          只允许 <code>x-*</code> 自定义头与 <code>user-agent</code>；
+          <code>Authorization</code>/<code>Host</code>/<code>Cookie</code> 等会被引擎拒绝。
+          值里可写 <code>{session}</code>，运行时会替换成当前对话的会话 id。
+        </p>
+      </div>
+    </details>
+
+    <!-- 二次确认：请求头会随每次调用发送 -->
+    <div v-if="pendingProvider" class="mask">
+      <div class="dlg">
+        <h3 style="margin:0 0 8px">确认保存这些请求头？</h3>
+        <p class="hint" style="margin:0 0 6px">
+          以下请求头将随**每次调用**发送到 provider「{{ pendingProvider.name }}」
+          （{{ pendingProvider.base_url || '未填 base_url' }}）：
+        </p>
+        <pre class="hdrs">{{ Object.entries(pendingProvider.headers)
+          .map(([k, v]) => `${k}: ${v}`).join('\n') || '（无自定义头）' }}</pre>
+        <p v-if="pendingProvider.user_agent" class="hint" style="margin:0 0 6px">
+          user-agent：<code>{{ pendingProvider.user_agent }}</code>
+        </p>
+        <div style="display:flex; gap:8px; justify-content:flex-end">
+          <button class="btn" @click="pendingProvider = null">取消</button>
+          <button class="btn primary" @click="confirmSaveProvider">我确认保存</button>
+        </div>
+      </div>
     </div>
     <div style="margin-top:8px">
       <div v-for="s in ['transcription', 'evaluation']" :key="s"
@@ -1115,6 +1215,14 @@ onMounted(async () => {
 </template>
 
 <style scoped>
+/* D137：provider 请求头二次确认弹窗 */
+.mask { position: fixed; inset: 0; background: rgba(15, 23, 42, .45); z-index: 60;
+        display: flex; align-items: center; justify-content: center; }
+.dlg { background: #fff; border-radius: 10px; padding: 16px 18px; width: min(560px, 92vw);
+       box-shadow: 0 12px 40px rgba(0, 0, 0, .25); }
+.hdrs { background: #f9fafb; border: 1px solid var(--c-border); border-radius: 6px;
+        padding: 8px; font-size: 12px; white-space: pre-wrap; margin: 0 0 8px; }
+
 /* D127-FIX：逐生审核名单 —— 固定高度 + 滚轮 + 粘性表头（与「班级与标签」名单表同口径）。 */
 .review-tools { display: flex; gap: 8px; align-items: center; flex-wrap: wrap;
                 margin: 8px 0 4px; }

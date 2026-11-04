@@ -6,7 +6,7 @@
  */
 import { computed, onMounted, ref } from 'vue'
 import {
-  fetchAtopiaJournal, fetchAtopiaTools, runAtopiaTool,
+  fetchAtopiaJournal, fetchAtopiaTools, postAtopiaLimits, runAtopiaTool,
   type AtopiaTool,
 } from '../lib/engineClient'
 
@@ -15,6 +15,11 @@ const props = defineProps<{ engineAddr: string; token?: string }>()
 const tools = ref<AtopiaTool[]>([])
 const levels = ref<Record<string, string>>({})
 const limits = ref<Record<string, number>>({})
+const hardCaps = ref<Record<string, number>>({})
+/* D137：护栏可编辑（受硬顶约束；保存前二次确认） */
+const limDraft = ref<Record<string, number>>({})
+const pendingLimits = ref<Record<string, number> | null>(null)
+const limMsg = ref('')
 const journal = ref<any[]>([])
 const msg = ref('')
 const busy = ref(false)
@@ -49,11 +54,52 @@ async function refresh() {
     tools.value = r.tools || []
     levels.value = r.levels || {}
     limits.value = r.limits || {}
+    hardCaps.value = r.hardCaps || {}
+    if (!Object.keys(limDraft.value).length) limDraft.value = { ...(r.limits || {}) }
     if (!selected.value && usable.value.length) selected.value = usable.value[0]!.name
     await loadJournal()
   } catch (e) {
     msg.value = `读取失败：${String((e as Error).message || e)}（引擎是否在线？）`
   } finally { busy.value = false }
+}
+
+function askSaveLimits() {
+  const lim = { ...limDraft.value }
+  const changed = Object.entries(lim).filter(([k, v]) => Number(v) !== Number(limits.value[k]))
+  if (!changed.length) { limMsg.value = '没有改动'; return }
+  // 超硬顶**先在前端拦一次**（引擎仍会再校验，这里只为更早给反馈）
+  const over = changed.filter(([k, v]) => hardCaps.value[k] && Number(v) > hardCaps.value[k])
+  if (over.length) {
+    limMsg.value = over.map(([k, v]) => `${k}=${v} 超过硬顶 ${hardCaps.value[k]}`).join('；')
+    return
+  }
+  pendingLimits.value = lim
+}
+
+async function confirmSaveLimits() {
+  const lim = pendingLimits.value
+  pendingLimits.value = null
+  if (!lim) return
+  try {
+    const r = await postAtopiaLimits(props.engineAddr, props.token, lim)
+    if (r?.ok) {
+      limits.value = r.limits || lim
+      limDraft.value = { ...(r.limits || lim) }
+      hardCaps.value = r.hardCaps || hardCaps.value
+      limMsg.value = '✅ 护栏已保存（下次会话生效）'
+    } else {
+      limMsg.value = `❌ ${r?.error || '保存失败'}`
+    }
+  } catch (e) {
+    limMsg.value = `保存失败：${String((e as Error).message || e)}`
+  }
+}
+
+const LIMIT_LABEL: Record<string, string> = {
+  maxCallsPerSession: '单会话最多调用次数',
+  maxLlmCallsPerSession: '其中会花模型钱的次数',
+  callTimeoutSeconds: '单次调用超时（秒）',
+  sessionSeconds: '会话总时长（秒）',
 }
 
 async function loadJournal() {
@@ -202,6 +248,34 @@ defineExpose({ refresh })
       </div>
     </div>
 
+    <!-- D137：护栏可编辑（受硬顶约束） -->
+    <h4 style="margin:14px 0 4px">护栏（本次会话的调用上限）</h4>
+    <p class="hint" style="margin:0 0 6px">
+      数值可调，但**不能配成无限**——超过硬顶会被拒绝。
+    </p>
+    <div class="lim-grid">
+      <label v-for="(lab, k) in LIMIT_LABEL" :key="k" class="lim-item">
+        <span>{{ lab }}</span>
+        <input v-model.number="limDraft[k]" type="number" min="1" style="width:90px" />
+        <em class="hint">硬顶 {{ hardCaps[k] ?? '—' }}</em>
+      </label>
+    </div>
+    <p style="margin:6px 0">
+      <button class="btn" @click="askSaveLimits">保存护栏</button>
+      <span v-if="limMsg" class="hint" style="margin-left:8px">{{ limMsg }}</span>
+    </p>
+
+    <div v-if="pendingLimits" class="confirm">
+      <p style="margin:0 0 6px">⚠️ 将修改护栏（**影响后续每一次 AI 会话**）：</p>
+      <pre class="args">{{ Object.entries(pendingLimits)
+        .filter(([k, v]) => Number(v) !== Number(limits[k]))
+        .map(([k, v]) => `${k}: ${limits[k]} → ${v}`).join('\n') }}</pre>
+      <p style="margin:6px 0 0">
+        <button class="btn primary" @click="confirmSaveLimits">✅ 我确认修改</button>
+        <button class="btn" style="margin-left:6px" @click="pendingLimits = null">取消</button>
+      </p>
+    </div>
+
     <h4 style="margin:14px 0 4px">最近调用（审计日志）</h4>
     <p v-if="!journal.length" class="hint">（还没有调用记录。）</p>
     <table v-else class="jt">
@@ -236,6 +310,8 @@ defineExpose({ refresh })
 .tool.off { opacity: .55; cursor: not-allowed; }
 .tname { font-size: 13px; font-weight: 600; }
 .lv { margin-left: 6px; font-size: 11px; font-weight: 600; }
+.lim-grid { display: flex; gap: 14px; flex-wrap: wrap; margin: 4px 0; }
+.lim-item { display: flex; gap: 6px; align-items: center; font-size: 13px; }
 .args { width: 100%; font-family: ui-monospace, monospace; font-size: 12px;
         border: 1px solid #e5e7eb; border-radius: 6px; padding: 6px; }
 .confirm { border: 1px solid #fbbf24; background: #fffbeb; border-radius: 6px;

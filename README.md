@@ -47,6 +47,7 @@
 - `docs/83-D134-atopia-workspace-and-summary-grading.md` — **D134 Atopia 专用工作区（重命名 + 目录收拢）+ summary 双轨评阅（资料口径 / 保底口径）+ 资料上传**
 - `docs/84-D135-knowledge-trend.md` — **D135 跨多次作业的知识点趋势（同一知识点反复出错 / 改善 vs 持续；只给教师）**
 - `docs/86-D136-opencode-go-session-header.md` — **D136 opencode-go 会话头（x-opencode-session）+ provider 级自定义请求头（白名单）**
+- `docs/87-D137-pwa-cli-parity.md` — **D137 PWA ↔ CLI 能力对齐（provider 请求头 / 资料页三动作 / Atopia 护栏）**
 - `docs/85-D135-knowledge-hierarchy.md` — **D135 待决：知识点层级（上位/下位概念）方案与取舍**
 - `docs/34-D82-kb-read-order-image-upload-batch.md` — **D82 kb 多文件读取/题目排序/插图参数/草稿修复/上传试跑/batch**
 - `docs/16-xuexitong-integration.md` — **阶段6 学习通整合任务需求单**（登录/读取/下载/上传/发布）

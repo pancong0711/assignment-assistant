@@ -830,3 +830,21 @@ rainclass 67/67，PWA↔engine 全等，仅末位浮点四舍五入噪声）。
 - ✅ 会话粒度：Playground/Atopia 一会话一 id；批阅按作业切分。
 - ✅ 修复 `provider=-`（报错定位字段取错）与语义化错误提示。
 - **明确不做**：自动给 opencode 补默认 session（显式配置、缺失即报错）。
+
+---
+
+## D137 · PWA ↔ CLI 能力对齐（2026-10-31 完成）
+
+> 需求单：`docs/87-D137-pwa-cli-parity.md`。
+
+核对结论：日常动线（题库/AI 作答/LLM 配置/学习通全链路/规则卡/教师报告/趋势/
+作业包/水印/备份/资料上传与回收站）**基本已对齐**；补了三个真缺口：
+
+- ✅ **A1**：provider `headers` / `user_agent` PWA 可编辑（折叠块 + 二次确认显示实际内容；
+  白名单仍由引擎强校验）。
+- ✅ **B1**：Atopia 护栏 PWA 可改（二次确认 + 显示硬顶；超限由引擎拒绝）。
+- ✅ **A2**：资料页「① 抽取 / ② AI 建议 / ③ 确认生效」。
+  「确认生效」保持 D131 原意：**弹窗展示清单全文**（与写入同一渲染函数）+
+  必须教师显式确认 + 默认不覆盖 + journal 记 `confirmed_by`。
+- **明确不做**：`atopia reset` / `migrate-grading-dir --apply` /
+  `workspace clean-migrated --apply` / `engine update`（L3 类，不给 PWA 一键入口）。
