@@ -881,3 +881,16 @@ rainclass 67/67，PWA↔engine 全等，仅末位浮点四舍五入噪声）。
 - ✅ 会话历史落 `<ws>/atopia/sessions/*.jsonl`（可整体删除），可回看。
 - ✅ Playground 加了分工说明。
 - 已知限制：无流式输出；L2 确认粒度为"本次请求全部确认"。
+
+---
+
+## D143 · 翻译题库题号重复修复（2026-10-31 完成）
+
+> 需求单：`docs/90-D143-translation-question-id.md`。
+
+- 现象：告警 `translation@translation/translation/…（×16）`。
+- 根因：`read_translation()` 给**每行**都写 `id="translation"`；
+  答案版本库以 qid 为键 → 多道翻译题答案写进同一文件**互相覆盖**。
+- ✅ 改为按行序生成 `translation-01…`（与其它题库命名一致、重读稳定、空行不留空洞）。
+- **不改** `paper/task.py` 的"每题纸 1 道翻译题"（D93 刻意的旧语义）。
+- ⚠️ 历史残留的 `translation` 单文件无法自动还原到具体题号，建议重新作答一次。

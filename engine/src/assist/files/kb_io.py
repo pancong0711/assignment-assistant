@@ -149,10 +149,17 @@ def read_translation(xlsx_path: Path, kb_dir: Path) -> dict[str, list[dict]]:
     ws = wb.active
     rows = list(ws.iter_rows(values_only=True))
     entries = []
+    # D143 修复：此前每行都写死 `id="translation"`，导致**所有翻译题同号**
+    # → 触发"重复题号"告警；更严重的是答案版本库以 qid 为键，
+    # 16 道题会把答案写进同一个文件互相覆盖。
+    # 现按**行序**给稳定唯一题号（`translation-01`…，与其它题库
+    # `<sheet名>-<题号>` 的命名风格一致；行序稳定 → 重读仍对得上）。
+    seq = 0
     for row in rows[1:]:
         saying = str(row[0]).strip() if row and row[0] else ""
         if not saying:
             continue
+        seq += 1
         author = str(row[1]).strip() if len(row) > 1 and row[1] else ""
         book = str(row[2]).strip() if len(row) > 2 and row[2] else ""
         year = str(row[3]).strip() if len(row) > 3 and row[3] else ""
@@ -163,7 +170,7 @@ def read_translation(xlsx_path: Path, kb_dir: Path) -> dict[str, list[dict]]:
             tmp += f", {year}"
         tmp += ("）\n并回答：（1）介绍一下作者及相关理论，"
                 "（2）结合个人经验谈一谈对上述内容的理解。")
-        entries.append({"id": "translation", "content": tmp, "img_path": None})
+        entries.append({"id": f"translation-{seq:02d}", "content": tmp, "img_path": None})
     wb.close()
     return {"translation": entries}
 
