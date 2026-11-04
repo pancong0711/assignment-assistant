@@ -4,6 +4,11 @@
 > 状态：**P3 全部完成（P3-1 / P3-2 / T16 / PWA 工作区）**
 > 关联：`docs/78-D130` §3.9（P3 T15–T18）、`docs/40-D88`（playground）、`docs/12`
 
+> **D134 更新（2026-10-31）**：本模块已更名为 **Atopia**（`assist atopia ...`，
+> 旧名 `assist assistopia ...` 仍可用）；`<ws>/assistopia/` 与 `<ws>/extensions/`
+> 已收拢到 **`<ws>/atopia/`**（自动幂等迁移）。本文档其余内容为历史记录，
+> 路径以 `docs/83-D134` 为准。
+
 ## 0. 一句话
 
 Assistopia（**assist + utopia**）让 AI 在本项目**自己的工具**上工作，但**每一步都受限、可审计、可复现**：

@@ -44,6 +44,7 @@
 - `docs/79-D131-materials-and-summary-grading.md` — **D131 课堂资料 `<ws>/materials/` → 知识点清单 → `summary` 批阅联动（P2）**
 - `docs/80-D126B-teacher-report.md` — **D126-B 教师总结报告：易错知识点汇总 + 共现 + 得分率**
 - `docs/81-D132-assistopia.md` — **D132 Assistopia：AI 调用本项目工具的安全工作区（工具白名单/分级/审计/护栏/扩展隔离）**
+- `docs/83-D134-atopia-workspace-and-summary-grading.md` — **D134 Atopia 专用工作区（重命名 + 目录收拢）+ summary 双轨评阅（资料口径 / 保底口径）+ 资料上传**
 - `docs/34-D82-kb-read-order-image-upload-batch.md` — **D82 kb 多文件读取/题目排序/插图参数/草稿修复/上传试跑/batch**
 - `docs/16-xuexitong-integration.md` — **阶段6 学习通整合任务需求单**（登录/读取/下载/上传/发布）
 - `_legacy/` — 原始两项目解档（仅本地参考，已被 gitignore，永不推送）

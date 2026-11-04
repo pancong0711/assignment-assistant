@@ -775,3 +775,28 @@ rainclass 67/67，PWA↔engine 全等，仅末位浮点四舍五入噪声）。
   （L3 拒绝 / L2 二次确认 / 护栏），非 JSON 回复不猜意图。
 - ✅ **PWA Assistopia 工作区已完成**：工具分组 / L2 二次确认 / 审计日志；
   真实浏览器回归验证「确认前未执行」。P3 全部完成。
+
+---
+
+## D134 · Atopia 专用工作区 + summary 双轨评阅（2026-10-31 完成）
+
+> 需求单：`docs/83-D134-atopia-workspace-and-summary-grading.md`。
+
+- ✅ **T1 重命名**：`assistopia` → `atopia`（包/CLI/HTTP/前端）。旧名保留兼容：
+  `assist assistopia ...` 经 argv 别名、`/assistopia/*` 经前缀转发。
+- ✅ **T2 `atopia/` 工作区**：`limits.json`、`journal.jsonl`、`extensions/` 收拢到
+  `<ws>/atopia/`；旧位置**幂等迁移**（冲突时新目录优先、旧的留 `.bak-<ts>`）。
+  **硬性质**：删掉 `<ws>/atopia/` 后引擎/评阅照常、护栏回默认、扩展不生效，
+  且 `materials/` 与 `grading-rules.json` 不受影响（测试锁定）。
+  新增 `assist atopia migrate|reset`（reset 属 L3，不给 AI）。
+- ✅ **T3 上传与文件管理**：PWA 可上传到 `materials/<chap>/_source/`
+  （扩展名白名单 / 20MB / **同名不覆盖**）；`materials.files`(L0)、
+  `materials.remove`(L2，**只移入 `_source/_trash/` 不真删**)。
+- ✅ **T4 summary 保底口径**：无课堂资料时按「知识点总结 / 公式推导 / 示意图 / 长度」
+  四维判定，**缺项不扣分**，只扣「过简」；`summary_basis="heuristic"` 降级可见。
+- ✅ **T5 summary 资料口径**：仅在**本章有已确认 `知识点清单.md`** 时生成要点；
+  有资料时优先且不叠加保底口径。
+- 顺带修复：`rules.read_rules` 首次落盘跳过扩展覆盖；`build_result_from_analysis`
+  缺 `feedback_md`/summary 元数据；`registry._SAFE_STR` 正则双反斜杠导致
+  **所有 str 参数被误拒**。
+- **未做**：回收站恢复入口（`materials restore`）；`.zip` 上传（刻意不收）。
