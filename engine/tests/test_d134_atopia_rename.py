@@ -52,10 +52,10 @@ def test_legacy_http_path_rewritten():
 
 
 def test_tool_registry_still_intact():
-    """改名不能动工具清单（D137/D138 新增 materials.files/remove/restore、kb.vocab.set-topic → 31 个）。
+    """改名不能动工具清单（D148 新增 fs.ls/fs.read/fs.search → 34 个）。
 
     L3 仍为 5 个且写死拒绝——新增工具不得引入新的危险入口。
     """
     from assist.atopia.registry import BUILTIN_TOOLS, L3
-    assert len(BUILTIN_TOOLS) == 31
+    assert len(BUILTIN_TOOLS) == 34
     assert len([t for t in BUILTIN_TOOLS if t.level == L3]) == 5

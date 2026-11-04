@@ -78,6 +78,16 @@ BUILTIN_TOOLS: tuple[Tool, ...] = (
        {"chap": "str"}),
     _t("kb.vocab.list", ("kb", "vocab", "list"), L0, "查看受控知识点词表"),
     _t("prompt.list", ("prompt", "list"), L0, "列出提示词模板"),
+    # ---- D148：通用只读文件能力（教师诉求"AI 应先找到文档再打开查看"） ----
+    _t("fs.ls", ("fs", "ls"), L0,
+       "列出 workspace 内目录（只读；secrets/.runtime/.git 已屏蔽）",
+       {"path": "path_in_ws"}),
+    _t("fs.read", ("fs", "read"), L0,
+       "读 workspace 内文本文件（只读；二进制拒读；默认前 200 行）",
+       {"path": "path_in_ws"}),
+    _t("fs.search", ("fs", "search", "{query}"), L0,
+       "按关键词搜索 workspace 内文件内容（只读；返回 文件:行:摘要）",
+       {"query": "str", "glob": "str"}),
     # ---- L1 预览（只读但花 LLM 成本） ----
     _t("kb.tag-knowledge.dry", ("kb", "tag-knowledge", "--dry-run"), L1,
        "预览 AI 知识点标注（不写库）", {"kb": "str", "ids": "str"}),
@@ -198,7 +208,9 @@ def build_argv(tool: Tool, args: "dict | None") -> list[str]:
     argv: list[str] = []
     used: set[str] = set()
     for tok in tool.argv:
-        m = re.fullmatch(r"\\{(\\w+)\\}", tok)
+        # D148 修复：原正则写成双反斜杠，实际匹配的是字面 `\{`，导致
+        # **所有用 `{name}` 占位符传参的工具**（fs.search / kb.write …）都失效。
+        m = re.fullmatch(r"\{(\w+)\}", tok)
         if m and m.group(1) in a:
             argv.append(str(a[m.group(1)]))
             used.add(m.group(1))
@@ -231,6 +243,7 @@ _ARG_FLAG = {
     "text": "--text",
     "file": "--file",
     "topic": "--topic",
+    "glob": "--glob",
 }
 
 

@@ -1591,6 +1591,60 @@ def atopia_journal(obj, limit, workspace, verbose):
                           ensure_ascii=False, indent=2))
 
 
+@cli.group("fs", help="D148：Atopia 的**只读**文件查看（ls/read/search，限 workspace 内）")
+def fs_grp():
+    pass
+
+
+@fs_grp.command("ls")
+@click.option("--path", "path", default=".", help="workspace 内相对路径（缺省根目录）")
+@click.option("--workspace", "-w", default=None)
+@click.option("--verbose", "-v", is_flag=True)
+@click.pass_obj
+def fs_ls(obj, path, workspace, verbose):
+    """列目录（只读）。"""
+    from .atopia import fsview as F
+    ws = _setup(verbose or obj.get("verbose"), workspace)
+    try:
+        click.echo(json.dumps(F.ls(ws, path), ensure_ascii=False, indent=1))
+    except F.FSViewError as exc:
+        raise click.ClickException(str(exc))
+
+
+@fs_grp.command("read")
+@click.option("--path", "path", required=True, help="workspace 内文件路径")
+@click.option("--lines", default=200, type=int, show_default=True, help="最多读多少行")
+@click.option("--workspace", "-w", default=None)
+@click.option("--verbose", "-v", is_flag=True)
+@click.pass_obj
+def fs_read(obj, path, lines, workspace, verbose):
+    """读文本文件（只读；二进制拒读）。"""
+    from .atopia import fsview as F
+    ws = _setup(verbose or obj.get("verbose"), workspace)
+    try:
+        click.echo(json.dumps(F.read(ws, path, lines=lines), ensure_ascii=False, indent=1))
+    except F.FSViewError as exc:
+        raise click.ClickException(str(exc))
+
+
+@fs_grp.command("search")
+@click.argument("query")
+@click.option("--glob", "glob", default="", help="文件名过滤（如 *.json）")
+@click.option("--max-hits", default=50, type=int, show_default=True)
+@click.option("--workspace", "-w", default=None)
+@click.option("--verbose", "-v", is_flag=True)
+@click.pass_obj
+def fs_search(obj, query, glob, max_hits, workspace, verbose):
+    """按关键词搜索 workspace 内文件内容（只读）。"""
+    from .atopia import fsview as F
+    ws = _setup(verbose or obj.get("verbose"), workspace)
+    try:
+        click.echo(json.dumps(F.search(ws, query, glob=glob, max_hits=max_hits),
+                              ensure_ascii=False, indent=1))
+    except F.FSViewError as exc:
+        raise click.ClickException(str(exc))
+
+
 @cli.group("materials", help="D131：课堂资料库 <ws>/materials/<chap>/（PPT/PDF/讲义 → 知识点清单）")
 def materials_grp():
     pass

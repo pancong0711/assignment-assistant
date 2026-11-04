@@ -1,7 +1,7 @@
 # D148 需求单：Atopia 通用只读文件能力（fs.ls / fs.read / fs.search）
 
 > 日期：2026-10-31
-> 状态：**实施中**
+> 状态：**已完成**
 > 关联：`docs/81-D132`（工具白名单/分级）、`docs/86-D136`（会话头）、
 > `docs/89-D140`（Atopia 对话）、`docs/12`
 
@@ -82,10 +82,55 @@ D132 的工具白名单是**"特定任务命令"**（`kb.stats` / `materials.sho
 | 大文件把上下文撑爆 | 行数/字节上限 + 截断提示 |
 | 目录过大导致列举慢 | 深度/条数上限 |
 
-## 6. 实施记录
+## 6. 实施记录（2026-10-31 完成）
 
-（实施后回填）
+### 6.1 新增 `atopia/fsview.py`
+
+`ls` / `read` / `search` 三个纯只读函数 + `_resolve_in_ws` 路径校验：
+
+- workspace 边界（`resolve()` 后 `relative_to` 校验）；
+- 硬屏蔽：`.runtime` / `.git` / `node_modules` / `__pycache__` / `.venv` 目录，
+  以及 `*.secrets.json` / `limits.json` 文件；
+- 二进制（含 NUL）拒读；
+- 上限：列目录 300 项、读 200 行/64KB、搜索 50 条/单文件 2MB。
+
+### 6.2 CLI + 工具注册
+
+- `assist fs ls|read|search`
+- 工具 `fs.ls` / `fs.read`（`path_in_ws`）、`fs.search`（`query` 位置参数）
+
+### 6.3 顺带修了一个**真实缺陷**
+
+`registry.build_argv()` 的占位符正则写成了双反斜杠：
+
+```python
+re.fullmatch(r"\\{(\\w+)\\}", tok)   # 匹配的是字面 `\{`，永远不命中
+```
+
+导致**所有用 `{name}` 占位符传参的工具**（`fs.search`、`kb.write` 等）参数传不进去，
+报 "不知道如何传递参数"。已改为 `r"\{(\w+)\}"`。
+
+（此类"正则多写一层反斜杠"的问题已是第二次出现，D136 的 `_SAFE_STR` 也是同一类。）
 
 ## 7. 验收对照
 
-（实施后回填）
+| # | 标准（§4） | 结果 | 证据 |
+|---|---|---|---|
+| 1 | 能列目录/读文件/搜关键词 | ✅ | `test_ls` / `test_read` / `test_search_finds_answer` |
+| 2 | 读 secrets → 拒绝 | ✅ | `test_blocked_secrets` / `test_fs_read_via_runner_blocks_secrets` |
+| 3 | 读 workspace 外 → 拒绝 | ✅ | `test_blocked_outside_workspace` / `test_fs_read_rejects_non_ws_path_arg` |
+| 4 | 读二进制 → 明确提示 | ✅ | `test_binary_rejected` |
+| 5 | 大文件截断并说明 | ✅ | `test_read_truncated` |
+| 6 | 只读（无写能力） | ✅ | 三个函数均无写操作；L0 |
+| 7 | pytest / build / selfcheck / 脱敏 | ✅ | 1204 passed |
+
+## 8. 现在 AI 能做什么
+
+教师：**"帮我找 chap04 第 1 题的参考答案"**
+
+AI 现在可以：
+1. `fs.search("chap04-01")` → 找到 `kb/solutions/chap04-01.json`
+2. `fs.read("kb/solutions/chap04-01.json")` → 看到答案内容
+3. 回答教师
+
+这正是教师期望的"先找到文档、再打开查看"。
