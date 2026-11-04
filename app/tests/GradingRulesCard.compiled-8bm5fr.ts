@@ -167,7 +167,7 @@ return __returned__
 }
 
 })
-import { createElementVNode as _createElementVNode, createTextVNode as _createTextVNode, openBlock as _openBlock, createElementBlock as _createElementBlock, createCommentVNode as _createCommentVNode, toDisplayString as _toDisplayString, renderList as _renderList, Fragment as _Fragment, normalizeClass as _normalizeClass, vModelText as _vModelText, withDirectives as _withDirectives, vShow as _vShow, vModelCheckbox as _vModelCheckbox } from "vue"
+import { createElementVNode as _createElementVNode, createTextVNode as _createTextVNode, openBlock as _openBlock, createElementBlock as _createElementBlock, createCommentVNode as _createCommentVNode, toDisplayString as _toDisplayString, renderList as _renderList, Fragment as _Fragment, normalizeClass as _normalizeClass, vModelText as _vModelText, withDirectives as _withDirectives, vShow as _vShow } from "vue"
 
 const _hoisted_1 = { class: "rules-card" }
 const _hoisted_2 = { class: "rules-head" }
@@ -203,28 +203,23 @@ const _hoisted_16 = {
   key: 0,
   class: "hint"
 }
-const _hoisted_17 = {
-  key: 1,
-  class: "rubric-toggle"
-}
-const _hoisted_18 = { class: "hint" }
-const _hoisted_19 = ["value"]
-const _hoisted_20 = {
+const _hoisted_17 = ["value"]
+const _hoisted_18 = {
   class: "ro-block",
   style: {"margin-top":"14px"}
 }
-const _hoisted_21 = { class: "num-grid" }
-const _hoisted_22 = ["onUpdate:modelValue"]
-const _hoisted_23 = {
+const _hoisted_19 = { class: "num-grid" }
+const _hoisted_20 = ["onUpdate:modelValue"]
+const _hoisted_21 = {
   key: 0,
   class: "hint"
 }
-const _hoisted_24 = {
-  key: 3,
+const _hoisted_22 = {
+  key: 2,
   class: "hint",
   style: {"margin-top":"10px","white-space":"pre-wrap"}
 }
-const _hoisted_25 = {
+const _hoisted_23 = {
   class: "hint",
   style: {"margin-top":"6px"}
 }
@@ -232,16 +227,18 @@ const _hoisted_25 = {
 export function render(_ctx, _cache, $props, $setup, $data, $options) {
   return (_openBlock(), _createElementBlock("div", _hoisted_1, [
     _createElementVNode("div", _hoisted_2, [
-      _cache[1] || (_cache[1] = _createElementVNode("h3", { style: {"margin":"0"} }, "⚖️ 评阅规则卡（按题目来源分型）", -1 /* CACHED */)),
-      _cache[2] || (_cache[2] = _createElementVNode("span", {
+      _cache[0] || (_cache[0] = _createElementVNode("h3", { style: {"margin":"0"} }, "⚖️ 评阅规则卡（按题目来源分型）", -1 /* CACHED */)),
+      _cache[1] || (_cache[1] = _createElementVNode("span", {
         class: "hint",
         style: {"margin":"0"}
       }, [
         _createTextVNode(" 改动"),
         _createElementVNode("b", null, "只影响后续批阅"),
-        _createTextVNode("，不改已生成报告；改动会记 journal。 ")
+        _createTextVNode("，不改已生成报告；改动会记 journal。 本卡只管"),
+        _createElementVNode("b", null, "怎么扣分"),
+        _createTextVNode("；生成 AI 评阅要点请到「⑦ 题库 AI 作答」勾选 「同时生成评阅要点」。 ")
       ], -1 /* CACHED */)),
-      _cache[3] || (_cache[3] = _createElementVNode("span", { style: {"flex":"1"} }, null, -1 /* CACHED */)),
+      _cache[2] || (_cache[2] = _createElementVNode("span", { style: {"flex":"1"} }, null, -1 /* CACHED */)),
       _createElementVNode("button", {
         class: "btn small",
         disabled: $setup.loading,
@@ -275,15 +272,15 @@ export function render(_ctx, _cache, $props, $setup, $data, $options) {
             _createElementVNode("p", _hoisted_10, _toDisplayString($setup.KIND_LABEL[$setup.activeKind] || $setup.activeKind) + " · 评分算法：" + _toDisplayString($setup.MODE_LABEL[$setup.typeCfg.mode] || $setup.typeCfg.mode || '—'), 1 /* TEXT */),
             _createCommentVNode(" 🔒 只读：进 prompt 的规则摘要（= 教师此前根本看不到的那段文字） "),
             _createElementVNode("details", _hoisted_11, [
-              _cache[4] || (_cache[4] = _createElementVNode("summary", null, "🔒 只读 · 实际进入评阅提示词的规则摘要", -1 /* CACHED */)),
+              _cache[3] || (_cache[3] = _createElementVNode("summary", null, "🔒 只读 · 实际进入评阅提示词的规则摘要", -1 /* CACHED */)),
               _createElementVNode("pre", _hoisted_12, _toDisplayString($setup.summaryText), 1 /* TEXT */),
-              _cache[5] || (_cache[5] = _createElementVNode("p", {
+              _cache[4] || (_cache[4] = _createElementVNode("p", {
                 class: "hint",
                 style: {"margin":"4px 0"}
               }, " 这段文字与「生成评阅要点」用的是同一份规则摘要，保证要点粒度与扣分方式匹配。 ", -1 /* CACHED */))
             ]),
             _createCommentVNode(" ✏️ 可改数值：本题型 "),
-            _cache[12] || (_cache[12] = _createElementVNode("h4", { style: {"margin":"12px 0 6px"} }, "✏️ 本题型可改数值", -1 /* CACHED */)),
+            _cache[9] || (_cache[9] = _createElementVNode("h4", { style: {"margin":"12px 0 6px"} }, "✏️ 本题型可改数值", -1 /* CACHED */)),
             _createElementVNode("div", _hoisted_13, [
               (_openBlock(), _createElementBlock(_Fragment, null, _renderList($setup.NUM_FIELDS, (f) => {
                 return _withDirectives(_createElementVNode("label", {
@@ -315,46 +312,26 @@ export function render(_ctx, _cache, $props, $setup, $data, $options) {
             (!Object.keys($setup.typeCfg).some((k) => $setup.NUM_FIELDS.some((f) => f.key === k)))
               ? (_openBlock(), _createElementBlock("p", _hoisted_16, "本题型没有可改数值（见上方只读摘要）。"))
               : _createCommentVNode("v-if", true),
-            _createCommentVNode(" 🔀 AI 要点开关：copy 默认关闭（以原文为唯一依据）；summary 由课堂资料决定 "),
-            ('generateRubric' in $setup.typeCfg)
-              ? (_openBlock(), _createElementBlock("div", _hoisted_17, [
-                  _createElementVNode("label", null, [
-                    _withDirectives(_createElementVNode("input", {
-                      "onUpdate:modelValue": _cache[0] || (_cache[0] = $event => (($setup.typeCfg.generateRubric) = $event)),
-                      type: "checkbox"
-                    }, null, 512 /* NEED_PATCH */), [
-                      [_vModelCheckbox, $setup.typeCfg.generateRubric]
-                    ]),
-                    _cache[6] || (_cache[6] = _createTextVNode(" 为本题型生成 ", -1 /* CACHED */)),
-                    _cache[7] || (_cache[7] = _createElementVNode("b", null, "AI 评阅要点", -1 /* CACHED */))
-                  ]),
-                  _createElementVNode("span", _hoisted_18, _toDisplayString($setup.activeKind === 'copy'
-            ? '默认关闭（以原文为唯一依据）。开启后「生成要点」会给抄写题也产出要点。'
-            : $setup.activeKind === 'summary'
-              ? '开关只表示"允许"；本章还需有教师确认的课堂资料清单才会真正生成。'
-              : ''), 1 /* TEXT */)
-                ]))
-              : _createCommentVNode("v-if", true),
             _createCommentVNode(" ➕ 可改扩展：checklist 项名 "),
             ('checklist' in $setup.typeCfg)
-              ? (_openBlock(), _createElementBlock(_Fragment, { key: 2 }, [
-                  _cache[8] || (_cache[8] = _createElementVNode("h4", { style: {"margin":"12px 0 6px"} }, "➕ 检查项名称（可改扩展）", -1 /* CACHED */)),
+              ? (_openBlock(), _createElementBlock(_Fragment, { key: 1 }, [
+                  _cache[5] || (_cache[5] = _createElementVNode("h4", { style: {"margin":"12px 0 6px"} }, "➕ 检查项名称（可改扩展）", -1 /* CACHED */)),
                   _createElementVNode("input", {
                     class: "chk-input",
                     value: $setup.checklistText(),
                     onChange: $setup.setChecklist,
                     placeholder: "用中文逗号分隔，如：题目，解题过程，示意图"
-                  }, null, 40 /* PROPS, NEED_HYDRATION */, _hoisted_19),
-                  _cache[9] || (_cache[9] = _createElementVNode("p", {
+                  }, null, 40 /* PROPS, NEED_HYDRATION */, _hoisted_17),
+                  _cache[6] || (_cache[6] = _createElementVNode("p", {
                     class: "hint",
                     style: {"margin":"4px 0"}
                   }, " 重命名检查项会改变报告里的用词；批阅仍然逐项判断是否达标。 ", -1 /* CACHED */))
                 ], 64 /* STABLE_FRAGMENT */))
               : _createCommentVNode("v-if", true),
             _createCommentVNode(" ✏️ 全局规则（跨题/跨作业） "),
-            _createElementVNode("details", _hoisted_20, [
-              _cache[10] || (_cache[10] = _createElementVNode("summary", null, "✏️ 全局规则（跨题、跨作业）", -1 /* CACHED */)),
-              _createElementVNode("div", _hoisted_21, [
+            _createElementVNode("details", _hoisted_18, [
+              _cache[7] || (_cache[7] = _createElementVNode("summary", null, "✏️ 全局规则（跨题、跨作业）", -1 /* CACHED */)),
+              _createElementVNode("div", _hoisted_19, [
                 (_openBlock(), _createElementBlock(_Fragment, null, _renderList($setup.NUM_FIELDS, (f) => {
                   return _withDirectives(_createElementVNode("label", {
                     key: 'g-' + f.key,
@@ -366,7 +343,7 @@ export function render(_ctx, _cache, $props, $setup, $data, $options) {
                       type: "number",
                       step: "any",
                       class: _normalizeClass({ bad: $setup.outOfRange(f.key, $setup.globalCfg[f.key]) })
-                    }, null, 10 /* CLASS, PROPS */, _hoisted_22), [
+                    }, null, 10 /* CLASS, PROPS */, _hoisted_20), [
                       [
                         _vModelText,
                         $setup.globalCfg[f.key],
@@ -375,14 +352,14 @@ export function render(_ctx, _cache, $props, $setup, $data, $options) {
                       ]
                     ]),
                     ($setup.range(f.key))
-                      ? (_openBlock(), _createElementBlock("em", _hoisted_23, "范围 " + _toDisplayString($setup.range(f.key)?.[0]) + "~" + _toDisplayString($setup.range(f.key)?.[1]), 1 /* TEXT */))
+                      ? (_openBlock(), _createElementBlock("em", _hoisted_21, "范围 " + _toDisplayString($setup.range(f.key)?.[0]) + "~" + _toDisplayString($setup.range(f.key)?.[1]), 1 /* TEXT */))
                       : _createCommentVNode("v-if", true)
                   ], 512 /* NEED_PATCH */), [
                     [_vShow, f.key in $setup.globalCfg]
                   ])
                 }), 64 /* STABLE_FRAGMENT */))
               ]),
-              _cache[11] || (_cache[11] = _createElementVNode("p", {
+              _cache[8] || (_cache[8] = _createElementVNode("p", {
                 class: "hint",
                 style: {"margin":"4px 0"}
               }, [
@@ -392,9 +369,9 @@ export function render(_ctx, _cache, $props, $setup, $data, $options) {
               ], -1 /* CACHED */))
             ]),
             ($setup.msg)
-              ? (_openBlock(), _createElementBlock("p", _hoisted_24, _toDisplayString($setup.msg), 1 /* TEXT */))
+              ? (_openBlock(), _createElementBlock("p", _hoisted_22, _toDisplayString($setup.msg), 1 /* TEXT */))
               : _createCommentVNode("v-if", true),
-            _createElementVNode("p", _hoisted_25, " 规则文件：" + _toDisplayString($setup.payload?.file || '—') + "（引擎缺失时自动写入默认值） ", 1 /* TEXT */)
+            _createElementVNode("p", _hoisted_23, " 规则文件：" + _toDisplayString($setup.payload?.file || '—') + "（引擎缺失时自动写入默认值） ", 1 /* TEXT */)
           ], 64 /* STABLE_FRAGMENT */))
   ]))
 }

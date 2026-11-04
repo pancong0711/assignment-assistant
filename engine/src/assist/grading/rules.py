@@ -73,21 +73,18 @@ DEFAULT_RULES: dict = {
             "perErrorDeduct": 5,
             "perQuestionCap": 20,
             "requireDiagram": False,        # 由图决定，不强制
-            "generateRubric": True,
         },
         "qa": {
             "mode": "missingPoints",        # 要点完整性 + 示意图
             "perMissingPointDeduct": 5,
             "missingDiagramDeduct": 5,
             "requireDiagram": True,
-            "generateRubric": True,
         },
         "copy": {
             "mode": "checklist",            # 抄写完整性三缺一
             "perMissingItemDeduct": 5,
             "checklist": ["题目", "解题过程", "示意图"],
             "requireDiagram": "if_question_has",   # 题本身有图才要求抄图
-            "generateRubric": False,        # 以原文为唯一依据
         },
         "distinguish": {
             "mode": "lengthBased",          # 辨析角度与依据（较宽）
@@ -97,7 +94,6 @@ DEFAULT_RULES: dict = {
             "irrelevantDeduct": 20,         # 与题目完全无关 → −20
             "logicErrorExempt": True,       # 逻辑错误豁免扣分，但必须生成启发式提问
             "requireDiagram": False,
-            "generateRubric": True,
         },
         "innovation": {
             "mode": "lengthBased",
@@ -107,7 +103,6 @@ DEFAULT_RULES: dict = {
             "irrelevantDeduct": 20,
             "logicErrorExempt": True,
             "requireDiagram": False,
-            "generateRubric": True,
         },
         "translation": {
             "mode": "lengthBased",
@@ -117,14 +112,12 @@ DEFAULT_RULES: dict = {
             "irrelevantDeduct": 20,
             "logicErrorExempt": True,
             "requireDiagram": False,
-            "generateRubric": True,
         },
         "summary": {
             "mode": "checklist",            # 知识点与概念 / 重要公式及推导 / 示意图
             "perMissingItemDeduct": 5,
             "checklist": ["知识点与概念", "重要公式及推导", "示意图"],
             "requireDiagram": "if_question_has",
-            "generateRubric": True,         # D134：有本章已确认资料时才真正生成（见 rubric_enabled）
             # D134-T4：**保底口径**（无课堂资料时用；四维判定，缺项不扣分，只扣"过简"）
             "fallback": {
                 "enabled": True,
@@ -402,17 +395,22 @@ def rule_summary(ws, kind: str) -> str:
 
 
 def rubric_enabled(ws, kind: str, chap: str = "") -> bool:
-    """该 kind 是否生成 AI 评阅要点。
+    """该 kind 是否允许生成 AI 评阅要点（**代码口径**，不再是规则卡开关）。
 
-    - `copy`：**永不自生成**（以原文为唯一依据，D130 口径）；
+    D144：移除规则卡里的 `generateRubric` 开关——它挂在"评阅规则卡"里，
+    但**批阅根本不读它**（批阅读 mode/扣分数值），只影响 `rules generate`
+    要不要跳过某个题型，与「AI 作答时同时生成要点」又是另一套规则，极易误解。
+    现在改为固定的代码规则，教师无需配置：
+
+    - `copy`：**永不自动生成**（以原文为唯一依据，D130 口径）；
+      确需生成用显式 `--force`；
     - `summary`（D134-T5a）：**仅当**本章有教师确认的 `知识点清单.md` 时才生成
       —— 没有资料时生成本章要点等于让模型编造"本章应该讲什么"，
       应改用保底口径（`summary_fallback`），而不是产出假依据；
-    - 其它 kind：看 `generateRubric`。
+    - 其它 kind：允许。
     """
     k = normalize_kind(kind)
-    on = bool(type_rules(ws, k).get("generateRubric", False))
-    if not on:
+    if k == "copy":
         return False
     if k == "summary":
         if ws is None:

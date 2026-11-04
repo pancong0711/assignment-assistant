@@ -228,31 +228,35 @@ def test_ai_solve_summary_skips_rubric_without_materials(ws, monkeypatch):
     assert captured.get("with_rubric", False) is False
 
 
-# ---------------- D135：copy 的要点开关（教师可开） ----------------
-def test_copy_rubric_toggle_is_teacher_switchable(ws):
-    """copy 默认不生成要点；教师把 generateRubric 打开后**真的**生效。
+# ---------------- D144：copy 的要点改为**代码口径**（规则卡开关已移除） ----------------
+def test_copy_never_auto_generates_rubric(ws):
+    """copy 永不自动生成要点（以原文为唯一依据，D130 口径）。
 
-    口径：默认关闭（以原文为唯一依据），但**允许**教师显式开启——
-    这是规则卡上可见的布尔开关，不需要改代码。
+    D144：规则卡里的 `generateRubric` 开关已删除 —— 它挂在"评阅规则卡"里却
+    **不影响批阅**，且与「AI 作答时同时生成要点」是两套规则，极易误解。
+    现在改为固定的代码规则：copy 一律不生成，确需生成用显式 `--force`。
     """
     assert R.rubric_enabled(ws, "copy") is False
+
+
+def test_generate_rubric_field_removed_from_rules(ws):
+    """规则里不再有这个字段（避免旧配置残留导致"行为不可见"）。"""
+    rules = R.read_rules(ws)
+    for kind, cfg in (rules.get("types") or {}).items():
+        assert "generateRubric" not in (cfg or {}), f"types.{kind} 仍有 generateRubric"
+
+
+def test_copy_rubric_force_ok(ws):
+    """需要时仍可显式 --force 生成（CLI 层放行，不受规则影响）。"""
     data = R.read_rules(ws)
-    data["types"]["copy"]["generateRubric"] = True
-    assert R.write_rules(ws, data).get("ok") is True
-    assert R.rubric_enabled(ws, "copy") is True
+    assert R.validate_rules(data) == [] or all("generateRubric" not in e
+                                               for e in R.validate_rules(data))
 
 
-def test_copy_rubric_switch_survives_reload(ws):
-    """开关必须落在 grading-rules.json（而不是只在内存），否则刷新就丢。"""
-    data = R.read_rules(ws)
-    data["types"]["copy"]["generateRubric"] = True
-    R.write_rules(ws, data)
-    assert R.read_rules(ws)["types"]["copy"]["generateRubric"] is True
-
-
-def test_summary_rubric_switch_alone_is_not_enough(ws):
-    """summary 即使开关打开，没有已确认资料仍不生成（防模型编造"本章该讲什么"）。"""
-    data = R.read_rules(ws)
-    data["types"]["summary"]["generateRubric"] = True
-    R.write_rules(ws, data)
+def test_summary_requires_confirmed_materials(ws):
+    """summary 只看"本章有没有已确认资料"，与任何开关无关。"""
     assert R.rubric_enabled(ws, "summary", chap="chap04") is False
+    from assist.files import materials as M
+    d = M.ensure_chap(ws, "chap04")
+    (d / M.KNOW_MD).write_text("## 核心知识点\n- 动量守恒\n", encoding="utf-8")
+    assert R.rubric_enabled(ws, "summary", chap="chap04") is True

@@ -158,6 +158,8 @@ defineExpose({ load })
       <h3 style="margin:0">⚖️ 评阅规则卡（按题目来源分型）</h3>
       <span class="hint" style="margin:0">
         改动<b>只影响后续批阅</b>，不改已生成报告；改动会记 journal。
+        本卡只管<b>怎么扣分</b>；生成 AI 评阅要点请到「⑦ 题库 AI 作答」勾选
+        「同时生成评阅要点」。
       </span>
       <span style="flex:1"></span>
       <button class="btn small" :disabled="loading" @click="load">重新读取</button>
@@ -202,21 +204,6 @@ defineExpose({ load })
       </div>
       <p v-if="!Object.keys(typeCfg).some((k) => NUM_FIELDS.some((f) => f.key === k))"
          class="hint">本题型没有可改数值（见上方只读摘要）。</p>
-
-      <!-- 🔀 AI 要点开关：copy 默认关闭（以原文为唯一依据）；summary 由课堂资料决定 -->
-      <div v-if="'generateRubric' in typeCfg" class="rubric-toggle">
-        <label>
-          <input v-model="typeCfg.generateRubric" type="checkbox" />
-          为本题型生成 <b>AI 评阅要点</b>
-        </label>
-        <span class="hint">
-          {{ activeKind === 'copy'
-            ? '默认关闭（以原文为唯一依据）。开启后「生成要点」会给抄写题也产出要点。'
-            : activeKind === 'summary'
-              ? '开关只表示"允许"；本章还需有教师确认的课堂资料清单才会真正生成。'
-              : '' }}
-        </span>
-      </div>
 
       <!-- ➕ 可改扩展：checklist 项名 -->
       <template v-if="'checklist' in typeCfg">
@@ -265,9 +252,6 @@ defineExpose({ load })
 .num-item span { flex: 1; }
 .num-item input { width: 84px; }
 .num-item input.bad { border-color: #dc2626; background: #fef2f2; }
-.rubric-toggle { margin: 12px 0 6px; display: flex; gap: 8px; align-items: baseline;
-                 flex-wrap: wrap; }
-.rubric-toggle label { display: flex; gap: 6px; align-items: center; font-size: 13px; }
 .chk-input { width: 100%; max-width: 460px; }
 .hint { color: #6b7280; font-size: 12px; }
 </style>
