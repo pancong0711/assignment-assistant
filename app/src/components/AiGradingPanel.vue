@@ -26,6 +26,7 @@ import PlaygroundPanel from './PlaygroundPanel.vue'
 import StudentReviewModal from './StudentReviewModal.vue'
 import GradingRulesCard from './GradingRulesCard.vue'
 import TeacherReportCard from './TeacherReportCard.vue'
+import TrendCard from './TrendCard.vue'
 import AtopiaPanel from './AtopiaPanel.vue'
 const packStore = usePackStore()
 const rosterStore = useRosterStore()
@@ -995,6 +996,10 @@ onMounted(async () => {
     <TeacherReportCard :engine-addr="props.engineAddr" :token="props.token"
                        :class-dir="curWorkDir" :task-id="packId || padId"
                        :reload-key="reportReloadKey" />
+
+    <!-- D135：跨作业知识点趋势（同一知识点是否反复出错；只给教师） -->
+    <TrendCard :engine-addr="props.engineAddr" :token="props.token"
+               :class-dir="curWorkDir" :reload-key="reportReloadKey" />
 
     <!-- D132：Atopia（AI 可调用本项目工具；L2 写入逐次确认，L3 不开放） -->
     <AtopiaPanel :engine-addr="props.engineAddr" :token="props.token" />

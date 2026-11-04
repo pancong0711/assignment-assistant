@@ -2091,6 +2091,33 @@ export async function fetchMaterialsKnowledge(
     base, `/materials/knowledge?${qs.toString()}`, token))) as any
 }
 
+/* ========== D135：跨作业知识点趋势（只给教师） ========== */
+
+export interface TrendPoint {
+  packId: string; name: string; at: string; students: number; rate: number
+}
+export interface TrendRecurring {
+  term: string; packs: number; trail: TrendPoint[]
+  firstAt: string; lastAt: string; peakStudents: number
+  improving: boolean; persisting: boolean
+}
+export interface TrendStat {
+  ok?: boolean; classDir?: string
+  sequence?: { packId: string; name: string; at: string; students: number }[]
+  recurring?: TrendRecurring[]
+  oneOff?: { term: string; packs: string[]; students: number }[]
+  summary?: { packs: number; terms: number; recurring: number; persisting: number }
+}
+
+export async function fetchKnowledgeTrend(
+  engineAddr: string, token: string | undefined, classDir: string, minRecur = 2,
+): Promise<{ ok?: boolean; stat?: TrendStat; markdown?: string; error?: string }> {
+  const base = normalizeEngineAddr(engineAddr)
+  const qs = new URLSearchParams({ classDir, minRecur: String(minRecur) })
+  return (await getJson2(engineUrlWithToken(
+    base, `/grade/trend?${qs.toString()}`, token))) as any
+}
+
 /* ========== D134：课堂资料上传 / 文件管理 ========== */
 
 export interface MaterialsFile {

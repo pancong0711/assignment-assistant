@@ -800,3 +800,16 @@ rainclass 67/67，PWA↔engine 全等，仅末位浮点四舍五入噪声）。
   缺 `feedback_md`/summary 元数据；`registry._SAFE_STR` 正则双反斜杠导致
   **所有 str 参数被误拒**。
 - **未做**：回收站恢复入口（`materials restore`）；`.zip` 上传（刻意不收）。
+
+---
+
+## D135 · 跨多次作业的知识点趋势（2026-10-31 完成）
+
+> 需求单：`docs/84-D135-knowledge-trend.md`（落实 docs/80 §8 的"跨多次作业趋势"）。
+
+- ✅ 作业序列 = 同一 `class_dir` 下**按评阅时间升序**的作业包；
+  同一知识点在 ≥2 次作业出现 → **反复出错**，并判定**改善 / 仍在持续**。
+- ✅ `assist trend --class-dir ...`、`GET /grade/trend`、PWA `TrendCard.vue`。
+- 口径：只用 `errors[].knowledge[]`（排除低置信度）；用**出错率**判定改善
+  （班额可能变化）；不做按章节串（缺可靠映射）。
+- **未做**：跨班级对比；知识点同义词需先 `kb check-knowledge` 归一。

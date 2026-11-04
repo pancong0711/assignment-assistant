@@ -2141,6 +2141,29 @@ def teacher_report_cmd(obj, task_path, top_n, out_dir, workspace, verbose):
                           ensure_ascii=False, indent=2))
 
 
+@cli.command("trend")
+@click.option("--class-dir", "class_dir", required=True,
+              help="班级目录（如 classes/化工25）；趋势按该目录下的评阅时间串成序列")
+@click.option("--min-recur", default=2, type=int, show_default=True,
+              help="至少在这么多次作业里出现才算「反复出错」")
+@click.option("--out", "out_dir", default="",
+              help="输出目录（缺省 <ws>/classes/<班级>/grading/_trend）")
+@click.option("--workspace", "-w", default=None)
+@click.option("--verbose", "-v", is_flag=True)
+@click.pass_obj
+def trend_cmd(obj, class_dir, min_recur, out_dir, workspace, verbose):
+    """D135：跨多次作业的知识点趋势（同一知识点是否反复出错；只给教师）。"""
+    from .grading import trend as TR
+    ws = _setup(verbose or obj.get("verbose"), workspace)
+    out = Path(out_dir).expanduser() if out_dir else (
+        Path(ws).resolve() / class_dir.strip().strip("/") / "grading" / "_trend")
+    rep = TR.generate(ws, class_dir, out, min_recur=min_recur,
+                      title=f"知识点趋势 · {class_dir}")
+    click.echo(json.dumps({k: v for k, v in rep.items() if k not in ("stat", "markdown")}
+                          | {"summary": (rep.get("stat") or {}).get("summary")},
+                          ensure_ascii=False, indent=2))
+
+
 @cli.command("grade-drafts")
 @click.option("--task", "task_path", required=True, help="任务包 JSON（定位 grading 产物）")
 @click.option("--class", "class_id", required=True, help="学习通班级 ID（草稿键用）")

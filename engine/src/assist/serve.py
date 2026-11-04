@@ -2920,6 +2920,35 @@ class Handler(BaseHTTPRequestHandler):
                         "numericRanges": {k: list(v) for k, v in _rules._NUM_RANGES.items()},
                         "file": str(_rules.rules_path(ws_))})
             return
+        elif u.path == "/grade/trend":
+            # D135：跨多次作业的知识点趋势（只给教师）
+            # 路径：/grade/trend?classDir=classes/化工25[&rebuild=1][&minRecur=2]
+            from .grading import trend as _td
+            q = urllib.parse.parse_qs(u.query)
+            class_dir = str((q.get("classDir") or [""])[0]).strip().strip("/")
+            if not class_dir:
+                self._json({"ok": False, "error": "classDir 必填"}, 400)
+                return
+            ws_ = Path(self.ws).resolve()
+            try:
+                (ws_ / class_dir).resolve().relative_to((ws_ / "classes").resolve())
+            except Exception:  # noqa: BLE001
+                self._json({"ok": False, "error": "路径越界"}, 400)
+                return
+            try:
+                min_recur = max(1, int((q.get("minRecur") or ["2"])[0] or 2))
+            except ValueError:
+                min_recur = 2
+            out = ws_ / class_dir / "grading" / "_trend"
+            try:
+                rep = _td.generate(ws_, class_dir, out, min_recur=min_recur,
+                                   title=f"知识点趋势 · {class_dir}")
+            except Exception as exc:  # noqa: BLE001
+                self._json({"ok": False, "error": str(exc)[:300]}, 500)
+                return
+            self._json({"ok": True, "stat": rep["stat"], "markdown": rep["markdown"],
+                        "written": rep["written"]})
+            return
         elif u.path == "/grade/teacher-report":
             # D126-B：教师总结报告（统计 JSON + Markdown 正文，供 PWA 画共现矩阵/得分率）
             # 路径：/grade/teacher-report?classDir=classes/化工25&taskId=pack1&rebuild=1
