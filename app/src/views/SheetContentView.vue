@@ -4,6 +4,7 @@ import { KB_KINDS, KB_KIND_LABELS, STUDENT_TAGS, STUDENT_TAG_LABELS, type KbKind
 import { useKbStore } from '../stores/kb'
 import { useTaskpadStore } from '../stores/taskpad'
 import { useRosterStore } from '../stores/roster'
+import { usePackStore } from '../stores/packs'
 import { parseTaskpad, missingBoundTags, padInferredTag, resolveBindTag, type PadBinding } from '../lib/taskpad'
 import { batchCommand, batchPaths, buildVariantBatchZip, ensureDefaultSheetHtmlProvider, setBatchHtmlIncludeSolution } from '../lib/variantBatch'
 import { downloadBlob } from '../lib/fsAccess'
@@ -17,6 +18,24 @@ import { downloadBlob } from '../lib/fsAccess'
 const kb = useKbStore()
 const pad = useTaskpadStore()
 const roster = useRosterStore()
+const packs = usePackStore()
+
+/** D135：整班 batch zip 的作业纸范围 —— **优先当前作业包**。
+ *
+ *  此前直接用 `pad.savedJsons()`（全库作业纸），会把别的作业包的作业纸
+ *  也打进本次交付包（mapping 里凭空多出 tag）。现与「整班预览」同口径：
+ *  有当前包 → 只取包内作业纸；没有包 → 回落到全库并**明确告知**。
+ */
+const batchPads = computed(() => {
+  const inPack = packs.packPadJsons(pad.savedJsons())
+  if (inPack.pads.length) {
+    return { pads: inPack.pads.map((x: { id: string; json: string }) => ({ id: x.id, json: x.json })),
+             scope: `当前作业包 ${inPack.packId}`,
+             dangling: inPack.dangling }
+  }
+  return { pads: pad.savedJsons(), scope: '全部已保存作业纸（未选作业包）',
+           dangling: [] as string[] }
+})
 
 const status = ref('')
 
@@ -178,10 +197,13 @@ async function downloadBatchZip() {
     await ensureDefaultSheetHtmlProvider((kind) => kb.book(kind as never), kb.effectiveSolution)
     setBatchHtmlIncludeSolution(batchIncludeAnswers.value)   // D57-2
     const { blob, cd, padCount } = await buildVariantBatchZip(
-      roster.students, pad.savedJsons(), classDirName.value)
+      roster.students, batchPads.value.pads, classDirName.value)
     downloadBlob(blob, `batch-package-${new Date().toISOString().slice(0, 10)}.zip`)
     roster.registerArtifact({ name: `batch-package-${new Date().toISOString().slice(0, 10)}.zip`, kind: 'batch-zip', via: 'browser-download', bytes: blob.size })
-    status.value = `已生成整班 batch 交付包（班级 ${cd}）：${padCount} 份作业纸 + roster.xlsx + batch.json + README（内嵌 HTML 口径：${batchIncludeAnswers.value ? '教师版含答案' : '学生版不含答案'}）。解压到引擎 workspace 根目录后按 README 执行 assist sheet batch 即可（batch PDF 通道本身不含答案）。`
+    const scopeNote = batchPads.value.scope
+    const danglingNote = batchPads.value.dangling.length
+      ? `；注意：包内引用了 ${batchPads.value.dangling.length} 份找不到的作业纸（${batchPads.value.dangling.join('、')}）` : ''
+    status.value = `已生成整班 batch 交付包（班级 ${cd}，范围：${scopeNote}）：${padCount} 份作业纸 + roster.xlsx + batch.json + README（内嵌 HTML 口径：${batchIncludeAnswers.value ? '教师版含答案' : '学生版不含答案'}）。解压到引擎 workspace 根目录后按 README 执行 assist sheet batch 即可（batch PDF 通道本身不含答案）${danglingNote}。`
   } catch (e) {
     status.value = `batch 包生成失败：${(e as Error).message}`
   } finally {
