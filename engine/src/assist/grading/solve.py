@@ -105,13 +105,27 @@ def solve_targets(ws: Path, targets: list[dict], *, model: str = "", apply: bool
     client, used_model = _client(ws, model)
 
     def _one(p: dict) -> dict:
-        """单题作答（每调用独立请求）。"""
+        """单题作答（每调用独立请求）。
+
+        D141：**每题一个 client（= 一个对话/一个 session）**。
+        此前整批共用一个 `client`，导致：
+        - 所有题的请求挤在同一个 `x-opencode-session` 下（路由把无关题归成一坨）；
+        - 并发线程会争抢修改 `client.session_id`（共享可变状态，线程不安全）。
+        `_client()` 只是读配置构造对象，开销可忽略。
+        """
         try:
+            cli = client
+            try:
+                cli, _m = _client(ws, model)
+                if used_model:
+                    cli.set_session_id(f"solve-{p['id']}")
+            except Exception:  # noqa: BLE001 —— 构造失败时退回共享 client（旧行为）
+                cli = client
             if with_rubric:
                 # D133：一次调用产出「解答 + 要点 + 知识点」（带题型规则摘要）
                 from . import rubric as RB
                 rub = RB.generate_rubric(
-                    client, ws=ws, kind=str(p.get("kb") or "problems"),
+                    cli, ws=ws, kind=str(p.get("kb") or "problems"),
                     content=str(p.get("content") or ""),
                     related=str(p.get("related") or ""), model=model or None)
                 text = RB.rubric_to_text(rub)
@@ -132,8 +146,8 @@ def solve_targets(ws: Path, targets: list[dict], *, model: str = "", apply: bool
                             "error": r.get("error")}
                 return {"id": p["id"], "ok": True, "chars": len(text),
                         "model": used_model, "withRubric": True, "rubricPoints": points}
-            text = client.chat(system_prompt=SOLVE_SYSTEM_PROMPT, user_text=p["prompt"],
-                               step="evaluation")
+            text = cli.chat(system_prompt=SOLVE_SYSTEM_PROMPT, user_text=p["prompt"],
+                            step="evaluation")
             if apply:
                 r = sol.add_version(ws, p["id"], text, source="ai", model=used_model,
                                     kb=p.get("kb", ""), chap=p.get("chap", ""), pin=pin)

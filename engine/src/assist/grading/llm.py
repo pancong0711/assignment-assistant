@@ -251,13 +251,17 @@ class LLMClient:
         for name, val in extra.items():
             sval = str(val)
             if "{session}" in sval:
+                # D141：**自动兜底**。此前"没设 session 就报错"导致
+                # kb ai-solve / rules generate / materials suggest 等**所有漏设
+                # session 的调用点**在 opencode-go 上直接 400 失败
+                # （教师实际踩到：勾了"同时生成评阅要点"就 failed: 1）。
+                # 语义仍然正确：本 client 实例 = 一次调用/一个对话，
+                # 首次用到时生成一次并缓存，后续请求复用同一个 id
+                # （prompt 缓存命中）；显式 set_session_id() 仍优先。
                 if not self.session_id:
-                    raise LLMConfigError(
-                        f"provider 需要会话头 `{name}`（含 {{session}} 占位），"
-                        f"但本次调用没有传 session_id。"
-                        f"opencode-go 的 /go 路由要求每个对话带稳定的 "
-                        f"x-opencode-session（docs/86 §2）；"
-                        f"多轮会话请复用同一个 id，单次调用请每次新建。")
+                    import uuid as _uuid
+                    self.session_id = f"assist-{_uuid.uuid4().hex[:16]}"
+                    logger.debug(f"[LLM] 自动生成会话 id：{self.session_id}")
                 sval = sval.replace("{session}", self.session_id)
             headers[name] = sval
         return headers

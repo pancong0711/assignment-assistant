@@ -245,3 +245,50 @@ assist llm provider --action set --name opencode-go \
 
 已改为：解析日志里的 `failed` 与 `error`，失败时显示
 `❌ 有 N 题作答失败（未写回）：<原因>`，并提示"已成功的题已写回"。
+
+---
+
+## 12. D141 补记（第二次踩坑）：`{session}` 缺值导致**所有漏设 session 的调用点** 400
+
+### 现象
+
+`kb ai-solve` 勾选「同时生成评阅要点」后报：
+`作answer并写回完成 ... "failed": 1`，深入后是 `MissingSessionID`。
+
+### 根因
+
+`LLMClient._headers_for()` 原先的设计是"配了 `{session}` 却没设 session → **报错**"。
+但全项目只有 **4 处**调用点设了 session
+（Playground / Atopia / 批阅 flow / serve 的 ask），而构造 `LLMClient` 的地方有 **10+ 处**：
+
+```
+solve._client()        ← kb ai-solve（本次踩坑）
+cli._rubric_client()   ← rules generate / kb ai-solve
+materials.suggest_knowledge()（serve 侧）
+serve 的 /llm/test
+flow 的 transcribe / evaluate
+```
+
+这些没设 session 的调用点在 opencode-go 上一律 400。
+
+### 修复
+
+1. **`_headers_for()` 改为自动兜底**：配了 `{session}` 但未设 session 时，
+   生成 `assist-<hex>` 并**缓存到该 client 实例**（同一实例内复用，prompt 缓存可命中）；
+   显式 `set_session_id()` 仍然优先。
+2. **`solve` 批改为每题一个 client**（`solve-<qid>`）：
+   此前整批共用一个 client，导致
+   - 所有题挤在同一个 session（路由把无关题归成一坨）；
+   - **并发线程争抢修改共享的 `session_id`**（线程不安全）。
+
+### 教训
+
+> 安全/配置类的"缺就报错"要小心**覆盖面**：
+> 校验放在底层（`_headers_for`）却只在少数上层调用点补值时，
+> 底层越严格，越容易把"上层漏补"放大成全链路故障。
+> 正确做法是：**底层提供安全默认值，上层按需覆盖**。
+
+### 回归
+
+`test_d141_session_autofill_all_paths.py`（5 项）锁死：
+solve / rubric / materials 三条路径都带会话头；批量每题独立；未配 headers 的 provider 不多发。

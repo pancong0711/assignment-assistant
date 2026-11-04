@@ -64,12 +64,27 @@ def test_session_placeholder_substituted():
     assert h["x-opencode-session"] == "abc123"
 
 
-def test_missing_session_raises_config_error():
+def test_missing_session_is_autofilled():
+    """D141 变更：缺 session **不再报错**，而是自动生成一个并缓存。
+
+    为什么改：原先"缺 session 就报错"导致所有没显式设 session 的调用点
+    （kb ai-solve / rules generate / materials suggest …）在 opencode-go 上
+    直接 400 —— 教师实际踩到"勾了同时生成要点就 failed: 1"。
+    语义仍正确：一个 client 实例 = 一个对话，首次用到时生成、后续复用。
+    """
     c = LLMClient(settings={"base_url": "https://x/v1", "api_key": "k", "model": "m",
                             "headers": {"x-opencode-session": "{session}"}})
-    with pytest.raises(LLMConfigError) as ei:
-        c._headers_for("k", {})
-    assert "x-opencode-session" in str(ei.value)
+    h = c._headers_for("k", {})
+    assert h["x-opencode-session"].startswith("assist-")
+    # 同一 client 复用同一个 id（prompt 缓存可命中）
+    assert c._headers_for("k", {})["x-opencode-session"] == h["x-opencode-session"]
+
+
+def test_explicit_session_wins_over_autofill():
+    c = LLMClient(settings={"base_url": "https://x/v1", "api_key": "k", "model": "m",
+                            "headers": {"x-opencode-session": "{session}"}})
+    c.set_session_id("my-explicit")
+    assert c._headers_for("k", {})["x-opencode-session"] == "my-explicit"
 
 
 def test_plain_provider_headers_unchanged():
@@ -125,19 +140,26 @@ def test_request_omits_session_when_not_configured(monkeypatch):
     assert "x-opencode-session" not in seen["headers"]
 
 
-def test_missing_session_does_not_send_request(monkeypatch):
-    called = {"n": 0}
+def test_autofilled_session_is_sent(monkeypatch):
+    """D141：自动兜底的 session 必须**真的发出去**（不能只是内存里有值）。"""
+    seen = {}
 
-    def fake_post(*a, **k):
-        called["n"] += 1
-        raise AssertionError("不该发请求")
+    class R:
+        status_code = 200
+        text = "{}"
+
+        def json(self):
+            return {"choices": [{"message": {"content": "ok"}}]}
+
+    def fake_post(url, headers=None, json=None, timeout=None):
+        seen["headers"] = dict(headers or {})
+        return R()
 
     monkeypatch.setattr(httpx, "post", fake_post)
     c = LLMClient(settings={"base_url": "https://x/v1", "api_key": "k", "model": "m",
                             "headers": {"x-opencode-session": "{session}"}})
-    with pytest.raises(LLMConfigError):
-        c.chat("sys", "hi")
-    assert called["n"] == 0
+    c.chat("sys", "hi")
+    assert seen["headers"]["x-opencode-session"].startswith("assist-")
 
 
 # ---------------- provider=- 修复 / 错误提示 ----------------
