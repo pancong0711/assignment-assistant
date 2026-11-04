@@ -13,6 +13,7 @@ import TransferView from './views/TransferView.vue'
 import HelpView from './views/HelpView.vue'
 import JournalView from './views/JournalView.vue'
 import AtopiaView from './views/AtopiaView.vue'
+import KnowledgeView from './views/KnowledgeView.vue'
 
 const settings = useSettingsStore()
 
@@ -27,6 +28,8 @@ const TABS = [
   { key: 'xxetong', label: '作业预览-学习通', component: XxetongView },
   { key: 'publish', label: '发布-学习通', component: PublishView },
   { key: 'grading', label: 'AI 辅助批阅', component: GradingView },
+  // D148：知识点（AI 标注 + 题库 AI 作答 + 词表）——与题库编辑分开，避免淹没在"改题"动线里
+  { key: 'knowledge', label: '知识点', component: KnowledgeView },
   // D140：Atopia 独立选项卡（AI 用本项目工具的唯一入口；多轮对话 + 工具）
   { key: 'atopia', label: 'Atopia', component: AtopiaView },
   { key: 'transfer', label: '导入导出', component: TransferView },

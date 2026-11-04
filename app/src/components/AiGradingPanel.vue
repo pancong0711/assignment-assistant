@@ -421,6 +421,73 @@ const curWorkDir = computed<string>(() => {
 })
 
 /* ④ 逐生审核 */
+
+/* D148：**逐生补批** —— 只对一名学生跑 转写 / 批阅 / 完整。
+ *  背景：`--limit N` 只批前 N 名（现在=前 N 名**有作答**的），
+ *  漏掉的学生此前只能整批重跑（已批过的要重转写/重评阅，浪费额度）。
+ *  这里传 `students:[姓名]`，引擎只处理这一人。 */
+const rowBusy = ref('')
+async function runOne(s: any, mode: 'transcribe' | 'evaluate' | 'full') {
+  const w = curWork.value
+  if (!w) { msg.value = '请先在 ③ 区选择作业'; return }
+  const steps = mode === 'full' ? ['transcribe', 'evaluate']
+    : mode === 'transcribe' ? ['transcribe'] : ['evaluate']
+  const label = mode === 'full' ? '完整批阅' : mode === 'transcribe' ? '转写' : '批阅'
+  rowBusy.value = s.name
+  msg.value = `正在对「${s.name}」执行${label}…`
+  try {
+    // 与「③ 任务」区**同一套装配逻辑**（避免两处口径漂移）
+    const packPadList = packPads.value.map((p2) => {
+      try { return JSON.parse(p2.json) } catch { return null }
+    }).filter(Boolean)
+    let taskpad: any = null
+    let padsPayload: any[] | undefined
+    if (packId.value && packPadList.length) {
+      padsPayload = packPadList
+      taskpad = packPadList[0]
+    } else {
+      const raw = pads.value.find((p2) => p2.id === padId.value)?.json || ''
+      try { taskpad = raw ? JSON.parse(raw) : null } catch { taskpad = null }
+    }
+    if (!taskpad) { msg.value = '请先选择作业包（或单张作业纸）'; return }
+    const jobId = await startXxtGradeAi(props.engineAddr, props.token, {
+      courseId: w.courseId, classId: w.classId, cpi: w.cpi, workId: w.workId,
+      ...(packId.value ? { packId: packId.value } : {}),
+      taskpad,
+      ...(padsPayload && padsPayload.length > 1 ? { pads: padsPayload } : {}),
+      mode: 'optimized',
+      tags: s.tag ? [s.tag] : undefined,
+      students: [s.name],
+      steps,
+      imageMode: imageMode.value, svgRedraw: svgRedraw.value,
+      allowPartial: true,
+    })
+    await pollJob(jobId, `「${s.name}」${label}`)
+    await loadStudents()
+  } catch (e) {
+    msg.value = `❌ 「${s.name}」${label}失败：${String((e as Error).message || e)}`
+  } finally {
+    rowBusy.value = ''
+  }
+}
+
+/** 轮询 job 直到结束（逐生补批共用）。 */
+async function pollJob(jobId: string, label: string) {
+  for (let i = 0; i < 600; i++) {
+    await new Promise((r) => window.setTimeout(r, 2000))
+    const job = await fetchXxtLoginJob(props.engineAddr, props.token, jobId)
+    const line = (job.lines || []).slice(-1)[0] || ''
+    msg.value = `${label}：${line.slice(-160)}`
+    if (job.status !== 'running') {
+      msg.value = job.status === 'done'
+        ? `✅ ${label}完成`
+        : `❌ ${label}失败：${(job.lines || []).slice(-2).join(' ')}`
+      return
+    }
+  }
+  msg.value = `⚠️ ${label}超时（仍在后台执行）`
+}
+
 const students = ref<Array<{ name: string; key: string; tag?: string; images?: string[] }>>([])
 /** D117：学生清单加载中（供逐生审核空态提示） */
 const studentsLoading = ref(false)
@@ -1175,7 +1242,17 @@ onMounted(async () => {
             <td class="c">{{ draftOf(s).ai?.score ?? draftOf(s).score ?? '—' }}</td>
             <td class="c">{{ draftOf(s).human?.used ? (draftOf(s).human.score ?? '✓') : '—' }}</td>
             <td class="c">{{ reportMode(s) }}</td>
-            <td class="c"><button class="btn small" @click="onReviewOpen(i)">审核</button></td>
+            <td class="c" style="white-space:nowrap">
+              <button class="btn small" :disabled="rowBusy !== ''"
+                      title="只转写这一名学生" @click="runOne(s, 'transcribe')">转写</button>
+              <button class="btn small" :disabled="rowBusy !== ''"
+                      title="用已有转写评阅这一名学生" @click="runOne(s, 'evaluate')">批阅</button>
+              <button class="btn small" :disabled="rowBusy !== ''"
+                      title="转写+评阅这一名学生" @click="runOne(s, 'full')">
+                {{ rowBusy === s.name ? '…' : '完整' }}
+              </button>
+              ｜<button class="btn small" @click="onReviewOpen(i)">审核</button>
+            </td>
           </tr>
         </tbody>
       </table>

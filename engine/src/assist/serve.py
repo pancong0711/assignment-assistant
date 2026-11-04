@@ -1659,6 +1659,87 @@ class Handler(BaseHTTPRequestHandler):
             rep["confirmed_by"] = confirm
             self._json(rep)
             return
+        # ---------------- D148：知识点（标注 / 词表 / 要点生成） ----------------
+        if u.path == "/knowledge/tag":
+            # AI 为题目打知识点标签（默认只标未标注；dryRun 只预览）
+            payload: dict = {}
+            try:
+                length = int(self.headers.get("Content-Length") or 0)
+                if length:
+                    payload = json.loads(self.rfile.read(length).decode("utf-8")) or {}
+            except Exception as exc:  # noqa: BLE001
+                self._json({"ok": False, "error": f"bad json: {exc}"}, 400)
+                return
+            dry = payload.get("dryRun") is True
+            args = ["kb", "tag-knowledge"]
+            for k in (payload.get("kb") or []):
+                args += ["--kb", str(k)]
+            for c in (payload.get("chap") or []):
+                args += ["--chap", str(c)]
+            if payload.get("ids"):
+                ids = payload.get("ids")
+                args += ["--ids", ",".join(ids) if isinstance(ids, list) else str(ids)]
+            if payload.get("force") is True:
+                args += ["--force"]
+            if dry:
+                args += ["--dry-run"]
+            if payload.get("model"):
+                args += ["--model", str(payload.get("model"))]
+            cmd = [sys.executable, "-m", "assist.cli", *args, "--workspace", str(self.ws)]
+            try:
+                proc = subprocess.run(cmd, cwd=str(self.ws), capture_output=True,
+                                      text=True, timeout=1800, check=False)
+            except subprocess.TimeoutExpired:
+                self._json({"ok": False, "error": "知识点标注超时（>30 分钟）"}, 504)
+                return
+            if proc.returncode != 0:
+                self._json({"ok": False, "error": (proc.stderr or "")[-600:]}, 400)
+                return
+            try:
+                self._json(json.loads(proc.stdout))
+            except json.JSONDecodeError:
+                self._json({"ok": True, "raw": proc.stdout[-2000:]})
+            return
+        if u.path == "/knowledge/vocab":
+            from .grading import vocab as V
+            ws_ = Path(self.ws).resolve()
+            self._json({"ok": True, **V.load_vocab(ws_)})
+            return
+        if u.path == "/knowledge/rubric-batch":
+            # 批量生成 AI 评阅要点（dryRun 只预览；apply 写版本库，默认不置顶）
+            payload: dict = {}
+            try:
+                length = int(self.headers.get("Content-Length") or 0)
+                if length:
+                    payload = json.loads(self.rfile.read(length).decode("utf-8")) or {}
+            except Exception as exc:  # noqa: BLE001
+                self._json({"ok": False, "error": f"bad json: {exc}"}, 400)
+                return
+            args = ["rules", "generate", "--kind", str(payload.get("kind") or "problems")]
+            if payload.get("chap"):
+                args += ["--chap", str(payload.get("chap"))]
+            if payload.get("ids"):
+                ids = payload.get("ids")
+                args += ["--ids", ",".join(ids) if isinstance(ids, list) else str(ids)]
+            if payload.get("force") is True:
+                args += ["--force"]
+            if payload.get("apply") is True:
+                args += ["--apply"]
+            cmd = [sys.executable, "-m", "assist.cli", *args, "--workspace", str(self.ws)]
+            try:
+                proc = subprocess.run(cmd, cwd=str(self.ws), capture_output=True,
+                                      text=True, timeout=1800, check=False)
+            except subprocess.TimeoutExpired:
+                self._json({"ok": False, "error": "生成要点超时（>30 分钟）"}, 504)
+                return
+            if proc.returncode != 0:
+                self._json({"ok": False, "error": (proc.stderr or "")[-600:]}, 400)
+                return
+            try:
+                self._json(json.loads(proc.stdout))
+            except json.JSONDecodeError:
+                self._json({"ok": True, "raw": proc.stdout[-2000:]})
+            return
         if u.path == "/atopia/ask":
             # D140：Atopia 对话（多轮 + 工具调用，全部经同一 Gate）
             # 安全：L3 拒绝、L2 必须教师确认（confirmed=true 才放行）、护栏照旧。
@@ -2170,6 +2251,12 @@ class Handler(BaseHTTPRequestHandler):
                 args += ["--tags", ",".join(tags) if isinstance(tags, list) else str(tags)]
             if payload.get("limit"):
                 args += ["--limit", str(int(payload.get("limit")))]
+            # D148：逐生补批（只处理指定学生，避免整批重跑）
+            stu_ = payload.get("students")
+            if isinstance(stu_, list) and stu_:
+                args += ["--students", ",".join(str(x) for x in stu_)]
+            elif isinstance(stu_, str) and stu_.strip():
+                args += ["--students", stu_]
             # D125：分步批阅（仅转录 / 仅评阅 / 转录+评阅）与"允许部分失败"
             steps_ = payload.get("steps")
             if isinstance(steps_, list) and steps_:

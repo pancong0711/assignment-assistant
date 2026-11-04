@@ -977,7 +977,9 @@ export async function startXxtGradeAi(
     /** D125：分步批阅 —— 本次只跑这些步骤（如 ['transcribe'] / ['transcribe','evaluate']） */
     steps?: string[]
     /** D125：转录有学生失败时仍继续（默认中止） */
-    allowPartial?: boolean },
+    allowPartial?: boolean
+    /** D148：只处理这些学生（逐生补批） */
+    students?: string[] },
 ): Promise<string> {
   const base = normalizeEngineAddr(engineAddr)
   const res = await fetch(engineUrlWithToken(base, '/xxt/grade/ai-run', token), {
@@ -2116,6 +2118,53 @@ export async function restoreMaterialsFile(
 ): Promise<{ ok?: boolean; error?: string; to?: string }> {
   return runAtopiaTool(engineAddr, token,
                        { tool: 'materials.restore', args: { chap, file }, confirm }) as any
+}
+
+/* ========== D148：知识点（标注 / 词表 / 要点生成） ========== */
+
+export interface KnowledgeTerm {
+  term: string; source?: string; aliases?: string[]; chapter?: string
+  topic?: string; count?: number
+}
+
+async function postCliJson(
+  url: string, payload: Record<string, any>,
+): Promise<any> {
+  const res = await fetch(url, {
+    method: 'POST', headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(payload),
+  })
+  const o = (await res.json().catch(() => ({}))) as any
+  if (!res.ok && !o?.error) throw new Error(`HTTP ${res.status}`)
+  return o
+}
+
+/** AI 为题目打知识点标签（dryRun=只预览；apply 会写题库，需教师确认）。 */
+export async function tagKnowledge(
+  base: string, token: string | undefined,
+  payload: { kb?: string[]; chap?: string[]; ids?: string[]; force?: boolean
+             dryRun?: boolean; model?: string },
+): Promise<{ ok?: boolean; error?: string; updates?: any[]; failed?: any[] }> {
+  return postCliJson(engineUrlWithToken(normalizeEngineAddr(base), '/knowledge/tag', token),
+                     payload)
+}
+
+/** 读取受控知识点词表。 */
+export async function fetchKnowledgeVocab(
+  base: string, token: string | undefined,
+): Promise<{ ok?: boolean; terms?: KnowledgeTerm[]; error?: string }> {
+  return (await getJson2(engineUrlWithToken(
+    normalizeEngineAddr(base), '/knowledge/vocab', token))) as any
+}
+
+/** 批量生成 AI 评阅要点（apply=false 只预览）。 */
+export async function generateRubricBatch(
+  base: string, token: string | undefined,
+  payload: { kind: string; chap?: string; ids?: string[]; force?: boolean; apply?: boolean },
+): Promise<{ ok?: boolean; error?: string; written?: any[]; failed?: any[]
+             preview?: any[]; skipped?: boolean; reason?: string; howTo?: string[] }> {
+  return postCliJson(engineUrlWithToken(normalizeEngineAddr(base),
+                                        '/knowledge/rubric-batch', token), payload)
 }
 
 /* ========== D135：跨作业知识点趋势（只给教师） ========== */
