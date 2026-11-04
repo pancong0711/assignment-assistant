@@ -569,14 +569,42 @@ async function saveProvider() {
 }
 
 async function doSaveProvider(headers: Record<string, string>, ua: string) {
+  const savedName = pName.value.trim()
   const rep = await postLlmProvider(props.engineAddr, props.token, {
-    action: 'set', name: pName.value.trim(), base_url: pBase.value.trim(),
+    action: 'set', name: savedName, base_url: pBase.value.trim(),
     api_key: pKey.value ? pKey.value : undefined, batch_support: pBatch.value,
     headers, user_agent: ua,
   })
-  msg.value = rep?.ok ? `provider「${pName.value}」已保存（key 只掩码显示）` : `保存失败：${rep?.error || ''}`
+  if (rep?.ok) {
+    const n = Object.keys(headers).length
+    msg.value = `provider「${savedName}」已保存（key 只掩码显示`
+      + (n || ua ? `；请求头 ${n} 项${ua ? ' + 自定义 UA' : ''}` : '') + '）'
+    // D142：保存后**清空表单**，否则新建下一个 provider 时会把上一个的
+    // 请求头/UA 原样带过去（字段一直留着 → 静默污染另一个 provider）。
+    resetProviderForm()
+  } else {
+    msg.value = `保存失败：${rep?.error || ''}`
+  }
   pKey.value = ''
   await loadConfig()
+}
+
+/** 清空 provider 表单（含请求头/UA），避免把上一个 provider 的配置带到下一个。 */
+function resetProviderForm() {
+  pName.value = ''
+  pBase.value = ''
+  pKey.value = ''
+  pBatch.value = false
+  pHdrText.value = ''
+  pUserAgent.value = ''
+  showAdv.value = false
+}
+
+/** 该 provider 是否被两段中的某一段引用（= 请求头是否真的会被用到）。 */
+function usedByStage(name: string): string[] {
+  const st = (llmConfig.value.stages || {}) as Record<string, any>
+  return ['transcription', 'evaluation']
+    .filter((k) => String(st[k]?.provider || '') === name)
 }
 
 async function confirmSaveProvider() {
@@ -845,8 +873,15 @@ onMounted(async () => {
           <td style="text-align:center">{{ p.batch_support ? '✓' : '' }}</td>
           <td style="text-align:center">{{ p.api_key || '（未设置）' }}</td>
           <td style="text-align:center" class="hint">
-            {{ Object.keys(p.headers || {}).length }} 项
-            <template v-if="p.user_agent">·UA</template>
+            <template v-if="Object.keys(p.headers || {}).length || p.user_agent">
+              <a href="javascript:;" @click="editProvider(p); showAdv = true">查看</a>
+              （{{ Object.keys(p.headers || {}).length }} 项<template v-if="p.user_agent"> · UA</template>）
+              <div v-if="usedByStage(p.name).length" style="color:#16a34a">
+                已生效（{{ usedByStage(p.name).map((x) => x === 'transcription' ? '转写' : '评阅').join('、') }}段）
+              </div>
+              <div v-else style="color:#b45309">未分配段 → 不会用到</div>
+            </template>
+            <template v-else>—</template>
           </td>
           <td style="text-align:center">
             <a href="javascript:;" @click="editProvider(p)">编辑</a>
@@ -861,6 +896,7 @@ onMounted(async () => {
       <label class="field">api_key <input v-model="pKey" type="password" placeholder="留空=不修改（只存掩码）" style="width:200px" /></label>
       <label class="field"><input type="checkbox" v-model="pBatch" /> 支持 batch</label>
       <button class="btn" @click="saveProvider">保存 provider</button>
+      <button class="btn" @click="resetProviderForm">清空表单</button>
     </div>
 
     <!-- D137：高级请求头（默认折叠；只有 provider 明确要求时才填） -->

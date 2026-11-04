@@ -292,3 +292,56 @@ flow 的 transcribe / evaluate
 
 `test_d141_session_autofill_all_paths.py`（5 项）锁死：
 solve / rubric / materials 三条路径都带会话头；批量每题独立；未配 headers 的 provider 不多发。
+
+---
+
+## 13. 使用说明：PWA 里怎么配（教师看这里）
+
+### 「① LLM 设置」区的两样东西
+
+| 位置 | 是什么 |
+|---|---|
+| provider 表格的 **「请求头」列** | **只读摘要**：显示该 provider 存了几项头、有没有自定义 UA，以及**是否已生效** |
+| **⚙️ 高级：自定义请求头 / user-agent**（折叠块） | **编辑入口**：在这里填，然后点「保存 provider」才会写进**当前表单所选的那个 provider** |
+
+### 完整步骤（以 opencode-go 为例）
+
+1. 点表格里 `opencode-go` 那一行的 **「编辑」** → 表单会回填它的 base_url 与已有请求头；
+   （新建则先填「名称」+「base_url」）
+2. 展开 **⚙️ 高级**，在「请求头（每行 name=value）」里填：
+   ```
+   x-opencode-session={session}
+   ```
+   `user-agent` 可留空（默认 `assignment-assistant/<版本>`，符合 opencode 要求）
+3. 点 **「保存 provider」** → 弹出二次确认，列出"将随每次调用发送的内容"→ 点「我确认保存」
+4. **关键一步**：在下面「转写段 / 评阅段」两个下拉里**都选上 `opencode-go`** 并保存
+5. **重启引擎**（配置改动需重新加载）
+
+### 怎么确认配好了
+
+看 provider 表格「请求头」列：
+
+- ✅ 绿字 `已生效（转写、评阅段）` → 两个段都用它，请求头会真的发出去；
+- ⚠️ 橙字 `未分配段 → 不会用到` → 只存了 provider，**没分配段**，实际不会用它；
+- `—` → 没配请求头。
+
+### 常见误解
+
+- **“保存了 provider 就等于配好了”** —— 不对。provider 只是"一个可用端点"，
+  还要在下面「两段式」里**选用它**才会真正被调用。
+- **`{session}` 不是让你填固定值** —— 它是占位符，运行时会替换成当前对话的
+  会话 id（同一对话内稳定，便于 provider 做 prompt 缓存）。填死一个固定字符串
+  也能跑，但会失去缓存收益。
+
+## 14. D142 修复：保存后表单未清空 → 会污染下一个 provider
+
+**问题**：`saveProvider` 保存后只清了 `api_key`，请求头/UA/名称/base_url 都留在表单里。
+教师接着新建另一个 provider（如阿里云）时，**上一个 provider 的请求头会被原样带过去**，
+导致请求阿里云也带上 `x-opencode-session`（无意义甚至触发网关异常），且不易察觉。
+
+**修复**：保存成功后 `resetProviderForm()` 清空名称/base_url/key/batch/请求头/UA；
+新增「清空表单」按钮；「请求头」列增加「查看」与**已生效/未分配段**提示。
+
+**配套**：`_d130_sfc_all.mjs` 的编译产物此前落在 `src/` 旁边（`.gitignore` 只覆盖
+`components/`，`views/` 下的残留会被 tsc 扫进构建）→ 改为统一输出到 `tests/`，
+并补齐 `app/src/views/*.compiled-*.ts` 的忽略规则。

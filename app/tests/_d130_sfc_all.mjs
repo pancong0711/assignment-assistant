@@ -8,7 +8,10 @@ const seen = new Map()   // abs .vue path → 生成的 .ts path
 function compileOne(vuePath) {
   vuePath = resolve(vuePath)
   if (seen.has(vuePath)) return seen.get(vuePath)
-  const outTs = vuePath.replace(/\.vue$/, `.compiled-${hash(vuePath)}.ts`)
+  // D142：产物写到 tests/ 下（此前落在 src/ 旁边，会被 tsc 扫进构建、
+  // 且 .gitignore 只覆盖 components/ 导致 views/ 下的残留文件进版本库）
+  const outTs = resolve(process.cwd(), 'tests',
+                        basename(vuePath).replace(/\.vue$/, `.compiled-${hash(vuePath)}.ts`))
   seen.set(vuePath, outTs)
 
   const src = readFileSync(vuePath, 'utf-8')

@@ -1,7 +1,7 @@
 import { defineComponent as _defineComponent } from 'vue'
 import { computed, onMounted, ref } from 'vue'
 import { useSettingsStore } from '/home/bot2603/Projects/2609-assignment-assistant/app/src/stores/settings'
-import AtopiaPanel from '/home/bot2603/Projects/2609-assignment-assistant/app/src/components/AtopiaPanel.compiled-1l2ros.ts'
+import AtopiaPanel from '/home/bot2603/Projects/2609-assignment-assistant/app/tests/AtopiaPanel.compiled-1l2ros.ts'
 import {
   askAtopia, fetchAtopiaSessions, type AtopiaAskResult, type AtopiaStep,
 } from '/home/bot2603/Projects/2609-assignment-assistant/app/src/lib/engineClient'
