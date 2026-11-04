@@ -466,14 +466,16 @@ def kb_snapshot(obj, workspace, verbose):
 @click.option("--with-rubric/--no-with-rubric", "with_rubric", default=False,
               help="D133：同时生成「评阅要点 + 知识点」（带该题型规则摘要），"
                    "写入同一版本。**默认不置顶**，教师确认后才生效")
+@click.option("--tag-knowledge", "tag_knowledge", is_flag=True,
+              help="D152：同时把 AI 产出的知识点写回题库（改前自动快照）")
 @click.option("--pin-rubric", is_flag=True,
               help="配合 --with-rubric：生成后**直接置顶**（默认不置顶，需教师确认）")
 @click.option("--workspace", "-w", default=None)
 @click.option("--verbose", "-v", is_flag=True)
 @click.pass_obj
 def kb_ai_solve(obj, kb_kind, chap, ids, model, pin, apply, concurrency, requirement,
-                requirement_template, all_questions, with_rubric, pin_rubric,
-                workspace, verbose):
+                requirement_template, all_questions, with_rubric, tag_knowledge,
+                pin_rubric, workspace, verbose):
     """D89-N5/D100：对题库题目做 AI 作答（**不覆盖**原答案，新增版本并默认置顶；默认 dry-run）。"""
     from .grading import solve as solve_mod
     ws = _setup(verbose or obj.get("verbose"), workspace)
@@ -509,7 +511,8 @@ def kb_ai_solve(obj, kb_kind, chap, ids, model, pin, apply, concurrency, require
             with_rubric = False
     res = solve_mod.solve_targets(ws, targets, model=model, apply=apply, pin=eff_pin,
                                   dry_run=True, concurrency=concurrency,
-                                  requirement=req_text, with_rubric=with_rubric)
+                                  requirement=req_text, with_rubric=with_rubric,
+                                  tag_knowledge=bool(tag_knowledge))
     if res.get("dryRun"):
         click.echo(json.dumps({"dryRun": True, "planned": res["planned"],
                                "withRubric": bool(with_rubric),

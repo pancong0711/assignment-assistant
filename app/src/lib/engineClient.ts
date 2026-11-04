@@ -1776,7 +1776,9 @@ export async function startKbAiSolve(
     /** D133：同时生成「评阅要点 + 知识点」（带题型规则摘要，写入同一版本） */
     withRubric?: boolean
     /** D133：生成后直接置顶（默认**不**置顶——未确认的要点不该抢生效答案） */
-    pinRubric?: boolean },
+    pinRubric?: boolean
+    /** D152：把 AI 产出的知识点写回题库（走 apply_related，改前自动快照） */
+    tagKnowledge?: boolean },
 ): Promise<string> {
   const base = normalizeEngineAddr(engineAddr)
   const res = await fetch(engineUrlWithToken(base, '/kb/ai-solve', token), {
@@ -2120,6 +2122,31 @@ export async function restoreMaterialsFile(
 ): Promise<{ ok?: boolean; error?: string; to?: string }> {
   return runAtopiaTool(engineAddr, token,
                        { tool: 'materials.restore', args: { chap, file }, confirm }) as any
+}
+
+/* ========== D153：教师报告多选（班级 × 作业包 × tag） ========== */
+
+export async function fetchTeacherReportMulti(
+  base: string, token: string | undefined,
+  opts: { classDirs: string[]; packIds: string[]; tags?: string[] },
+): Promise<{ ok?: boolean; stat?: TeacherReportStat; markdown?: string
+             sources?: string[]; records?: number; error?: string; hint?: string }> {
+  const qs = new URLSearchParams({
+    classDirs: opts.classDirs.join(','), packIds: opts.packIds.join(','),
+  })
+  if (opts.tags?.length) qs.set('tags', opts.tags.join(','))
+  return (await getJson2(engineUrlWithToken(
+    normalizeEngineAddr(base), `/grade/teacher-report-multi?${qs.toString()}`, token))) as any
+}
+
+/** 列出 workspace 里所有班级目录及其有评阅结果的作业包（供多选）。 */
+export async function fetchWorkspaceClasses(
+  base: string, token: string | undefined,
+): Promise<{ ok?: boolean
+             classes?: Array<{ classDir: string; name: string; packs: string[] }>
+             error?: string }> {
+  return (await getJson2(engineUrlWithToken(
+    normalizeEngineAddr(base), '/workspace/classes', token))) as any
 }
 
 /* ========== D151：提示词模板（多类别） ========== */

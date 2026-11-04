@@ -2090,6 +2090,9 @@ class Handler(BaseHTTPRequestHandler):
                 args += ["--with-rubric"]
                 if payload.get("pinRubric") is True:
                     args += ["--pin-rubric"]
+            # D152：同时把知识点写回题库（CLI 侧 --tag-knowledge）
+            if payload.get("tagKnowledge") is True:
+                args += ["--tag-knowledge"]
             # D100-T3：AI 作答默认置顶（生效答案）；显式 pin=false 才保持"不抢原答案"。
             if payload.get("pin", True) is False:
                 args += ["--no-pin"]
@@ -3306,6 +3309,25 @@ class Handler(BaseHTTPRequestHandler):
                     out["error"] = f"AI 建议文件损坏：{exc}"
             self._json(out)
             return
+        elif u.path == "/workspace/classes":
+            # D153：列出 workspace 下的班级目录（供报告多选）
+            ws_ = Path(self.ws).resolve()
+            root = ws_ / "classes"
+            out = []
+            if root.is_dir():
+                for d in sorted(p for p in root.iterdir() if p.is_dir()):
+                    if d.name.startswith("."):
+                        continue
+                    grading = d / "grading"
+                    packs = []
+                    if grading.is_dir():
+                        packs = sorted(x.name for x in grading.iterdir()
+                                       if x.is_dir() and not x.name.startswith("_")
+                                       and (x / "evaluations").is_dir())
+                    out.append({"classDir": f"classes/{d.name}", "name": d.name,
+                                "packs": packs})
+            self._json({"ok": True, "classes": out})
+            return
         elif u.path == "/roster/grading-packs":
             # D149：列出该班级有评阅结果的作业包（每次作业 = 一列成绩）
             from .roster import grading_scores as _gs
@@ -3397,6 +3419,39 @@ class Handler(BaseHTTPRequestHandler):
                         "summaries": summaries,
                         "numericRanges": {k: list(v) for k, v in _rules._NUM_RANGES.items()},
                         "file": str(_rules.rules_path(ws_))})
+            return
+        elif u.path == "/grade/teacher-report-multi":
+            # D153：多选（班级 × 作业包 × tag）的教师报告，供「题库AI+」使用
+            # 路径：/grade/teacher-report-multi?classDirs=a,b&packIds=p1,p2&tags=x,y
+            from .grading import teacher_report as _trm
+            q = urllib.parse.parse_qs(u.query)
+            cds = [x for x in str((q.get("classDirs") or [""])[0]).split(",") if x.strip()]
+            pids = [x for x in str((q.get("packIds") or [""])[0]).split(",") if x.strip()]
+            tgs = [x for x in str((q.get("tags") or [""])[0]).split(",") if x.strip()]
+            if not cds or not pids:
+                self._json({"ok": False, "error": "classDirs 与 packIds 必填"}, 400)
+                return
+            ws_ = Path(self.ws).resolve()
+            try:
+                recs, srcs = _trm.collect_multi(ws_, cds, pids, tags=tgs or None)
+            except Exception as exc:  # noqa: BLE001
+                self._json({"ok": False, "error": str(exc)[:300]}, 500)
+                return
+            if not recs:
+                self._json({"ok": False, "error": "所选范围内没有评阅结果",
+                            "hint": "换一个作业包或班级试试", "sources": srcs}, 404)
+                return
+            try:
+                topics = _trm.load_topic_map(ws_)
+                stat = _trm.analyze(recs, topics=topics)
+                md = _trm.render_md(stat, title="／".join(srcs[:3])
+                                    + ("…" if len(srcs) > 3 else ""))
+            except Exception as exc:  # noqa: BLE001
+                self._json({"ok": False, "error": f"生成失败：{str(exc)[:200]}"}, 500)
+                return
+            self._json({"ok": True, "stat": stat, "markdown": md,
+                        "sources": srcs, "records": len(recs),
+                        "classDirs": cds, "packIds": pids, "tags": tgs})
             return
         elif u.path == "/grade/trend":
             # D135：跨多次作业的知识点趋势（只给教师）

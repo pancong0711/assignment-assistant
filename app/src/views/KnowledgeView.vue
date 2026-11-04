@@ -8,10 +8,14 @@
  */
 import { computed, onMounted, ref } from 'vue'
 import { useSettingsStore } from '../stores/settings'
+import KbAiSolvePanel from '../components/KbAiSolvePanel.vue'
+import TeacherReportCard from '../components/TeacherReportCard.vue'
+import TrendCard from '../components/TrendCard.vue'
 import { KB_KINDS, KB_KIND_LABELS, type KbKind } from '../lib/kb'
 import {
   PROMPT_CATEGORIES, PROMPT_CATEGORY_LABELS, fetchKbCatalog, fetchKnowledgeVocab,
-  fetchPromptTemplatesByCategory, generateRubricBatch, postPromptTemplateCategory,
+  fetchPromptTemplatesByCategory, fetchTeacherReportMulti, fetchWorkspaceClasses,
+  postPromptTemplateCategory,
   tagKnowledge, type KnowledgeTerm, type PromptCategory, type PromptTemplate,
 } from '../lib/engineClient'
 
@@ -44,7 +48,9 @@ async function loadChaps() {
   } catch { chaps.value = [] }
 }
 
-onMounted(async () => { await loadVocab(); await loadChaps(); await loadTemplates() })
+onMounted(async () => {
+  await loadVocab(); await loadChaps(); await loadTemplates(); await loadClasses()
+})
 
 /* ---------- ④ 提示词模板（D151：5 类 system prompt 可改/可存/可删） ---------- */
 const tplCat = ref<PromptCategory>('evaluate')
@@ -57,6 +63,58 @@ const tplMsg = ref('')
 
 const tplCurrent = computed(() => tplItems.value.find((t) => t.id === tplSel.value) || null)
 const tplIsBuiltin = computed(() => !!tplCurrent.value?.builtin)
+
+/* ---------- ⑤ 教师报告（D153：班级 / 作业包 / tag 多选） ---------- */
+const wClasses = ref<Array<{ classDir: string; name: string; packs: string[] }>>([])
+const selClasses = ref<string[]>([])
+const selPacks = ref<string[]>([])
+const selTags = ref<string>('')
+const repBusy = ref(false)
+const repStat = ref<any>(null)
+const repSources = ref<string[]>([])
+const repMsg = ref('')
+
+/** 所有可选作业包（按所选班级取并集）。 */
+const packOptions = computed(() => {
+  const out = new Set<string>()
+  for (const c of wClasses.value) {
+    if (selClasses.value.length && !selClasses.value.includes(c.classDir)) continue
+    for (const p of c.packs || []) out.add(p)
+  }
+  return [...out].sort()
+})
+
+async function loadClasses() {
+  try {
+    const r = await fetchWorkspaceClasses(settings.engineUrl, settings.engineToken)
+    wClasses.value = r?.classes || []
+  } catch { wClasses.value = [] }
+}
+
+async function genReport() {
+  if (!selClasses.value.length || !selPacks.value.length) {
+    repMsg.value = '请至少勾选一个班级和一个作业包'
+    return
+  }
+  repBusy.value = true
+  repMsg.value = '正在汇总…'
+  try {
+    const r = await fetchTeacherReportMulti(settings.engineUrl, settings.engineToken, {
+      classDirs: selClasses.value, packIds: selPacks.value,
+      tags: selTags.value.split(',').map((x) => x.trim()).filter(Boolean),
+    })
+    if (!r?.ok) {
+      repStat.value = null
+      repMsg.value = `❌ ${r?.error || '生成失败'}${r?.hint ? `（${r.hint}）` : ''}`
+      return
+    }
+    repStat.value = r.stat || null
+    repSources.value = r.sources || []
+    repMsg.value = `✅ 已汇总 ${r.records} 份评阅（${repSources.value.length} 个作业包×班级）`
+  } catch (e) {
+    repMsg.value = `生成失败：${String((e as Error).message || e)}`
+  } finally { repBusy.value = false }
+}
 
 async function loadTemplates() {
   try {
@@ -175,49 +233,6 @@ async function doTagApply() {
   finally { busy.value = '' }
 }
 
-/* ---------- ② 题库 AI 作答（生成要点） ---------- */
-const rubKind = ref<KbKind>('problems')
-const rubChap = ref('')
-const rubForce = ref(false)
-const rubPreview = ref<any[]>([])
-
-async function doRubricPreview() {
-  busy.value = 'rub'
-  msg.value = ''
-  rubPreview.value = []
-  try {
-    const r = await generateRubricBatch(settings.engineUrl, settings.engineToken, {
-      kind: rubKind.value, chap: rubChap.value || undefined, apply: false,
-    })
-    if (r?.skipped) {
-      msg.value = `⚠️ ${r.reason || '按口径不生成'}\n`
-        + (r.howTo ? `\n怎么做：\n${r.howTo.join('\n')}` : '')
-      return
-    }
-    if (!r?.ok) { msg.value = `❌ ${r?.error || '预览失败'}`; return }
-    rubPreview.value = (r.preview || []) as any[]
-    msg.value = `预览完成：${rubPreview.value.length} 题（尚未写入）`
-  } catch (e) { msg.value = `预览失败：${String((e as Error).message || e)}` }
-  finally { busy.value = '' }
-}
-
-async function doRubricApply() {
-  if (!window.confirm('将把「参考解答 + 评阅要点」写入答案版本库（**默认不置顶**）。确认？')) return
-  busy.value = 'rub'
-  msg.value = '正在生成（可能需要几分钟）…'
-  try {
-    const r = await generateRubricBatch(settings.engineUrl, settings.engineToken, {
-      kind: rubKind.value, chap: rubChap.value || undefined, apply: true,
-      force: rubForce.value,
-    })
-    if (r?.skipped) { msg.value = `⚠️ ${r.reason || '按口径不生成'}`; return }
-    const n = (r?.written || []).length
-    msg.value = r?.ok ? `✅ 已写入 ${n} 题的要点（未置顶，需你核对后置顶）`
-      : `❌ ${r?.error || '生成失败'}`
-    rubPreview.value = []
-  } catch (e) { msg.value = `生成失败：${String((e as Error).message || e)}` }
-  finally { busy.value = '' }
-}
 </script>
 
 <template>
@@ -271,39 +286,14 @@ async function doRubricApply() {
         </template>
       </section>
 
-      <!-- ② 要点 -->
+      <!-- ② 题库 AI 作答（D152：⑦ 区整体平移过来，能力与批阅页一致） -->
       <section class="card">
-        <h3>② 题库 AI 作答（参考解答 + 评阅要点）</h3>
+        <h3>② 题库 AI 作答（参考解答 + 评阅要点 + 知识点）</h3>
         <p class="hint">
-          一次产出「参考解答 + 评阅要点 + 知识点」，写入答案版本库；
-          <b>默认不置顶</b>（你核对后再置顶才生效）。
+          一次可完成三件事：参考解答 / 评阅要点 / 知识点标注。
+          默认<b>不置顶</b>（你核对后再置顶才生效）。
         </p>
-        <div class="row">
-          <label class="field">题型
-            <select v-model="rubKind">
-              <option v-for="k in KB_KINDS" :key="k" :value="k">{{ KB_KIND_LABELS[k] || k }}</option>
-            </select>
-          </label>
-          <label class="field">章节
-            <select v-model="rubChap">
-              <option value="">（全部章节）</option>
-              <option v-for="c in chaps" :key="c" :value="c">{{ c }}</option>
-            </select>
-          </label>
-          <label class="field"><input v-model="rubForce" type="checkbox" /> 强制（copy/summary）</label>
-        </div>
-        <p style="margin:6px 0">
-          <button class="btn" :disabled="busy !== ''" @click="doRubricPreview">
-            {{ busy === 'rub' ? '处理中…' : '① 预览' }}
-          </button>
-          <button class="btn primary" :disabled="busy !== ''" @click="doRubricApply">
-            ② 生成并写入
-          </button>
-        </p>
-        <details v-if="rubPreview.length" open>
-          <summary class="hint" style="cursor:pointer">预览 {{ rubPreview.length }} 题</summary>
-          <pre class="md">{{ rubPreview.slice(0, 3).map((x) => x.text).join('\n\n---\n\n') }}</pre>
-        </details>
+        <KbAiSolvePanel :engine-addr="settings.engineUrl" :token="settings.engineToken" />
       </section>
 
       <!-- ④ 提示词模板（D151） -->
@@ -344,6 +334,69 @@ async function doRubricApply() {
           <button class="btn" :disabled="tplBusy || !tplSel || tplIsBuiltin" @click="deleteTpl">🗑 删除</button>
           <span v-if="tplMsg" class="hint" style="margin-left:8px">{{ tplMsg }}</span>
         </p>
+      </section>
+
+      <!-- ⑤ 教师报告（D153：多选班级/作业包/tag） -->
+      <section class="card">
+        <h3>⑤ 教师总结报告（可多选班级 / 作业包 / tag）</h3>
+        <p class="hint">
+          勾选多个班级与作业包即可看**宏观**情况；tag 留空 = 全部学生。
+        </p>
+        <p v-if="!wClasses.length" class="hint">
+          （还没有班级目录：先在「AI 辅助批阅」跑一次批阅。）
+        </p>
+        <template v-else>
+          <div class="row">
+            <span class="hint" style="margin:0">班级：</span>
+            <label v-for="c in wClasses" :key="c.classDir" class="field">
+              <input v-model="selClasses" type="checkbox" :value="c.classDir" />
+              {{ c.name }}（{{ (c.packs || []).length }} 个作业包）
+            </label>
+          </div>
+          <div class="row">
+            <span class="hint" style="margin:0">作业包：</span>
+            <label v-for="p in packOptions" :key="p" class="field">
+              <input v-model="selPacks" type="checkbox" :value="p" />
+              {{ p }}
+            </label>
+            <span v-if="!packOptions.length" class="hint">（所选班级还没有评阅结果）</span>
+          </div>
+          <div class="row">
+            <label class="field">tag（逗号分隔，留空=全部）
+              <input v-model="selTags" placeholder="top,middle" style="width:200px" />
+            </label>
+            <button class="btn primary" :disabled="repBusy" @click="genReport">
+              {{ repBusy ? '汇总中…' : '生成报告' }}
+            </button>
+            <span v-if="repMsg" class="hint" style="margin:0">{{ repMsg }}</span>
+          </div>
+          <p v-if="repSources.length" class="hint" style="margin:2px 0">
+            本次汇总：{{ repSources.join('；') }}
+          </p>
+          <div v-if="repStat" style="margin-top:8px">
+            <table class="tbl">
+              <thead><tr><th>指标</th><th>值</th></tr></thead>
+              <tbody>
+                <tr><td>已评阅</td><td>{{ repStat.students }} 人</td></tr>
+                <tr><td>平均分</td><td>{{ repStat.avg }}</td></tr>
+                <tr><td>最高 / 最低</td><td>{{ repStat.max }} / {{ repStat.min }}</td></tr>
+                <tr><td>易错知识点（前 5）</td>
+                  <td>{{ (repStat.knowledge_errors || []).slice(0, 5)
+                    .map((x: any) => `${x.term}(${x.students}人)`).join('、') || '—' }}</td></tr>
+              </tbody>
+            </table>
+          </div>
+        </template>
+
+        <!-- 单次作业的详细报告卡 / 跨作业趋势卡（D153：从批阅页搬来） -->
+        <template v-if="repSources.length === 1 && selClasses.length">
+          <TeacherReportCard :engine-addr="settings.engineUrl" :token="settings.engineToken"
+                             :class-dir="selClasses[0]!" :task-id="selPacks[0]!"
+                             :reload-key="0" />
+        </template>
+        <TrendCard v-if="selClasses.length === 1"
+                   :engine-addr="settings.engineUrl" :token="settings.engineToken"
+                   :class-dir="selClasses[0]!" :reload-key="0" />
       </section>
 
       <!-- ③ 词表 -->

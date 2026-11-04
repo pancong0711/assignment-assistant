@@ -81,11 +81,15 @@ def _client(ws: Path, model: str = ""):
 
 def solve_targets(ws: Path, targets: list[dict], *, model: str = "", apply: bool = False,
                   pin: bool = True, dry_run: bool = True, concurrency: int = 3,
-                  requirement: str = "", with_rubric: bool = False) -> dict:
+                  requirement: str = "", with_rubric: bool = False,
+                  tag_knowledge: bool = False) -> dict:
     """对 targets AI 作答（D98：并发）；apply=False 只预览。返回 {ok, planned, written, results[]}。
 
     D100-T3：`pin=True`（默认）= 作答后置顶为新生效答案（"AI 生成内容默认置顶"）；
     传 False 则只追加版本（等价旧行为，不抢原答案）。
+
+    D152：`tag_knowledge=True`（需同时 with_rubric）→ 把 AI 产出的 `knowledge[]`
+    汇总后写回题库（`rubric.apply_related`，走 `kb/knowledge/`，改前自动快照）。
 
     D133：`with_rubric=True` → 一次产出「参考解答 + 评阅要点 + 知识点」，
     写入答案版本库（走 `rubric.build_rubric_prompt`，**带该题型规则摘要**）。
@@ -145,7 +149,9 @@ def solve_targets(ws: Path, targets: list[dict], *, model: str = "", apply: bool
                             "rubricPoints": points, "pinned": bool(pin),
                             "error": r.get("error")}
                 return {"id": p["id"], "ok": True, "chars": len(text),
-                        "model": used_model, "withRubric": True, "rubricPoints": points}
+                        "model": used_model, "withRubric": True, "rubricPoints": points,
+                        "knowledge": [str(x) for x in (rub.get("knowledge") or [])],
+                        "kb": p.get("kb", ""), "chap": p.get("chap", "")}
             # D151：作答 system prompt 可用模板覆盖（不选模板 = 内置）
             from ..files.prompts import system_prompt as _sp
             _sys = _sp(ws, "solve", SOLVE_SYSTEM_PROMPT)
@@ -176,6 +182,30 @@ def solve_targets(ws: Path, targets: list[dict], *, model: str = "", apply: bool
             item["error"] = it.get("error") or "failed"
         results.append(item)
     written = sum(1 for r in results if r.get("ok")) if apply else 0
+    # D152：把 AI 产出的知识点写回题库（仅当 with_rubric + apply + tag_knowledge）
+    knowledge_written = None
+    if with_rubric and apply and tag_knowledge:
+        try:
+            from . import rubric as RB
+            ups = []
+            for r in results:
+                if not r.get("ok"):
+                    continue
+                terms = [str(x).strip() for x in (r.get("knowledge") or [])
+                         if str(x).strip()]
+                if not terms:
+                    continue
+                ups.append({"kb": str(r.get("kb") or ""),
+                            "chap": str(r.get("chap") or ""),
+                            "qid": str(r.get("id") or ""),
+                            "related": "，".join(terms),
+                            "meta": {"source": "ai", "ai_suggested": "，".join(terms),
+                                     "pinned_by": ""}})
+            knowledge_written = RB.apply_related(ws, ups) if ups else {"ok": True, "written": 0}
+        except Exception as exc:  # noqa: BLE001 —— 标注失败不影响作答结果
+            logger.warning(f"[AI 作答] 知识点写回失败：{exc}")
+            knowledge_written = {"ok": False, "error": str(exc)[:200]}
     return {"ok": True, "model": used_model, "planned": len(plans),
             "written": written, "results": results, "concurrency": concurrency,
-            "failed": report.get("failed", 0)}
+            "failed": report.get("failed", 0),
+            "knowledgeWritten": knowledge_written}

@@ -52,6 +52,53 @@ def load_evaluations(eval_dir) -> list[dict]:
     return out
 
 
+def collect_multi(ws, class_dirs: "list[str]", pack_ids: "list[str]",
+                  tags: "list[str] | None" = None) -> "tuple[list[dict], list[str]]":
+    """D153：从**多个班级 × 多个作业包**收集评阅结果（教师报告多选）。
+
+    - `tags`：按名单 join 过滤（**评阅结果里没有 tag 字段**）；
+    - 返回 `(records, sources)`，`sources` 形如 `["classes/化工25/pack1", ...]`
+      供前端回显"这次报告汇总了哪几份作业"。
+    """
+    from pathlib import Path as _P
+    ws_p = _P(ws).resolve()
+    records: list[dict] = []
+    sources: list[str] = []
+    want_tags = {str(t).strip() for t in (tags or []) if str(t).strip()}
+    for cd in (class_dirs or []):
+        cd_s = str(cd or "").strip().strip("/")
+        if not cd_s:
+            continue
+        # tag 过滤：从名单读 姓名 → tag
+        name_tag: dict[str, str] = {}
+        if want_tags:
+            try:
+                from ..files import roster_io
+                ros = roster_io.read_roster_file(ws_p, cd_s) or {}
+                for st in (ros.get("students") or []):
+                    nm = str(st.get("name") or "").strip()
+                    if nm:
+                        name_tag[nm] = str(st.get("tag") or st.get("group") or "").strip()
+            except Exception as exc:  # noqa: BLE001
+                logger.warning(f"[教师报告] 读取名单失败（不按 tag 过滤）：{exc}")
+        for pid in (pack_ids or []):
+            pid_s = str(pid or "").strip()
+            if not pid_s:
+                continue
+            ev = ws_p / cd_s / "grading" / pid_s / "evaluations"
+            if not ev.is_dir():
+                continue
+            got = load_evaluations(ev)
+            if want_tags and name_tag:
+                got = [r for r in got
+                       if name_tag.get(str(r.get("student") or "")) in want_tags]
+            for r in got:
+                r.setdefault("_sourcePack", f"{cd_s}/{pid_s}")
+            records.extend(got)
+            sources.append(f"{cd_s}/{pid_s}")
+    return records, sources
+
+
 # ---------------- 分析 ----------------
 def _norm(term: str) -> str:
     return str(term or "").strip()

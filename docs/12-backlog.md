@@ -980,6 +980,27 @@ rainclass 67/67，PWA↔engine 全等，仅末位浮点四舍五入噪声）。
 
 ---
 
+## D161 · 翻译题随机种子（2026-10-31 完成）
+
+> 需求单：`docs/104-D161-translation-seed.md`。
+
+- 问题：新建作业纸时**从不写 `random_seed`** → 永远取 0 → 每次抽到同一道翻译题；
+  CLI 也没有 `--seed`。
+- ✅ PWA `emptyTaskpad()` 写入时间戳种子；作业纸设计页加「🎲 换一题」。
+- ✅ CLI `paper.task.ensure_random_seed()` + `sheet make --seed N | --reseed`。
+- 口径：**只在"新建/重抽"时随机，一旦记下就固定**（同份作业纸重出仍是同一题）。
+
+---
+
+## D152/D153 完成（同日）
+
+- ✅ **D152**：⑦ 区抽成 `KbAiSolvePanel.vue` 整体搬入「题库AI+」；
+  新增「同时标注知识点到题库」（`--tag-knowledge` → `apply_related`）；批阅页留指引。
+- ✅ **D153**：教师报告支持**班级/作业包/tag 多选**（`collect_multi` + 名单 join tag）；
+  报告卡与趋势卡搬入题库AI+，批阅页留指引。
+
+---
+
 ## D147 · Atopia L2 确认精确到「工具 + 参数」（2026-10-31 完成，安全修复）
 
 > 需求单：`docs/94-D147-confirm-scope.md`。

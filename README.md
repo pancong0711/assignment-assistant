@@ -64,6 +64,7 @@
 - `docs/101-D154-per-student-button-feedback.md` — **D154 逐生审核按钮反馈修复**
 - `docs/102-D155-materials-feature-name.md` — **D155 课堂资料按特征名管理 + 上传按类型归档**
 - `docs/103-D156-D160-grading-quality.md` — **D156–D160 批阅正确性与质量（落错人/结果不变/太简略/转写 schema）**
+- `docs/104-D161-translation-seed.md` — **D161 翻译题随机种子（新建随机 / 落盘 / 可重抽）**
 - `docs/85-D135-knowledge-hierarchy.md` — **D135 待决：知识点层级（上位/下位概念）方案与取舍**
 - `docs/34-D82-kb-read-order-image-upload-batch.md` — **D82 kb 多文件读取/题目排序/插图参数/草稿修复/上传试跑/batch**
 - `docs/16-xuexitong-integration.md` — **阶段6 学习通整合任务需求单**（登录/读取/下载/上传/发布）

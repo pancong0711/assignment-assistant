@@ -1,7 +1,7 @@
 # D152 需求单：「题库AI+」整合题库 AI 作答（整体平移）+ 知识点标注并入
 
 > 日期：2026-10-31
-> 状态：**部分实施**（改名+模板已做；⑦ 区整体平移 / 报告多选 未做）
+> 状态：**已完成**
 > 关联：`docs/98-D151`、`docs/78-D130`、`docs/97-D150`、`docs/12`
 
 ## 0. 教师要求
@@ -71,8 +71,23 @@ PWA 流程：勾选 → 先 dry-run 预览"将改哪 N 题的 related" → 教�
 4. 旧数据（related 在 xlsx）仍能正确读出；
 5. pytest / build / selfcheck / 脱敏全绿。
 
-## 5. 实施记录
-（待回填）
+## 5. 实施记录（2026-10-31 完成）
+
+- 抽出 **`KbAiSolvePanel.vue`**（⑦ 区整体搬迁，不是复制）：题号多选 / 模型 /
+  置顶 / 写回 / 同时生成要点 / 提示词模板 / 作答要求 / 题目预览 / 索引状态；
+- 批阅页 ⑦ 区**移除**，留一行指引（消除双入口）；
+- 选项卡改名 **「题库AI+」**；
+- **新增勾选**「同时标注知识点到题库」：`kb ai-solve --tag-knowledge`
+  → `solve_targets(tag_knowledge=True)` → `rubric.apply_related()`
+  （写 `kb/knowledge/<scope>.json`，改前自动快照）；
+- `related` 仍以题库为权威（sidecar 版本记录），**兼容旧数据**。
 
 ## 6. 验收对照
-（待回填）
+
+| # | 标准 | 结果 |
+|---|---|---|
+| 1 | 题库AI+ 具备 ⑦ 区全部能力 | ✅ `KbAiSolvePanel.vue` |
+| 2 | 批阅页无 ⑦ 区 + 指引 | ✅ |
+| 3 | 勾选标注 → 写回知识点 | ✅ `tag_knowledge` → `apply_related` |
+| 4 | 旧数据兼容 | ✅ `apply_related` 保留 xlsx 回读 |
+| 5 | pytest / build / selfcheck | ✅ 1272 passed · 0 error · 33/33 |

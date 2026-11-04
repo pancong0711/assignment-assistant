@@ -7,26 +7,20 @@
  */
 import { computed, nextTick, onMounted, ref, watch } from 'vue'
 import { useTaskpadStore } from '../stores/taskpad'
-import { useKbStore } from '../stores/kb'
 import {
   extractJobError, fetchLlmConfig, fetchXxtClassMap, fetchXxtGradeDrafts, fetchXxtLoginJob,
   fetchXxtReviewIndex, fetchXxtReviewStudents, postLlmProvider, postXxtClassMap,
-  startXxtGradeAi, startXxtGradeUpload,
-  startKbAiSolve, fetchKbCatalog, renderReportsFromDrafts,
-  fetchPromptTemplates, mutatePromptTemplate, testLlmStages, type PromptTemplate,
+  startXxtGradeAi, startXxtGradeUpload, renderReportsFromDrafts, testLlmStages,
 } from '../lib/engineClient'
-import { normalizePromptId, suggestPromptId, PROMPT_ID_HINT } from '../lib/promptId'
+
+import { usePackStore } from '../stores/packs'
+import { useRosterStore } from '../stores/roster'
 
 const props = defineProps<{ engineAddr: string; token?: string }>()
 const taskpadStore = useTaskpadStore()
-const kbStore = useKbStore()
-import { usePackStore } from '../stores/packs'
-import { useRosterStore } from '../stores/roster'
 import PlaygroundPanel from './PlaygroundPanel.vue'
 import StudentReviewModal from './StudentReviewModal.vue'
 import GradingRulesCard from './GradingRulesCard.vue'
-import TeacherReportCard from './TeacherReportCard.vue'
-import TrendCard from './TrendCard.vue'
 const packStore = usePackStore()
 const rosterStore = useRosterStore()
 
@@ -41,254 +35,6 @@ const allowPartial = ref(false)
 const busy = ref(false)
 const progress = ref('')
 let pollTimer: number | undefined
-
-/* ⑦ 题库 AI 作答（D89-N5/D92-R3）：对题库题目生成参考答案，不覆盖、可多版本 */
-const kbCatalog = ref<{ kinds?: any[] }>({ kinds: [] })
-const kbKind = ref(''); const kbChap = ref(''); const kbIdsSel = ref<string[]>([]); const kbModel = ref('')
-const kbCustomModel = ref(false)
-const kbKinds = computed<string[]>(() => (kbCatalog.value.kinds || []).map((k: any) => k.kind))
-const kbChapters = computed<string[]>(() => {
-  const k = (kbCatalog.value.kinds || []).find((x: any) => x.kind === kbKind.value)
-  return (k?.chapters || []).map((c: any) => c.chap)
-})
-const kbIdList = computed<{ id: string; content?: string }[]>(() => {
-  const k = (kbCatalog.value.kinds || []).find((x: any) => x.kind === kbKind.value)
-  const c = (k?.chapters || []).find((x: any) => x.chap === kbChap.value)
-  return c?.ids || []
-})
-/** 所选题号的内容预览（单行拼接，可横向滚动）。 */
-const kbPreview = computed(() => {
-  const want = new Set(kbIdsSel.value)
-  const picked = kbIdList.value.filter((i) => !want.size || want.has(i.id))
-  return picked.map((i) => `${i.id}: ${i.content ?? ''}`).join('   ｜   ')
-})
-async function loadKbCatalog() {
-  const r = await fetchKbCatalog(props.engineAddr, props.token)
-  kbCatalog.value = { kinds: r.kinds || [] }
-  if (!kbKind.value && kbKinds.value.length) kbKind.value = kbKinds.value.includes('problems') ? 'problems' : kbKinds.value[0]
-}
-// 切换题库/章节时清空已选题号
-watch(kbKind, () => { kbChap.value = ''; kbIdsSel.value = [] })
-watch(kbChap, () => { kbIdsSel.value = [] })
-// D100-T3/T8：AI 作答默认置顶（生效答案）；取消勾选 = 只追加版本不抢原答案
-const kbPin = ref(true); const kbApply = ref(false)
-/* D133：同时生成「评阅要点 + 知识点」。
- * 勾选后**默认不置顶**（要点未经教师确认不该抢生效答案，D130 验收 5），
- * 教师可再显式勾「同时置顶」；不勾则只生成解答，行为与旧版一致。 */
-const kbWithRubric = ref(false); const kbPinRubric = ref(false)
-// D104：教师额外作答要求（可选）—— 例如「请画出示意图」「输出为 HTML 文档」
-const kbRequirement = ref('')
-/* D108：提示词模板库（保存/默认/删除；存储于 <ws>/prompts/ai-solve/，CLI 可复用） */
-const promptTemplates = ref<PromptTemplate[]>([])
-const promptSel = ref('')
-const promptBusy = ref(false)
-const promptMsg = ref('')
-const promptIsBuiltin = computed(() =>
-  !!promptTemplates.value.find((t) => t.id === promptSel.value)?.builtin)
-const promptIsDefault = computed(() =>
-  !!promptTemplates.value.find((t) => t.id === promptSel.value)?.default)
-
-async function loadPromptTemplates(autoPickDefault = true) {
-  const r = await fetchPromptTemplates(props.engineAddr, props.token)
-  promptTemplates.value = r.items || []
-  if (!promptTemplates.value.length) {
-    // 引擎离线时列表为空：明确提示，否则用户以为"没有模板可选"
-    promptMsg.value = '模板库读取失败（引擎离线或未启动？）'
-    return
-  }
-  if (autoPickDefault) {
-    const def = r.default || promptTemplates.value.find((t) => t.default)?.id || ''
-    if (def) {
-      promptSel.value = def
-      const t = promptTemplates.value.find((x) => x.id === def)
-      if (t) kbRequirement.value = t.text
-    }
-  }
-}
-/** 切换模板 → 把模板文本载入文本框（可继续临时修改）。 */
-function pickPromptTemplate() {
-  const t = promptTemplates.value.find((x) => x.id === promptSel.value)
-  if (t) {
-    kbRequirement.value = t.text
-    promptMsg.value = `已载入「${t.name}」${t.builtin ? '（内置）' : ''}`
-  }
-}
-/* D108-FIX：模板 id 归一化/建议值逻辑见 lib/promptId.ts（与引擎 _ID_RE 一致，可单测）。 */
-/** 弹窗询问新模板 id：预填建议值，归一化后校验；返回 null 表示取消。 */
-function askPromptId(name: string): string | null {
-  const raw = window.prompt(
-    `新模板 id（${PROMPT_ID_HINT}）\n同时用作文件名，保存后不可改。`,
-    suggestPromptId(name, promptTemplates.value.map((t) => t.id)),
-  )
-  if (raw === null) return null
-  const id = normalizePromptId(raw)
-  if (!id) {
-    promptMsg.value = `模板 id 不合法：${raw.trim() || '（空）'}（${PROMPT_ID_HINT}）`
-    return null
-  }
-  return id
-}
-
-/** 保存：覆盖当前模板（内置也可改内容）；无选中则新建。 */
-async function savePromptTemplate() {
-  const text = kbRequirement.value.trim()
-  if (!text) { promptMsg.value = '内容为空，未保存'; return }
-  const cur = promptTemplates.value.find((x) => x.id === promptSel.value)
-  const isNew = !cur
-  if (isNew) {
-    const name = window.prompt('模板名称', '我的作答要求')
-    if (name === null) return
-    const id = askPromptId(name)
-    if (!id) return
-    await doSavePrompt(id, name.trim() || id, text, true)
-    return
-  }
-  const id = cur!.id
-  const name = cur!.name
-  await doSavePrompt(id, name, text, false)
-}
-
-/** 统一的保存动作：写库 → 刷新列表 → 选中该模板。 */
-async function doSavePrompt(id: string, name: string, text: string, isNew: boolean) {
-  promptBusy.value = true
-  try {
-    const r = await mutatePromptTemplate(props.engineAddr, props.token, {
-      action: 'save', id, name, text,
-    })
-    if (!r.ok) { promptMsg.value = r.error || '保存失败（引擎离线？）'; return }
-    promptTemplates.value = r.items || []
-    promptSel.value = id
-    promptMsg.value = isNew ? `已新建模板「${name}」` : `已保存「${name}」`
-  } catch (e) {
-    promptMsg.value = `保存失败：${String((e as Error).message || e)}`
-  } finally {
-    promptBusy.value = false
-  }
-}
-/** 另存为新模板（内置模板编辑后想保留原版时用）。 */
-async function savePromptAsNew() {
-  const text = kbRequirement.value.trim()
-  if (!text) { promptMsg.value = '内容为空，未保存'; return }
-  const curName = promptTemplates.value.find((x) => x.id === promptSel.value)?.name || ''
-  const name = window.prompt('新模板名称', curName ? `${curName}（副本）` : '')
-  if (name === null) return
-  const id = askPromptId(name)
-  if (!id) return
-  // 另存为不应静默覆盖已有模板（save 是 upsert 语义）
-  if (promptTemplates.value.some((t) => t.id === id)) {
-    promptMsg.value = `模板 id「${id}」已存在，请换一个（另存为不会覆盖已有模板）`
-    return
-  }
-  promptBusy.value = true
-  try {
-    const r = await mutatePromptTemplate(props.engineAddr, props.token,
-      { action: 'save', id, name: name.trim() || id, text })
-    if (!r.ok) { promptMsg.value = r.error || '保存失败'; return }
-    promptTemplates.value = r.items || []
-    promptSel.value = id
-    promptMsg.value = `已另存为新模板「${name.trim() || id}」`
-  } catch (e) {
-    promptMsg.value = `另存失败：${String((e as Error).message || e)}`
-  } finally {
-    promptBusy.value = false
-  }
-}
-async function deletePromptTemplate() {
-  if (!promptSel.value) return
-  if (promptIsBuiltin.value) { promptMsg.value = '内置模板不可删除（可「另存为新模板」后编辑）'; return }
-  if (!window.confirm(`删除模板「${promptSel.value}」？`)) return
-  promptBusy.value = true
-  const r = await mutatePromptTemplate(props.engineAddr, props.token,
-    { action: 'delete', id: promptSel.value })
-  promptBusy.value = false
-  if (!r.ok) { promptMsg.value = r.error || '删除失败'; return }
-  promptTemplates.value = r.items || []
-  promptSel.value = r.default || ''
-  const t = promptTemplates.value.find((x) => x.id === promptSel.value)
-  kbRequirement.value = t ? t.text : ''
-  promptMsg.value = '已删除'
-}
-async function setPromptDefault() {
-  if (!promptSel.value) return
-  promptBusy.value = true
-  const r = await mutatePromptTemplate(props.engineAddr, props.token,
-    { action: 'set_default', id: promptSel.value })
-  promptBusy.value = false
-  if (!r.ok) { promptMsg.value = r.error || '设置默认失败'; return }
-  promptTemplates.value = r.items || []
-  promptMsg.value = `已把「${promptSel.value}」设为默认模板`
-}
-const kbSolveMsg = ref('')
-const kbSolving = ref(false)
-async function solveByKb() {
-  const ids = [...kbIdsSel.value]
-  // D110：空选择不再被静默当成"整章/整库"。范围越界必须先显式确认，
-  // 否则用户以为只答一两题，实际把整库参考答案都刷新了（且是置顶生效答案）。
-  if (!ids.length) {
-    if (!kbChap.value) {
-      if (!window.confirm(
-        `未选择章节，也未勾选题号 → 将对 **整个「${kbKind.value}」题库** 作答`
-        + (kbApply.value ? '（并写回/置顶生效答案）' : '（dry-run 预览）') + '。\n'
-        + '题量可能很大且耗时长。确定继续？',
-      )) return
-    } else {
-      const n = kbIdList.value.length
-      if (!window.confirm(
-        `未勾选题号 → 将对整章「${kbChap.value}」（${n} 题）作答`
-        + (kbApply.value ? '（并写回/置顶生效答案）' : '（dry-run 预览）') + '。\n确定继续？',
-      )) return
-    }
-  }
-  kbSolving.value = true; kbSolveMsg.value = '正在启动题库 AI 作答……'
-  try {
-    const jobId = await startKbAiSolve(props.engineAddr, props.token, {
-      kb: kbKind.value, chap: kbChap.value, ids, model: kbModel.value,
-      pin: kbPin.value, apply: kbApply.value,
-      withRubric: kbWithRubric.value,
-      pinRubric: kbWithRubric.value && kbPinRubric.value,
-      // 真正的"整库"仅在显式确认后下发
-      all: !ids.length && !kbChap.value,
-      requirement: kbRequirement.value.trim(),
-      requirementTemplate: promptSel.value,   // D108：模板优先于单次输入
-    })
-    const tick = async () => {
-      try {
-        const job = await fetchXxtLoginJob(props.engineAddr, props.token, jobId)
-        const lines = job.lines || []
-        kbSolveMsg.value = (lines.slice(-1)[0] || '进行中…').slice(-220)
-        if (job.status === 'running') { window.setTimeout(tick, 2000); return }
-        // D139：先看**失败条数**——此前无论成败都显示"作答并写回完成"，
-        // 失败原因又被 `slice(-2)` 截掉，教师只能看到 "failed": 1，无从排查。
-        const tail = lines.slice(-6).join('\n')
-        const failedN = /"failed"\s*:\s*(\d+)/.exec(tail)?.[1]
-        const errs = [...tail.matchAll(/"error"\s*:\s*"([^"]{1,300})"/g)]
-          .map((m) => m[1]).filter(Boolean)
-        if (kbApply.value) {
-          // D100-T8：作答写回版本库 → 刷新生效答案索引（题库表格/作业纸预览立即跟随）
-          await kbStore.bumpSolutions()
-          const pinDesc = kbWithRubric.value
-            ? (kbPinRubric.value ? '已置顶（含要点）' : '未置顶（要点待你确认后再置顶）')
-            : (kbPin.value ? '已置顶为生效答案' : '未置顶，仅追加版本')
-          if (failedN && failedN !== '0') {
-            kbSolveMsg.value = `❌ 有 ${failedN} 题作答失败（未写回）`
-              + (errs.length ? `：${[...new Set(errs)].slice(0, 3).join('；')}` : '')
-              + '　—— 已成功的题已写回；失败题可重试或换模型'
-            return
-          }
-          kbSolveMsg.value = `✅ 作答并写回完成（${pinDesc}）：`
-            + (lines.slice(-2).join(' ') || '')
-          return
-        }
-        kbSolveMsg.value = 'dry-run 预览完成：' + (lines.slice(-2).join(' ') || '')
-      } catch (e) { kbSolveMsg.value = extractJobError(String(e)) || String(e) }
-    }
-    tick()
-  } catch (e) {
-    kbSolveMsg.value = String((e as Error).message || e)
-  } finally {
-    kbSolving.value = false
-  }
-}
 
 /* ① LLM 设置 */
 const llmConfig = ref<{ providers?: any[]; stages?: Record<string, any>; default_base_url?: string }>({})
@@ -977,8 +723,6 @@ onMounted(async () => {
   await loadWorks()
   // D117：自动选中的作业同样要拉学生/草稿（否则「逐生审核」空白）
   if (workKey.value) void loadStudents()
-  loadKbCatalog()
-  void loadPromptTemplates()
 })
 </script>
 
@@ -1310,14 +1054,11 @@ onMounted(async () => {
     <GradingRulesCard :engine-addr="props.engineAddr" :token="props.token"
                       @notify="(m) => { progress = m }" />
 
-    <!-- D126-B：教师总结报告（易错知识点 + 共现矩阵 + 得分率；只给教师） -->
-    <TeacherReportCard :engine-addr="props.engineAddr" :token="props.token"
-                       :class-dir="curWorkDir" :task-id="packId || padId"
-                       :reload-key="reportReloadKey" />
-
-    <!-- D135：跨作业知识点趋势（同一知识点是否反复出错；只给教师） -->
-    <TrendCard :engine-addr="props.engineAddr" :token="props.token"
-               :class-dir="curWorkDir" :reload-key="reportReloadKey" />
+    <!-- D153：教师总结报告 + 跨作业趋势已搬到「题库AI+」选项卡（支持多选班级/作业包/tag） -->
+    <p class="hint" style="margin-top:12px">
+      📊 教师总结报告与知识点趋势已移至顶部 <b>「题库AI+」</b> 选项卡 ——
+      那里可以<b>多选班级 / 作业包 / tag</b>，看更宏观的情况。
+    </p>
 
     <!-- D140：Atopia 已独立为顶层选项卡，这里只留指路提示（避免双入口） -->
     <p class="hint" style="margin-top:12px">
@@ -1326,97 +1067,12 @@ onMounted(async () => {
     </p>
   </div>
 
-    <h3 style="margin-top:14px">⑦ 题库 AI 作答（对题目生成参考答案；不覆盖、可多版本）</h3>
-    <div style="display:flex; gap:8px; align-items:center; flex-wrap:wrap">
-      <span class="hint" style="margin:0">题库：</span>
-      <select v-model="kbKind" style="min-width:120px">
-        <option value="">（选择题库）</option>
-        <option v-for="k in kbKinds" :key="k" :value="k">{{ k }}</option>
-      </select>
-      <span class="hint" style="margin:0">章节：</span>
-      <select v-model="kbChap" style="min-width:130px">
-        <option value="">（整库）</option>
-        <option v-for="c in kbChapters" :key="c" :value="c">{{ c }}</option>
-      </select>
-      <span class="hint" style="margin:0">题号：</span>
-      <select v-model="kbIdsSel" multiple style="min-width:200px; min-height:64px" title="多选；不选=整章">
-        <option v-for="i in kbIdList" :key="i.id" :value="i.id">{{ i.id }}</option>
-      </select>
-      <span class="hint" style="margin:0">模型：</span>
-      <template v-if="modelsForStage('evaluation').length && !kbCustomModel">
-        <select v-model="kbModel" style="min-width:160px">
-          <option value="">（评阅段配置）</option>
-          <option v-for="m in modelsForStage('evaluation')" :key="m" :value="m">{{ m }}</option>
-        </select>
-        <button class="btn small" @click="kbCustomModel = true">自定义</button>
-      </template>
-      <template v-else>
-        <input v-model="kbModel" placeholder="模型名（空=评阅段配置）" style="width:180px" />
-        <button class="btn small" @click="kbCustomModel = false">用下拉</button>
-      </template>
-      <label class="field" title="默认勾选：AI 作答即成为生效答案（旧版仍在版本库，可一键 pin 回）">
-        <input type="checkbox" v-model="kbPin" /> 作答后置顶（默认）
-      </label>
-      <label class="field" title="不勾=仅 dry-run 预览将作答哪些题；勾=真正调 LLM 并写回 kb/solutions/">
-        <input type="checkbox" v-model="kbApply" /> 真正作答并写回
-      </label>
-      <label class="field"
-             title="一次产出「参考解答 + 评阅要点 + 知识点」（带该题型规则摘要），写入同一版本">
-        <input type="checkbox" v-model="kbWithRubric" /> 同时生成评阅要点
-      </label>
-      <label v-if="kbWithRubric" class="field"
-             title="默认不置顶：AI 要点未经教师确认，不该抢生效答案（D130 验收 5）">
-        <input type="checkbox" v-model="kbPinRubric" /> 同时置顶（跳过确认）
-      </label>
-    </div>
-    <p v-if="kbWithRubric" class="hint" style="margin:2px 0 0">
-      ⓘ 要点与解答**同一次生成**（口径一致）。默认<b>不置顶</b>：先在题库表格里核对要点，
-      确认无误再「置顶」为生效答案；`copy`/`summary` 按口径不生成 AI 要点。
+    <!-- D152：⑦ 区已整体搬到「题库AI+」选项卡（避免双入口） -->
+    <h3 style="margin-top:14px">⑦ 题库 AI 作答</h3>
+    <p class="hint">
+      🤖 题库 AI 作答（参考解答 / 评阅要点 / 知识点标注）已移至顶部
+      <b>「题库AI+」</b> 选项卡 —— 那里能力更全（题号多选 / 模型 / 模板 / 一次性完成三件事）。
     </p>
-    <div style="margin:6px 0">
-      <!-- D108：提示词模板库 -->
-      <div style="display:flex; gap:6px; align-items:center; flex-wrap:wrap; margin-bottom:4px">
-        <label class="hint" style="margin:0">提示词模板：</label>
-        <select v-model="promptSel" @change="pickPromptTemplate" style="min-width:220px">
-          <option value="">（不使用模板 / 单次输入）</option>
-          <option v-for="t in promptTemplates" :key="t.id" :value="t.id">
-            {{ t.default ? '★ ' : '' }}{{ t.name }}{{ t.builtin ? '（内置）' : '' }}
-          </option>
-        </select>
-        <button class="btn small" :disabled="promptBusy || !promptSel || promptIsDefault"
-                title="下次打开面板自动载入该模板" @click="setPromptDefault">设为默认</button>
-        <button class="btn small" :disabled="promptBusy || !kbRequirement.trim()"
-                title="保存到当前模板（覆盖其内容）" @click="savePromptTemplate">💾 保存</button>
-        <button class="btn small" :disabled="promptBusy || !kbRequirement.trim()"
-                title="另存为一个新模板（内置模板改完想留原版时用这个）" @click="savePromptAsNew">＋ 另存为</button>
-        <button class="btn small" :disabled="promptBusy || !promptSel || promptIsBuiltin"
-                title="内置模板不可删除" @click="deletePromptTemplate">🗑 删除</button>
-      </div>
-      <label class="hint" style="display:block; margin:0 0 4px">
-        作答要求（会作为「优先满足」附加到每题 prompt；选中模板会载入其内容，可再临时修改，直接点「AI 作答」即生效）：
-      </label>
-      <textarea v-model="kbRequirement" rows="3"
-        placeholder="例：请画出示意图；用 LaTeX 公式完整推导；输出为 HTML 文档；按「已知/求/解/答」结构写；计算题保留 3 位有效数字……"
-        style="width:100%; max-width:760px; font-family:inherit; font-size:13px; padding:6px 8px;
-               border:1px solid var(--c-border); border-radius:6px; resize:vertical"></textarea>
-      <div class="hint" style="margin:2px 0 0">
-        留空 = 使用系统默认作答风格（规范完整解答，公式用 $..$ / $$..$$）。
-        模板保存在 <code>&lt;workspace&gt;/prompts/ai-solve/</code>，<b>CLI/AI 同样可用</b>
-        （<code>assist prompt list</code> / <code>kb ai-solve --requirement-template &lt;id&gt;</code>）。
-        <span v-if="promptMsg" style="color:var(--c-primary)">｜{{ promptMsg }}</span>
-      </div>
-      <button class="btn" :disabled="kbSolving" @click="solveByKb">▶ {{ kbApply ? 'AI 作答并写回' : 'AI 作答（dry-run）' }}</button>
-    </div>
-    <div class="hint" style="margin:4px 0 0">题目预览：
-      <code v-if="kbPreview" style="display:inline-block; max-width:100%; overflow-x:auto; white-space:nowrap; vertical-align:bottom">{{ kbPreview }}</code>
-      <span v-else>（未选题号：将按整章/整库作答）</span>
-    </div>
-    <p class="hint" style="margin:6px 0 0">
-      AI 作答**不覆盖**原答案：每次新增一版（含模型名 + 时间戳），默认**置顶为生效答案**
-      （可在「题库编辑器 → solution 🔍 预览」里改选/置顶旧版）；作业纸预览、作业包与批阅统一**实时读取生效版**
-      （置顶版 → 最新版 → 题库 solution 列）。索引状态：{{ kbStore.solutionsMsg || '（未刷新）' }}
-    </p>
-    <p class="hint" v-if="kbSolveMsg">{{ kbSolveMsg }}</p>
 
 
     <StudentReviewModal

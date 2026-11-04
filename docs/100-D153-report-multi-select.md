@@ -56,8 +56,23 @@ tag：[☑ top] [☑ middle]（可选，来自名单）
 4. 批阅页不再有报告卡/趋势卡，给出指引；
 5. pytest / build / selfcheck / 脱敏全绿。
 
-## 4. 实施记录
-（待回填）
+## 4. 实施记录（2026-10-31 完成）
+
+- `teacher_report.collect_multi(ws, class_dirs, pack_ids, tags)`：
+  多班级 × 多作业包收集；**tag 从名单 join**（评阅结果无 tag 字段）；
+  每条记录附 `_sourcePack`，返回 `sources` 供前端回显；
+- serve `GET /grade/teacher-report-multi`、`GET /workspace/classes`
+  （列出班级及其有评阅结果的作业包）；
+- PWA「题库AI+」⑤ 区：班级多选 / 作业包多选 / tag 输入 + 汇总指标表；
+  单选时可下钻到 `TeacherReportCard`（详细）与 `TrendCard`（趋势）；
+- **批阅页移除**教师报告卡与趋势卡，留一行指引。
 
 ## 5. 验收对照
-（待回填）
+
+| # | 标准 | 结果 | 证据 |
+|---|---|---|---|
+| 1 | 可多选班级/作业包/tag | ✅ | `test_collect_*`（4 项） |
+| 2 | 合并统计正确 | ✅ | `test_analyze_merged_records` |
+| 3 | tag 筛选生效（名单 join） | ✅ | `test_tag_filter_joins_roster` |
+| 4 | 批阅页不再有报告卡/趋势卡 | ✅ | build + 指引文案 |
+| 5 | pytest / build / selfcheck | ✅ | 1272 passed · 33/33 |
