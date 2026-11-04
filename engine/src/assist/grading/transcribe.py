@@ -30,15 +30,113 @@ TRANSCRIBE_USER_TEXT = ("请把这份物理作业图片转录为结构化 JSON�
 _TRANSCRIBE_ATTEMPTS = 3
 
 
+# D148：模型经常把 LaTeX 直接写进 JSON 字符串（`"\frac{1}{2}"`）。
+# 问题在于 `\f` `\t` `\b` `\n` `\r` 恰好都是**合法 JSON 转义**，
+# 于是 json.loads 会"成功"但把 `\frac` 变成「换页符 + rac」——
+# 这就是预览里出现特殊字符的根因。
+_FP = "\x0c"     # 换页符：\frac / \forall / \flat 被吃掉后的残留
+_BS = "\x08"     # 退格符：\beta / \bar 被吃掉后的残留
+
+
+def _repair_latex_escapes(body: str) -> str:
+    """把"看起来被吃掉的 LaTeX 命令"补回反转义形式。
+
+    只修**正常文本里几乎不可能出现**的控制字符（换页符/退格符）——
+    它们恰恰是 `\frac` `\beta` 被 JSON 转义后的产物，因此判定很可靠。
+    """
+    return body.replace(_FP, r"\\f").replace(_BS, r"\\b")
+
+
+def _escape_bare_backslashes(text: str) -> str:
+    r"""把**未被转义**的反斜杠补成双反斜杠，使 JSON 合法。
+
+    合法转义（`\"` `\\` `\/` `\b` `\f` `\n` `\r` `\t` `\uXXXX`）原样保留；
+    其余（如裸的 `\frac`）补成 `\\`。
+    """
+    out: list[str] = []
+    i, n = 0, len(text)
+    while i < n:
+        ch = text[i]
+        if ch != "\\":
+            out.append(ch)
+            i += 1
+            continue
+        nxt = text[i + 1] if i + 1 < n else ""
+        if nxt in ('"', "\\", "/") or nxt in ("b", "f", "n", "r", "t"):
+            out.append(ch + nxt)
+            i += 2
+        elif nxt == "u" and i + 5 < n:
+            out.append(text[i:i + 6])
+            i += 6
+        else:
+            out.append("\\\\")
+            i += 1
+    return "".join(out)
+
+
 def parse_llm_json(raw: str) -> dict:
-    """清洗 ```json 围栏并解析（迁移自 transcriber._cleaned 逻辑）。"""
+    """清洗 ```json 围栏并解析（迁移自 transcriber._cleaned 逻辑）。
+
+    D148：模型常把 LaTeX 直接写进 JSON，导致两种坏情况：
+    1. **能解析但内容被改坏**：`\frac` → 换页符 + `rac`；
+    2. **不能解析**：出现裸反斜杠。
+    这里先正常解析；失败时做一次"转义修复"重试；成功但含控制字符时也用修复版。
+    """
     cleaned = raw.strip()
     for p in ("```json", "```"):
         if cleaned.startswith(p):
             cleaned = cleaned[len(p):]
         if cleaned.endswith(p):
             cleaned = cleaned[:-len(p)]
-    return json.loads(cleaned.strip())
+    body = cleaned.strip()
+    try:
+        data = json.loads(body)
+    except json.JSONDecodeError:
+        repaired = _repair_latex_escapes(body)
+        for cand in (repaired, _escape_bare_backslashes(repaired)):
+            try:
+                return json.loads(cand)
+            except json.JSONDecodeError:
+                continue
+        raise
+    # 关键：`\f` 是**合法** JSON 转义，所以 json.loads 会"成功"，
+    # 但内容已被改成换页符。必须**在原始文本里**查这种"可疑的 LaTeX 前导"，
+    # 例如 `\frac` `\beta` `\times` `\rho`（都紧跟在一个被吃掉的首字母上）。
+    if _looks_like_eaten_latex(body):
+        try:
+            return json.loads(_fix_latex_in_json(body))
+        except json.JSONDecodeError:
+            return data
+    return data
+
+
+def _fix_latex_in_json(body: str) -> str:
+    r"""把 JSON 文本里"会被误当转义"的 LaTeX 命令改写成 `\命令`。
+
+    例：`"rac{1}{2}"` → `"\frac{1}{2}"`（JSON 解析后得到字面 `rac`）。
+    只有 `  	  
+` 后面**紧跟已知 LaTeX 结尾**时才改，
+    避免把真正的换行/制表符改坏。
+    """
+    import re as _re
+    tails = "rac|orall|lat|eta|ar|heta|an|imes|ho|ightarrow|abla|ot|im|elta|u|psilon"
+    pat = _re.compile(r'\\([fbtrn])((?:' + tails + r')[A-Za-z]*)')
+    return pat.sub(lambda m: "\\\\" + m.group(1) + m.group(2), body)
+
+
+_LATEX_TAILS = ("rac", "orall", "lat", "eta", "ar", "heta", "an", "imes",
+                "ho", "ightarrow", "abla", "u", "ot", "im", "psilon", "elta")
+
+
+def _looks_like_eaten_latex(body: str) -> bool:
+    """检测"LaTeX 命令被 JSON 转义吃掉首字母"的痕迹。
+
+    例：模型写 `\frac`（JSON 文本里是反斜杠+f+r+a+c），json.loads 后
+    变成 `\x0c` + `rac`。所以原始文本里会出现 `\frac` 这种
+    "反斜杠 + 单个字母 + 已知 LaTeX 结尾"的组合。
+    """
+    import re as _re
+    return bool(_re.search(r"\\[fbtrn](rac|eta|heta|imes|ho|abla|ot|elta|orall|lat)", body))
 
 
 def student_from_filename(fn: Path) -> str:

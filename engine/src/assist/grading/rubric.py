@@ -95,7 +95,11 @@ RUBRIC_PROMPT = """你是一位大学物理教研组老师，正在为**批阅**
 - `reference_solution` 面向教师核对，可完整；学生报告中另有人工/AI 批语，不会直接展示该答案；
 - `rubric_points` 按重要性排序，**3–8 条为宜**；
 - `knowledge` 用规范术语，2–5 个；若题目已带「已标注知识点」，**优先原样沿用**；
-- `diagram.required` 只在题干明确要求画图时才为 true。"""
+- `diagram.required` 只在题干明确要求画图时才为 true。
+
+【JSON 转义（必须遵守）】
+- LaTeX 反斜杠在 JSON 字符串里必须写成两个反斜杠（例：frac 要写成双反斜杠 + frac）；
+- 只写一个反斜杠会变成非法转义或控制字符，公式会显示成乱码。"""
 
 
 def build_rubric_prompt(*, ws, kind: str, content: str, solution: str = "",
