@@ -30,7 +30,10 @@ export interface RosterStudent {
 /** 一个成绩源文件（任意 xlsx，教师手动指定"分数来源列"与权重）。
  *  D19：新增格式预设 family —— 固定四类（engine scores.py ADAPTERS 同名）按
  *  列名/表结构 family 语义自动定位分数列，无需用户选列；custom = 手动选列。 */
-export type ScoreFamily = 'roster' | 'exam' | 'xuexitong_assignment' | 'xuexitong_stat' | 'rainclass' | 'custom'
+export type ScoreFamily = 'roster' | 'exam' | 'xuexitong_assignment' | 'xuexitong_stat'
+  | 'rainclass' | 'custom'
+  /** D149：AI 批阅成绩（从引擎 `evaluations/*.json` 取 `total_score`，一次作业包 = 一列） */
+  | 'grading'
 
 export interface ScoreSource {
   /** D46-3：源唯一 id（IndexedDB raw 键；创建时生成，随 persist 序列化） */
@@ -81,6 +84,7 @@ export const SCORE_FAMILY_PRESETS: Array<{
   { value: 'xuexitong_stat', label: '学习通·章节测验（统计文件）', desc: '固定格式（来自学习通导出）：按 sheet 名含"章节测验"匹配，第 4 行为表头找"成绩"列，非 0 计入取均分。', fixed: true },
   { value: 'rainclass', label: '雨课堂汇总表', desc: '固定格式（来自雨课堂导出）：无表头，第 2 行为列标题，前 3 列为学号/姓名/汇总，其后每课 2 列（方式+得分），取每课得分均值。', fixed: true },
   { value: 'custom', label: '自定义（手动选列）', desc: '其他成绩（高考数学/大一高数等）：手动指定姓名列与分数来源列 + 权重。', fixed: false },
+  { value: 'grading', label: 'AI 批阅成绩（每次作业一列）', desc: '直接取本班级该次作业的 AI 批阅总分；**未批阅/未提交记 0 分**。可勾选、可调权重。', fixed: true },
 ]
 
 export function scoreFamilyLabel(family: ScoreFamily): string {

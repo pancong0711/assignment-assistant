@@ -2120,6 +2120,34 @@ export async function restoreMaterialsFile(
                        { tool: 'materials.restore', args: { chap, file }, confirm }) as any
 }
 
+/* ========== D149：AI 批阅成绩作为成绩源 ========== */
+
+export interface GradingPack {
+  packId: string; name: string; graded: number; at: string
+}
+
+/** 列出该班级**有评阅结果**的作业包（每次作业 = 一列成绩）。 */
+export async function fetchGradingPacks(
+  base: string, token: string | undefined, classDir: string,
+): Promise<{ ok?: boolean; packs?: GradingPack[]; error?: string }> {
+  const qs = new URLSearchParams({ classDir })
+  return (await getJson2(engineUrlWithToken(
+    normalizeEngineAddr(base), `/roster/grading-packs?${qs.toString()}`, token))) as any
+}
+
+/** 某作业包的批阅成绩（未批阅/未提交 → 0 分，带 submitted/graded 标记）。 */
+export async function fetchGradingScores(
+  base: string, token: string | undefined,
+  classDir: string, packId: string, students: string[] = [],
+): Promise<{ ok?: boolean; rows?: Array<{ name: string; score: number; submitted: boolean
+                                          graded: boolean }>
+             graded?: number; zeroFilled?: number; error?: string }> {
+  const qs = new URLSearchParams({ classDir, packId })
+  if (students.length) qs.set('students', students.join(','))
+  return (await getJson2(engineUrlWithToken(
+    normalizeEngineAddr(base), `/roster/grading-scores?${qs.toString()}`, token))) as any
+}
+
 /* ========== D148：知识点（标注 / 词表 / 要点生成） ========== */
 
 export interface KnowledgeTerm {

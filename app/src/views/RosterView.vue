@@ -17,6 +17,7 @@ import { parseTaskpad, padInferredTag } from '../lib/taskpad'
 import { downloadData, detectCapabilities, fsWriteHint, pickReadFileFsa } from '../lib/fsAccess'
 import { useKbStore } from '../stores/kb'
 import { useSettingsStore } from '../stores/settings'
+import { fetchGradingPacks, fetchGradingScores } from '../lib/engineClient'
 import { stringifyClassHtml, printSheetHtml, expandPadItems,
   type SheetHtmlPadInput, type SheetHtmlStudent } from '../lib/sheetHtml'
 import type { KbKind } from '../lib/kb'
@@ -41,6 +42,48 @@ const kbStore = useKbStore()
 const settingsStore = useSettingsStore()
 const caps = detectCapabilities()
 const status = ref('')
+/** D149：AI 批阅成绩（一次作业包 = 一列） */
+/** 当前班级的 workspace 目录：按 D124「目录名 = 班级真名」推断。 */
+const activeClassDir = computed(() => {
+  const nm = String(roster.activeMeta?.name || '').trim()
+  return nm ? `classes/${nm}` : ''
+})
+
+const gradingPicker = ref(false)
+const gradingPacks = ref<Array<{ packId: string; name: string; graded: number; at: string }>>([])
+
+async function openGradingPicker() {
+  const cd = activeClassDir.value
+  if (!cd) { status.value = '请先选择班级（需有班级名称才能定位 workspace 目录）。'; return }
+  try {
+    const r = await fetchGradingPacks(settingsStore.engineUrl, settingsStore.engineToken, cd)
+    if (!r?.ok) { status.value = `读取批阅结果失败：${r?.error || ''}`; return }
+    gradingPacks.value = r.packs || []
+    gradingPicker.value = true
+    if (!gradingPacks.value.length) {
+      status.value = '该班级还没有批阅结果：先在「AI 辅助批阅」跑一次批阅。'
+    }
+  } catch (e) {
+    status.value = `读取失败：${String((e as Error).message || e)}（引擎是否在线？）`
+  }
+}
+
+async function pickGradingPack(g: { packId: string; name: string }) {
+  const cd = activeClassDir.value
+  const names = roster.students.map((s) => s.name)
+  try {
+    const r = await fetchGradingScores(settingsStore.engineUrl, settingsStore.engineToken,
+                                       cd, g.packId, names)
+    if (!r?.ok) { status.value = `读取批阅成绩失败：${r?.error || ''}`; return }
+    status.value = roster.addGradingSource({
+      packId: g.packId, name: g.name, rows: r.rows || [],
+    })
+    gradingPicker.value = false
+  } catch (e) {
+    status.value = `加入失败：${String((e as Error).message || e)}`
+  }
+}
+
 /** 成绩源添加时的格式预设选择（默认 custom = 旧行为） */
 const presetFamily = ref<ScoreFamily>('custom')
 // D49-F1：成绩源下拉已移除 roster 预设（名单=「导入名单 xlsx…」专用按钮的唯一入口）；
@@ -763,7 +806,25 @@ const nonTranslationRatios = computed(() => roster.ratios.filter((g) => g.tag !=
           </select>
         </label>
         <button class="btn primary" style="margin-left:8px" @click="addSource">＋添加成绩源（选 xlsx）</button>
+        <button class="btn" style="margin-left:8px" @click="openGradingPicker">
+          ＋加入 AI 批阅成绩
+        </button>
       </p>
+
+      <!-- D149：选一次作业包 → 作为一列成绩（未批阅/未提交记 0 分） -->
+      <div v-if="gradingPicker" class="notice" style="margin:6px 0">
+        <p class="hint" style="margin:0 0 4px">
+          选择要作为成绩的作业包（该班级下有评阅结果的）：
+        </p>
+        <p v-if="!gradingPacks.length" class="hint">（该班级还没有任何批阅结果。）</p>
+        <p v-for="g in gradingPacks" :key="g.packId" style="margin:2px 0">
+          <button class="btn small" @click="pickGradingPack(g)">
+            ＋ {{ g.name }}
+          </button>
+          <span class="hint">{{ g.graded }} 人已评阅{{ g.at ? ' · ' + g.at : '' }}</span>
+        </p>
+        <button class="btn small" style="margin-top:4px" @click="gradingPicker = false">取消</button>
+      </div>
       <p class="hint" :class="{ notice: presetIsFixed }" style="margin-top:2px">
         <template v-if="presetIsFixed">这是固定格式（来自{{ presetFamily === 'rainclass' ? '雨课堂' : presetFamily.startsWith('xuexitong') ? '学习通' : '教务' }}导出）——无需选列，自动按列名语义解析。说明：{{ presetDesc }}</template>
         <template v-else>{{ presetDesc }}</template>

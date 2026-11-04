@@ -365,6 +365,44 @@ export const useRosterStore = defineStore('roster', {
         : `已加入成绩源「${src.name}」（固定格式 ${src.family}：已按该格式的列名语义自动定位，${src.rows.length} 行，默认勾选；只需确认权重）。`
       return { message: msg, preview }
     },
+    /** D149：加入「AI 批阅成绩」列（一次作业包 = 一列）。
+     *
+     *  与 Excel 成绩源不同：分数来自引擎的 `evaluations/*.json`，
+     *  **未批阅/未提交记 0 分**（教师口径）。该列只读（不能手改分数），
+     *  但可以取消勾选参与聚合、可调权重。
+     */
+    addGradingSource(payload: { packId: string; name: string
+                                rows: Array<{ name: string; score: number
+                                              submitted?: boolean; graded?: boolean }> }): string {
+      const uid = `grading-${payload.packId}`
+      if (this.sources.some((x) => x.uid === uid)) {
+        return `「${payload.name}」的批阅成绩已在成绩源里（不重复添加）。`
+      }
+      const scores: Record<string, number> = {}
+      for (const r of payload.rows || []) {
+        if (r?.name) scores[String(r.name)] = Number(r.score ?? 0)
+      }
+      const src = normalizeSource({
+        uid,
+        name: `批阅:${payload.name}`,
+        fileName: `grading:${payload.packId}`,
+        family: 'grading',
+        scoreColumn: 'total_score',
+        nameColumn: 'student',
+        rows: (payload.rows || []).map((r) => ({
+          name: String(r.name), score: Number(r.score ?? 0),
+        })),
+        scores,
+        includeInAggregation: true,
+      } as any)
+      this.sources.push(src)
+      this.dirty = true
+      this.persist()
+      const zero = (payload.rows || []).filter((r) => r.graded === false).length
+      return `已加入「批阅:${payload.name}」：${payload.rows.length} 人`
+        + (zero ? `（其中 ${zero} 人未批阅/未提交，记 0 分）` : '')
+        + '。可取消勾选或调权重。'
+    },
     /** 切换某成绩源的格式预设：固定四类需重新按 family 语义解析原始表。
      *  legacy 源没有原始矩阵（只有选列后的行），提示教师重新选择文件。 */
     setSourceFamily(idx: number, family: ScoreFamily, file: File | null): string {

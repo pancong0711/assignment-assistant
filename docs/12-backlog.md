@@ -937,6 +937,31 @@ rainclass 67/67，PWA↔engine 全等，仅末位浮点四舍五入噪声）。
 
 ---
 
+## D149 · AI 批阅成绩作为成绩源（2026-10-31 完成）
+
+> 需求单：`docs/96-D149-grading-as-score-source.md`。
+
+教师：批阅好了就不必再去学习通下载成绩，应能像勾选表格成绩一样勾选批阅成绩。
+
+- ✅ 引擎 `roster/grading_scores.py`：每作业包一列，取 `total_score`；
+  **未批阅/未提交记 0 分**（带 `graded/submitted` 标记可区分）。
+- ✅ serve `/roster/grading-packs`、`/roster/grading-scores`。
+- ✅ PWA 成绩源新增「＋加入 AI 批阅成绩」，该列只读但可勾选/调权重。
+- ✅ 与 Excel 成绩源**完全同一套加权聚合**（`merge_scores`），可混算总成绩。
+
+---
+
+## D150 · 规划记录：Atopia 工作区 + 拷贝到课堂资料（未实施）
+
+> `docs/97-D150-plan-atopia-workspace.md`（教师要求先记录）。
+
+- 三层目录：`materials/<chap>/_source/`（AI 只读）/ `atopia/work/<chap>/{_upload,_parsed}`（AI 可写）；
+- 「📥 复制到课堂资料」按钮与 `materials.confirm` 同口径（显式点击 + 全文 + journal）；
+- JSON + MD 双写；复用 D138 两层分类；
+- 待定口径：上传入口位置 / 产物与清单的关系 / 长文档分片 / AI 题库数据结构。
+
+---
+
 ## D147 · Atopia L2 确认精确到「工具 + 参数」（2026-10-31 完成，安全修复）
 
 > 需求单：`docs/94-D147-confirm-scope.md`。

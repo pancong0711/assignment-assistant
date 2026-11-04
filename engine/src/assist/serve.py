@@ -3261,6 +3261,34 @@ class Handler(BaseHTTPRequestHandler):
                     out["error"] = f"AI 建议文件损坏：{exc}"
             self._json(out)
             return
+        elif u.path == "/roster/grading-packs":
+            # D149：列出该班级有评阅结果的作业包（每次作业 = 一列成绩）
+            from .roster import grading_scores as _gs
+            q = urllib.parse.parse_qs(u.query)
+            class_dir = str((q.get("classDir") or [""])[0]).strip().strip("/")
+            try:
+                packs = _gs.list_grading_packs(Path(self.ws).resolve(), class_dir)
+            except _gs.GradingScoreError as exc:
+                self._json({"ok": False, "error": str(exc)}, 400)
+                return
+            self._json({"ok": True, "classDir": class_dir, "packs": packs})
+            return
+        elif u.path == "/roster/grading-scores":
+            # D149：某作业包的批阅成绩（未批阅/未提交记 0 分）
+            from .roster import grading_scores as _gs
+            q = urllib.parse.parse_qs(u.query)
+            class_dir = str((q.get("classDir") or [""])[0]).strip().strip("/")
+            pack_id = str((q.get("packId") or [""])[0]).strip()
+            names = [x for x in str((q.get("students") or [""])[0]).split(",") if x.strip()]
+            try:
+                rep = _gs.grading_scores(Path(self.ws).resolve(), class_dir, pack_id,
+                                         students=names or None)
+            except _gs.GradingScoreError as exc:
+                self._json({"ok": False, "error": str(exc)}, 400)
+                return
+            rep["classDir"] = class_dir
+            self._json(rep)
+            return
         elif u.path == "/materials/files":
             # D134-T3b：某章 _source/ 原件清单（只读）
             from .files import materials as _mfl
