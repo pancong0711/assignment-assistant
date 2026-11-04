@@ -327,9 +327,59 @@ def render_md(stat: dict, *, title: str = "", subtitle: str = "") -> str:
     return "\n".join(lines)
 
 
+def export_png(md_text: str, out_path, *, title: str = "", subtitle: str = "") -> "str | None":
+    """D135：教师报告 → PNG（A4 宽长图）。复用学生报告的 Playwright 链路。
+
+    浏览器/playwright 不可用时返回 None（**不抛**）：导图是附加能力，
+    不能让"看不到图"变成"报告生成失败"。
+    """
+    try:
+        from .report import render_report_png
+        p = render_report_png(md_text, out_path, kind="teacher",
+                              title=title, subtitle=subtitle)
+        return str(p) if p else None
+    except Exception as exc:  # noqa: BLE001
+        logger.warning(f"[教师报告] PNG 导出失败（已跳过）：{exc}")
+        return None
+
+
+def export_pdf(png_path) -> "str | None":
+    """D135：PNG → 单页 PDF（reportlab，已有依赖）。
+
+    用"图片贴满 PDF 页"而不是重新排版：教师报告是**长图**，
+    重排版会让"和我看到的不一样"，与 D87 "预览=打印"的口径一致。
+    """
+    try:
+        from reportlab.lib.pagesizes import A4
+        from reportlab.lib.utils import ImageReader
+        from reportlab.pdfgen import canvas
+
+        src = Path(png_path)
+        if not src.is_file():
+            return None
+        w, h = ImageReader(str(src)).getSize()
+        # 页面宽度固定 A4 宽，高度按图片比例（长图就长页），避免内容被压扁
+        page_w = A4[0]
+        page_h = page_w * (h / w) if w else A4[1]
+        out = src.with_suffix(".pdf")
+        c = canvas.Canvas(str(out), pagesize=(page_w, page_h))
+        c.drawImage(str(src), 0, 0, width=page_w, height=page_h)
+        c.showPage()
+        c.save()
+        return str(out)
+    except Exception as exc:  # noqa: BLE001
+        logger.warning(f"[教师报告] PDF 导出失败（已跳过）：{exc}")
+        return None
+
+
 def generate(eval_dir, out_dir, *, title: str = "", subtitle: str = "",
-             top_n: int = 15) -> dict:
-    """读 evaluations → 写 `reports/_teacher_report.md`（+ stats JSON 供 PWA 画图）。"""
+             top_n: int = 15, render_png: bool = False,
+             render_pdf: bool = False) -> dict:
+    """读 evaluations → 写 `reports/_teacher_report.md`（+ stats JSON 供 PWA 画图）。
+
+    D135：`render_png=True` 额外导出 `_teacher_report.png`；
+    `render_pdf=True` 再导出 `_teacher_report.pdf`（依赖 PNG）。
+    """
     records = load_evaluations(eval_dir)
     stat = analyze(records, top_n=top_n)
     out = Path(out_dir)
@@ -340,5 +390,12 @@ def generate(eval_dir, out_dir, *, title: str = "", subtitle: str = "",
     stats_path = out / "_teacher_report.stats.json"
     stats_path.write_text(json.dumps(stat, ensure_ascii=False, indent=1), encoding="utf-8")
     logger.info(f"[教师报告] 已生成（{stat['students']} 人）→ {md_path}")
+
+    png_path = pdf_path = None
+    if render_png or render_pdf:
+        png_path = export_png(md, out / "_teacher_report.png",
+                              title=title or "教师总结报告", subtitle=subtitle)
+        if render_pdf and png_path:
+            pdf_path = export_pdf(png_path)
     return {"ok": True, "students": stat["students"], "md": str(md_path),
-            "stats": str(stats_path), "stat": stat}
+            "stats": str(stats_path), "png": png_path, "pdf": pdf_path, "stat": stat}

@@ -2957,6 +2957,8 @@ class Handler(BaseHTTPRequestHandler):
             class_dir = str((q.get("classDir") or [""])[0]).strip().strip("/")
             task_id = str((q.get("taskId") or [""])[0]).strip()
             rebuild = str((q.get("rebuild") or [""])[0]) in ("1", "true", "yes")
+            # D135：导出格式（png/pdf）；空 = 不导图（默认，保持既有行为）
+            export_format = str((q.get("export") or [""])[0]).strip().lower()
             if not (class_dir and task_id):
                 self._json({"ok": False, "error": "classDir/taskId 必填"}, 400)
                 return
@@ -2971,17 +2973,31 @@ class Handler(BaseHTTPRequestHandler):
             ev = base / "evaluations"
             stats_p = base / "reports" / "_teacher_report.stats.json"
             md_p = base / "reports" / "_teacher_report.md"
-            if rebuild or not stats_p.is_file():
+            png_p = base / "reports" / "_teacher_report.png"
+            pdf_p = base / "reports" / "_teacher_report.pdf"
+            # 导图请求：即使统计已存在也要**重新导出**（格式可能是本次才要的）
+            need_build = (rebuild or not stats_p.is_file()
+                          or (export_format in ("png", "pdf") and not png_p.is_file())
+                          or (export_format == "pdf" and not pdf_p.is_file()))
+            if need_build:
                 if not any(ev.glob("[!_]*.json")):
                     self._json({"ok": False, "error": "没有评阅结果",
                                 "hint": "先跑批阅（转写+评阅）再生成教师报告",
                                 "dir": str(ev)}, 404)
                     return
                 try:
-                    _tr.generate(ev, base / "reports", title=task_id,
-                                 subtitle=class_dir)
+                    built = _tr.generate(
+                        ev, base / "reports", title=task_id, subtitle=class_dir,
+                        render_png=export_format in ("png", "pdf"),
+                        render_pdf=(export_format == "pdf"))
                 except Exception as exc:  # noqa: BLE001
                     self._json({"ok": False, "error": f"生成失败：{str(exc)[:200]}"}, 500)
+                    return
+                if export_format in ("png", "pdf") and not built.get("png"):
+                    self._json({"ok": False,
+                                "error": "PNG 导出失败（浏览器不可用）",
+                                "hint": "报告本身已生成，可先用 Markdown；"
+                                        "装好 Chromium 后重试", "mdFile": str(md_p)}, 500)
                     return
             try:
                 stat = json.loads(stats_p.read_text(encoding="utf-8"))
@@ -2990,7 +3006,9 @@ class Handler(BaseHTTPRequestHandler):
                 return
             md = md_p.read_text(encoding="utf-8", errors="replace") if md_p.is_file() else ""
             self._json({"ok": True, "stat": stat, "markdown": md,
-                        "statsFile": str(stats_p), "mdFile": str(md_p)})
+                        "statsFile": str(stats_p), "mdFile": str(md_p),
+                        "png": str(png_p) if png_p.is_file() else "",
+                        "pdf": str(pdf_p) if pdf_p.is_file() else ""})
             return
         elif u.path.startswith("/grade/report/"):
             # D130-T10：逐生审核「报告」页——返回已生成的报告 HTML 供 iframe 预览。

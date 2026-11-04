@@ -43,7 +43,9 @@ th { background: #f0f0f0; }
 """
 
 KIND_LABEL = {"ai": "AI 批阅报告", "human": "人工批阅报告",
-              "ai-revised": "AI 批阅报告（人工修订）"}
+              "ai-revised": "AI 批阅报告（人工修订）",
+              # D135：教师总结报告 —— **只给教师**，标签必须一眼可辨
+              "teacher": "教师总结报告（只给教师）"}
 
 
 def _md_to_html(md_text: str) -> str:

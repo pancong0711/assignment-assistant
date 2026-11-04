@@ -103,6 +103,17 @@ try:
         pg.wait_for_function(
             "() => document.body.innerText.includes('已汇总 2 名学生')", timeout=20000)
         body = pg.inner_text('body')
+        # D135：导出 PNG（真实浏览器链路：前端 → serve → Playwright 截图）
+        pg.locator('button', has_text='导出 PNG').click()
+        pg.wait_for_function(
+            "() => document.body.innerText.includes('已导出')"
+            " || document.body.innerText.includes('导出失败')", timeout=60000)
+        _t = pg.inner_text('body')
+        out['teacherExport'] = {
+            'ok': '已导出' in _t,
+            'msg': [ln for ln in _t.splitlines() if '导出' in ln][:2],
+        }
+
         out['teacher'] = {
             'students': '已评阅' in body,
             'topk': '动量守恒' in body and '完全弹性碰撞' in body,
@@ -144,10 +155,11 @@ assert t['matrixSvg'], '共现矩阵 SVG 未渲染'
 assert t['bars'] >= 1, f"得分率柱状图未渲染：{t}"
 assert t['segments'], '分数段未渲染'
 assert t['onlyTeacher'], '缺少"只给教师"声明'
+assert out['teacherExport']['ok'], f"教师报告 PNG 导出失败：{out['teacherExport']}"
 assert m['chapListed'] and m['confirmed'], f"资料页未显示已生效章节：{m}"
 assert m['terms'], '资料页未显示知识点术语'
 assert m['nextStepDone'], '资料页未提示"已完成"'
-print('OK d126b-d131-pages：教师报告（易错点/共现矩阵/得分率/分数段，且声明只给教师）'
+print('OK d126b-d131-pages：教师报告（易错点/共现矩阵/得分率/分数段，且声明只给教师）可导出 PNG'
       ' · 资料页（章节状态/生效清单/下一步）全部通过')
 PY
 RC=$?

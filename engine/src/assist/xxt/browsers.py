@@ -60,6 +60,30 @@ def _find(cands: list[str]) -> "str | None":
     return None
 
 
+def _playwright_cache_chromium() -> "str | None":
+    """D135：扫 `~/.cache/ms-playwright/chromium-*/chrome-linux64/chrome`。
+
+    为什么需要：Playwright 升级后要求**它自己版本对应的**浏览器目录
+    （如 `chromium-1200`），而本机可能只装过别的版本（如 `chromium-1228`）→
+    `launch()` 直接报 "Executable doesn't exist"，但机器上**明明有可用的 Chromium**。
+    这里把缓存里最新的一档找出来显式指定，避免"装过却用不了"。
+    """
+    root = Path.home() / ".cache" / "ms-playwright"
+    if not root.is_dir():
+        return None
+    cands: list[Path] = []
+    for d in sorted(root.iterdir(), reverse=True):
+        if not d.name.startswith("chromium-"):
+            continue
+        for rel in ("chrome-linux64/chrome", "chrome-linux/chrome",
+                    "chrome-mac/Chromium.app/Contents/MacOS/Chromium",
+                    "chrome-win/chrome.exe"):
+            p = d / rel
+            if p.exists():
+                cands.append(p)
+    return str(cands[0]) if cands else None
+
+
 def _local_attempts() -> list[dict]:
     """有序本机档位；每项含内部 `_kwargs`，不直接暴露给 PWA。"""
     out: list[dict] = []
@@ -84,6 +108,16 @@ def _local_attempts() -> list[dict]:
             "tier": 2 if name == "msedge" else 3,
             "kind": "channel", "name": label, "path": p,
             "_kwargs": {"channel": name, "executable_path": p},
+        })
+    # D135：**最后**才用 Playwright 缓存里已下载的 Chromium（版本可能不匹配）。
+    # 必须排在系统浏览器之后：用户装的 Edge/Chrome 才是"更可信"的运行环境，
+    # 缓存副本只是兜底（例如只在 CI/容器里下载过浏览器时）。
+    pc = _playwright_cache_chromium()
+    if pc:
+        out.append({
+            "tier": 4, "kind": "playwright-cache",
+            "name": f"Playwright 缓存 Chromium：{Path(pc).parent.parent.name}",
+            "path": pc, "_kwargs": {"executable_path": pc},
         })
     return out
 

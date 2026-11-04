@@ -20,6 +20,28 @@ const stat = ref<TeacherReportStat | null>(null)
 const md = ref('')
 const msg = ref('')
 const showMd = ref(false)
+/** D135：导出 PNG/PDF（附加能力；失败不影响报告本身） */
+const exporting = ref<'png' | 'pdf' | ''>('')
+const exportMsg = ref('')
+
+async function exportReport(kind: 'png' | 'pdf') {
+  if (!canLoad.value) return
+  exporting.value = kind
+  exportMsg.value = ''
+  try {
+    const r = await fetchTeacherReport(props.engineAddr, props.token, {
+      classDir: props.classDir, taskId: props.taskId, export: kind,
+    })
+    if (!r?.ok) {
+      exportMsg.value = `❌ ${r?.error || '导出失败'}${r?.hint ? `（${r.hint}）` : ''}`
+      return
+    }
+    const path = kind === 'pdf' ? r.pdf : r.png
+    exportMsg.value = path ? `✅ 已导出：${path}` : '❌ 未产出文件'
+  } catch (e) {
+    exportMsg.value = `导出失败：${String((e as Error).message || e)}`
+  } finally { exporting.value = '' }
+}
 
 const canLoad = computed(() => Boolean(props.classDir && props.taskId))
 
@@ -118,11 +140,20 @@ const segMax = computed(() => Math.max(1, ...segments.value.map((x) => x.n)))
       <button class="btn small" :disabled="loading || !canLoad" @click="load(true)">
         重新汇总
       </button>
+      <button class="btn small" :disabled="exporting !== '' || !canLoad"
+              @click="exportReport('png')">
+        {{ exporting === 'png' ? '导出中…' : '导出 PNG' }}
+      </button>
+      <button class="btn small" :disabled="exporting !== '' || !canLoad"
+              @click="exportReport('pdf')">
+        {{ exporting === 'pdf' ? '导出中…' : '导出 PDF' }}
+      </button>
     </div>
 
     <p v-if="!canLoad" class="hint">先在 ③ 区选择作业（需要班级目录 + 批阅目录键）。</p>
     <p v-else-if="loading" class="hint">正在汇总评阅结果…</p>
     <p v-else-if="msg" class="hint">{{ msg }}</p>
+    <p v-if="exportMsg" class="hint">{{ exportMsg }}</p>
 
     <template v-if="stat && stat.students">
       <!-- 概览 -->

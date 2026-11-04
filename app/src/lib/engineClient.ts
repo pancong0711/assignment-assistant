@@ -2053,12 +2053,14 @@ export interface TeacherReportStat {
 
 export async function fetchTeacherReport(
   engineAddr: string, token: string | undefined,
-  opts: { classDir: string; taskId: string; rebuild?: boolean },
+  opts: { classDir: string; taskId: string; rebuild?: boolean
+          /** D135：导出格式（png/pdf）；不传则不导图 */ export?: 'png' | 'pdf' },
 ): Promise<{ ok?: boolean; error?: string; hint?: string; stat?: TeacherReportStat
-             markdown?: string }> {
+             markdown?: string; png?: string; pdf?: string }> {
   const base = normalizeEngineAddr(engineAddr)
   const qs = new URLSearchParams({ classDir: opts.classDir, taskId: opts.taskId })
   if (opts.rebuild) qs.set('rebuild', '1')
+  if (opts.export) qs.set('export', opts.export)
   return (await getJson2(engineUrlWithToken(
     base, `/grade/teacher-report?${qs.toString()}`, token))) as any
 }
