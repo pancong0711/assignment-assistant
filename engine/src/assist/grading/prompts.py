@@ -157,8 +157,13 @@ KIND_OUTPUT_SCHEMA_HINT = {
     "summary": """【总结题输出要求】每题除通用字段外，必须给：
 - `covered`: {"知识点与概念": true/false, "重要公式及推导": true/false, "示意图": true/false}
   逐项判断是否讲到；题干没有要求画图时 `示意图` 填 true；
+- `summary_basis`: "materials" | "heuristic"
+  **有**「本堂课应掌握的知识点」依据时填 `materials`；
+  **没有**该依据时填 `heuristic`（本次是通用标准粗判，不是对着课堂资料核对）；
+- `answer_chars`: 学生本题作答字数（整数）；
 - `knowledge_missing`: ["学生**漏掉**的本章知识点术语", ...]
-  只在题目给了「本堂课应掌握的知识点」时填写（没有该依据就填空数组）；
+  **只在 `summary_basis="materials"` 时填写**（没有该依据就填空数组，
+  不要凭常识编造"本章应该有哪些知识点"）；
   `guidance` 的启发式提问应**优先指向这些遗漏知识点**。""",
     "problems": """【计算/推导题输出要求】每题除通用字段外，按通用格式给出 `errors`（逐处错误）。""",
 }
@@ -167,6 +172,35 @@ KIND_OUTPUT_SCHEMA_HINT = {
 def kind_output_hint(kind: str) -> str:
     from .rules import normalize_kind
     return KIND_OUTPUT_SCHEMA_HINT.get(normalize_kind(kind), "")
+
+
+def summary_fallback_block(fb: "dict | None") -> str:
+    """D134-T4：`summary` **保底口径**提示（没有任何课堂资料时使用）。
+
+    只判"四件事有没有"，**不判"漏了哪个知识点"**（没有依据就没有资格判）。
+    降级必须可见：要求模型明确回 `summary_basis="heuristic"`。
+    """
+    if not fb:
+        return ""
+    min_chars = int(fb.get("minChars") or 0)
+    req = []
+    if fb.get("requireKnowledgeSummary", True):
+        req.append("- 是否**归纳了知识点/概念**（在复述、串联本堂概念，而不是只写一两句感想）")
+    if fb.get("requireFormulaOrDerivation", True):
+        req.append("- 是否出现**重要公式或推导**（只罗列公式 vs 有推导过程，请在 reasoning 里写明）")
+    if fb.get("requireDiagram") == "if_question_has":
+        req.append("- 题干要求画图时，是否**画了示意图**（填 `covered[\"示意图\"]`；不要求画图填 true）")
+    if min_chars > 0:
+        req.append(f"- **作答长度**是否达到 {min_chars} 字（`answer_chars` 如实填写；"
+                   f"系统会按转写原文重算）")
+    return ("【本题没有课堂资料依据：按**通用保底标准**评阅】\n"
+            "本次**未能**拿到本堂课的授课计划/PPT 知识点清单，因此：\n"
+            "1. `summary_basis` 必须填 `\"heuristic\"`；\n"
+            "2. `knowledge_missing` 必须填空数组（**无依据时禁止编造**本章知识点）；\n"
+            "3. 只判定下面四件事是否做到：\n" + "\n".join(req) + "\n"
+            "4. 上述项目**缺失不扣分**（只作为启发式提问的依据）；"
+            "唯一可能扣分的是「总结过于简略」。\n"
+            "5. `guidance` 应引导学生补上缺失的那一项（例如「把你的推导写出来」）。")
 
 
 def summary_knowledge_block(terms: "list[str] | None", md_text: str = "") -> str:
@@ -195,6 +229,7 @@ def summary_knowledge_block(terms: "list[str] | None", md_text: str = "") -> str
             parts.append(body[:2000])
     parts.append(
         "评阅本题时：\n"
+        "- `summary_basis` 必须填 `\"materials\"`；\n"
         "- `covered` 三项照常判定；\n"
         "- `knowledge_missing` 列出学生**明显漏掉**的上表知识点（可留空）；\n"
         "- `guidance` 的启发式提问**优先指向**遗漏的知识点，不要泛泛而谈。")
@@ -397,6 +432,9 @@ EVALUATION_SCHEMA = {
                             # D131-T21c：summary 题漏掉的本章知识点
                             "knowledge_missing": {"type": "array",
                                                   "items": {"type": "string"}},
+                            # D134-T4：summary 题的评阅依据（降级必须可见）
+                            "summary_basis": {"type": "string",
+                                              "enum": ["materials", "heuristic"]},
                             # distinguish / innovation / translation：长度档
                             "answer_chars": {"type": "integer"},
                             "relevance": {"type": "string",

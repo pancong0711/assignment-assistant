@@ -124,7 +124,17 @@ DEFAULT_RULES: dict = {
             "perMissingItemDeduct": 5,
             "checklist": ["知识点与概念", "重要公式及推导", "示意图"],
             "requireDiagram": "if_question_has",
-            "generateRubric": False,        # 未来接课堂资料（P2）
+            "generateRubric": True,         # D134：有本章已确认资料时才真正生成（见 rubric_enabled）
+            # D134-T4：**保底口径**（无课堂资料时用；四维判定，缺项不扣分，只扣"过简"）
+            "fallback": {
+                "enabled": True,
+                "minChars": 150,            # 低于此字数视为"总结过于简略"
+                "minCharsDeduct": 5,
+                "requireKnowledgeSummary": True,     # 必须看到知识点/概念的归纳
+                "requireFormulaOrDerivation": True,  # 必须有公式或推导
+                "requireDiagram": "if_question_has",
+                "missingItemDeduct": 0,     # 保底模式**缺项不扣分**（防误伤）
+            },
         },
     },
 }
@@ -287,6 +297,22 @@ def validate_rules(rules: dict) -> list[str]:
         if cl is not None and (not isinstance(cl, list) or not cl
                                or not all(isinstance(x, str) and x.strip() for x in cl)):
             errs.append(f"types.{kind}.checklist 必须是非空字符串数组")
+        fb = cfg.get("fallback")
+        if fb is not None:
+            if not isinstance(fb, dict):
+                errs.append(f"types.{kind}.fallback 必须是对象")
+            else:
+                if "enabled" in fb and not isinstance(fb["enabled"], bool):
+                    errs.append(f"types.{kind}.fallback.enabled 必须是布尔值")
+                for k2, (lo2, hi2) in (("minChars", (0, 5000)),
+                                       ("minCharsDeduct", (0, 100)),
+                                       ("missingItemDeduct", (0, 100))):
+                    if k2 in fb:
+                        v2 = fb[k2]
+                        if not isinstance(v2, (int, float)) or isinstance(v2, bool):
+                            errs.append(f"types.{kind}.fallback.{k2} 必须是数值")
+                        elif not (lo2 <= float(v2) <= hi2):
+                            errs.append(f"types.{kind}.fallback.{k2}={v2} 超出范围 [{lo2}, {hi2}]")
     return errs
 
 
@@ -375,6 +401,47 @@ def rule_summary(ws, kind: str) -> str:
     return "\n".join(lines)
 
 
-def rubric_enabled(ws, kind: str) -> bool:
-    """该 kind 是否生成 AI 评阅要点（copy/summary 默认不生成）。"""
-    return bool(type_rules(ws, normalize_kind(kind)).get("generateRubric", False))
+def rubric_enabled(ws, kind: str, chap: str = "") -> bool:
+    """该 kind 是否生成 AI 评阅要点。
+
+    - `copy`：**永不自生成**（以原文为唯一依据，D130 口径）；
+    - `summary`（D134-T5a）：**仅当**本章有教师确认的 `知识点清单.md` 时才生成
+      —— 没有资料时生成本章要点等于让模型编造"本章应该讲什么"，
+      应改用保底口径（`summary_fallback`），而不是产出假依据；
+    - 其它 kind：看 `generateRubric`。
+    """
+    k = normalize_kind(kind)
+    on = bool(type_rules(ws, k).get("generateRubric", False))
+    if not on:
+        return False
+    if k == "summary":
+        if ws is None:
+            return False
+        c = str(chap or "").strip()
+        if not c:
+            return False
+        try:
+            from ..files import materials as _mat
+            return bool(_mat.read_knowledge_md(ws, c).strip())
+        except Exception:  # noqa: BLE001 —— 资料缺失 = 不生成（不报错）
+            return False
+    return True
+
+
+def summary_fallback(ws, kind: str = "summary") -> dict:
+    """D134-T4：`summary` 的**保底口径**配置（无课堂资料时使用）。
+
+    返回 `{}` 表示保底关闭（此时行为与 D130 完全一致）。
+    """
+    fb = type_rules(ws, normalize_kind(kind)).get("fallback") or {}
+    if not isinstance(fb, dict) or not fb.get("enabled", True):
+        return {}
+    return {
+        "enabled": True,
+        "minChars": int(fb.get("minChars", 150) or 0),
+        "minCharsDeduct": float(fb.get("minCharsDeduct", 0) or 0),
+        "requireKnowledgeSummary": bool(fb.get("requireKnowledgeSummary", True)),
+        "requireFormulaOrDerivation": bool(fb.get("requireFormulaOrDerivation", True)),
+        "requireDiagram": fb.get("requireDiagram", "if_question_has"),
+        "missingItemDeduct": float(fb.get("missingItemDeduct", 0) or 0),
+    }

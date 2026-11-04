@@ -497,9 +497,15 @@ def kb_ai_solve(obj, kb_kind, chap, ids, model, pin, apply, concurrency, require
         eff_pin = False
     if kb_kind in ("copy", "summary") and with_rubric:
         from .grading.rules import rubric_enabled
-        if not rubric_enabled(ws, kb_kind):
-            click.echo(f"提示：{kb_kind} 按口径不生成 AI 评阅要点（以原文/课堂资料为唯一依据），"
-                       f"本次只生成参考解答。", err=True)
+        # D134-T5a：summary 只有在**本章已有教师确认资料**时才生成要点，
+        # 与 `rules generate` 同口径（避免同一条口径在两个入口不一致）。
+        ok = (rubric_enabled(ws, kb_kind, chap=str(chap or ""))
+              if kb_kind == "summary" else rubric_enabled(ws, kb_kind))
+        if not ok:
+            why = ("本章还没有教师确认的课堂资料知识点清单" if kb_kind == "summary"
+                   else "以原文为唯一依据")
+            click.echo(f"提示：{kb_kind} 本次不生成 AI 评阅要点（{why}），"
+                       f"只生成参考解答；批阅时 summary 会走保底口径。", err=True)
             with_rubric = False
     res = solve_mod.solve_targets(ws, targets, model=model, apply=apply, pin=eff_pin,
                                   dry_run=True, concurrency=concurrency,
@@ -1750,7 +1756,28 @@ def rules_generate(obj, kb_kind, chap, ids, model, apply, force, concurrency, wo
     from .grading.rules import normalize_kind, rubric_enabled
     ws = _setup(verbose or obj.get("verbose"), workspace)
     kind = normalize_kind(kb_kind)
-    if not rubric_enabled(ws, kind) and not force:
+    # D134-T5c：summary 的要点**必须基于本章已确认的课堂资料**——
+    # 没有资料时让模型"生成本章要点"等于编造依据，应引导教师先去整理资料。
+    if kind == "summary" and not rubric_enabled(ws, kind, chap=chap or "") and not force:
+        if not chap:
+            raise click.ClickException(
+                "summary 生成要点必须指定 --chap：要点依据是本章的《知识点清单.md》")
+        click.echo(json.dumps({
+            "ok": True, "skipped": True,
+            "reason": f"本章（{chap}）还没有教师确认的课堂资料知识点清单，"
+                      "无法生成本章要点（否则等于让模型编造“本章该讲什么”）。",
+            "howTo": [
+                f"把授课计划/PPT 放进 <ws>/materials/{chap}/_source/",
+                f"assist materials extract --chap {chap}",
+                f"assist materials suggest --chap {chap}",
+                f"assist materials confirm --chap {chap}   # 教师确认后才生效",
+                f"assist rules generate --kind summary --chap {chap} --apply",
+            ],
+            "fallback": "若无课堂资料，summary 批阅会自动走「保底口径」"
+                        "（知识点总结/公式推导/示意图/长度四维，缺项不扣分）",
+        }, ensure_ascii=False, indent=2))
+        return
+    if not rubric_enabled(ws, kind, chap=chap or "") and not force:
         click.echo(json.dumps({"ok": True, "skipped": True,
                                "reason": f"{kind} 按口径不生成 AI 评阅要点"
                                          "（以原文/课堂资料为唯一依据；确需生成加 --force）"},

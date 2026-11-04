@@ -156,16 +156,26 @@ def build_user_prompt(items: list[dict], markdown_text: str, student: str = "",
             from ..files import materials as _mat
             chaps = {str(it.get("chap") or "") for it in (items or [])
                      if str(it.get("kind") or "") == "summary"}
-            from .prompts import summary_knowledge_block
+            from .prompts import summary_fallback_block, summary_knowledge_block
+            from .rules import summary_fallback
             block_parts: list[str] = []
+            has_materials = False
             for c in sorted(x for x in chaps if x):
                 terms = _mat.knowledge_terms(ws, c)
                 md = _mat.read_knowledge_md(ws, c)
                 b = summary_knowledge_block(terms, md)
                 if b:
                     block_parts.append(b)
-            if block_parts:
+                    has_materials = True
+            if has_materials:
+                # D134-T4：**有资料时不叠加保底口径**（避免双重扣分/口径打架）
                 parts.append("\n\n".join(block_parts))
+            else:
+                # D134-T4：无任何本章资料 → 保底口径（四维判定 + 降级可见）
+                fb = summary_fallback(ws)
+                fb_block = summary_fallback_block(fb)
+                if fb_block:
+                    parts.append(fb_block)
         except Exception:  # noqa: BLE001 —— 清单缺失/损坏不影响评阅
             logger.debug("读取课堂资料知识点清单失败", exc_info=True)
 
@@ -304,7 +314,6 @@ def _q_deduction(q: dict, t: dict, g: dict) -> tuple[float, list[str], list[str]
         rules.append("missingPoints")
 
     elif mode == "checklist":
-        per = float(t.get("perMissingItemDeduct") or 5)
         raw: dict = {}
         for key in ("copied", "covered"):
             v = q.get(key)
@@ -314,10 +323,31 @@ def _q_deduction(q: dict, t: dict, g: dict) -> tuple[float, list[str], list[str]
                         raw[str(k2)] = v2
         items = [str(x) for x in (t.get("checklist") or [])]
         miss = [k for k in items if raw.get(k) is False]
-        d = min(len(miss) * per, cap)
-        if miss:
+        # D134-T4：summary 走**保底口径**（`summary_basis != "materials"`）时，
+        # 缺项**不扣分**（没有课堂资料就没资格判"漏了什么"），只可能扣"过简"。
+        basis = str(q.get("summary_basis") or "").strip().lower()
+        fb = (t.get("fallback") or {}) if isinstance(t.get("fallback"), dict) else {}
+        heuristic = bool(fb.get("enabled", True)) and basis != "materials"
+        if heuristic and fb:
+            per = float(fb.get("missingItemDeduct") or 0)
+            if miss and per <= 0:
+                steps.append(f"保底口径：未完成 {len(miss)} 项（缺项不扣分）：{'、'.join(miss)}")
+        else:
+            per = float(t.get("perMissingItemDeduct") or 5)
+        d = min(len(miss) * per, cap) if per > 0 else 0.0
+        if d > 0:
             steps.append(f"未完成 {len(miss)} 项 × {per:g} = −{d:g}：{'、'.join(miss)}")
             pts += d
+        # 「总结过于简略」：仅保底口径下计分（字数以转写原文重算，不信模型自报）
+        if heuristic and fb:
+            min_chars = int(fb.get("minChars") or 0)
+            fb_deduct = float(fb.get("minCharsDeduct") or 0)
+            n_chars = _text_len(str(q.get("answer_text") or ""))
+            if not n_chars and isinstance(q.get("answer_chars"), int):
+                n_chars = int(q["answer_chars"])
+            if min_chars > 0 and fb_deduct > 0 and n_chars < min_chars:
+                steps.append(f"总结过于简略（{n_chars} 字 < {min_chars} 字） −{fb_deduct:g}")
+                pts += fb_deduct
         rules.append("checklist")
 
     elif mode == "lengthBased":
@@ -352,6 +382,28 @@ def _q_deduction(q: dict, t: dict, g: dict) -> tuple[float, list[str], list[str]
         rules.append("lengthBased")
 
     return min(pts, cap + brief), steps, rules
+
+
+def _aggregate_summary_meta(result: dict, analysis: dict) -> None:
+    """D134-T4：把 summary 题的**评阅依据**与**遗漏知识点**汇总到结果（两条路径共用）。
+
+    - `knowledge_missing[]`：仅资料口径下模型才填（保底口径下必为空）；
+    - `summary_basis`：`materials`（有课堂资料）| `heuristic`（通用保底粗判）。
+      **降级必须可见**，学生报告里会据此加一段说明。
+    """
+    km: list[str] = []
+    for q in (analysis.get("questions") or []):
+        for k in (q.get("knowledge_missing") or []):
+            k = str(k or "").strip()
+            if k and k not in km:
+                km.append(k)
+    if km:
+        result["knowledge_missing"] = km
+    bases = {str(q.get("summary_basis") or "").strip().lower()
+             for q in (analysis.get("questions") or []) if q.get("summary_basis")}
+    bases.discard("")
+    if bases:
+        result["summary_basis"] = "materials" if bases == {"materials"} else "heuristic"
 
 
 def score_from_analysis(analysis: dict, quality: dict | None = None,
@@ -519,6 +571,11 @@ def build_feedback_md(result: dict, student_name: str = "学生",
                 lines.append(f"  - **想一想：**{e['guidance']}")
         if not q.get("has_diagram", True):
             lines.append("- 提示：缺少示意图，请补上。")
+    if str(result.get("summary_basis") or "") == "heuristic":
+        lines += ["", "---", "## 关于总结题",
+                  "本次总结题按**通用标准**评阅（未结合本堂课授课资料），"
+                  "因此只检查是否归纳了知识点、是否有公式或推导、"
+                  "示意图是否给出、篇幅是否过短，**不判断漏掉了哪些具体知识点**。"]
     # 整体引导
     g = (analysis or result.get("analysis", {})).get("guidance", result.get("guidance", ""))
     if g:
@@ -639,15 +696,9 @@ def evaluate_student(client: LLMClient, transcript_file: Path, items: list[dict]
                 if _k and _k not in _ks:
                     _ks.append(_k)
     result["knowledge"] = _ks
-    # D131-T21c：汇总学生**漏掉**的本章知识点（summary 题；供教师总结报告与报告标注）
-    _km: list[str] = []
-    for _q in (analysis.get("questions") or []):
-        for _k in (_q.get("knowledge_missing") or []):
-            _k = str(_k or "").strip()
-            if _k and _k not in _km:
-                _km.append(_k)
-    if _km:
-        result["knowledge_missing"] = _km
+    # D131-T21c + D134-T4：summary 题的遗漏知识点与评阅依据（共用汇总函数）
+    _aggregate_summary_meta(result, analysis)
+
 
     out_dir.mkdir(parents=True, exist_ok=True)
     out = out_dir / f"{student}.json"
@@ -682,6 +733,12 @@ def build_result_from_analysis(analysis: dict, *, student: str, quality: "dict |
     result["verdict"] = "suspected-substitution" if substitution else "normal"
     result["question_match"] = match
     result["feedback_md"] = build_feedback_md(result, student, homework_name, analysis=analysis)
+    result["feedback_md"] = build_feedback_md(result, student, homework_name,
+                                              analysis=analysis or {})
+    # D134-T4：与 evaluate_student 同口径（summary 依据 / 遗漏知识点）
+    _aggregate_summary_meta(result, analysis or {})
+    result["feedback_md"] = build_feedback_md(result, student, homework_name,
+                                              analysis=analysis or {})
     result.update({
         "student": student,
         "homework": homework_name,
