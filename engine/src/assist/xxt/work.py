@@ -138,12 +138,20 @@ def publish_work(storage, course_id: str, class_id: str, work_library_id: str, *
         if dup:
             return {"ok": False, "error": f"该作业已在班级 {dup} 发布过；同一作业同一班级不允许重复发布，"
                                            "如需修改请先在学习通创建副本（副本+时间戳）后再发布。"}
-        try:
-            pub = published_library_ids(storage, course_id, targets[0], str(cpi)) or []
-        except Exception:  # noqa: BLE001
-            pub = []
-        if str(work_library_id) in [str(x) for x in pub]:
-            return {"ok": False, "error": "该作业已在班级发布过（平台侧）；禁止重复发布。"}
+        # D165：**逐班**校验（此前只查 targets[0]，多班时漏检其它班）
+        already: list[str] = []
+        for cid in targets:
+            try:
+                pub = published_library_ids(storage, course_id, cid, str(cpi)) or []
+            except Exception:  # noqa: BLE001
+                continue
+            if str(work_library_id) in [str(x) for x in pub]:
+                already.append(str(cid))
+        if already:
+            return {"ok": False,
+                    "error": f"该作业已在班级 {already} 发布过（平台侧）；"
+                             f"同一作业同一班级不允许重复发布。"
+                             f"如需在其他班发布，请确认目标班未被包含在 {already} 中。"}
     from playwright.sync_api import sync_playwright
     from .session import check_session, _launch
     storage = Path(storage)
@@ -151,9 +159,13 @@ def publish_work(storage, course_id: str, class_id: str, work_library_id: str, *
     if chk.get("verdict") != "alive":
         return {"ok": False, "error": "session dead",
                 "hint": chk.get("hint", "请先 assist xxt login")}
+    # D165 修复：**必须带 clazzid**。此前只带 courseid/cpi/workLibraryId，
+    # 平台于是按**课程**维度判断"该作业库条目是否已发布"——只要在同学程的
+    # 其他班发过，就提示"已发布，禁止重新发布"，导致跨班发布失败。
+    # 对比同文件的其它 URL（作业库列表/详情/已发布列表）都带 clazzid。
     url = (f"https://mooc2-ans.chaoxing.com/mooc2-ans/work/library/setting"
-           f"?courseid={course_id}&cpi={cpi}&workLibraryId={work_library_id}"
-           f"&fromCreate=1&from=")
+           f"?courseid={course_id}&clazzid={targets[0]}&cpi={cpi}"
+           f"&workLibraryId={work_library_id}&fromCreate=1&from=")
     stamp = time.strftime("%Y%m%d-%H%M%S")
     run_id = f"xxt-work-publish-{stamp}"
     reqs: list = []
@@ -253,6 +265,28 @@ def publish_work(storage, course_id: str, class_id: str, work_library_id: str, *
         page.wait_for_timeout(10000)
         post = _receipt_dir() / f"{run_id}-post.png"
         page.screenshot(path=str(post), full_page=True)
+        # D165：抓取点击「发放」后的**页面提示文字**。
+        # 此前失败只返回空 response（AJAX 根本没发出时一片空白），
+        # 教师看到的只有 "ok": false，不知道是"禁止重复发布"还是别的原因。
+        page_hint = ""
+        try:
+            page_hint = page.evaluate("""() => {
+              // 常见提示容器：layer 弹层 / 提示条 / 对话框
+              const sels = ['.layui-layer-content', '.layer-content', '.toast',
+                            '.el-message', '.prompt', '#tip', '.error-tip',
+                            '.layui-layer-dialog', '.mark_layer'];
+              for (const s of sels) {
+                const el = document.querySelector(s);
+                const t = el ? (el.innerText || '').trim() : '';
+                if (t) return t.slice(0, 300);
+              }
+              // 兜底：整页找"禁止/重复/失败/错误"附近文字
+              const txt = (document.body && document.body.innerText) || '';
+              const m = txt.match(/[^\n]{0,40}(禁止|重复发布|失败|错误)[^\n]{0,60}/);
+              return m ? m[0].trim().slice(0, 300) : '';
+            }""") or ""
+        except Exception:  # noqa: BLE001
+            page_hint = ""
         browser.close()
     body = ""
     for r in resps:
@@ -270,11 +304,21 @@ def publish_work(storage, course_id: str, class_id: str, work_library_id: str, *
             _update_index(lambda idx: idx.__setitem__(_dup_key, entry))
         except Exception:  # noqa: BLE001
             pass
-    return {"ok": bool(parsed.get("status")), "mode": "send", "runId": run_id,
+    _ok = bool(parsed.get("status"))
+    _ret = {"ok": _ok, "mode": "send", "runId": run_id,
             "courseId": str(course_id), "classId": str(class_id),
             "workLibraryId": work_library_id, "response": parsed,
             "responseText": body[:1000], "screenshot": str(post),
             "requests": reqs[-5:], "responses": resps[-5:]}
+    if not _ok:
+        # D165：把页面提示带出来（"禁止重复发布"等），否则教师只看到 ok:false
+        if page_hint:
+            _ret["pageHint"] = page_hint
+            _ret["error"] = page_hint
+        elif not reqs:
+            _ret["error"] = ("点击「发放」后没有发出任何请求：通常是平台前端校验未通过"
+                             "（如「已发布，禁止重新发布」）。请查看截图确认提示文字。")
+    return _ret
 
 def list_folders(storage, course_id: str, class_id: str, cpi: str = "0") -> dict:
     """只读列出作业库文件夹（用于「发布-学习通」的文件夹设置）。"""
