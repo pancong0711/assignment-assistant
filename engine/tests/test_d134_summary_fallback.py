@@ -226,3 +226,33 @@ def test_ai_solve_summary_skips_rubric_without_materials(ws, monkeypatch):
                                      "--apply", "-w", str(ws)])
     # 无论 solve 是否被调，都不得带 with_rubric=True
     assert captured.get("with_rubric", False) is False
+
+
+# ---------------- D135：copy 的要点开关（教师可开） ----------------
+def test_copy_rubric_toggle_is_teacher_switchable(ws):
+    """copy 默认不生成要点；教师把 generateRubric 打开后**真的**生效。
+
+    口径：默认关闭（以原文为唯一依据），但**允许**教师显式开启——
+    这是规则卡上可见的布尔开关，不需要改代码。
+    """
+    assert R.rubric_enabled(ws, "copy") is False
+    data = R.read_rules(ws)
+    data["types"]["copy"]["generateRubric"] = True
+    assert R.write_rules(ws, data).get("ok") is True
+    assert R.rubric_enabled(ws, "copy") is True
+
+
+def test_copy_rubric_switch_survives_reload(ws):
+    """开关必须落在 grading-rules.json（而不是只在内存），否则刷新就丢。"""
+    data = R.read_rules(ws)
+    data["types"]["copy"]["generateRubric"] = True
+    R.write_rules(ws, data)
+    assert R.read_rules(ws)["types"]["copy"]["generateRubric"] is True
+
+
+def test_summary_rubric_switch_alone_is_not_enough(ws):
+    """summary 即使开关打开，没有已确认资料仍不生成（防模型编造"本章该讲什么"）。"""
+    data = R.read_rules(ws)
+    data["types"]["summary"]["generateRubric"] = True
+    R.write_rules(ws, data)
+    assert R.rubric_enabled(ws, "summary", chap="chap04") is False

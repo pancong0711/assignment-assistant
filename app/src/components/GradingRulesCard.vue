@@ -203,6 +203,21 @@ defineExpose({ load })
       <p v-if="!Object.keys(typeCfg).some((k) => NUM_FIELDS.some((f) => f.key === k))"
          class="hint">本题型没有可改数值（见上方只读摘要）。</p>
 
+      <!-- 🔀 AI 要点开关：copy 默认关闭（以原文为唯一依据）；summary 由课堂资料决定 -->
+      <div v-if="'generateRubric' in typeCfg" class="rubric-toggle">
+        <label>
+          <input v-model="typeCfg.generateRubric" type="checkbox" />
+          为本题型生成 <b>AI 评阅要点</b>
+        </label>
+        <span class="hint">
+          {{ activeKind === 'copy'
+            ? '默认关闭（以原文为唯一依据）。开启后「生成要点」会给抄写题也产出要点。'
+            : activeKind === 'summary'
+              ? '开关只表示"允许"；本章还需有教师确认的课堂资料清单才会真正生成。'
+              : '' }}
+        </span>
+      </div>
+
       <!-- ➕ 可改扩展：checklist 项名 -->
       <template v-if="'checklist' in typeCfg">
         <h4 style="margin:12px 0 6px">➕ 检查项名称（可改扩展）</h4>
@@ -250,6 +265,9 @@ defineExpose({ load })
 .num-item span { flex: 1; }
 .num-item input { width: 84px; }
 .num-item input.bad { border-color: #dc2626; background: #fef2f2; }
+.rubric-toggle { margin: 12px 0 6px; display: flex; gap: 8px; align-items: baseline;
+                 flex-wrap: wrap; }
+.rubric-toggle label { display: flex; gap: 6px; align-items: center; font-size: 13px; }
 .chk-input { width: 100%; max-width: 460px; }
 .hint { color: #6b7280; font-size: 12px; }
 </style>
