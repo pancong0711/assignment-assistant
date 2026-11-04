@@ -1684,6 +1684,24 @@ def materials_remove(obj, chap, file_name, workspace, verbose):
     click.echo(json.dumps(rep, ensure_ascii=False, indent=2))
 
 
+@materials_grp.command("restore")
+@click.option("--chap", required=True)
+@click.option("--file", "file_name", required=True,
+              help="回收站中的文件名（如 a.pdf 或 _trash/a.pdf）")
+@click.option("--workspace", "-w", default=None)
+@click.option("--verbose", "-v", is_flag=True)
+@click.pass_obj
+def materials_restore(obj, chap, file_name, workspace, verbose):
+    """D135：把文件从 `_source/_trash/` **移回** `_source/`（同名自动 -2）。"""
+    from .files import materials as M
+    ws = _setup(verbose or obj.get("verbose"), workspace)
+    try:
+        rep = M.restore_source(ws, chap, file_name)
+    except M.MaterialsError as exc:
+        raise click.ClickException(str(exc))
+    click.echo(json.dumps(rep, ensure_ascii=False, indent=2))
+
+
 @materials_grp.command("show")
 @click.option("--chap", required=True)
 @click.option("--text", "show_text", is_flag=True, help="打印抽取到的文本（前 4000 字）")

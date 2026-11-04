@@ -184,3 +184,57 @@ def test_remove_tool_cannot_escape_workspace(ws):
                     {"chap": "chap04", "file": "../../secret.pdf"},
                     confirmed_by="teacher:test")
     assert r["ok"] is False
+
+
+# ---------------- D135：从回收站恢复（与 remove 对称） ----------------
+def test_restore_moves_back(ws):
+    M.save_uploads(ws, "chap04", [_upload("a.pdf", b"abc")])
+    M.remove_source(ws, "chap04", "a.pdf")
+    rep = M.restore_source(ws, "chap04", "a.pdf")
+    src = ws / "materials" / "chap04" / "_source"
+    assert rep["ok"] is True
+    assert (src / "a.pdf").read_bytes() == b"abc"
+    assert not (src / "_trash" / "a.pdf").exists()
+
+
+def test_restore_accepts_trash_prefix(ws):
+    M.save_uploads(ws, "chap04", [_upload("a.pdf", b"abc")])
+    M.remove_source(ws, "chap04", "a.pdf")
+    M.restore_source(ws, "chap04", "_trash/a.pdf")
+    assert (ws / "materials" / "chap04" / "_source" / "a.pdf").is_file()
+
+
+def test_restore_does_not_overwrite_existing(ws):
+    """恢复时目标同名已存在 → 自动 -2（教师原件永不被静默替换）。"""
+    M.save_uploads(ws, "chap04", [_upload("a.pdf", b"old")])
+    M.remove_source(ws, "chap04", "a.pdf")
+    M.save_uploads(ws, "chap04", [_upload("a.pdf", b"new")])
+    rep = M.restore_source(ws, "chap04", "a.pdf")
+    src = ws / "materials" / "chap04" / "_source"
+    assert (src / "a.pdf").read_bytes() == b"new"
+    assert (src / "a-2.pdf").read_bytes() == b"old"
+    assert rep["renamed"] is True
+
+
+def test_restore_missing_errors(ws):
+    with pytest.raises(M.MaterialsError):
+        M.restore_source(ws, "chap04", "nope.pdf")
+
+
+def test_restore_rejects_outside_trash(ws):
+    with pytest.raises(M.MaterialsError):
+        M.restore_source(ws, "chap04", "../../../etc/passwd")
+
+
+def test_restore_tool_is_l2_and_requires_confirm(ws):
+    names = {t.name: t.level for t in R.BUILTIN_TOOLS}
+    assert names["materials.restore"] == "L2"
+    M.save_uploads(ws, "chap04", [_upload("a.pdf", b"abc")])
+    M.remove_source(ws, "chap04", "a.pdf")
+    from assist.atopia.registry import ToolDenied
+    with pytest.raises(ToolDenied):
+        RN.run_tool(ws, "materials.restore", {"chap": "chap04", "file": "a.pdf"})
+    r = RN.run_tool(ws, "materials.restore", {"chap": "chap04", "file": "a.pdf"},
+                    confirmed_by="teacher:test")
+    assert r["ok"] is True
+    assert (ws / "materials" / "chap04" / "_source" / "a.pdf").is_file()

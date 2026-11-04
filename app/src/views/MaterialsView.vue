@@ -9,7 +9,7 @@ import { computed, onMounted, ref } from 'vue'
 import { useSettingsStore } from '../stores/settings'
 import {
   MATERIALS_UPLOAD_EXTS, fetchMaterialsFiles, fetchMaterialsKnowledge,
-  fetchMaterialsList, removeMaterialsFile, uploadMaterialsFiles,
+  fetchMaterialsList, removeMaterialsFile, restoreMaterialsFile, uploadMaterialsFiles,
   type MaterialsChap, type MaterialsFile,
 } from '../lib/engineClient'
 
@@ -28,6 +28,7 @@ const showTrash = ref(false)
 const uploading = ref(false)
 const fileMsg = ref('')
 const pendingRemove = ref<MaterialsFile | null>(null)
+const pendingRestore = ref<MaterialsFile | null>(null)
 const fileInput = ref<HTMLInputElement | null>(null)
 
 const cur = computed(() => chaps.value.find((c) => c.chap === active.value) || null)
@@ -147,6 +148,28 @@ async function confirmRemove() {
   }
 }
 
+function askRestore(f: MaterialsFile) { pendingRestore.value = f }
+
+async function confirmRestore() {
+  const f = pendingRestore.value
+  pendingRestore.value = null
+  if (!f || !active.value) return
+  try {
+    // 回收站里的文件名相对 `_trash/`；引擎接受 `a.pdf` 或 `_trash/a.pdf`
+    const rel = f.file.replace(/^_source\/_trash\//, '')
+    const r = await restoreMaterialsFile(settings.engineUrl, settings.engineToken,
+                                         active.value, rel, 'teacher:pwa')
+    if (r?.ok) {
+      fileMsg.value = `已从回收站恢复：${f.name}`
+    } else {
+      fileMsg.value = `恢复失败：${r?.error || '未知错误'}`
+    }
+    await loadFiles()
+  } catch (e) {
+    fileMsg.value = `恢复失败：${String((e as Error).message || e)}`
+  }
+}
+
 function fmtBytes(n: number): string {
   if (!n) return '0'
   if (n < 1024) return `${n} B`
@@ -243,6 +266,9 @@ defineExpose({ refresh })
                 <button v-if="f.dir === '_source'" class="btn sm" @click="askRemove(f)">
                   移除
                 </button>
+                <button v-else class="btn sm" @click="askRestore(f)">
+                  恢复
+                </button>
               </td>
             </tr>
           </tbody>
@@ -267,6 +293,21 @@ defineExpose({ refresh })
             <pre class="md">{{ knowMd }}</pre>
           </details>
         </template>
+      </div>
+    </div>
+
+    <!-- L2 二次确认：恢复 -->
+    <div v-if="pendingRestore" class="mask">
+      <div class="dlg">
+        <h3 style="margin:0 0 8px">确认恢复到原件目录？</h3>
+        <p class="hint" style="margin:0 0 8px">
+          将把 <b>{{ pendingRestore.name }}</b> 从 <code>_source/_trash/</code>
+          移回 <code>_source/</code>（同名会自动改名，不覆盖现有文件）。
+        </p>
+        <div style="display:flex; gap:8px; justify-content:flex-end">
+          <button class="btn" @click="pendingRestore = null">取消</button>
+          <button class="btn" @click="confirmRestore">我确认恢复</button>
+        </div>
       </div>
     </div>
 

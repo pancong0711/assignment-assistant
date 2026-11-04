@@ -118,6 +118,26 @@ try:
                                     in ('第4章 动量守恒', 'v2') for n in trashed),
             'sourceOnlyOneLeft': len(list(src.glob('*.md'))) <= 1,
         })
+        # ---- D135：从回收站恢复（二次确认后移回 _source/）----
+        pg.locator('input[type=checkbox]').check()          # 显示回收站
+        pg.wait_for_function(
+            "() => document.body.innerText.includes('回收站')", timeout=15000)
+        pg.wait_for_function(
+            "() => Array.from(document.querySelectorAll('button'))"
+            ".some(b => b.textContent.trim() === '恢复')", timeout=15000)
+        pg.locator('button', has_text='恢复').first.click()
+        pg.wait_for_selector('text=确认恢复到原件目录？', timeout=10000)
+        notYet = len(list(src.glob('*.md')))
+        pg.locator('button', has_text='我确认恢复').click()
+        pg.wait_for_function(
+            "() => document.body.innerText.includes('已从回收站恢复')", timeout=20000)
+        out['restore'] = {
+            'dialogShown': True,
+            'notYetRestored': notYet <= 1,
+            'backInSource': len(list(src.glob('*.md'))) >= 2,
+            'trashEmptied': len(list((src / '_trash').glob('*.md'))) == 0,
+        }
+
         out['errors'] = errs
         b.close()
 finally:
@@ -132,7 +152,10 @@ assert u['listedInTable'], f"上传后未出现在文件列表：{u}"
 assert s['originalIntact'] and s['renamed'] and s['noticeShown'], f"同名未安全改名：{s}"
 assert r['dialogShown'] and r['notYetMoved'], f"移除未经二次确认就执行：{r}"
 assert r['inTrash'] and r['contentPreserved'], f"移除未进回收站或内容丢失：{r}"
-print('OK d134-upload：扩展名白名单 · 同名不覆盖（自动 -2）· 移除二次确认 · 只进回收站不真删')
+rs = out['restore']
+assert rs['dialogShown'] and rs['notYetRestored'], f"恢复未经二次确认：{rs}"
+assert rs['backInSource'] and rs['trashEmptied'], f"恢复未把文件移回：{rs}"
+print('OK d134-upload：扩展名白名单 · 同名不覆盖（自动 -2）· 移除二次确认 · 只进回收站不真删 · 可从回收站恢复')
 PY
 RC=$?
 rm -f "$APP_DIR/tests/_d134.upload.html" "$APP_DIR/tests/.d134-upload.bundle.js" \

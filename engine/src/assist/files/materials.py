@@ -268,6 +268,43 @@ def remove_source(ws, chap: str, file_name: str) -> dict:
             "hint": "已移入回收站（未删除）；需要时从 _source/_trash/ 移回"}
 
 
+def restore_source(ws, chap: str, file_name: str) -> dict:
+    """D135：把回收站里的文件**移回 `_source/`**（与 remove 对称，不覆盖）。
+
+    `file_name` 可写回收站内的名字（`a.pdf`）或带目录（`_trash/a.pdf`）。
+    目标同名已存在时自动 `-2`（教师原件永不被静默替换）。
+    """
+    import shutil as _sh
+
+    d = chap_dir(ws, chap)
+    src = d / SOURCE
+    trash = src / TRASH
+    rel = str(file_name or "").strip().replace("\\", "/").lstrip("/")
+    if rel.startswith(f"{SOURCE}/"):
+        rel = rel[len(SOURCE) + 1:]
+    if rel.startswith(f"{TRASH}/"):
+        rel = rel[len(TRASH) + 1:]
+    if not rel:
+        raise MaterialsError("文件名不能为空")
+    target = (trash / rel)
+    try:
+        target = target.resolve()
+        target.relative_to(trash.resolve())
+    except Exception:  # noqa: BLE001
+        raise MaterialsError(f"文件必须位于 {SOURCE}/{TRASH}/ 内：{file_name!r}") from None
+    if not target.is_file():
+        raise MaterialsError(f"回收站中没有该文件：{rel}")
+    dest = src / target.name
+    n = 2
+    while dest.exists():
+        dest = src / f"{target.stem}-{n}{target.suffix}"
+        n += 1
+    _sh.move(str(target), str(dest))
+    return {"ok": True, "restored": rel,
+            "to": str(dest.relative_to(d)).replace("\\", "/"),
+            "renamed": dest.name != target.name}
+
+
 def classify(p: Path) -> str:
     s = p.suffix.lower()
     if s in PDF_LIKE:

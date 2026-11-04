@@ -2091,6 +2091,15 @@ export async function fetchMaterialsKnowledge(
     base, `/materials/knowledge?${qs.toString()}`, token))) as any
 }
 
+/** D135：把回收站里的文件移回 `_source/`（L2，需教师确认）。 */
+export async function restoreMaterialsFile(
+  engineAddr: string, token: string | undefined, chap: string, file: string,
+  confirm: string,
+): Promise<{ ok?: boolean; error?: string; to?: string }> {
+  return runAtopiaTool(engineAddr, token,
+                       { tool: 'materials.restore', args: { chap, file }, confirm }) as any
+}
+
 /* ========== D135：跨作业知识点趋势（只给教师） ========== */
 
 export interface TrendPoint {
