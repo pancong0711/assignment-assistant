@@ -10,12 +10,12 @@ import { computed, onMounted, ref } from 'vue'
 import { useSettingsStore } from '../stores/settings'
 import AtopiaPanel from '../components/AtopiaPanel.vue'
 import {
-  askAtopia, fetchAtopiaSessions, fetchLlmConfig,
+  askAtopia, fetchAtopiaSessions, fetchAtopiaWork, fetchLlmConfig, uploadAtopiaWork,
   type AtopiaAskResult, type AtopiaStep, type LlmProvider,
 } from '../lib/engineClient'
 
 const settings = useSettingsStore()
-const tab = ref<'chat' | 'tools'>('chat')
+const tab = ref<'chat' | 'tools' | 'work'>('chat')
 
 /* ---------- D146：provider / 模型选择 ----------
    与 Playground 同源（/llm/config）；空值 = 沿用「评阅段」配置。
@@ -145,6 +145,79 @@ async function confirmPending() {
   await send(true)
 }
 
+/* ---------- D164：工作区（上传 → 解析 → 复制到课堂资料） ---------- */
+const workFeatures = ref<string[]>([])
+const workFeature = ref('')
+const newFeature = ref('')
+const workFiles = ref<{ file: string; name: string; dir: string; bytes: number
+                        mtime: string }[]>([])
+const workText = ref('')
+const workBusy = ref(false)
+const workMsg = ref('')
+const workInput = ref<HTMLInputElement | null>(null)
+
+async function loadWork() {
+  try {
+    const r = await fetchAtopiaWork(settings.engineUrl, settings.engineToken)
+    workFeatures.value = r?.features || []
+    if (!workFeature.value && workFeatures.value.length) workFeature.value = workFeatures.value[0]!
+    if (workFeature.value) await loadWorkDetail()
+  } catch { workFeatures.value = [] }
+}
+
+async function loadWorkDetail() {
+  if (!workFeature.value) return
+  try {
+    const r = await fetchAtopiaWork(settings.engineUrl, settings.engineToken, workFeature.value)
+    workFiles.value = r?.files || []
+    workText.value = String(r?.text?.text || '')
+  } catch { workFiles.value = []; workText.value = '' }
+}
+
+function pickWorkFiles() { workInput.value?.click() }
+
+function readB64(f: File): Promise<string> {
+  return new Promise((res, rej) => {
+    const fr = new FileReader()
+    fr.onerror = () => rej(new Error('读取失败'))
+    fr.onload = () => {
+      const s = String(fr.result || '')
+      res(s.includes(',') ? s.slice(s.indexOf(',') + 1) : s)
+    }
+    fr.readAsDataURL(f)
+  })
+}
+
+async function onWorkFiles(ev: Event) {
+  const input = ev.target as HTMLInputElement
+  const list = Array.from(input.files || [])
+  input.value = ''
+  if (!list.length) return
+  if (!workFeature.value) { workMsg.value = '请先填写/选择特征名'; return }
+  workBusy.value = true; workMsg.value = ''
+  try {
+    const items = []
+    for (const f of list) items.push({ name: f.name, data_b64: await readB64(f) })
+    const r = await uploadAtopiaWork(settings.engineUrl, settings.engineToken,
+                                     workFeature.value, items)
+    if (!r?.ok) { workMsg.value = `❌ ${r?.error || '上传失败'}`; return }
+    const skipped = (r.skipped || []).map((x: any) => `${x.name}（${x.reason}）`)
+    workMsg.value = `✅ 已上传 ${(r.saved || []).length} 个`
+      + (skipped.length ? `；跳过：${skipped.join('、')}` : '')
+    await loadWork(); await loadWorkDetail()
+  } catch (e) {
+    workMsg.value = `上传失败：${String((e as Error).message || e)}`
+  } finally { workBusy.value = false }
+}
+
+async function createWorkFeature() {
+  const name = newFeature.value.trim()
+  if (!name) return
+  workFeature.value = name
+  newFeature.value = ''
+  await loadWork()
+}
+
 /* ---------- 会话历史 ---------- */
 const sessions = ref<{ id: string; turns: number; mtime: string }[]>([])
 const history = ref<any[]>([])
@@ -161,7 +234,7 @@ async function openSession(id: string) {
   } catch { history.value = [] }
 }
 
-onMounted(() => { newSession(); loadSessions(); loadProviders() })
+onMounted(() => { newSession(); loadSessions(); loadProviders(); loadWork() })
 
 const canSend = computed(() => Boolean(input.value.trim()) && !busy.value)
 </script>
@@ -181,6 +254,9 @@ const canSend = computed(() => Boolean(input.value.trim()) && !busy.value)
       </button>
       <button class="btn" :class="{ primary: tab === 'tools' }" @click="tab = 'tools'">
         🧰 单一工具执行
+      </button>
+      <button class="btn" :class="{ primary: tab === 'work' }" @click="tab = 'work'; loadWork()">
+        📁 工作区（上传/解析）
       </button>
       <span style="flex:1"></span>
       <label class="hint" v-if="tab === 'chat'">
@@ -292,6 +368,53 @@ const canSend = computed(() => Boolean(input.value.trim()) && !busy.value)
       </details>
     </template>
 
+    <!-- ============ D164：工作区 ============ -->
+    <template v-else-if="tab === 'work'">
+      <div class="work">
+        <p class="hint" style="margin:0 0 6px">
+          这里放你交给 Atopia 的<b>授课计划 / PPT</b>（落在
+          <code>atopia/work/&lt;特征名&gt;/_upload/</code>，与课堂资料的
+          <code>materials/_source/</code> <b>物理隔离</b>）。
+          解析出的知识点可到「课堂资料」点<b>「📥 从 Atopia 复制」</b>确认后写入。
+        </p>
+        <div style="display:flex; gap:8px; align-items:center; flex-wrap:wrap; margin:6px 0">
+          <label class="field">特征名
+            <input v-model="workFeature" placeholder="如 26C1" style="width:120px"
+                   @change="loadWorkDetail" />
+          </label>
+          <label class="field">或新建
+            <input v-model="newFeature" placeholder="26C2" style="width:100px"
+                   @keydown.enter="createWorkFeature" />
+          </label>
+          <button class="btn" :disabled="workBusy" @click="createWorkFeature">＋ 新建</button>
+          <button class="btn primary" :disabled="workBusy" @click="pickWorkFiles">
+            {{ workBusy ? '上传中…' : '⬆️ 上传文件' }}
+          </button>
+          <input ref="workInput" type="file" multiple style="display:none"
+                 accept=".pptx,.ppt,.pdf,.docx,.doc,.png,.jpg,.jpeg,.md,.txt,.markdown"
+                 @change="onWorkFiles" />
+          <button class="btn" @click="loadWork">刷新</button>
+          <span v-if="workMsg" class="hint" style="margin:0">{{ workMsg }}</span>
+        </div>
+        <p v-if="!workFiles.length" class="hint">（该特征名下还没有文件。）</p>
+        <table v-else class="tbl">
+          <thead><tr><th>文件</th><th>大小</th><th>位置</th><th>时间</th></tr></thead>
+          <tbody>
+            <tr v-for="f in workFiles" :key="f.file">
+              <td>{{ f.name }}</td>
+              <td class="c">{{ Math.round(f.bytes / 1024) }} KB</td>
+              <td class="c">{{ f.dir === '_upload' ? '待解析' : '已解析' }}</td>
+              <td class="c">{{ f.mtime }}</td>
+            </tr>
+          </tbody>
+        </table>
+        <details v-if="workText" style="margin-top:8px">
+          <summary class="hint" style="cursor:pointer">查看可解析文本（md/txt）</summary>
+          <pre class="md">{{ workText.slice(0, 3000) }}</pre>
+        </details>
+      </div>
+    </template>
+
     <!-- ============ 单一工具执行（原面板） ============ -->
     <AtopiaPanel v-else :engine-addr="settings.engineUrl" :token="settings.engineToken" />
   </div>
@@ -326,4 +449,11 @@ const canSend = computed(() => Boolean(input.value.trim()) && !busy.value)
 .dlg { background: #fff; border-radius: 10px; padding: 16px 18px; width: min(560px, 92vw);
        box-shadow: 0 12px 40px rgba(0, 0, 0, .25); }
 .sess { margin: 4px 0 0 16px; padding: 0; font-size: 12px; }
+.work { border: 1px solid #e5e7eb; border-radius: 10px; padding: 10px 12px; }
+.tbl { border-collapse: collapse; font-size: 13px; width: 100%; }
+.tbl th, .tbl td { border: 1px solid #e5e7eb; padding: 4px 8px; }
+.tbl th { background: #f9fafb; }
+.tbl td.c { text-align: center; }
+.md { background: #f9fafb; border: 1px solid #e5e7eb; border-radius: 6px; padding: 8px;
+      font-size: 12px; max-height: 260px; overflow: auto; white-space: pre-wrap; }
 </style>

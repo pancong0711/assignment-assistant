@@ -9,8 +9,8 @@ import { computed, onMounted, ref } from 'vue'
 import { useSettingsStore } from '../stores/settings'
 import {
   MATERIALS_UPLOAD_EXTS, fetchMaterialsFiles, fetchMaterialsKnowledge,
-  confirmMaterials, createMaterialsChap, extractMaterials, fetchMaterialsList,
-  fetchMaterialsSuggestPreview,
+  confirmMaterials, copyFromAtopia, createMaterialsChap, extractMaterials,
+  fetchAtopiaWork, fetchMaterialsList, fetchMaterialsSuggestPreview,
   removeMaterialsFile, restoreMaterialsFile, suggestMaterials, uploadMaterialsFiles,
   type MaterialsChap, type MaterialsFile,
 } from '../lib/engineClient'
@@ -287,6 +287,56 @@ function nextStep(c: MaterialsChap): string {
   return '已完成：summary 批阅会以此为依据'
 }
 
+/* D164：从 Atopia 复制解析产物（必须预览全文 + 教师确认） */
+const atopiaParsed = ref<Array<{ file: string; name: string }>>([])
+const pendingAtopia = ref<{ file: string; preview: string; terms: number } | null>(null)
+const atopiaBusy = ref(false)
+
+async function askCopyFromAtopia() {
+  if (!active.value) return
+  atopiaBusy.value = true
+  msg.value = ''
+  try {
+    const r = await fetchAtopiaWork(settings.engineUrl, settings.engineToken, active.value)
+    const parsed = (r?.files || []).filter((f: any) => f.dir === '_parsed')
+    atopiaParsed.value = parsed.map((f: any) => ({ file: f.name, name: f.name }))
+    if (!parsed.length) {
+      msg.value = `Atopia 工作区里没有「${active.value}」的解析产物：先到 Atopia 页 工作区页签上传并解析。`
+      return
+    }
+    // 取第一个（通常只有一个）的全文预览
+    const one = await fetchAtopiaWork(settings.engineUrl, settings.engineToken,
+                                      active.value, parsed[0].name)
+    const data = one?.parsed || {}
+    const terms = (data.knowledge || []).filter((k: any) => k && k.term)
+    pendingAtopia.value = {
+      file: parsed[0].name,
+      terms: terms.length,
+      preview: terms.map((k: any) => `- ${k.term}${k.topic ? ' · ' + k.topic : ''}`).join('\n'),
+    }
+  } catch (e) {
+    msg.value = `读取 Atopia 解析产物失败：${String((e as Error).message || e)}`
+  } finally { atopiaBusy.value = false }
+}
+
+async function confirmCopyFromAtopia() {
+  const p = pendingAtopia.value
+  pendingAtopia.value = null
+  if (!p || !active.value) return
+  atopiaBusy.value = true
+  try {
+    const r = await copyFromAtopia(settings.engineUrl, settings.engineToken, {
+      feature: active.value, file: p.file, confirm: 'teacher:pwa',
+    })
+    msg.value = r?.ok
+      ? `✅ 已从 Atopia 复制：${r.terms} 个知识点 → 课堂资料「${active.value}」（存为知识点清单.json/.md）`
+      : `❌ ${r?.error || '复制失败'}`
+    await refresh()
+  } catch (e) {
+    msg.value = `复制失败：${String((e as Error).message || e)}`
+  } finally { atopiaBusy.value = false }
+}
+
 /* D163：新建特征名目录（26C1 等）——此前只能手工在文件系统建 */
 const newChap = ref('')
 const creating = ref(false)
@@ -416,6 +466,10 @@ defineExpose({ refresh })
                   @click="askConfirm">
             {{ stepBusy === 'confirm' ? '处理中…' : '③ 确认生效' }}
           </button>
+          <button class="btn" :disabled="atopiaBusy" @click="askCopyFromAtopia"
+                  title="把 Atopia 工作区里该特征名的解析产物复制进来（会先预览全文）">
+            {{ atopiaBusy ? '读取中…' : '📥 从 Atopia 复制' }}
+          </button>
         </div>
         <p v-if="stepMsg" class="hint" style="margin:2px 0">{{ stepMsg }}</p>
         <p class="hint" style="margin:2px 0">
@@ -444,6 +498,24 @@ defineExpose({ refresh })
             <pre class="md">{{ knowMd }}</pre>
           </details>
         </template>
+      </div>
+    </div>
+
+    <!-- D164：从 Atopia 复制的确认弹窗（同样展示全文） -->
+    <div v-if="pendingAtopia" class="mask">
+      <div class="dlg wide">
+        <h3 style="margin:0 0 8px">把 Atopia 的解析结果复制到课堂资料？</h3>
+        <p class="hint" style="margin:0 0 6px">
+          文件 <code>{{ pendingAtopia.file }}</code>，共
+          <b>{{ pendingAtopia.terms }}</b> 个知识点。
+          复制后会写成 <code>知识点清单.json</code> + <code>知识点清单.md</code>，
+          <b>summary 批阅将以它为依据</b>。
+        </p>
+        <pre class="md" style="max-height:280px">{{ pendingAtopia.preview }}</pre>
+        <div style="display:flex; gap:8px; justify-content:flex-end; margin-top:6px">
+          <button class="btn" @click="pendingAtopia = null">取消</button>
+          <button class="btn primary" @click="confirmCopyFromAtopia">我确认复制</button>
+        </div>
       </div>
     </div>
 

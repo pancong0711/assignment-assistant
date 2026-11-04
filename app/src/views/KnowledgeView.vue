@@ -6,7 +6,7 @@
  *
  *  安全口径：写题库（标注 apply / 写答案）都必须教师**显式确认**，先 dry-run 看影响面。
  */
-import { computed, onMounted, ref } from 'vue'
+import { computed, onMounted, ref, watch } from 'vue'
 import { useSettingsStore } from '../stores/settings'
 import KbAiSolvePanel from '../components/KbAiSolvePanel.vue'
 import TeacherReportCard from '../components/TeacherReportCard.vue'
@@ -16,7 +16,8 @@ import {
   PROMPT_CATEGORIES, PROMPT_CATEGORY_LABELS, fetchKbCatalog, fetchKnowledgeVocab,
   fetchPromptTemplatesByCategory, fetchTeacherReportMulti, fetchWorkspaceClasses,
   postPromptTemplateCategory,
-  tagKnowledge, type KnowledgeTerm, type PromptCategory, type PromptTemplate,
+  tagKnowledge, type KbCatalogKind, type KnowledgeTerm, type PromptCategory,
+  type PromptTemplate,
 } from '../lib/engineClient'
 
 const settings = useSettingsStore()
@@ -25,7 +26,6 @@ const settings = useSettingsStore()
 const msg = ref('')
 const busy = ref('')
 const terms = ref<KnowledgeTerm[]>([])
-const chaps = ref<string[]>([])
 const kind = ref<KbKind>('problems')
 const chap = ref('')
 
@@ -36,17 +36,28 @@ async function loadVocab() {
   } catch { terms.value = [] }
 }
 
+/* D164 修复：此前读的是 `r.catalog`（**接口不返回这个字段**，只有 `kinds`）
+ * → 章节列表永远为空，看起来像"不能选章节 / 等于全选"。 */
+const catalog = ref<KbCatalogKind[]>([])
+
+/** 当前题型下的章节（切题型时联动）。 */
+const chaps = computed<string[]>(() => {
+  const k = catalog.value.find((x) => x.kind === kind.value)
+  return (k?.chapters || []).map((c) => c.chap)
+})
+
 async function loadChaps() {
   try {
     const r = await fetchKbCatalog(settings.engineUrl, settings.engineToken)
-    const set = new Set<string>()
-    for (const k of Object.keys((r as any)?.catalog || {})) {
-      for (const c of Object.keys((r as any).catalog[k] || {})) set.add(c)
-    }
-    chaps.value = [...set].sort()
-    if (!chap.value && chaps.value.length) chap.value = chaps.value[0]!
-  } catch { chaps.value = [] }
+    catalog.value = r?.kinds || []
+    if (!chaps.value.includes(chap.value)) chap.value = chaps.value[0] || ''
+  } catch { catalog.value = [] }
 }
+
+/** 切题型时，若当前章节不属于新题型 → 回到该题型第一个章节。 */
+watch(kind, () => {
+  if (!chaps.value.includes(chap.value)) chap.value = chaps.value[0] || ''
+})
 
 onMounted(async () => {
   await loadVocab(); await loadChaps(); await loadTemplates(); await loadClasses()

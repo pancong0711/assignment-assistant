@@ -1032,6 +1032,19 @@ rainclass 67/67，PWA↔engine 全等，仅末位浮点四舍五入噪声）。
 
 ---
 
+## D164 · Atopia 工作区 + 课堂资料「从 Atopia 复制」+ 标注章节联动（2026-10-31 完成）
+
+> 需求单：`docs/107-D164-atopia-work-and-materials-upload.md`。
+
+- ✅ **标注区不能选章节**：`loadChaps` 读错字段（`r.catalog` vs 实际 `kinds`）
+  → 章节列表永远为空。改读 `kinds` + 章节跟随题型联动。
+- ✅ **Atopia 工作区**：`<ws>/atopia/work/<特征名>/{_upload,_parsed}`，
+  与 `materials/_source` **物理隔离**；Atopia 页新增「📁 工作区」上传页签。
+- ✅ **「📥 从 Atopia 复制」**：必须预览全文 + 教师显式确认（缺 confirm → 403），
+  写入 `materials/<特征名>/知识点清单.json+.md`，可进 summary 批阅。
+
+---
+
 ## D147 · Atopia L2 确认精确到「工具 + 参数」（2026-10-31 完成，安全修复）
 
 > 需求单：`docs/94-D147-confirm-scope.md`。

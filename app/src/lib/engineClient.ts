@@ -2125,6 +2125,55 @@ export async function restoreMaterialsFile(
                        { tool: 'materials.restore', args: { chap, file }, confirm }) as any
 }
 
+/* ========== D164：Atopia 工作区（上传/解析）+ 复制到课堂资料 ========== */
+
+export interface AtopiaWorkFile {
+  file: string; name: string; dir: string; bytes: number; mtime: string
+}
+
+export async function fetchAtopiaWork(
+  base: string, token: string | undefined, feature = '', parsed = '',
+): Promise<{ ok?: boolean; features?: string[]; files?: AtopiaWorkFile[]
+             text?: { text?: string; files?: string[]; truncated?: boolean }
+             parsed?: any; error?: string }> {
+  const qs = new URLSearchParams()
+  if (feature) qs.set('feature', feature)
+  if (parsed) qs.set('parsed', parsed)
+  const q = qs.toString()
+  return (await getJson2(engineUrlWithToken(
+    normalizeEngineAddr(base), `/atopia/work${q ? '?' + q : ''}`, token))) as any
+}
+
+export async function uploadAtopiaWork(
+  base: string, token: string | undefined, feature: string,
+  items: { name: string; data_b64: string }[],
+): Promise<{ ok?: boolean; saved?: any[]; skipped?: any[]; files?: AtopiaWorkFile[]
+             error?: string }> {
+  const res = await fetch(engineUrlWithToken(normalizeEngineAddr(base),
+                                             '/atopia/work/upload', token), {
+    method: 'POST', headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ feature, items }),
+  })
+  const o = (await res.json().catch(() => ({}))) as any
+  if (!res.ok && !o?.error) throw new Error(`HTTP ${res.status}`)
+  return o
+}
+
+/** 把 Atopia 解析产物复制进课堂资料（**必须**教师确认）。 */
+export async function copyFromAtopia(
+  base: string, token: string | undefined,
+  payload: { feature: string; file: string; confirm: string },
+): Promise<{ ok?: boolean; error?: string; terms?: number; json?: string; md?: string }> {
+  const res = await fetch(engineUrlWithToken(normalizeEngineAddr(base),
+                                             '/materials/copy-from-atopia', token), {
+    method: 'POST', headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(payload),
+  })
+  const o = (await res.json().catch(() => ({}))) as any
+  if (!res.ok && !o?.error) throw new Error(`HTTP ${res.status}`)
+  return o
+}
+
 /* ========== D162：从引擎重载题库（含 AI 标注的 related） ========== */
 
 export async function fetchKbFull(

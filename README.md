@@ -67,6 +67,7 @@
 - `docs/104-D161-translation-seed.md` — **D161 翻译题随机种子（新建随机 / 落盘 / 可重抽）**
 - `docs/105-D162-batch-fixes.md` — **D162 一批修复（LaTeX 裸换行 / 标注可见性 / 章节下拉 / 种子往返 / 包计数）**
 - `docs/106-D163-materials-page-and-translation-line.md` — **D163 课堂资料页可新建/可上传 + 翻译题题号不换行**
+- `docs/107-D164-atopia-work-and-materials-upload.md` — **D164 Atopia 工作区（上传/解析）+ 从 Atopia 复制 + 标注章节联动**
 - `docs/85-D135-knowledge-hierarchy.md` — **D135 待决：知识点层级（上位/下位概念）方案与取舍**
 - `docs/34-D82-kb-read-order-image-upload-batch.md` — **D82 kb 多文件读取/题目排序/插图参数/草稿修复/上传试跑/batch**
 - `docs/16-xuexitong-integration.md` — **阶段6 学习通整合任务需求单**（登录/读取/下载/上传/发布）

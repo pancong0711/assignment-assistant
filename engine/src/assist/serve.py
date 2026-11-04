@@ -1571,6 +1571,69 @@ class Handler(BaseHTTPRequestHandler):
             rep["config"] = providers.public_config(ws)
             self._json(rep, 200 if rep.get("ok") else 400)
             return
+        if u.path == "/materials/copy-from-atopia":
+            # D164：把 Atopia 解析产物**复制**进课堂资料（会成为 summary 批阅依据）。
+            # 安全口径与 materials.confirm 一致：必须教师显式 confirm + 全文预览在前端完成。
+            payload: dict = {}
+            try:
+                length = int(self.headers.get("Content-Length") or 0)
+                if length:
+                    payload = json.loads(self.rfile.read(length).decode("utf-8")) or {}
+            except Exception as exc:  # noqa: BLE001
+                self._json({"ok": False, "error": f"bad json: {exc}"}, 400)
+                return
+            confirm = str(payload.get("confirm") or "").strip()
+            if not confirm:
+                self._json({"ok": False, "denied": True,
+                            "error": "复制到课堂资料必须由教师显式确认（缺少 confirm）"}, 403)
+                return
+            from .atopia import work as _aw
+            from .files import materials as _mat
+            feat = str(payload.get("feature") or "").strip()
+            fname = str(payload.get("file") or "").strip()
+            ws_ = Path(self.ws).resolve()
+            try:
+                data = _aw.read_parsed(ws_, feat, fname)
+            except _aw.WorkError as exc:
+                self._json({"ok": False, "error": str(exc)}, 400)
+                return
+            try:
+                d = _mat.ensure_chap(ws_, feat)
+                # 写 json（机器读，权威）+ md（人可读）
+                jp = d / "知识点清单.json"
+                jp.write_text(json.dumps(data, ensure_ascii=False, indent=1),
+                              encoding="utf-8")
+                md = _mat.render_knowledge_md({**data, "chap": feat})
+                (d / _mat.KNOW_MD).write_text(md, encoding="utf-8")
+            except Exception as exc:  # noqa: BLE001
+                self._json({"ok": False, "error": f"写入失败：{str(exc)[:200]}"}, 500)
+                return
+            self._json({"ok": True, "feature": feat, "json": str(jp),
+                        "md": str(d / _mat.KNOW_MD), "confirmed_by": confirm,
+                        "terms": len([k for k in (data.get("knowledge") or [])
+                                      if isinstance(k, dict)])})
+            return
+        if u.path == "/atopia/work/upload":
+            # D164：上传到 atopia/work/<特征名>/_upload/（与 materials 物理隔离）
+            payload: dict = {}
+            try:
+                length = int(self.headers.get("Content-Length") or 0)
+                if length:
+                    payload = json.loads(self.rfile.read(length).decode("utf-8")) or {}
+            except Exception as exc:  # noqa: BLE001
+                self._json({"ok": False, "error": f"bad json: {exc}"}, 400)
+                return
+            from .atopia import work as _aw
+            feat = str(payload.get("feature") or "").strip()
+            try:
+                rep = _aw.save_uploads(Path(self.ws).resolve(), feat,
+                                       payload.get("items") or [])
+                rep["files"] = _aw.files_of(Path(self.ws).resolve(), feat)
+            except _aw.WorkError as exc:
+                self._json({"ok": False, "error": str(exc)}, 400)
+                return
+            self._json(rep)
+            return
         if u.path == "/materials/create":
             # D163：新建一个「特征名」资料目录（26C1 等）——PWA 里没有它就只能手工建目录
             payload: dict = {}
@@ -3330,6 +3393,29 @@ class Handler(BaseHTTPRequestHandler):
                     out["ok"] = False
                     out["error"] = f"AI 建议文件损坏：{exc}"
             self._json(out)
+            return
+        elif u.path == "/atopia/work":
+            # D164：Atopia 工作区（特征名列表 / 文件清单 / 解析产物预览）
+            from .atopia import work as _aw
+            q = urllib.parse.parse_qs(u.query)
+            ws_ = Path(self.ws).resolve()
+            feat = str((q.get("feature") or [""])[0]).strip()
+            if not feat:
+                self._json({"ok": True, "features": _aw.list_features(ws_),
+                            "root": str(_aw.work_root(ws_))})
+                return
+            parsed = str((q.get("parsed") or [""])[0]).strip()
+            try:
+                if parsed:
+                    data = _aw.read_parsed(ws_, feat, parsed)
+                    self._json({"ok": True, "feature": feat, "parsed": data,
+                                "file": parsed})
+                    return
+                self._json({"ok": True, "feature": feat,
+                            "files": _aw.files_of(ws_, feat),
+                            "text": _aw.read_upload_text(ws_, feat)})
+            except _aw.WorkError as exc:
+                self._json({"ok": False, "error": str(exc)}, 400)
             return
         elif u.path == "/workspace/classes":
             # D153：列出 workspace 下的班级目录（供报告多选）

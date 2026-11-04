@@ -3,7 +3,7 @@ import { computed, onMounted, ref } from 'vue'
 import { useSettingsStore } from '/home/bot2603/Projects/2609-assignment-assistant/app/src/stores/settings'
 import AtopiaPanel from '/home/bot2603/Projects/2609-assignment-assistant/app/tests/AtopiaPanel.compiled-1l2ros.ts'
 import {
-  askAtopia, fetchAtopiaSessions, fetchLlmConfig,
+  askAtopia, fetchAtopiaSessions, fetchAtopiaWork, fetchLlmConfig, uploadAtopiaWork,
   type AtopiaAskResult, type AtopiaStep, type LlmProvider,
 } from '/home/bot2603/Projects/2609-assignment-assistant/app/src/lib/engineClient'
 
@@ -30,7 +30,7 @@ const __sfc_main = /*@__PURE__*/_defineComponent({
  *                 （L3 拒绝 / L2 教师逐次确认 / 审计 / 护栏）。
  */
 const settings = useSettingsStore()
-const tab = ref<'chat' | 'tools'>('chat')
+const tab = ref<'chat' | 'tools' | 'work'>('chat')
 
 /* ---------- D146：provider / 模型选择 ----------
    与 Playground 同源（/llm/config）；空值 = 沿用「评阅段」配置。
@@ -151,6 +151,79 @@ async function confirmPending() {
   await send(true)
 }
 
+/* ---------- D164：工作区（上传 → 解析 → 复制到课堂资料） ---------- */
+const workFeatures = ref<string[]>([])
+const workFeature = ref('')
+const newFeature = ref('')
+const workFiles = ref<{ file: string; name: string; dir: string; bytes: number
+                        mtime: string }[]>([])
+const workText = ref('')
+const workBusy = ref(false)
+const workMsg = ref('')
+const workInput = ref<HTMLInputElement | null>(null)
+
+async function loadWork() {
+  try {
+    const r = await fetchAtopiaWork(settings.engineUrl, settings.engineToken)
+    workFeatures.value = r?.features || []
+    if (!workFeature.value && workFeatures.value.length) workFeature.value = workFeatures.value[0]!
+    if (workFeature.value) await loadWorkDetail()
+  } catch { workFeatures.value = [] }
+}
+
+async function loadWorkDetail() {
+  if (!workFeature.value) return
+  try {
+    const r = await fetchAtopiaWork(settings.engineUrl, settings.engineToken, workFeature.value)
+    workFiles.value = r?.files || []
+    workText.value = String(r?.text?.text || '')
+  } catch { workFiles.value = []; workText.value = '' }
+}
+
+function pickWorkFiles() { workInput.value?.click() }
+
+function readB64(f: File): Promise<string> {
+  return new Promise((res, rej) => {
+    const fr = new FileReader()
+    fr.onerror = () => rej(new Error('读取失败'))
+    fr.onload = () => {
+      const s = String(fr.result || '')
+      res(s.includes(',') ? s.slice(s.indexOf(',') + 1) : s)
+    }
+    fr.readAsDataURL(f)
+  })
+}
+
+async function onWorkFiles(ev: Event) {
+  const input = ev.target as HTMLInputElement
+  const list = Array.from(input.files || [])
+  input.value = ''
+  if (!list.length) return
+  if (!workFeature.value) { workMsg.value = '请先填写/选择特征名'; return }
+  workBusy.value = true; workMsg.value = ''
+  try {
+    const items = []
+    for (const f of list) items.push({ name: f.name, data_b64: await readB64(f) })
+    const r = await uploadAtopiaWork(settings.engineUrl, settings.engineToken,
+                                     workFeature.value, items)
+    if (!r?.ok) { workMsg.value = `❌ ${r?.error || '上传失败'}`; return }
+    const skipped = (r.skipped || []).map((x: any) => `${x.name}（${x.reason}）`)
+    workMsg.value = `✅ 已上传 ${(r.saved || []).length} 个`
+      + (skipped.length ? `；跳过：${skipped.join('、')}` : '')
+    await loadWork(); await loadWorkDetail()
+  } catch (e) {
+    workMsg.value = `上传失败：${String((e as Error).message || e)}`
+  } finally { workBusy.value = false }
+}
+
+async function createWorkFeature() {
+  const name = newFeature.value.trim()
+  if (!name) return
+  workFeature.value = name
+  newFeature.value = ''
+  await loadWork()
+}
+
 /* ---------- 会话历史 ---------- */
 const sessions = ref<{ id: string; turns: number; mtime: string }[]>([])
 const history = ref<any[]>([])
@@ -167,11 +240,11 @@ async function openSession(id: string) {
   } catch { history.value = [] }
 }
 
-onMounted(() => { newSession(); loadSessions(); loadProviders() })
+onMounted(() => { newSession(); loadSessions(); loadProviders(); loadWork() })
 
 const canSend = computed(() => Boolean(input.value.trim()) && !busy.value)
 
-const __returned__ = { settings, tab, LS_PROV, LS_MODEL, providers, provider, model, customModel, modelsOfProvider, hasModelChoices, onProviderChange, onModelChange, loadProviders, msgs, input, busy, sessionId, errMsg, pending, confirming, showSteps, newSession, send, confirmPending, sessions, history, loadSessions, openSession, canSend, AtopiaPanel }
+const __returned__ = { settings, tab, LS_PROV, LS_MODEL, providers, provider, model, customModel, modelsOfProvider, hasModelChoices, onProviderChange, onModelChange, loadProviders, msgs, input, busy, sessionId, errMsg, pending, confirming, showSteps, newSession, send, confirmPending, workFeatures, workFeature, newFeature, workFiles, workText, workBusy, workMsg, workInput, loadWork, loadWorkDetail, pickWorkFiles, readB64, onWorkFiles, createWorkFeature, sessions, history, loadSessions, openSession, canSend, AtopiaPanel }
 Object.defineProperty(__returned__, '__isScriptSetup', { enumerable: false, value: true })
 return __returned__
 }
@@ -268,11 +341,38 @@ const _hoisted_37 = {
   key: 2,
   class: "out"
 }
+const _hoisted_38 = { class: "work" }
+const _hoisted_39 = { style: {"display":"flex","gap":"8px","align-items":"center","flex-wrap":"wrap","margin":"6px 0"} }
+const _hoisted_40 = { class: "field" }
+const _hoisted_41 = { class: "field" }
+const _hoisted_42 = ["disabled"]
+const _hoisted_43 = ["disabled"]
+const _hoisted_44 = {
+  key: 0,
+  class: "hint",
+  style: {"margin":"0"}
+}
+const _hoisted_45 = {
+  key: 0,
+  class: "hint"
+}
+const _hoisted_46 = {
+  key: 1,
+  class: "tbl"
+}
+const _hoisted_47 = { class: "c" }
+const _hoisted_48 = { class: "c" }
+const _hoisted_49 = { class: "c" }
+const _hoisted_50 = {
+  key: 2,
+  style: {"margin-top":"8px"}
+}
+const _hoisted_51 = { class: "md" }
 
 export function render(_ctx, _cache, $props, $setup, $data, $options) {
   return (_openBlock(), _createElementBlock("div", _hoisted_1, [
-    _cache[19] || (_cache[19] = _createElementVNode("h2", { style: {"margin":"0 0 4px"} }, "Atopia（AI 用本项目工具）", -1 /* CACHED */)),
-    _cache[20] || (_cache[20] = _createElementVNode("p", {
+    _cache[27] || (_cache[27] = _createElementVNode("h2", { style: {"margin":"0 0 4px"} }, "Atopia（AI 用本项目工具）", -1 /* CACHED */)),
+    _cache[28] || (_cache[28] = _createElementVNode("p", {
       class: "hint",
       style: {"margin":"0 0 8px"}
     }, [
@@ -290,16 +390,20 @@ export function render(_ctx, _cache, $props, $setup, $data, $options) {
         class: _normalizeClass(["btn", { primary: $setup.tab === 'tools' }]),
         onClick: _cache[1] || (_cache[1] = $event => ($setup.tab = 'tools'))
       }, " 🧰 单一工具执行 ", 2 /* CLASS */),
-      _cache[11] || (_cache[11] = _createElementVNode("span", { style: {"flex":"1"} }, null, -1 /* CACHED */)),
+      _createElementVNode("button", {
+        class: _normalizeClass(["btn", { primary: $setup.tab === 'work' }]),
+        onClick: _cache[2] || (_cache[2] = $event => {$setup.tab = 'work'; $setup.loadWork()})
+      }, " 📁 工作区（上传/解析） ", 2 /* CLASS */),
+      _cache[14] || (_cache[14] = _createElementVNode("span", { style: {"flex":"1"} }, null, -1 /* CACHED */)),
       ($setup.tab === 'chat')
         ? (_openBlock(), _createElementBlock("label", _hoisted_3, [
             _withDirectives(_createElementVNode("input", {
-              "onUpdate:modelValue": _cache[2] || (_cache[2] = $event => (($setup.showSteps) = $event)),
+              "onUpdate:modelValue": _cache[3] || (_cache[3] = $event => (($setup.showSteps) = $event)),
               type: "checkbox"
             }, null, 512 /* NEED_PATCH */), [
               [_vModelCheckbox, $setup.showSteps]
             ]),
-            _cache[10] || (_cache[10] = _createTextVNode(" 显示工具调用细节 ", -1 /* CACHED */))
+            _cache[13] || (_cache[13] = _createTextVNode(" 显示工具调用细节 ", -1 /* CACHED */))
           ]))
         : _createCommentVNode("v-if", true),
       ($setup.tab === 'chat')
@@ -314,7 +418,7 @@ export function render(_ctx, _cache, $props, $setup, $data, $options) {
     ($setup.tab === 'chat')
       ? (_openBlock(), _createElementBlock(_Fragment, { key: 0 }, [
           _createElementVNode("div", _hoisted_4, [
-            _cache[14] || (_cache[14] = _createElementVNode("span", {
+            _cache[17] || (_cache[17] = _createElementVNode("span", {
               class: "hint",
               style: {"margin":"0"}
             }, "provider：", -1 /* CACHED */)),
@@ -322,7 +426,7 @@ export function render(_ctx, _cache, $props, $setup, $data, $options) {
               value: $setup.provider,
               onChange: $setup.onProviderChange
             }, [
-              _cache[12] || (_cache[12] = _createElementVNode("option", { value: "" }, "（评阅段配置）", -1 /* CACHED */)),
+              _cache[15] || (_cache[15] = _createElementVNode("option", { value: "" }, "（评阅段配置）", -1 /* CACHED */)),
               (_openBlock(true), _createElementBlock(_Fragment, null, _renderList($setup.providers, (p) => {
                 return (_openBlock(), _createElementBlock("option", {
                   key: p.name,
@@ -330,7 +434,7 @@ export function render(_ctx, _cache, $props, $setup, $data, $options) {
                 }, _toDisplayString(p.name) + _toDisplayString(p.has_key ? '' : '（无 key）'), 9 /* TEXT, PROPS */, _hoisted_6))
               }), 128 /* KEYED_FRAGMENT */))
             ], 40 /* PROPS, NEED_HYDRATION */, _hoisted_5),
-            _cache[15] || (_cache[15] = _createElementVNode("span", {
+            _cache[18] || (_cache[18] = _createElementVNode("span", {
               class: "hint",
               style: {"margin":"0"}
             }, "模型：", -1 /* CACHED */)),
@@ -338,9 +442,9 @@ export function render(_ctx, _cache, $props, $setup, $data, $options) {
               ? (_openBlock(), _createElementBlock("select", {
                   key: 0,
                   value: $setup.model,
-                  onChange: _cache[3] || (_cache[3] = $event => {$setup.model = ($event.target as HTMLSelectElement).value; $setup.onModelChange()})
+                  onChange: _cache[4] || (_cache[4] = $event => {$setup.model = ($event.target as HTMLSelectElement).value; $setup.onModelChange()})
                 }, [
-                  _cache[13] || (_cache[13] = _createElementVNode("option", { value: "" }, "（默认）", -1 /* CACHED */)),
+                  _cache[16] || (_cache[16] = _createElementVNode("option", { value: "" }, "（默认）", -1 /* CACHED */)),
                   (_openBlock(true), _createElementBlock(_Fragment, null, _renderList($setup.modelsOfProvider, (m) => {
                     return (_openBlock(), _createElementBlock("option", {
                       key: m,
@@ -353,11 +457,11 @@ export function render(_ctx, _cache, $props, $setup, $data, $options) {
                   value: $setup.model,
                   placeholder: "模型名（空=默认）",
                   style: {"width":"170px"},
-                  onChange: _cache[4] || (_cache[4] = $event => {$setup.model = ($event.target as HTMLInputElement).value; $setup.onModelChange()})
+                  onChange: _cache[5] || (_cache[5] = $event => {$setup.model = ($event.target as HTMLInputElement).value; $setup.onModelChange()})
                 }, null, 40 /* PROPS, NEED_HYDRATION */, _hoisted_9)),
             _createElementVNode("button", {
               class: "btn small",
-              onClick: _cache[5] || (_cache[5] = $event => ($setup.customModel = !$setup.customModel)),
+              onClick: _cache[6] || (_cache[6] = $event => ($setup.customModel = !$setup.customModel)),
               title: $setup.hasModelChoices ? '切换下拉/自定义输入' : '该 provider 暂无候选模型'
             }, _toDisplayString($setup.customModel ? '用下拉' : '自定义'), 9 /* TEXT, PROPS */, _hoisted_10),
             ($setup.provider)
@@ -414,35 +518,35 @@ export function render(_ctx, _cache, $props, $setup, $data, $options) {
           ]),
           _createElementVNode("div", _hoisted_24, [
             _withDirectives(_createElementVNode("textarea", {
-              "onUpdate:modelValue": _cache[6] || (_cache[6] = $event => (($setup.input) = $event)),
+              "onUpdate:modelValue": _cache[7] || (_cache[7] = $event => (($setup.input) = $event)),
               rows: "2",
               placeholder: "告诉 Atopia 你要做什么（Enter 发送，Shift+Enter 换行）",
-              onKeydown: _cache[7] || (_cache[7] = _withKeys(_withModifiers($event => ($setup.send(false)), ["exact","prevent"]), ["enter"]))
+              onKeydown: _cache[8] || (_cache[8] = _withKeys(_withModifiers($event => ($setup.send(false)), ["exact","prevent"]), ["enter"]))
             }, null, 544 /* NEED_HYDRATION, NEED_PATCH */), [
               [_vModelText, $setup.input]
             ]),
             _createElementVNode("button", {
               class: "btn primary",
               disabled: !$setup.canSend,
-              onClick: _cache[8] || (_cache[8] = $event => ($setup.send(false)))
+              onClick: _cache[9] || (_cache[9] = $event => ($setup.send(false)))
             }, _toDisplayString($setup.busy ? '执行中…' : '发送'), 9 /* TEXT, PROPS */, _hoisted_25)
           ]),
           _createCommentVNode(" L2 确认弹窗 "),
           ($setup.pending)
             ? (_openBlock(), _createElementBlock("div", _hoisted_26, [
                 _createElementVNode("div", _hoisted_27, [
-                  _cache[18] || (_cache[18] = _createElementVNode("h3", { style: {"margin":"0 0 8px"} }, "确认让 Atopia 执行这个写入操作？", -1 /* CACHED */)),
+                  _cache[21] || (_cache[21] = _createElementVNode("h3", { style: {"margin":"0 0 8px"} }, "确认让 Atopia 执行这个写入操作？", -1 /* CACHED */)),
                   _createElementVNode("p", _hoisted_28, [
-                    _cache[16] || (_cache[16] = _createTextVNode(" 工具：", -1 /* CACHED */)),
+                    _cache[19] || (_cache[19] = _createTextVNode(" 工具：", -1 /* CACHED */)),
                     _createElementVNode("code", null, _toDisplayString($setup.pending.tool), 1 /* TEXT */),
-                    _cache[17] || (_cache[17] = _createTextVNode("（L2 写入，会修改工作区数据） ", -1 /* CACHED */))
+                    _cache[20] || (_cache[20] = _createTextVNode("（L2 写入，会修改工作区数据） ", -1 /* CACHED */))
                   ]),
                   _createElementVNode("pre", _hoisted_29, _toDisplayString(JSON.stringify($setup.pending.args || {}, null, 1)), 1 /* TEXT */),
                   _createElementVNode("p", _hoisted_30, _toDisplayString($setup.pending.reason || ''), 1 /* TEXT */),
                   _createElementVNode("div", _hoisted_31, [
                     _createElementVNode("button", {
                       class: "btn",
-                      onClick: _cache[9] || (_cache[9] = $event => ($setup.pending = null))
+                      onClick: _cache[10] || (_cache[10] = $event => ($setup.pending = null))
                     }, "拒绝"),
                     _createElementVNode("button", {
                       class: "btn primary",
@@ -479,13 +583,117 @@ export function render(_ctx, _cache, $props, $setup, $data, $options) {
               : _createCommentVNode("v-if", true)
           ], 32 /* NEED_HYDRATION */)
         ], 64 /* STABLE_FRAGMENT */))
-      : (_openBlock(), _createElementBlock(_Fragment, { key: 1 }, [
-          _createCommentVNode(" ============ 单一工具执行（原面板） ============ "),
-          _createVNode($setup["AtopiaPanel"], {
-            "engine-addr": $setup.settings.engineUrl,
-            token: $setup.settings.engineToken
-          }, null, 8 /* PROPS */, ["engine-addr", "token"])
-        ], 2112 /* STABLE_FRAGMENT, DEV_ROOT_FRAGMENT */))
+      : ($setup.tab === 'work')
+        ? (_openBlock(), _createElementBlock(_Fragment, { key: 1 }, [
+            _createCommentVNode(" ============ D164：工作区 ============ "),
+            _createElementVNode("div", _hoisted_38, [
+              _cache[26] || (_cache[26] = _createElementVNode("p", {
+                class: "hint",
+                style: {"margin":"0 0 6px"}
+              }, [
+                _createTextVNode(" 这里放你交给 Atopia 的"),
+                _createElementVNode("b", null, "授课计划 / PPT"),
+                _createTextVNode("（落在 "),
+                _createElementVNode("code", null, "atopia/work/<特征名>/_upload/"),
+                _createTextVNode("，与课堂资料的 "),
+                _createElementVNode("code", null, "materials/_source/"),
+                _createTextVNode(),
+                _createElementVNode("b", null, "物理隔离"),
+                _createTextVNode("）。 解析出的知识点可到「课堂资料」点"),
+                _createElementVNode("b", null, "「📥 从 Atopia 复制」"),
+                _createTextVNode("确认后写入。 ")
+              ], -1 /* CACHED */)),
+              _createElementVNode("div", _hoisted_39, [
+                _createElementVNode("label", _hoisted_40, [
+                  _cache[22] || (_cache[22] = _createTextVNode("特征名 ", -1 /* CACHED */)),
+                  _withDirectives(_createElementVNode("input", {
+                    "onUpdate:modelValue": _cache[11] || (_cache[11] = $event => (($setup.workFeature) = $event)),
+                    placeholder: "如 26C1",
+                    style: {"width":"120px"},
+                    onChange: $setup.loadWorkDetail
+                  }, null, 544 /* NEED_HYDRATION, NEED_PATCH */), [
+                    [_vModelText, $setup.workFeature]
+                  ])
+                ]),
+                _createElementVNode("label", _hoisted_41, [
+                  _cache[23] || (_cache[23] = _createTextVNode("或新建 ", -1 /* CACHED */)),
+                  _withDirectives(_createElementVNode("input", {
+                    "onUpdate:modelValue": _cache[12] || (_cache[12] = $event => (($setup.newFeature) = $event)),
+                    placeholder: "26C2",
+                    style: {"width":"100px"},
+                    onKeydown: _withKeys($setup.createWorkFeature, ["enter"])
+                  }, null, 544 /* NEED_HYDRATION, NEED_PATCH */), [
+                    [_vModelText, $setup.newFeature]
+                  ])
+                ]),
+                _createElementVNode("button", {
+                  class: "btn",
+                  disabled: $setup.workBusy,
+                  onClick: $setup.createWorkFeature
+                }, "＋ 新建", 8 /* PROPS */, _hoisted_42),
+                _createElementVNode("button", {
+                  class: "btn primary",
+                  disabled: $setup.workBusy,
+                  onClick: $setup.pickWorkFiles
+                }, _toDisplayString($setup.workBusy ? '上传中…' : '⬆️ 上传文件'), 9 /* TEXT, PROPS */, _hoisted_43),
+                _createElementVNode("input", {
+                  ref: "workInput",
+                  type: "file",
+                  multiple: "",
+                  style: {"display":"none"},
+                  accept: ".pptx,.ppt,.pdf,.docx,.doc,.png,.jpg,.jpeg,.md,.txt,.markdown",
+                  onChange: $setup.onWorkFiles
+                }, null, 544 /* NEED_HYDRATION, NEED_PATCH */),
+                _createElementVNode("button", {
+                  class: "btn",
+                  onClick: $setup.loadWork
+                }, "刷新"),
+                ($setup.workMsg)
+                  ? (_openBlock(), _createElementBlock("span", _hoisted_44, _toDisplayString($setup.workMsg), 1 /* TEXT */))
+                  : _createCommentVNode("v-if", true)
+              ]),
+              (!$setup.workFiles.length)
+                ? (_openBlock(), _createElementBlock("p", _hoisted_45, "（该特征名下还没有文件。）"))
+                : (_openBlock(), _createElementBlock("table", _hoisted_46, [
+                    _cache[24] || (_cache[24] = _createElementVNode("thead", null, [
+                      _createElementVNode("tr", null, [
+                        _createElementVNode("th", null, "文件"),
+                        _createElementVNode("th", null, "大小"),
+                        _createElementVNode("th", null, "位置"),
+                        _createElementVNode("th", null, "时间")
+                      ])
+                    ], -1 /* CACHED */)),
+                    _createElementVNode("tbody", null, [
+                      (_openBlock(true), _createElementBlock(_Fragment, null, _renderList($setup.workFiles, (f) => {
+                        return (_openBlock(), _createElementBlock("tr", {
+                          key: f.file
+                        }, [
+                          _createElementVNode("td", null, _toDisplayString(f.name), 1 /* TEXT */),
+                          _createElementVNode("td", _hoisted_47, _toDisplayString(Math.round(f.bytes / 1024)) + " KB", 1 /* TEXT */),
+                          _createElementVNode("td", _hoisted_48, _toDisplayString(f.dir === '_upload' ? '待解析' : '已解析'), 1 /* TEXT */),
+                          _createElementVNode("td", _hoisted_49, _toDisplayString(f.mtime), 1 /* TEXT */)
+                        ]))
+                      }), 128 /* KEYED_FRAGMENT */))
+                    ])
+                  ])),
+              ($setup.workText)
+                ? (_openBlock(), _createElementBlock("details", _hoisted_50, [
+                    _cache[25] || (_cache[25] = _createElementVNode("summary", {
+                      class: "hint",
+                      style: {"cursor":"pointer"}
+                    }, "查看可解析文本（md/txt）", -1 /* CACHED */)),
+                    _createElementVNode("pre", _hoisted_51, _toDisplayString($setup.workText.slice(0, 3000)), 1 /* TEXT */)
+                  ]))
+                : _createCommentVNode("v-if", true)
+            ])
+          ], 64 /* STABLE_FRAGMENT */))
+        : (_openBlock(), _createElementBlock(_Fragment, { key: 2 }, [
+            _createCommentVNode(" ============ 单一工具执行（原面板） ============ "),
+            _createVNode($setup["AtopiaPanel"], {
+              "engine-addr": $setup.settings.engineUrl,
+              token: $setup.settings.engineToken
+            }, null, 8 /* PROPS */, ["engine-addr", "token"])
+          ], 2112 /* STABLE_FRAGMENT, DEV_ROOT_FRAGMENT */))
   ]))
 }
 __sfc_main.render = render

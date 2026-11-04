@@ -1,5 +1,5 @@
 import { defineComponent as _defineComponent } from 'vue'
-import { computed, onMounted, ref } from 'vue'
+import { computed, onMounted, ref, watch } from 'vue'
 import { useSettingsStore } from '/home/bot2603/Projects/2609-assignment-assistant/app/src/stores/settings'
 import KbAiSolvePanel from '/home/bot2603/Projects/2609-assignment-assistant/app/tests/KbAiSolvePanel.compiled-pi5ca0.ts'
 import TeacherReportCard from '/home/bot2603/Projects/2609-assignment-assistant/app/tests/TeacherReportCard.compiled-gbyede.ts'
@@ -9,7 +9,8 @@ import {
   PROMPT_CATEGORIES, PROMPT_CATEGORY_LABELS, fetchKbCatalog, fetchKnowledgeVocab,
   fetchPromptTemplatesByCategory, fetchTeacherReportMulti, fetchWorkspaceClasses,
   postPromptTemplateCategory,
-  tagKnowledge, type KnowledgeTerm, type PromptCategory, type PromptTemplate,
+  tagKnowledge, type KbCatalogKind, type KnowledgeTerm, type PromptCategory,
+  type PromptTemplate,
 } from '/home/bot2603/Projects/2609-assignment-assistant/app/src/lib/engineClient'
 
 
@@ -31,7 +32,6 @@ const settings = useSettingsStore()
 const msg = ref('')
 const busy = ref('')
 const terms = ref<KnowledgeTerm[]>([])
-const chaps = ref<string[]>([])
 const kind = ref<KbKind>('problems')
 const chap = ref('')
 
@@ -42,17 +42,28 @@ async function loadVocab() {
   } catch { terms.value = [] }
 }
 
+/* D164 修复：此前读的是 `r.catalog`（**接口不返回这个字段**，只有 `kinds`）
+ * → 章节列表永远为空，看起来像"不能选章节 / 等于全选"。 */
+const catalog = ref<KbCatalogKind[]>([])
+
+/** 当前题型下的章节（切题型时联动）。 */
+const chaps = computed<string[]>(() => {
+  const k = catalog.value.find((x) => x.kind === kind.value)
+  return (k?.chapters || []).map((c) => c.chap)
+})
+
 async function loadChaps() {
   try {
     const r = await fetchKbCatalog(settings.engineUrl, settings.engineToken)
-    const set = new Set<string>()
-    for (const k of Object.keys((r as any)?.catalog || {})) {
-      for (const c of Object.keys((r as any).catalog[k] || {})) set.add(c)
-    }
-    chaps.value = [...set].sort()
-    if (!chap.value && chaps.value.length) chap.value = chaps.value[0]!
-  } catch { chaps.value = [] }
+    catalog.value = r?.kinds || []
+    if (!chaps.value.includes(chap.value)) chap.value = chaps.value[0] || ''
+  } catch { catalog.value = [] }
 }
+
+/** 切题型时，若当前章节不属于新题型 → 回到该题型第一个章节。 */
+watch(kind, () => {
+  if (!chaps.value.includes(chap.value)) chap.value = chaps.value[0] || ''
+})
 
 onMounted(async () => {
   await loadVocab(); await loadChaps(); await loadTemplates(); await loadClasses()
@@ -240,7 +251,7 @@ async function doTagApply() {
 }
 
 
-const __returned__ = { settings, msg, busy, terms, chaps, kind, chap, loadVocab, loadChaps, tplCat, tplItems, tplSel, tplText, tplName, tplBusy, tplMsg, tplCurrent, tplIsBuiltin, wClasses, selClasses, selPacks, selTags, repBusy, repStat, repSources, repMsg, packOptions, loadClasses, genReport, loadTemplates, pickTemplate, onTplCatChange, saveTpl, setTplDefault, deleteTpl, termByChapter, tagDry, tagForce, doTagPreview, doTagApply, KbAiSolvePanel, TeacherReportCard, TrendCard, get KB_KINDS() { return KB_KINDS }, get KB_KIND_LABELS() { return KB_KIND_LABELS }, get PROMPT_CATEGORIES() { return PROMPT_CATEGORIES }, get PROMPT_CATEGORY_LABELS() { return PROMPT_CATEGORY_LABELS } }
+const __returned__ = { settings, msg, busy, terms, kind, chap, loadVocab, catalog, chaps, loadChaps, tplCat, tplItems, tplSel, tplText, tplName, tplBusy, tplMsg, tplCurrent, tplIsBuiltin, wClasses, selClasses, selPacks, selTags, repBusy, repStat, repSources, repMsg, packOptions, loadClasses, genReport, loadTemplates, pickTemplate, onTplCatChange, saveTpl, setTplDefault, deleteTpl, termByChapter, tagDry, tagForce, doTagPreview, doTagApply, KbAiSolvePanel, TeacherReportCard, TrendCard, get KB_KINDS() { return KB_KINDS }, get KB_KIND_LABELS() { return KB_KIND_LABELS }, get PROMPT_CATEGORIES() { return PROMPT_CATEGORIES }, get PROMPT_CATEGORY_LABELS() { return PROMPT_CATEGORY_LABELS } }
 Object.defineProperty(__returned__, '__isScriptSetup', { enumerable: false, value: true })
 return __returned__
 }
