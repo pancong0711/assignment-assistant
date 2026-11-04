@@ -1961,13 +1961,14 @@ export interface KbCatalogKind { kind: string; chapters: KbCatalogChapter[] }
 /** GET /kb/catalog：题库 kind/章节/题号[+内容]。 */
 export async function fetchKbCatalog(
   engineAddr: string, token?: string,
-): Promise<{ ok?: boolean; kinds?: KbCatalogKind[] }> {
+): Promise<{ ok?: boolean; kinds?: KbCatalogKind[]; error?: string }> {
   const base = normalizeEngineAddr(engineAddr)
   try {
     return (await getJson2(engineUrlWithToken(base, '/kb/catalog', token))) as
-      { ok?: boolean; kinds?: KbCatalogKind[] }
-  } catch {
-    return { ok: false, kinds: [] }
+      { ok?: boolean; kinds?: KbCatalogKind[]; error?: string }
+  } catch (e) {
+    // D162：**不再静默返回空**（否则章节下拉空白且无任何提示，极难排查）
+    return { ok: false, kinds: [], error: String((e as Error).message || e) }
   }
 }
 
@@ -2122,6 +2123,15 @@ export async function restoreMaterialsFile(
 ): Promise<{ ok?: boolean; error?: string; to?: string }> {
   return runAtopiaTool(engineAddr, token,
                        { tool: 'materials.restore', args: { chap, file }, confirm }) as any
+}
+
+/* ========== D162：从引擎重载题库（含 AI 标注的 related） ========== */
+
+export async function fetchKbFull(
+  base: string, token: string | undefined,
+): Promise<{ ok?: boolean; kb?: Record<string, Record<string, any[]>>; error?: string }> {
+  return (await getJson2(engineUrlWithToken(
+    normalizeEngineAddr(base), '/kb/full', token))) as any
 }
 
 /* ========== D153：教师报告多选（班级 × 作业包 × tag） ========== */

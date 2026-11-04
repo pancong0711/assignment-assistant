@@ -319,6 +319,40 @@ export const useKbStore = defineStore('kb', {
     touch() {
       this.dirty = true
     },
+    /** D162：用引擎侧的题库覆盖本地（把 AI 写回的 related 拉回前端）。
+     *
+     *  引擎返回结构：`{kind: {chap: [row...]}}`，这里转换成内部 `books[]`。
+     *  返回导入的题目总数。
+     */
+    adoptEngineKb(raw: Record<string, Record<string, any[]>>): number {
+      const kinds = Object.keys(raw || {})
+      let total = 0
+      const next: KbBook[] = []
+      for (const kind of kinds) {
+        const chapters = Object.entries(raw[kind] || {}).map(([name, rows]) => {
+          total += (rows || []).length
+          return {
+            name,
+            rows: (rows || []).map((r: any) => ({
+              id: String(r.id ?? ''),
+              content: String(r.content ?? ''),
+              img_path: String(r.img_path ?? ''),
+              page: String(r.page ?? ''),
+              related: String(r.related ?? ''),
+              type: String(r.type ?? ''),
+              solution: String(r.solution ?? ''),
+              note: String(r.note ?? ''),
+            })),
+          }
+        })
+        next.push({ kind: kind as KbKind, chapters })
+      }
+      this.books = next as unknown as typeof this.books
+      this.savedAt = new Date().toISOString()
+      this.dirty = false
+      this.persist()
+      return total
+    },
     /** D100-T6：从引擎拉全库生效答案索引（幂等；引擎离线 → 清空索引并回落 xlsx 列）。 */
     async refreshSolutions(): Promise<{ ok: boolean; count: number; message: string }> {
       const { useSettingsStore } = await import('./settings')

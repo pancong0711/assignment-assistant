@@ -1,4 +1,5 @@
 import { defineStore } from 'pinia'
+import { usePackStore } from './packs'
 import {
   defaultGrid, emptyTaskpad, parseTaskpad, serializeTaskpad, makeTaskpadId,
   chapLabelOfItems,
@@ -143,9 +144,28 @@ export const useTaskpadStore = defineStore('taskpad', {
       void persistTaskpadToDisk(entry.json)
       return entry.id
     },
-    removeFromLibrary(id: string) {
+    /** D162：从清单删除作业纸。
+     *
+     *  **同时**把该作业纸从所有作业包的引用里移除——否则作业包名后面的
+     *  「N 张」计数不会减少（此前只删了清单记录，包内引用还在）。
+     *  返回被影响的作业包 id 列表（供 UI 提示 / 便于测试）。
+     */
+    removeFromLibrary(id: string): string[] {
       this.saved = this.saved.filter((s) => s.id !== id)
       localStorage.setItem(LS_KEY, JSON.stringify(this.saved))
+      const affected: string[] = []
+      try {
+        const packs = usePackStore()
+        for (const pk of packs.packs as Array<{ id: string; pads?: Array<{ padId: string }> }>) {
+          const before = (pk.pads || []).length
+          pk.pads = (pk.pads || []).filter((r) => String(r.padId) !== String(id))
+          if (pk.pads.length !== before) affected.push(pk.id)
+        }
+        if (affected.length) packs.persistLocal()
+      } catch {
+        /* 非浏览器环境（测试）忽略 */
+      }
+      return affected
     },
     openFromLibrary(id: string): boolean {
       const found = this.saved.find((s) => s.id === id)

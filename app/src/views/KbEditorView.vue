@@ -6,10 +6,24 @@ import { detectCapabilities, fsWriteHint, writeFileInDir } from '../lib/fsAccess
 import { useSettingsStore } from '../stores/settings'
 import { fetchKbSolutions, mutateKbSolution, type SolutionVersion } from '../lib/engineClient'
 import { renderMathIn, KATEX_DONE_ATTR } from '../lib/katexRender'
+import { fetchKbFull } from '../lib/engineClient'
 import { renderRich } from '../lib/richdoc'
 
 const kb = useKbStore()
+
+/** D162：从引擎重载题库（把 AI 标注写回的 related 拉回前端表格）。 */
+async function reloadFromEngine() {
+  try {
+    const r = await fetchKbFull(settings.engineUrl, settings.engineToken)
+    if (!r?.ok || !r.kb) { status.value = `读取失败：${r?.error || '引擎未返回题库'}`; return }
+    const n = kb.adoptEngineKb(r.kb)
+    status.value = `已从引擎重载题库：${n} 道题（含知识点标注）`
+  } catch (e) {
+    status.value = `重载失败：${String((e as Error).message || e)}（引擎在线吗？）`
+  }
+}
 const settings = useSettingsStore()
+const status = ref('')
 const caps = detectCapabilities()
 const writeHint = fsWriteHint()
 
@@ -249,7 +263,6 @@ function figThumb(imgPath: string): string {
 const activeKind = ref<KbKind>('problems')
 const activeChap = ref('')
 const filter = ref('')
-const status = ref('')
 
 onMounted(() => {
   // B4：提前探测引擎在线状态，保证第一次「保存」就有机会走样式保留写回。
@@ -337,6 +350,10 @@ function addChapter() {
       <p>
         <label class="btn as-label btn-file" for="kb-file">载入教师 xlsx…</label>
         <input type="file" accept=".xlsx" hidden id="kb-file" @change="selectXlsx" />
+        <button class="btn" style="margin-left:8px" @click="reloadFromEngine"
+                title="从引擎重读题库 xlsx（AI 标注知识点后，用它把 related 拉回来）">
+          🔄 从引擎重载题库
+        </button>
         <button class="btn" style="margin-left:8px" @click="loadDemoData">载入示例数据</button>
         <button class="btn" style="margin-left:8px" @click="kb.downloadExample(activeKind)">⬇ 下载示例 xlsx（{{ activeKind }}-example.xlsx）</button>
         <button class="btn" style="margin-left:8px" :disabled="!caps.directoryPicker" @click="connectWorkspace"

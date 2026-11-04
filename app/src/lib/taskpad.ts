@@ -197,8 +197,13 @@ export function makeTaskpadId(yearMonth?: string, chap?: string): string {
 }
 
 /** D161：生成翻译题随机种子（时间戳；2^31 内，与引擎 seedIndex 同量级）。 */
+let _lastSeed = 0
 export function makeRandomSeed(): number {
-  return Math.floor(Date.now()) % 2147483647
+  // D162：同一毫秒内连续新建会拿到相同时间戳 → 加 1 保证递增（仍是"时间序"）
+  let s = Math.floor(Date.now()) % 2147483647
+  if (s <= _lastSeed) s = (_lastSeed + 1) % 2147483647
+  _lastSeed = s
+  return s
 }
 
 export function emptyTaskpad(): Taskpad {
@@ -428,6 +433,9 @@ export function parseTaskpad(raw: unknown): Taskpad {
     class: typeof o.class === 'string' ? o.class : undefined,
     term: typeof o.term === 'string' ? o.term : undefined,
     target_tag: typeof o.target_tag === 'string' && o.target_tag ? o.target_tag : undefined,
+    // D162 修复：此前 parseTaskpad 重建对象时**丢掉了 random_seed** →
+    // 保存/载入往返后种子变回 undefined → 翻译题又回到「永远 0 → 同一道题」。
+    random_seed: typeof o.random_seed === 'number' ? o.random_seed : undefined,
     layout: {
       orientation,
       per_page: normalizePerPage(layout.per_page, orientation),
@@ -501,6 +509,8 @@ export function serializeTaskpad(pad: Taskpad): string {
   }
   // D23：为空不写 target_tag 字段，保持与缺字段的作业纸（engine 兼容）完全一致
   if (pad.target_tag) payload.target_tag = pad.target_tag
+  // D162：种子必须**写进 JSON**，否则保存后载入又回到默认（翻译题永远同一道）
+  if (typeof pad.random_seed === 'number') payload.random_seed = pad.random_seed
   if (pad.journal?.length) payload.journal = pad.journal
   return JSON.stringify(payload, null, 2)
 }

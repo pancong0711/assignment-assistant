@@ -47,6 +47,39 @@ def _repair_latex_escapes(body: str) -> str:
     return body.replace(_FP, r"\\f").replace(_BS, r"\\b")
 
 
+def _escape_control_chars(text: str) -> str:
+    """D162：把 JSON **字符串字面量内部**的裸控制字符（换行/制表/回车）转义。
+
+    模型常直接把换行写进 JSON 字符串（`"第一行\\n第二行"` 写成真实换行），
+    这会让 json.loads 报 `Invalid control character`。
+    这里按"是否在字符串内"判断，逐字符转义；字符串外的结构字符不动。
+    """
+    out: list[str] = []
+    in_str = False
+    esc = False
+    for ch in text:
+        if esc:
+            out.append(ch)
+            esc = False
+            continue
+        if ch == "\\":
+            out.append(ch)
+            esc = True
+            continue
+        if ch == '"':
+            in_str = not in_str
+            out.append(ch)
+            continue
+        if in_str and ch in ("\n", "\r", "\t"):
+            out.append({"\n": "\\n", "\r": "\\r", "\t": "\\t"}[ch])
+            continue
+        if in_str and ord(ch) < 0x20:
+            out.append(f"\\u{ord(ch):04x}")
+            continue
+        out.append(ch)
+    return "".join(out)
+
+
 def _escape_bare_backslashes(text: str) -> str:
     r"""把**未被转义**的反斜杠补成双反斜杠，使 JSON 合法。
 
@@ -92,8 +125,18 @@ def parse_llm_json(raw: str) -> dict:
     try:
         data = json.loads(body)
     except json.JSONDecodeError:
-        repaired = _repair_latex_escapes(body)
-        for cand in (repaired, _escape_bare_backslashes(repaired)):
+        # D162：常见失败原因有两种，都要救：
+        # ① LaTeX 反斜杠未转义（`\frac`）；
+        # ② 字符串里出现**裸换行/制表符**（模型直接换行写进 JSON 字符串，非法）。
+        # 顺序：**先救 LaTeX 反斜杠**（`\frac` 是"反斜杠+已知命令名"，判定可靠），
+        # 再救**裸换行**（字符串里的真实换行）。
+        # 反过来会把 `\frac` 当成"换页符"处理，再也救不回来。
+        repaired = _fix_latex_in_json(body) if _looks_like_eaten_latex(body) else body
+        cands = [repaired,
+                 _escape_control_chars(repaired),
+                 _escape_bare_backslashes(repaired),
+                 _escape_control_chars(_escape_bare_backslashes(repaired))]
+        for cand in cands:
             try:
                 return json.loads(cand)
             except json.JSONDecodeError:

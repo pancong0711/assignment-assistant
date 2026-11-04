@@ -1001,6 +1001,25 @@ rainclass 67/67，PWA↔engine 全等，仅末位浮点四舍五入噪声）。
 
 ---
 
+## D162 · 一批问题修复（2026-10-31 完成）
+
+> 需求单：`docs/105-D162-batch-fixes.md`。
+
+教师一次性反馈 9 条，核实后 4 条是**真实缺陷**：
+
+- ✅ **LaTeX 裸换行**：模型把真实换行写进 JSON 字符串 → 解析失败。修 `parse_llm_json`
+  （先修 LaTeX 反斜杠、再转义裸控制字符）。
+- ✅ **标注后题库编辑器看不到**：编辑器用浏览器内存副本，引擎写 xlsx 后不重读
+  → 新增 `GET /kb/full` + 「🔄 从引擎重载题库」。
+- ✅ **章节下拉为空**：`fetchKbCatalog` 失败时静默返回空 → 改为显示错误 + 重试。
+- ✅ **种子往返丢失**：`parse/serializeTaskpad` 都没处理 `random_seed`
+  → 保存后载入种子丢失（翻译题回到同一道）。已修 + 同毫秒递增。
+- ✅ **作业包计数不减**：删作业纸只删清单、没清包内引用 → `removeFromLibrary` 同步清理。
+- 已确认**不是** bug：translation tag 是确定性等距选点（不会重新随机）；
+  逐生补批固定 `force:true`（会覆盖，是刻意）；translation 题号换行来自 content 本身。
+
+---
+
 ## D147 · Atopia L2 确认精确到「工具 + 参数」（2026-10-31 完成，安全修复）
 
 > 需求单：`docs/94-D147-confirm-scope.md`。

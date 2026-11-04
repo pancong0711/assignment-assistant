@@ -3731,6 +3731,14 @@ class Handler(BaseHTTPRequestHandler):
             # D65-P2：浏览器直下清单——实测镜像链接 + 收包路径 + 已装/在包状态
             from .xxt.installer import pkg_manifest
             self._json(pkg_manifest())
+        elif u.path == "/kb/full":
+            # D162：把**引擎侧的题库**（含 AI 标注后的 related）整体返回给 PWA。
+            # 背景：题库编辑器用的是**浏览器内存副本**，引擎写回 xlsx 后前端看不到
+            # （教师反馈"勾了标注知识点，题库编辑器里看不到"）。
+            from .files import kb_io as _kbio
+            kb = _kbio.read_kb(Path(self.ws).resolve() / "kb")
+            self._json({"ok": True, "kb": kb})
+            return
         elif u.path == "/kb/stats":
             from .files import read_kb
             kb = read_kb(Path(self.ws) / "kb")

@@ -20,6 +20,7 @@ const kbStore = useKbStore()
 
 /* ---------- 题库目录 ---------- */
 const kbCatalog = ref<{ kinds?: any[] }>({ kinds: [] })
+const kbCatalogErr = ref('')
 const kbKind = ref(''); const kbChap = ref(''); const kbIdsSel = ref<string[]>([]); const kbModel = ref('')
 const kbKinds = computed<string[]>(() => (kbCatalog.value.kinds || []).map((k: any) => k.kind))
 const kbChapters = computed<string[]>(() => {
@@ -37,8 +38,14 @@ const kbPreview = computed(() => {
   return picked.map((i) => `${i.id}: ${i.content ?? ''}`).join('   ｜   ')
 })
 async function loadKbCatalog() {
+  kbCatalogErr.value = ''
   const r = await fetchKbCatalog(props.engineAddr, props.token)
   kbCatalog.value = { kinds: r.kinds || [] }
+  if (r.ok === false || !(r.kinds || []).length) {
+    kbCatalogErr.value = r.error
+      ? `读取题库目录失败：${r.error}（引擎在线吗？）`
+      : '题库为空：请先在「题库编辑器」载入 xlsx'
+  }
   if (!kbKind.value && kbKinds.value.length) {
     kbKind.value = kbKinds.value.includes('problems') ? 'problems' : kbKinds.value[0]
   }
@@ -209,6 +216,8 @@ defineExpose({ loadKbCatalog, loadPromptTemplates })
 <template>
   <div>
     <div style="display:flex; gap:8px; align-items:center; flex-wrap:wrap">
+      <span v-if="kbCatalogErr" class="hint" style="color:#b45309">{{ kbCatalogErr }}</span>
+      <button v-if="kbCatalogErr" class="btn small" @click="loadKbCatalog">重试</button>
       <span class="hint" style="margin:0">题库：</span>
       <select v-model="kbKind" style="min-width:120px">
         <option value="">（选择题库）</option>
