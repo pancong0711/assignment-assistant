@@ -258,13 +258,25 @@ async function solveByKb() {
         const lines = job.lines || []
         kbSolveMsg.value = (lines.slice(-1)[0] || '进行中…').slice(-220)
         if (job.status === 'running') { window.setTimeout(tick, 2000); return }
+        // D139：先看**失败条数**——此前无论成败都显示"作答并写回完成"，
+        // 失败原因又被 `slice(-2)` 截掉，教师只能看到 "failed": 1，无从排查。
+        const tail = lines.slice(-6).join('\n')
+        const failedN = /"failed"\s*:\s*(\d+)/.exec(tail)?.[1]
+        const errs = [...tail.matchAll(/"error"\s*:\s*"([^"]{1,300})"/g)]
+          .map((m) => m[1]).filter(Boolean)
         if (kbApply.value) {
           // D100-T8：作答写回版本库 → 刷新生效答案索引（题库表格/作业纸预览立即跟随）
           await kbStore.bumpSolutions()
           const pinDesc = kbWithRubric.value
             ? (kbPinRubric.value ? '已置顶（含要点）' : '未置顶（要点待你确认后再置顶）')
             : (kbPin.value ? '已置顶为生效答案' : '未置顶，仅追加版本')
-          kbSolveMsg.value = `作答并写回完成（${pinDesc}）：`
+          if (failedN && failedN !== '0') {
+            kbSolveMsg.value = `❌ 有 ${failedN} 题作答失败（未写回）`
+              + (errs.length ? `：${[...new Set(errs)].slice(0, 3).join('；')}` : '')
+              + '　—— 已成功的题已写回；失败题可重试或换模型'
+            return
+          }
+          kbSolveMsg.value = `✅ 作答并写回完成（${pinDesc}）：`
             + (lines.slice(-2).join(' ') || '')
           return
         }

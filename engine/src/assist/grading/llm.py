@@ -105,6 +105,26 @@ def _settings_from_workspace(ws: Path, *, stage: str = "") -> dict:
         from . import providers as _prov
         provs = _prov.list_providers(ws)
         if provs:
+            # D139 修复（静默回落）：已配置 provider 但**没有分配 stage** 时，
+            # 旧逻辑会悄悄回落到 `load_llm_settings`（读平铺 base_url/api_key，
+            # 通常是空的或另一个端点），于是：
+            #   - 教师以为配好了 opencode-go，实际请求发往 dashscope；
+            #   - provider 上的 `headers`（如 x-opencode-session）**完全被绕过**；
+            #   - 报错信息里看到的端点与配置对不上，极难排查。
+            # 现在改为**明确报错**，告诉教师去分配两段 provider。
+            _raw_stages = (_prov.stages(ws) or {})
+            _has_stage = any(
+                isinstance(_raw_stages.get(st), dict)
+                and str(_raw_stages[st].get("provider") or "").strip()
+                for st in ("transcription", "evaluation"))
+            if not _has_stage:
+                raise LLMConfigError(
+                    "已配置 provider，但**还没有为任何一段分配 provider**："
+                    f"{', '.join(str(p.get('name')) for p in provs)}。"
+                    "请在「① LLM 设置」把「转写段」和「评阅段」分别选上 provider"
+                    "（CLI：assist llm provider --action stage --stage evaluation "
+                    "--name <provider> --model <model>）。"
+                    "否则请求会回落到旧的单层配置，provider 上的自定义请求头也不会生效。")
             use_stage = stage if stage in ("transcription", "evaluation") else "evaluation"
             eps = {st: _prov.stage_endpoint(ws, st) for st in ("transcription", "evaluation")}
             ep = eps[use_stage]
@@ -124,7 +144,11 @@ def _settings_from_workspace(ws: Path, *, stage: str = "") -> dict:
                 "transcription_model": eps["transcription"].get("model") or "",
                 "evaluation_model": eps["evaluation"].get("model") or "",
             }
-    except Exception:  # noqa: BLE001
+    except LLMConfigError:
+        # D139：**配置类错误必须向上抛**——静默回落到旧单层配置会让教师
+        # 看到"我明明配了 A，报错却指向 B"，是最难排查的一类问题。
+        raise
+    except Exception:  # noqa: BLE001 —— provider 读取本身的其它异常仍可回落
         pass
     return load_llm_settings(ws)
 

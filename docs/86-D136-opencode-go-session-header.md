@@ -206,3 +206,42 @@ assist llm provider --action set --name opencode-go \
   请求头直接决定鉴权与路由，配置入口刻意保留在 CLI（避免误填造成难排查的故障）；
 - 未实现"自动探测 provider 是否需要 session 头"——显式配置、缺失即报错，
   行为可预测（不做隐式魔法）。
+
+---
+
+## 10. D139 补记：修复「配了 provider 却没分配 stage → 静默回落」
+
+### 现象
+
+教师已保存 provider（含 `headers: {"x-opencode-session": "{session}"}`），
+但请求仍报 `MissingSessionID`，且报错里的 `base_url` 与配置对不上。
+
+### 根因（实测复现）
+
+`_settings_from_workspace()` 里：**有 provider 但 `llm.stages` 为空**时，
+会静默回落到 `load_llm_settings()`（读平铺 `base_url/api_key`）→
+`LLMClient` 从未拿到 provider 对象 → `headers` **完全被绕过**。
+
+| 配置状态 | 实际发出的请求头 |
+|---|---|
+| 只保存 provider，未分配 stage | `Authorization/Content-Type/User-Agent`（**无 session 头**），端点回落到旧平铺配置 |
+| 两段都指向该 provider | 以上 + `x-opencode-session` ✅ |
+
+### 修复
+
+1. 有 provider 但**没有任何一段分配 provider** → 抛 `LLMConfigError`，
+   明确提示去「① LLM 设置」分配两段（含 CLI 等价命令）；
+2. `_settings_from_workspace` 的 `except Exception: pass` 改为**配置类错误向上抛**
+   （其它异常仍可回落，避免误伤）；
+3. **没有任何 provider** 时旧单层配置路径保持可用（有测试锁定）。
+
+> 教训：**"看起来配好了但没生效"比"直接报错"危险得多**——
+> 它会把配置问题伪装成服务端问题，浪费大量排查时间。
+
+## 11. D139 补记：`failed: 1` 提示吞掉原因
+
+`kb ai-solve` 前端**无条件**显示"作答并写回完成"，且只截取日志最后两行，
+把 `results[].error` 截掉了 → 教师只看到 `"failed": 1`。
+
+已改为：解析日志里的 `failed` 与 `error`，失败时显示
+`❌ 有 N 题作答失败（未写回）：<原因>`，并提示"已成功的题已写回"。
