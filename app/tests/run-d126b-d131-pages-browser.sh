@@ -63,7 +63,13 @@ M.extract_chap(ws, 'chap04')
     {'term': '动量守恒', 'aliases': [], 'importance': 'core', 'evidence': '第1页'},
     {'term': '完全弹性碰撞', 'aliases': [], 'importance': 'supporting', 'evidence': '第1页'},
 ], 'logic': [], 'generatedAt': '2026-10-30'}, ensure_ascii=False), encoding='utf-8')
-M.confirm_knowledge(ws, 'chap04')
+(d / M.KNOW_AI).write_text(json.dumps({'chap': 'chap04', 'knowledge': [
+    {'term': '动量守恒', 'aliases': [], 'importance': 'core', 'topic': '动量定理',
+     'evidence': '第1页'},
+    {'term': '完全弹性碰撞', 'aliases': [], 'importance': 'supporting',
+     'topic': '碰撞问题', 'evidence': '第1页'},
+], 'logic': [], 'generatedAt': '2026-10-30'}, ensure_ascii=False), encoding='utf-8')
+M.confirm_knowledge(ws, 'chap04', force=True)
 
 S.Handler.ws = ws
 S.Handler.token = ''
@@ -121,6 +127,8 @@ try:
             'bars': pg.locator('svg.bars rect').count(),
             'segments': '分数段分布' in body,
             'onlyTeacher': '不发给学生' in body or '不上传、不发学生' in body,
+            # D138：按主题分组（两章都有 topic 时才分组）
+            'byTopic': '📚 动量定理' in body or '📚 碰撞问题' in body,
             'errors': errs,
         }
 
@@ -159,6 +167,7 @@ assert out['teacherExport']['ok'], f"教师报告 PNG 导出失败：{out['teach
 assert m['chapListed'] and m['confirmed'], f"资料页未显示已生效章节：{m}"
 assert m['terms'], '资料页未显示知识点术语'
 assert m['nextStepDone'], '资料页未提示"已完成"'
+assert t["byTopic"], f"教师报告未按主题分组：{t}"
 print('OK d126b-d131-pages：教师报告（易错点/共现矩阵/得分率/分数段，且声明只给教师）可导出 PNG'
       ' · 资料页（章节状态/生效清单/下一步）全部通过')
 PY

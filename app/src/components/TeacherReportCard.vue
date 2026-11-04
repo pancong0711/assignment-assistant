@@ -170,6 +170,23 @@ const segMax = computed(() => Math.max(1, ...segments.value.map((x) => x.n)))
       <p v-if="!stat.knowledge_errors.length" class="hint">
         （无知识点级错误记录：本次批阅可能没有产出 errors[].knowledge，或全班答对。）
       </p>
+      <!-- D138：有主题时按「块」分组展示（教师看得出"整条线没掌握"） -->
+      <template v-else-if="(stat.byTopic || []).length">
+        <div v-for="g in stat.byTopic" :key="g.topic" style="margin-bottom:8px">
+          <p class="hint" style="margin:2px 0">📚 <b>{{ g.topic }}</b></p>
+          <table class="tc-table">
+            <thead><tr><th>知识点</th><th>出错人数</th><th>出错率</th><th>题号</th></tr></thead>
+            <tbody>
+              <tr v-for="x in g.items" :key="x.term">
+                <td><b>{{ x.term }}</b></td>
+                <td class="c">{{ x.students }}</td>
+                <td class="c">{{ Math.round(x.rate * 100) }}%</td>
+                <td class="c">{{ x.questions.join('、') || '—' }}</td>
+              </tr>
+            </tbody>
+          </table>
+        </div>
+      </template>
       <table v-else class="tc-table">
         <thead><tr><th>知识点</th><th>出错人数</th><th>出错率</th><th>题号</th></tr></thead>
         <tbody>

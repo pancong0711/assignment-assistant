@@ -1967,17 +1967,42 @@ def kb_vocab_list(obj, workspace, verbose):
     click.echo(json.dumps(V.load_vocab(ws), ensure_ascii=False, indent=2))
 
 
-@kb_vocab.command("add")
+@kb_vocab.command("set-topic")
 @click.option("--term", required=True)
-@click.option("--alias", "aliases", multiple=True, help="同义/别名（可多次）")
+@click.option("--topic", default="", help="章内主题；传空串=清除归类")
+@click.option("--chapter", default=None, help="同时设置所属章（可选）")
 @click.option("--workspace", "-w", default=None)
 @click.option("--verbose", "-v", is_flag=True)
 @click.pass_obj
-def kb_vocab_add(obj, term, aliases, workspace, verbose):
-    """人工新增/更新术语（同义词并入 aliases）。"""
+def kb_vocab_set_topic(obj, term, topic, chapter, workspace, verbose):
+    """D138：给术语设置**章内主题**（两层分类的最后一段）。"""
     from .grading import vocab as V
     ws = _setup(verbose or obj.get("verbose"), workspace)
-    res = V.add_term(ws, term, aliases=list(aliases), source="human")
+    vocab = V.load_vocab(ws)
+    if term.strip().lower() not in V.term_index(vocab):
+        raise click.ClickException(f"词表里没有该术语：{term}（先 kb vocab add）")
+    res = V.add_term(ws, term, source="human", topic=topic, chapter=chapter)
+    click.echo(json.dumps(res, ensure_ascii=False, indent=2))
+    if not res.get("ok"):
+        raise click.ClickException(res.get("error") or "写入失败")
+
+
+@kb_vocab.command("add")
+@click.option("--term", required=True)
+@click.option("--alias", "aliases", multiple=True, help="同义/别名（可多次）")
+@click.option("--topic", default=None,
+              help="D138：章内主题（如 碰撞问题）；不传=保持原值")
+@click.option("--chapter", default=None,
+              help="D138：所属章（如 chap04）；不传=保持原值")
+@click.option("--workspace", "-w", default=None)
+@click.option("--verbose", "-v", is_flag=True)
+@click.pass_obj
+def kb_vocab_add(obj, term, aliases, topic, chapter, workspace, verbose):
+    """人工新增/更新术语（同义词并入 aliases；可指定 topic/chapter）。"""
+    from .grading import vocab as V
+    ws = _setup(verbose or obj.get("verbose"), workspace)
+    res = V.add_term(ws, term, aliases=list(aliases), source="human",
+                     topic=topic, chapter=chapter)
     click.echo(json.dumps(res, ensure_ascii=False, indent=2))
     if not res.get("ok"):
         raise click.ClickException(res.get("error") or "写入失败")
@@ -2162,9 +2187,14 @@ def teacher_report_cmd(obj, task_path, top_n, out_dir, render_png, render_pdf,
     if not any(ev.glob("[!_]*.json")):
         raise click.ClickException(f"没有评阅结果：{ev}（先跑批阅）")
     out = Path(out_dir).expanduser() if out_dir else (base / "reports")
+    # D138：从本章生效清单取「主题」映射，报告按主题分组（无清单则退回扁平表格）
+    chaps = sorted({str(i.get("chap") or "") for i in (task.get("items") or [])
+                    if isinstance(i, dict) and str(i.get("chap") or "")})
+    topics = TR.load_topic_map(ws, chaps or None)
     rep = TR.generate(ev, out, title=str(task.get("course") or task.get("id") or ""),
                       subtitle=str(task.get("class_dir") or ""), top_n=top_n,
-                      render_png=render_png or render_pdf, render_pdf=render_pdf)
+                      render_png=render_png or render_pdf, render_pdf=render_pdf,
+                      topics=topics)
     click.echo(json.dumps({k: v for k, v in rep.items() if k != "stat"},
                           ensure_ascii=False, indent=2))
 

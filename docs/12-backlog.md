@@ -848,3 +848,17 @@ rainclass 67/67，PWA↔engine 全等，仅末位浮点四舍五入噪声）。
   必须教师显式确认 + 默认不覆盖 + journal 记 `confirmed_by`。
 - **明确不做**：`atopia reset` / `migrate-grading-dir --apply` /
   `workspace clean-migrated --apply` / `engine update`（L3 类，不给 PWA 一键入口）。
+
+---
+
+## D138 · 知识点两层分类（章 → 主题 → 术语）（2026-10-31 完成）
+
+> 需求单：`docs/88-D138-knowledge-topic-layer.md`（docs/85 方案 B 被采纳）。
+
+- ✅ 词表新增 `topic`（**不做** parent/child）：`kb vocab add --topic`、
+  `kb vocab set-topic`；工具 `kb.vocab.set-topic`（L2）。
+- ✅ `materials suggest` 产出 `topic`；`知识点清单.md` 按主题分节，
+  无 topic 归「其他」（不丢）；整份无 topic 时保持旧格式。
+- ✅ `knowledge_terms()` 兼容新旧格式；`## 逻辑关系` 段的 `A → B` 不再误当术语。
+- ✅ 教师报告 / 趋势报告按主题分组（无主题时**行为与之前完全一致**）。
+- ✅ PWA：资料页与教师报告卡均按主题分组展示。

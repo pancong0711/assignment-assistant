@@ -3044,12 +3044,16 @@ class Handler(BaseHTTPRequestHandler):
             q = urllib.parse.parse_qs(u.query)
             chap = str((q.get("chap") or [""])[0])
             try:
-                md = _mat.read_knowledge_md(Path(self.ws).resolve(), chap)
-                terms = _mat.knowledge_terms(Path(self.ws).resolve(), chap)
+                ws_k = Path(self.ws).resolve()
+                md = _mat.read_knowledge_md(ws_k, chap)
+                terms = _mat.knowledge_terms(ws_k, chap)
+                # D138：两层分类（章 → 主题 → 术语）供 PWA 分组展示
+                topics = _mat.knowledge_topics(ws_k, chap)
             except Exception as exc:  # noqa: BLE001
                 self._json({"ok": False, "error": str(exc)[:200]}, 400)
                 return
-            self._json({"ok": bool(md), "chap": chap, "terms": terms, "markdown": md})
+            self._json({"ok": bool(md), "chap": chap, "terms": terms,
+                        "topics": topics, "markdown": md})
             return
         elif u.path == "/rules":
             # D130-T9：评阅规则卡读取（默认值 + 当前值 + 校验范围 + 可读摘要）
@@ -3129,10 +3133,12 @@ class Handler(BaseHTTPRequestHandler):
                                 "dir": str(ev)}, 404)
                     return
                 try:
+                    # D138：按主题分组（从各章生效清单取映射；读不到则退回扁平）
+                    _topics = _tr.load_topic_map(ws_)
                     built = _tr.generate(
                         ev, base / "reports", title=task_id, subtitle=class_dir,
                         render_png=export_format in ("png", "pdf"),
-                        render_pdf=(export_format == "pdf"))
+                        render_pdf=(export_format == "pdf"), topics=_topics)
                 except Exception as exc:  # noqa: BLE001
                     self._json({"ok": False, "error": f"生成失败：{str(exc)[:200]}"}, 500)
                     return

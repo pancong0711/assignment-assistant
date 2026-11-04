@@ -130,7 +130,8 @@ def _load_knowledge_errors(eval_dir) -> dict[str, set[str]]:
 
 # ---------------- 分析 ----------------
 def analyze(ws, class_dir: str, *, min_recur: int = MIN_RECUR,
-            sequence: "list[dict] | None" = None) -> dict:
+            sequence: "list[dict] | None" = None,
+            topics: "dict[str, str] | None" = None) -> dict:
     """纯统计：多次作业 → 反复出错的知识点 + 逐次轨迹。
 
     输入 `sequence` 可直接传（测试用），否则从磁盘发现。
@@ -175,6 +176,19 @@ def analyze(ws, class_dir: str, *, min_recur: int = MIN_RECUR,
             "improving": last["rate"] < first["rate"],
             "persisting": last["rate"] >= first["rate"],
         })
+    # D138：附上主题并按主题归组（同一条线上的知识点一起看才有意义）
+    tp = topics or {}
+    for r in recurring:
+        r["topic"] = str(tp.get(r["term"], "") or "")
+    by_topic: list[dict] = []
+    if any(r["topic"] for r in recurring):
+        buckets: dict[str, list[dict]] = {}
+        for r in recurring:
+            buckets.setdefault(r["topic"] or "其他", []).append(r)
+        named = [{"topic": t, "items": v} for t, v in buckets.items() if t != "其他"]
+        other = [{"topic": t, "items": v} for t, v in buckets.items() if t == "其他"]
+        named.sort(key=lambda g: -int(g["items"][0]["packs"] or 0))
+        by_topic = named + other
     recurring.sort(key=lambda x: (-x["packs"], -x["peakStudents"], x["term"]))
     one_off.sort(key=lambda x: (-x["students"], x["term"]))
 
@@ -183,6 +197,7 @@ def analyze(ws, class_dir: str, *, min_recur: int = MIN_RECUR,
         "classDir": class_dir,
         "sequence": [{k: p[k] for k in ("packId", "name", "at", "students")} for p in seq],
         "recurring": recurring,
+        "byTopic": by_topic,
         "oneOff": one_off,
         "summary": {"packs": len(seq), "terms": len(traj),
                     "recurring": len(recurring),
@@ -191,6 +206,15 @@ def analyze(ws, class_dir: str, *, min_recur: int = MIN_RECUR,
 
 
 # ---------------- 渲染 ----------------
+def _render_one(lines: list, r: dict) -> None:
+    mark = "⚠️ 仍在持续" if r["persisting"] else "📉 有改善"
+    lines.append(f"#### {r['term']} — 出现 {r['packs']} 次 · {mark}")
+    for pt in r["trail"]:
+        lines.append(f"- {pt['name']}（{pt.get('at') or '—'}）："
+                     f"{pt['students']} 人出错（{pt['rate'] * 100:.0f}%）")
+    lines.append("")
+
+
 def render_md(stat: dict, *, title: str = "") -> str:
     """教师可读的 Markdown（只给教师，不进学生报告）。"""
     s = stat.get("summary") or {}
@@ -214,6 +238,14 @@ def render_md(stat: dict, *, title: str = "") -> str:
     lines.append("## 反复出错的知识点")
     if not rec:
         lines.append("（没有知识点在 ≥2 次作业里反复出错）")
+    by_topic = stat.get("byTopic") or []
+    if by_topic and len(by_topic) > 1:
+        # D138：同一条线上的知识点放一起，教师能看出"整块没掌握"
+        for g in by_topic:
+            lines.append(f"### 📚 {g['topic']}")
+            for r in g["items"]:
+                _render_one(lines, r)
+        rec = []          # 已按主题渲染，避免下面重复
     for r in rec:
         mark = "⚠️ 仍在持续" if r["persisting"] else "📉 有改善"
         lines.append(f"### {r['term']} — 出现 {r['packs']} 次 · {mark}")
@@ -233,7 +265,13 @@ def render_md(stat: dict, *, title: str = "") -> str:
 def generate(ws, class_dir: str, out_dir=None, *, title: str = "",
              min_recur: int = MIN_RECUR) -> dict:
     """统计 + 落盘（`trend.md` / `trend.json`）。"""
-    stat = analyze(ws, class_dir, min_recur=min_recur)
+    topics: dict[str, str] = {}
+    try:
+        from .teacher_report import load_topic_map
+        topics = load_topic_map(ws)
+    except Exception:  # noqa: BLE001 —— 分组是增强，失败不影响趋势本身
+        topics = {}
+    stat = analyze(ws, class_dir, min_recur=min_recur, topics=topics)
     md = render_md(stat, title=title)
     stat["feedback_md"] = md
     written: list[str] = []

@@ -22,6 +22,8 @@ const msg = ref('')
 const active = ref<string>('')
 const knowTerms = ref<string[]>([])
 const knowMd = ref('')
+/** D138：按主题分组（`{主题: 术语[]}`）；无主题时全部归「其他」 */
+const knowTopics = ref<Record<string, string[]>>({})
 
 /* D134-T3e：上传与文件管理（`_source/` 是教师原件，同名不覆盖；移除只进回收站） */
 const files = ref<MaterialsFile[]>([])
@@ -133,9 +135,11 @@ async function showKnowledge(chap: string) {
     const r = await fetchMaterialsKnowledge(settings.engineUrl, settings.engineToken, chap)
     knowTerms.value = r?.terms || []
     knowMd.value = r?.markdown || ''
+    knowTopics.value = r?.topics || {}
   } catch {
     knowTerms.value = []
     knowMd.value = ''
+    knowTopics.value = {}
   }
   await loadFiles()
 }
@@ -379,8 +383,14 @@ defineExpose({ refresh })
           <p class="hint" style="margin:0 0 4px">
             共 {{ knowTerms.length }} 个知识点（summary 批阅以此为核对依据）：
           </p>
-          <div class="terms">
-            <span v-for="t in knowTerms" :key="t" class="term">{{ t }}</span>
+          <!-- D138：按主题分组（章 → 主题 → 术语）；无主题时归「其他」 -->
+          <div v-for="(ts, topic) in knowTopics" :key="topic" style="margin-bottom:6px">
+            <p class="hint" style="margin:0 0 2px">
+              📚 <b>{{ topic }}</b>（{{ ts.length }}）
+            </p>
+            <div class="terms">
+              <span v-for="t in ts" :key="t" class="term">{{ t }}</span>
+            </div>
           </div>
           <details style="margin-top:6px">
             <summary class="hint" style="cursor:pointer">查看清单原文</summary>

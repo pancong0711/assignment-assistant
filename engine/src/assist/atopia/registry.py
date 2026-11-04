@@ -90,6 +90,9 @@ BUILTIN_TOOLS: tuple[Tool, ...] = (
     # ---- L2 写入（必须教师确认） ----
     _t("kb.vocab.add", ("kb", "vocab", "add"), L2, "新增/更新受控词表术语",
        {"term": "str", "alias": "str"}),
+    _t("kb.vocab.set-topic", ("kb", "vocab", "set-topic"), L2,
+       "D138：给知识点设置章内主题（两层分类：章 → 主题 → 术语）",
+       {"term": "str", "topic": "str"}),
     _t("kb.write", ("kb", "write"), L2, "写回题库（需先导出 JSON）",
        {"input": "path_in_ws", "kind": "str"}),
     _t("kb.tag-knowledge.apply", ("kb", "tag-knowledge", "--force"), L2,
@@ -227,6 +230,7 @@ _ARG_FLAG = {
     "id": "--id",
     "text": "--text",
     "file": "--file",
+    "topic": "--topic",
 }
 
 

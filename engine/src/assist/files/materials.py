@@ -564,14 +564,18 @@ KNOWN_PROMPT = """你是大学物理教研组老师。下面是一门课的**课
    **不要**写成整句、不要带题号；
 2. 每条必须给 `evidence`：**引用资料中的原话或页/幻灯片编号**，不得凭空编造；
    `importance`：core=本章核心必考 / supporting=支撑性（公式变形、单位、特例）；
-3. `logic`：知识点之间的先后/推导关系（`from` → `to`），`note` 说明依据；
-4. 若资料里已给出「已标注知识点」，**优先原样沿用**其中的术语；
-5. 术语 5–20 个；宁可少而准，不要凑数。
+3. `topic`：**每个术语必须给**一个"章内主题"（同一章里的内容块，如 碰撞问题、动量定理、
+   刚体转动），用于把同章分散的术语归类；**不要**写成章名（chapter 另给），
+   也不要凭空编造——只能从资料里的章节标题/小节/幻灯片分组归纳；
+4. `logic`：知识点之间的先后/推导关系（`from` → `to`），`note` 说明依据；
+5. 若资料里已给出「已标注知识点」，**优先原样沿用**其中的术语；
+6. 术语 5–20 个；宁可少而准，不要凑数。
 
 【输出格式（严格 JSON）】
 {
   "knowledge": [
     {"term": "动量守恒", "aliases": ["动量守恒定律"], "importance": "core",
+     "topic": "动量定理",
      "evidence": "第 5 页：系统所受合外力为零时总动量守恒"}
   ],
   "logic": [{"from": "牛顿第三定律", "to": "动量守恒", "note": "作用力反作用力等大反向"}],
@@ -649,6 +653,8 @@ def suggest_knowledge(client, ws, chap: str, *, model: "str | None" = None,
                           "aliases": [str(a).strip() for a in (k.get("aliases") or [])
                                       if str(a).strip()],
                           "importance": str(k.get("importance") or "supporting"),
+                          # D138：章内主题（AI 归纳；缺失则空，渲染时归入「其他」）
+                          "topic": str(k.get("topic") or "").strip(),
                           "evidence": str(k.get("evidence") or "")})
     out = {"version": 1, "chap": str(chap), "term_count": len(knowledge),
            "knowledge": knowledge,
@@ -669,6 +675,9 @@ def suggest_knowledge(client, ws, chap: str, *, model: "str | None" = None,
 
 
 # ---------------- T21b：教师确认 → 生效清单 ----------------
+_TOPIC_OTHER = "其他"
+
+
 def render_knowledge_md(data: dict) -> str:
     chap = str(data.get("chap") or "")
     lines = [f"# 本章知识点清单（{chap}）", "",
@@ -677,19 +686,47 @@ def render_knowledge_md(data: dict) -> str:
     ks = [k for k in (data.get("knowledge") or []) if isinstance(k, dict)]
     core = [k for k in ks if str(k.get("importance")) == "core"]
     supp = [k for k in ks if str(k.get("importance")) != "core"]
+
+    def _group(items: list[dict]) -> list[tuple[str, list[dict]]]:
+        """D138：按 `topic` 分组（两层分类：章 → 主题 → 术语）。
+
+        组顺序按**首次出现**（保持 AI/教师给的顺序，可读性更好）；
+        无 topic 的条目归入「其他」，**排在最后**——绝不丢。
+        """
+        buckets: dict[str, list[dict]] = {}
+        for k in items:
+            t = str(k.get("topic") or "").strip() or _TOPIC_OTHER
+            buckets.setdefault(t, []).append(k)
+        named = [(t, v) for t, v in buckets.items() if t != _TOPIC_OTHER]
+        other = [(t, v) for t, v in buckets.items() if t == _TOPIC_OTHER]
+        return named + other
+
+    def _render(items: list[dict], *, bold: bool) -> list[str]:
+        out: list[str] = []
+        has_topic = any(str(k.get("topic") or "").strip() for k in items)
+        if not has_topic:
+            # 完全没有主题信息：保持旧格式（无 ### 小节），旧文件/旧数据不受影响
+            for k in items:
+                ev = f" —— _{k['evidence']}_" if k.get("evidence") else ""
+                al = f"（别名：{'、'.join(k['aliases'])}）" if k.get("aliases") else ""
+                term = f"**{k.get('term')}**" if bold else str(k.get("term"))
+                out.append(f"- {term}{al}{ev}")
+            out.append("")
+            return out
+        for topic, group in _group(items):
+            out.append(f"### {topic}")
+            for k in group:
+                ev = f" —— _{k['evidence']}_" if k.get("evidence") else ""
+                al = f"（别名：{'、'.join(k['aliases'])}）" if k.get("aliases") else ""
+                term = f"**{k.get('term')}**" if bold else str(k.get("term"))
+                out.append(f"- {term}{al}{ev}")
+            out.append("")
+        return out
+
     if core:
-        lines += ["## 核心知识点（必考）", ""]
-        for k in core:
-            ev = f" —— _{k['evidence']}_" if k.get("evidence") else ""
-            al = f"（别名：{'、'.join(k['aliases'])}）" if k.get("aliases") else ""
-            lines.append(f"- **{k.get('term')}**{al}{ev}")
-        lines.append("")
+        lines += ["## 核心知识点（必考）", ""] + _render(core, bold=True)
     if supp:
-        lines += ["## 支撑知识点", ""]
-        for k in supp:
-            ev = f" —— _{k['evidence']}_" if k.get("evidence") else ""
-            lines.append(f"- {k.get('term')}{ev}")
-        lines.append("")
+        lines += ["## 支撑知识点", ""] + _render(supp, bold=False)
     logic = [x for x in (data.get("logic") or []) if isinstance(x, dict)]
     if logic:
         lines += ["## 逻辑关系", ""]
@@ -745,15 +782,53 @@ def read_knowledge_md(ws, chap: str) -> str:
 
 
 def knowledge_terms(ws, chap: str) -> list[str]:
-    """生效清单里的知识点术语（供与题库 `related` 比对/批阅提示）。"""
+    """生效清单里的知识点术语（供与题库 `related` 比对/批阅提示）。
+
+    D138：兼容两种格式——旧的扁平列表（`## 核心知识点` 下直接 `- 术语`）与
+    新的按主题分节（`### 主题` 下的 `- 术语`）。只认 `- `/`* ` 行，
+    `###` 是分节标题**不是**术语。
+    """
     md = read_knowledge_md(ws, chap)
     terms: list[str] = []
+    in_logic = False
     for line in md.splitlines():
         s = line.strip()
+        if s.startswith("## "):
+            # 进入「逻辑关系」段后不再把 `- A → B` 当术语（旧实现靠 "→" 过滤）
+            in_logic = "逻辑关系" in s
+            continue
         if not s.startswith(("- ", "* ")):
+            continue
+        if in_logic:
             continue
         s = s[2:].split("——")[0].split("（")[0].strip()
         s = s.strip("*").strip()
         if s and "→" not in s and s not in terms:
             terms.append(s)
     return terms
+
+
+def knowledge_topics(ws, chap: str) -> dict[str, list[str]]:
+    """D138：生效清单 → `{主题: [术语...]}`（报告按主题分组用）。
+
+    无 `###` 分节（旧格式）时，全部术语归到 `"其他"`。
+    """
+    md = read_knowledge_md(ws, chap)
+    out: dict[str, list[str]] = {}
+    cur = _TOPIC_OTHER
+    in_logic = False
+    for line in md.splitlines():
+        s = line.strip()
+        if s.startswith("### "):
+            cur = s[4:].strip() or _TOPIC_OTHER
+            out.setdefault(cur, [])
+            continue
+        if s.startswith("## "):
+            in_logic = "逻辑关系" in s
+            continue
+        if not s.startswith(("- ", "* ")) or in_logic:
+            continue
+        t = s[2:].split("——")[0].split("（")[0].strip().strip("*").strip()
+        if t and "→" not in t:
+            out.setdefault(cur, []).append(t)
+    return out

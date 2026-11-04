@@ -77,8 +77,14 @@ def _terms_of(value) -> list[str]:
     return [t] if t else []
 
 
-def analyze(records: "list[dict]", *, top_n: int = 15) -> dict:
-    """纯函数：评阅结果 → 统计结构（便于单测，不碰磁盘）。"""
+def analyze(records: "list[dict]", *, top_n: int = 15,
+            topics: "dict[str, str] | None" = None) -> dict:
+    """纯函数：评阅结果 → 统计结构（便于单测，不碰磁盘）。
+
+    D138：`topics` = `{术语: 主题}`（来自本章知识点清单的两层分类）。
+    提供时在 `knowledge_errors[]` 里附 `topic` 并按主题归组（`by_topic`）；
+    不提供时行为与 D126-B **完全一致**。
+    """
     n = len(records)
     if not n:
         return {"students": 0, "knowledge_errors": [], "cooccurrence": [],
@@ -218,7 +224,8 @@ def analyze(records: "list[dict]", *, top_n: int = 15) -> dict:
         "substitution": sum(1 for r in records
                             if r.get("verdict") == "suspected-substitution"),
         "segments": segments,
-        "knowledge_errors": knowledge_errors[:top_n],
+        "knowledge_errors": _attach_topics(knowledge_errors[:top_n], topics),
+        "byTopic": _group_by_topic(_attach_topics(knowledge_errors[:top_n], topics)),
         "cooccurrence": cooccurrence[:top_n],
         "question_rates": question_rates,
         "kind_stats": kind_stats,
@@ -234,6 +241,40 @@ def analyze(records: "list[dict]", *, top_n: int = 15) -> dict:
 
 
 # ---------------- 渲染 ----------------
+def _attach_topics(items: list[dict], topics: "dict[str, str] | None") -> list[dict]:
+    """给每条易错知识点附上 `topic`（无映射则空串，不影响其它字段）。"""
+    if not items:
+        return items
+    tp = topics or {}
+    out: list[dict] = []
+    for x in items:
+        y = dict(x)
+        y["topic"] = str(tp.get(str(x.get("term") or ""), "") or "")
+        out.append(y)
+    return out
+
+
+def _group_by_topic(items: list[dict]) -> list[dict]:
+    """按 `topic` 归组（同章内的"块"）。
+
+    没有 topic 的条目归入「其他」并**排在最后**（不丢、不隐藏）；
+    若所有条目都没有 topic，返回空列表（调用方据此退回旧的扁平表格）。
+    """
+    if not items or not any(x.get("topic") for x in items):
+        return []
+    buckets: dict[str, list[dict]] = {}
+    for x in items:
+        t = str(x.get("topic") or "").strip() or "其他"
+        buckets.setdefault(t, []).append(x)
+    named = [{"topic": t, "items": v} for t, v in buckets.items() if t != "其他"]
+    other = [{"topic": t, "items": v} for t, v in buckets.items() if t == "其他"]
+    # 组内仍按出错人数降序；组间按组内最高出错人数降序
+    for g in named + other:
+        g["items"].sort(key=lambda x: (-int(x.get("students") or 0), str(x.get("term"))))
+    named.sort(key=lambda g: -int(g["items"][0].get("students") or 0))
+    return named + other
+
+
 def render_md(stat: dict, *, title: str = "", subtitle: str = "") -> str:
     n = stat.get("students") or 0
     lines = ["# 教师总结报告（易错知识点汇总）", ""]
@@ -266,10 +307,23 @@ def render_md(stat: dict, *, title: str = "", subtitle: str = "") -> str:
         lines.append("（无知识点级错误记录：可能本次批阅未产生 `errors[].knowledge`，"
                      "或全部答对。）")
     else:
-        lines += ["| 知识点 | 出错人数 | 出错率 | 涉及题号 |", "|---|---|---|---|"]
-        for x in ke:
-            qs = "、".join(x["questions"][:6]) or "—"
-            lines.append(f"| **{x['term']}** | {x['students']} | {x['rate'] * 100:.0f}% | {qs} |")
+        by_topic = stat.get("byTopic") or []
+        if by_topic:
+            # D138：按「主题」分块展示，教师一眼看出"这几个是同一条线上错的"
+            for g in by_topic:
+                lines += [f"### 📚 {g['topic']}", "",
+                          "| 知识点 | 出错人数 | 出错率 | 涉及题号 |", "|---|---|---|---|"]
+                for x in g["items"]:
+                    qs = "、".join(x["questions"][:6]) or "—"
+                    lines.append(f"| **{x['term']}** | {x['students']} | "
+                                 f"{x['rate'] * 100:.0f}% | {qs} |")
+                lines.append("")
+        else:
+            lines += ["| 知识点 | 出错人数 | 出错率 | 涉及题号 |", "|---|---|---|---|"]
+            for x in ke:
+                qs = "、".join(x["questions"][:6]) or "—"
+                lines.append(f"| **{x['term']}** | {x['students']} | "
+                             f"{x['rate'] * 100:.0f}% | {qs} |")
         top = ke[0]
         lines += ["", f"> **最需讲评：** {top['term']}（{top['students']} 人出错，"
                       f"占 {top['rate'] * 100:.0f}%）。"]
@@ -372,16 +426,35 @@ def export_pdf(png_path) -> "str | None":
         return None
 
 
+def load_topic_map(ws, chaps: "list[str] | None" = None) -> dict[str, str]:
+    """D138：从各章生效清单读 `{术语: 主题}`（用于报告按主题分组）。
+
+    读不到（无清单/无 topic）时返回空 dict —— 报告自动退回扁平表格。
+    """
+    out: dict[str, str] = {}
+    try:
+        from ..files import materials as M
+        for c in (chaps or M.list_chaps(ws)):
+            for topic, terms in (M.knowledge_topics(ws, c) or {}).items():
+                if topic == "其他":
+                    continue
+                for t in terms:
+                    out.setdefault(t, topic)
+    except Exception as exc:  # noqa: BLE001 —— 分组是增强，读不到不影响报告
+        logger.warning(f"[教师报告] 读取主题归类失败（已跳过分组）：{exc}")
+    return out
+
+
 def generate(eval_dir, out_dir, *, title: str = "", subtitle: str = "",
              top_n: int = 15, render_png: bool = False,
-             render_pdf: bool = False) -> dict:
+             render_pdf: bool = False, topics: "dict[str, str] | None" = None) -> dict:
     """读 evaluations → 写 `reports/_teacher_report.md`（+ stats JSON 供 PWA 画图）。
 
     D135：`render_png=True` 额外导出 `_teacher_report.png`；
     `render_pdf=True` 再导出 `_teacher_report.pdf`（依赖 PNG）。
     """
     records = load_evaluations(eval_dir)
-    stat = analyze(records, top_n=top_n)
+    stat = analyze(records, top_n=top_n, topics=topics)
     out = Path(out_dir)
     out.mkdir(parents=True, exist_ok=True)
     md = render_md(stat, title=title, subtitle=subtitle)

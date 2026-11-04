@@ -11,8 +11,11 @@ schema:
                 "aliases": ["动量守恒定律"], "chapter": "chap04",
                 "count": 3, "updatedAt": "..."}]}
 
+D138（docs/88）：两层分类 `chapter`（章）→ `topic`（章内的"块"）→ `term`。
+**不做** `parent/child` 树、不做 DAG（docs/85 方案 B 被采纳）。
+
 设计约束：
-- 只做**扁平**术语（知识点层级暂不做，docs/78 §7）；
+- 只做**两层**分类（章 + 主题）；无 `topic` 时按章归组；
 - 汇总时**不删除**人工维护的术语与别名；
 - 词表本身不改题库（写题库在 T6 `kb tag-knowledge`）。
 """
@@ -104,6 +107,8 @@ def save_vocab(ws, vocab: dict) -> Path:
                       "aliases": [str(a).strip() for a in (t.get("aliases") or [])
                                   if str(a).strip()],
                       "chapter": str(t.get("chapter") or ""),
+                      # D138：章内"块"（可选）；空串表示未归类
+                      "topic": str(t.get("topic") or "").strip(),
                       "count": int(t.get("count") or 0),
                       "updatedAt": str(t.get("updatedAt") or "")})
     terms = terms[:MAX_TERMS]
@@ -164,7 +169,8 @@ def harvest(ws, *, write: bool = False) -> dict:
         else:
             term = rec["term"][:MAX_TERM_LEN]
             vocab["terms"].append({"term": term, "source": "kb", "aliases": [],
-                                   "chapter": rec["chapter"], "count": int(rec["count"]),
+                                   "chapter": rec["chapter"], "topic": "",
+                                   "count": int(rec["count"]),
                                    "updatedAt": time.strftime("%Y-%m-%d %H:%M:%S")})
             idx[term.lower()] = vocab["terms"][-1]
             added.append(term)
@@ -179,7 +185,8 @@ def harvest(ws, *, write: bool = False) -> dict:
 
 
 def add_term(ws, term: str, *, aliases: "list[str] | None" = None,
-             source: str = "human") -> dict:
+             source: str = "human", topic: "str | None" = None,
+             chapter: "str | None" = None) -> dict:
     """人工新增/更新一个术语（同义词合并到 aliases）。"""
     term = str(term or "").strip()
     if not term:
@@ -191,8 +198,14 @@ def add_term(ws, term: str, *, aliases: "list[str] | None" = None,
     hit = idx.get(term.lower())
     if hit is None:
         hit = {"term": term, "source": source, "aliases": [], "chapter": "",
-               "count": 0, "updatedAt": time.strftime("%Y-%m-%d %H:%M:%S")}
+               "topic": "", "count": 0,
+               "updatedAt": time.strftime("%Y-%m-%d %H:%M:%S")}
         vocab["terms"].append(hit)
+    # D138：topic / chapter 只在**显式传入**时改（None = 保持原值，不误清空）
+    if topic is not None:
+        hit["topic"] = str(topic or "").strip()
+    if chapter is not None:
+        hit["chapter"] = str(chapter or "").strip()
     for a in (aliases or []):
         a = str(a or "").strip()
         if a and a != hit["term"] and a not in hit["aliases"]:

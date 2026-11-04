@@ -2049,7 +2049,13 @@ export interface TeacherReportStat {
   substitution: number
   segments: Record<string, number>
   knowledge_errors: { term: string; students: number; rate: number
-                      questions: string[]; examples: string[] }[]
+                      questions: string[]; examples: string[]
+                      /** D138：章内主题（来自本章知识点清单；无则空串） */
+                      topic?: string }[]
+  /** D138：按主题归组；无主题时为空数组（界面退回扁平表） */
+  byTopic?: { topic: string
+              items: { term: string; students: number; rate: number
+                       questions: string[]; topic?: string }[] }[]
   cooccurrence: { a: string; b: string; students: number; rate: number }[]
   question_rates: { id: string; students: number; avg_score: number
                     max_possible: number; rate: number }[]
@@ -2094,6 +2100,8 @@ export async function fetchMaterialsList(
 export async function fetchMaterialsKnowledge(
   engineAddr: string, token: string | undefined, chap: string,
 ): Promise<{ ok?: boolean; chap?: string; terms?: string[]; markdown?: string
+             /** D138：`{主题: [术语...]}`（两层分类；无主题时为 {"其他": [...]}） */
+             topics?: Record<string, string[]>
              error?: string }> {
   const base = normalizeEngineAddr(engineAddr)
   const qs = new URLSearchParams({ chap })
