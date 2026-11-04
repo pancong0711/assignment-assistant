@@ -196,6 +196,11 @@ export function makeTaskpadId(yearMonth?: string, chap?: string): string {
   return `${ym}-${c}-${rand3()}`
 }
 
+/** D161：生成翻译题随机种子（时间戳；2^31 内，与引擎 seedIndex 同量级）。 */
+export function makeRandomSeed(): number {
+  return Math.floor(Date.now()) % 2147483647
+}
+
 export function emptyTaskpad(): Taskpad {
   return {
     id: makeTaskpadId(),
@@ -213,6 +218,8 @@ export function emptyTaskpad(): Taskpad {
       figure: { scale: 1, pos: 'rt' },
     },
     items: [],
+    // D161：**新建作业纸时随机生成一次**并固定下来（之前从不写 → 永远 0 → 每次同一道翻译题）
+    random_seed: makeRandomSeed(),
     watermark: { enabled: true, style: 'default', pageText: true, items: [] },
     grade: {},
   }

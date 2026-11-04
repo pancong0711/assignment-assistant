@@ -20,10 +20,17 @@ import { useTaskpadStore } from '../stores/taskpad'
 import { useSettingsStore } from '../stores/settings'
 import { usePackStore } from '../stores/packs'
 import { expandPadItems, type SheetHtmlPadInput } from '../lib/sheetHtml'
+import { makeRandomSeed } from '../lib/taskpad'
 import type { KbKind } from '../lib/kb'
 
 const kb = useKbStore()
 const pad = useTaskpadStore()
+
+/** D161：重新随机翻译题种子（换一道翻译题）；写回作业纸 JSON 并保持可复现。 */
+function reseedTranslation() {
+  // 直接赋值即可（taskpad.current 是响应式对象；保存时随 toJson 落盘）
+  pad.current.random_seed = makeRandomSeed()
+}
 const settings = useSettingsStore()
 const packStore = usePackStore()
 
@@ -87,6 +94,22 @@ onMounted(() => { /* 通知中心占位（各段经 notify 上抛 pageStatus） 
 
 <template>
   <section class="design-view">
+    <!-- D161：翻译题随机种子（每份作业纸随机抽 1 道翻译题；种子记进作业纸 JSON） -->
+    <div class="card" style="margin:8px 12px 0">
+      <p style="display:flex; gap:10px; align-items:center; flex-wrap:wrap; margin:0">
+        <b>翻译题抽题种子</b>
+        <code>{{ pad.current.random_seed ?? '（未设置）' }}</code>
+        <button class="btn small" @click="reseedTranslation"
+                title="重新随机 → 换一道翻译题（种子写回作业纸，之后重出仍是这道）">
+          🎲 换一题
+        </button>
+        <span class="hint" style="margin:0">
+          新建作业纸时自动随机生成一次并记下来，因此同一份作业纸**每次重出都是同一道题**；
+          想换题点这里。
+        </span>
+      </p>
+    </div>
+
     <!-- D89-N1：作业包（最上层；从大到小：作业包 → 作业纸 → 版式/内容） -->
     <div class="card" id="pack" style="margin:8px 12px 0; border-left:4px solid var(--c-primary, #3b82f6)">
       <h2 style="margin:0 0 6px">作业包 <small style="font-weight:400;color:var(--c-muted)">一次分层作业的全部作业纸（每类型/tag 一张）</small></h2>

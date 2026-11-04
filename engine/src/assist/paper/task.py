@@ -37,6 +37,38 @@ def item_id_matches(chap: str, want, entry_id: str) -> bool:
     return False
 
 
+def ensure_random_seed(task: dict, task_path: "Path | None" = None, *,
+                       reseed: bool = False, seed: "int | None" = None) -> int:
+    """D161：确保任务包有 `random_seed`，**没有就生成并写回文件**。
+
+    之前 CLI 只读 `task["random_seed"]`，从不生成 → 永远 0 → 每次抽到同一道翻译题。
+
+    规则（与 PWA 同口径）：
+    - 显式 `seed` → 用它；
+    - `reseed=True` → 生成新的时间戳种子；
+    - 已有种子且未要求重抽 → **保持不变**（保证可复现）；
+    - 没有种子 → 生成一次并写回 `task_path`（若给了路径）。
+    """
+    import time as _t
+    cur = task.get("random_seed")
+    use = None
+    if seed is not None:
+        use = int(seed) % 2147483647
+    elif reseed or cur is None or not isinstance(cur, int):
+        use = int(_t.time()) % 2147483647
+    else:
+        return int(cur)
+    task["random_seed"] = use
+    if task_path is not None:
+        try:
+            from pathlib import Path as _P
+            p = _P(task_path)
+            p.write_text(json.dumps(task, ensure_ascii=False, indent=1), encoding="utf-8")
+        except Exception as exc:  # noqa: BLE001 —— 写回失败不阻断出卷
+            logger.warning(f"[作业纸] 回写 random_seed 失败：{exc}")
+    return use
+
+
 def resolve_items(kb_data: dict, task_items: list[dict], kb_dir: Path,
                   numbering: str = "auto", seed: int | None = None,
                   target_tag: str = "") -> list[tuple]:
@@ -207,9 +239,15 @@ def sheets_from_task(task_path: Path, ws: Path, out_dir: Path | None = None,
                      no_watermark: bool = False,
                      roster_path: str | None = None,
                      user_cfg: dict | None = None,
-                     teacher_mode: bool = False) -> list[Path]:
-    """根据任务包生成每个学生一份 pdf。"""
+                     teacher_mode: bool = False,
+                     reseed: bool = False, seed: "int | None" = None) -> list[Path]:
+    """根据任务包生成每个学生一份 pdf。
+
+    D161：`reseed=True` 换一道翻译题；`seed=N` 指定种子；
+    都没有且任务包无种子 → 自动生成并写回（保证"新建即随机、之后可复现"）。
+    """
     task = load_task(task_path)
+    ensure_random_seed(task, task_path, reseed=reseed, seed=seed)
     kb_dir = ws / "kb"
     kb_data = read_kb(kb_dir)
     lay = task.get("layout", {})
