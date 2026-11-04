@@ -71,6 +71,8 @@ const busy = ref(false)
 const sessionId = ref('')
 const errMsg = ref('')
 const pending = ref<{ tool?: string; args?: Record<string, any>; reason?: string } | null>(null)
+/* D147：正在确认的那一次调用（工具+参数）——随请求回传，后端只放行与之一致的调用 */
+const confirming = ref<{ tool: string; args: Record<string, any> } | null>(null)
 const showSteps = ref(true)
 
 function newSession() {
@@ -98,6 +100,8 @@ async function send(confirmed = false) {
       sessionId: sessionId.value,
       confirmed,
       confirmedBy: confirmed ? 'teacher:pwa' : undefined,
+      confirmedTool: confirmed ? confirming.value?.tool : undefined,
+      confirmedArgs: confirmed ? confirming.value?.args : undefined,
       provider: provider.value || undefined,
       model: model.value || undefined,
     })
@@ -124,6 +128,7 @@ async function send(confirmed = false) {
     errMsg.value = String((e as Error).message || e)
   } finally {
     busy.value = false
+    if (confirmed) confirming.value = null
   }
 }
 
@@ -131,6 +136,8 @@ async function confirmPending() {
   const p = pending.value
   pending.value = null
   if (!p) return
+  // D147：记下"教师确认的正是这个工具与参数"
+  confirming.value = { tool: String(p.tool || ''), args: (p.args || {}) as Record<string, any> }
   // 教师确认后**重发原始任务**（同一 task 文本），并标记 confirmed
   const last = [...msgs.value].reverse().find((m) => m.role === 'user')
   if (!last) return

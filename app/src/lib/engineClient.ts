@@ -2308,7 +2308,9 @@ export async function askAtopia(
   payload: { task: string; sessionId?: string; confirmed?: boolean; confirmedBy?: string
              protocol?: 'native' | 'json'; maxTurns?: number; model?: string
              /** D146：指定 provider（空=沿用评阅段配置） */
-             provider?: string },
+             provider?: string
+             /** D147：教师**确认的具体是哪个工具+参数**（后端只放行与之一致的调用） */
+             confirmedTool?: string; confirmedArgs?: Record<string, any> },
 ): Promise<AtopiaAskResult> {
   const base = normalizeEngineAddr(engineAddr)
   const res = await fetch(engineUrlWithToken(base, '/atopia/ask', token), {

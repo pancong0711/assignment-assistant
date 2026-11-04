@@ -934,3 +934,16 @@ rainclass 67/67，PWA↔engine 全等，仅末位浮点四舍五入噪声）。
 - ✅ `/atopia/ask` 接 `provider`；Atopia 对话页加 provider/模型选择器（记忆在 localStorage）。
 - ✅ 切换 provider 自动新建会话并提示（避免上下文/缓存错位）。
 - 不选 provider → 行为与改动前**完全一致**（向后兼容，有测试锁定）。
+
+---
+
+## D147 · Atopia L2 确认精确到「工具 + 参数」（2026-10-31 完成，安全修复）
+
+> 需求单：`docs/94-D147-confirm-scope.md`。
+
+- 核查发现 D140 的"已知限制（整次请求全部确认）"其实是**漏洞**：
+  教师为 A 确认后，同一次请求里模型改请求另一个 L2 工具也会被自动执行（实测可复现）。
+- ✅ 后端抽 `serve.make_atopia_confirm()`：必须 `confirmedTool` 匹配
+  （可选 `confirmedArgs` 也匹配）才放行；带 confirmed 却不指明工具 → 拒绝。
+- ✅ 前端确认时回传 `confirmedTool` / `confirmedArgs`。
+- ✅ 同时修正 docs/83、docs/86、docs/89 中已被后续提交推翻的"已知限制"表述。

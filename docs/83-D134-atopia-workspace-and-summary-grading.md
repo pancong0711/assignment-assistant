@@ -260,7 +260,7 @@
 
 - 迁移只在 CLI `_setup()` 与 serve `_ws()` 触发；**直接 import 库函数**的场景
   （如测试/脚本）不会自动迁移，需显式调 `paths.ensure_migrated(ws)`。
-- `materials.remove` 只把文件移入回收站，**没有"从回收站恢复"的 CLI/PWA 入口**
-  （可手工移回；如需可后续加 `materials restore`）。
+- ~~`materials.remove` 没有回收站恢复入口~~ → **已补**（D135）：
+  `assist materials restore` + PWA「恢复」按钮 + 工具 `materials.restore`（L2）。
 - 上传不收 `.zip`（压缩包可塞任意内容，先不做）。
 - summary 保底口径**不判断漏了哪个知识点**（这是刻意的：无依据即无资格判）。

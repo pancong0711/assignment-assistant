@@ -561,6 +561,55 @@ def _wm_serve_assets(ws: Path, explicit=None) -> tuple[Path, str]:
     return workspace_assets(ws), "workspace"
 
 
+def make_atopia_confirm(*, confirmed: bool, confirmed_tool: str = "",
+                        confirmed_args: "dict | None" = None,
+                        confirmed_by: str = "teacher:pwa") -> "callable":
+    """D147：构造 Atopia 的 L2 确认回调（**精确到工具 + 参数**）。
+
+    背景：PWA 是异步的，不能在请求线程里等教师点确认，所以采用
+    "拒绝 → 返回 pendingConfirm → 教师弹窗确认 → 带 confirmedTool/confirmedArgs 重发"。
+
+    **安全要求**：只放行"教师确认的那一次调用"。
+    此前只看 `confirmed is True` → 教师为 A 确认后，同一次请求里模型改请求
+    另一个 L2 工具（如 kb.write）也会被自动执行（实测可复现），
+    违背 D132「L2 必须教师**逐次**确认」。
+
+    规则：
+    - `confirmed=False` → 一律拒绝（返回空串）；
+    - 带 confirmed 但**没说是哪个工具** → 拒绝（不允许"盲确认"）；
+    - 工具名不一致 → 拒绝；
+    - 传了 `confirmed_args` 但参数不一致 → 拒绝；
+    - 全部一致 → 返回确认来源（记入 journal 的 `confirmed_by`）。
+    """
+    conf_tool = str(confirmed_tool or "").strip()
+
+    def _same_args(a: dict, b: "dict | None") -> bool:
+        if b is None:
+            return True              # 老客户端没传参数 → 只按工具名匹配
+        try:
+            return json.dumps(a or {}, sort_keys=True, ensure_ascii=False) == \
+                json.dumps(b, sort_keys=True, ensure_ascii=False)
+        except Exception:            # noqa: BLE001
+            return False
+
+    def _confirm(tool_name: str, args: dict) -> str:
+        if not confirmed:
+            return ""
+        if not conf_tool:
+            logger.warning("[atopia] 拒绝确认：请求带 confirmed 却没指明 confirmedTool")
+            return ""
+        if conf_tool != str(tool_name):
+            logger.warning(f"[atopia] 拒绝确认错配：教师确认 {conf_tool}，"
+                           f"模型请求 {tool_name}")
+            return ""
+        if not _same_args(args, confirmed_args):
+            logger.warning(f"[atopia] 拒绝确认参数不符：{tool_name}")
+            return ""
+        return str(confirmed_by or "teacher:pwa")
+
+    return _confirm
+
+
 def _rewrite_legacy_atopia(path: str) -> "tuple[str, bool]":
     """D134：旧路由 `/assistopia/*` → `/atopia/*`（旧名永久兼容）。
 
@@ -1634,11 +1683,17 @@ class Handler(BaseHTTPRequestHandler):
                                 limits=_al3.read_limits(ws_))
             confirmed = payload.get("confirmed") is True
             conf_note = str(payload.get("confirmedBy") or "teacher:pwa")
-
-            def _confirm(tool_name: str, args: dict) -> str:
-                # PWA 是**异步**的：不能在请求线程里等教师点确认。
-                # 因此这里只在"本次请求已带确认"时放行；否则拒绝并让前端弹窗后重发。
-                return conf_note if confirmed else ""
+            # D147 安全修复：确认必须**精确到"哪个工具 + 哪些参数"**。
+            # 此前只看 `confirmed=true` → 教师为 A 确认后，同一次请求里 AI 改请求
+            # 另一个 L2 工具（如 kb.write）也会被自动放行（实测可复现），
+            # 违背 D132「L2 必须**逐次**确认」。
+            conf_args = payload.get("confirmedArgs")
+            # D147：确认精确到"哪个工具 + 哪些参数"（实现见 make_atopia_confirm）
+            _confirm = make_atopia_confirm(
+                confirmed=confirmed,
+                confirmed_tool=str(payload.get("confirmedTool") or ""),
+                confirmed_args=(conf_args if isinstance(conf_args, dict) else None),
+                confirmed_by=conf_note)
 
             # D146：Atopia 可选 provider/模型（与 Playground 共用 build_client_for）
             try:
