@@ -295,9 +295,14 @@ const llmConfig = ref<{ providers?: any[]; stages?: Record<string, any>; default
 
 /* D137：provider 高级请求头（只有 provider 明确要求时才填，如 opencode-go 的
    x-opencode-session）。保存前必须二次确认并列出实际内容。 */
-const pHdrText = ref('')          // 多行 name=value
+const pHdrText = ref('')          // 其他自定义头（多行 name=value）
 const pUserAgent = ref('')
 const showAdv = ref(false)
+/* D145：会话头改为**勾选式**（引擎本就自动生成 session id，
+   教师不需要、也不应该手写 `{session}` 占位符）。 */
+const pSessionHdr = ref(false)
+const pSessionHdrName = ref('x-opencode-session')
+const DEFAULT_UA = 'assignment-assistant/<版本>'   // 仅用于展示默认值文案
 const pendingProvider = ref<{ name: string; base_url: string; headers: Record<string, string>
                               user_agent: string } | null>(null)
 
@@ -554,18 +559,34 @@ async function saveDir() {
   }
   await loadConfig()
 }
+/** 把「勾选式会话头」与「其他自定义头」合并成最终 headers。 */
+function collectHeaders(): Record<string, string> | { error: string } {
+  const parsed = parseHeaders(pHdrText.value)
+  if ('error' in parsed) return parsed
+  const out: Record<string, string> = { ...parsed }
+  if (pSessionHdr.value) {
+    const name = (pSessionHdrName.value || '').trim() || 'x-opencode-session'
+    if (!/^x-[\w-]+$/i.test(name)) {
+      return { error: `会话头的头名必须是 x-开头的合法头名，收到：${name}` }
+    }
+    // 占位符由前端代填（引擎运行时会替换成自动生成的会话 id）
+    out[name] = '{session}'
+  }
+  return out
+}
+
 async function saveProvider() {
   if (!pName.value.trim()) { msg.value = '请填 provider 名称'; return }
-  const parsed = parseHeaders(pHdrText.value)
-  if ('error' in parsed) { msg.value = parsed.error; return }
-  const hasHdr = Object.keys(parsed).length > 0 || pUserAgent.value.trim() !== ''
+  const merged = collectHeaders()
+  if ('error' in merged) { msg.value = merged.error; return }
+  const hasHdr = Object.keys(merged).length > 0 || pUserAgent.value.trim() !== ''
   if (hasHdr) {
     // D137：请求头会随**每次调用**发到该 provider → 保存前让教师看清实际内容
     pendingProvider.value = { name: pName.value.trim(), base_url: pBase.value.trim(),
-                              headers: parsed, user_agent: pUserAgent.value.trim() }
+                              headers: merged, user_agent: pUserAgent.value.trim() }
     return
   }
-  await doSaveProvider(parsed, '')
+  await doSaveProvider(merged, '')
 }
 
 async function doSaveProvider(headers: Record<string, string>, ua: string) {
@@ -577,10 +598,22 @@ async function doSaveProvider(headers: Record<string, string>, ua: string) {
   })
   if (rep?.ok) {
     const n = Object.keys(headers).length
-    msg.value = `provider「${savedName}」已保存（key 只掩码显示`
-      + (n || ua ? `；请求头 ${n} 项${ua ? ' + 自定义 UA' : ''}` : '') + '）'
-    // D142：保存后**清空表单**，否则新建下一个 provider 时会把上一个的
-    // 请求头/UA 原样带过去（字段一直留着 → 静默污染另一个 provider）。
+    await loadConfig()
+    // D145：明确告诉教师"存了什么"以及"是否真的会生效"
+    const stages = usedByStage(savedName)
+    const parts = [`provider「${savedName}」已保存（key 只掩码显示）`]
+    if (n || ua) {
+      const hdrNames = Object.keys(headers).join('、') || '无'
+      parts.push(`请求头 ${n} 项${n ? `（${hdrNames}）` : ''}${ua ? ' + 自定义 UA' : ''}`)
+    }
+    if (n || ua) {
+      parts.push(stages.length
+        ? `✅ 已分配到 ${stages.map(stageName).join('、')} → 会真正生效`
+        : '⚠️ 但还没分配到「转写段 / 评阅段」——**现在不会生效**，'
+          + '请在下方两段式里选上它')
+    }
+    msg.value = parts.join('；')
+    // D142：保存后清空表单，避免污染下一个 provider
     resetProviderForm()
   } else {
     msg.value = `保存失败：${rep?.error || ''}`
@@ -597,6 +630,8 @@ function resetProviderForm() {
   pBatch.value = false
   pHdrText.value = ''
   pUserAgent.value = ''
+  pSessionHdr.value = false
+  pSessionHdrName.value = 'x-opencode-session'
   showAdv.value = false
 }
 
@@ -620,9 +655,20 @@ function editProvider(p: any) {
   pBase.value = p.base_url
   pBatch.value = !!p.batch_support
   const hdrs = (p.headers || {}) as Record<string, string>
-  pHdrText.value = Object.entries(hdrs).map(([k, v]) => `${k}=${v}`).join('\n')
+  // D145：把"会话头"从普通头里拆出来 → 回填成勾选状态（教师看到的是勾选，不是占位符）
+  const sess = Object.entries(hdrs).find(([, v]) => String(v).includes('{session}'))
+  pSessionHdr.value = !!sess
+  pSessionHdrName.value = sess ? sess[0] : 'x-opencode-session'
+  pHdrText.value = Object.entries(hdrs)
+    .filter(([k]) => !sess || k !== sess[0])
+    .map(([k, v]) => `${k}=${v}`).join('\n')
   pUserAgent.value = String(p.user_agent || '')
   showAdv.value = Object.keys(hdrs).length > 0 || !!p.user_agent
+}
+
+/** 段名 → 中文（提示文案用）。 */
+function stageName(s: string): string {
+  return s === 'transcription' ? '转写段' : s === 'evaluation' ? '评阅段' : s
 }
 async function delProvider(name: string) {
   if (!window.confirm(`删除 provider「${name}」及其本地 key？`)) return
@@ -895,32 +941,53 @@ onMounted(async () => {
       <label class="field">base_url <input v-model="pBase" :placeholder="llmConfig.default_base_url || 'https://…/compatible-mode/v1'" style="width:330px" /></label>
       <label class="field">api_key <input v-model="pKey" type="password" placeholder="留空=不修改（只存掩码）" style="width:200px" /></label>
       <label class="field"><input type="checkbox" v-model="pBatch" /> 支持 batch</label>
-      <button class="btn" @click="saveProvider">保存 provider</button>
-      <button class="btn" @click="resetProviderForm">清空表单</button>
+
     </div>
 
-    <!-- D137：高级请求头（默认折叠；只有 provider 明确要求时才填） -->
-    <details :open="showAdv" style="margin-top:6px"
+    <!-- D145：高级设置（在保存键**上方**——先设好再保存） -->
+    <details :open="showAdv" style="margin:8px 0 6px"
              @toggle="showAdv = ($event.target as HTMLDetailsElement).open">
       <summary class="hint" style="cursor:pointer">
-        ⚙️ 高级：自定义请求头 / user-agent（按需，如 opencode-go 的 x-opencode-session）
+        ⚙️ 高级：请求头（只有 provider 明确要求时才需要设置）
       </summary>
-      <div style="margin-top:6px; display:flex; flex-direction:column; gap:6px">
-        <label class="field">user-agent
-          <input v-model="pUserAgent" placeholder="留空=使用 assignment-assistant/<版本>"
-                 style="width:320px" />
+      <div class="adv-box">
+        <label class="adv-row">
+          <input v-model="pSessionHdr" type="checkbox" />
+          <span>
+            <b>需要会话头</b>
+            <span class="hint">（自动生成会话 id；如 opencode-go 的 /go 路由要求）</span>
+          </span>
         </label>
-        <label class="field" style="align-items:flex-start">请求头（每行 name=value）
-          <textarea v-model="pHdrText" rows="3" style="width:420px; font-family:monospace"
-                    placeholder="x-opencode-session={session}"></textarea>
+        <label v-if="pSessionHdr" class="field" style="margin-left:22px">
+          头名
+          <input v-model="pSessionHdrName" placeholder="x-opencode-session" style="width:220px" />
+          <span class="hint">会话 id 由引擎自动生成并填入，<b>无需你填写</b></span>
         </label>
-        <p class="hint" style="margin:0">
+
+        <label class="field" style="align-items:flex-start; margin-top:6px">
+          其他自定义头（每行 name=value）
+          <textarea v-model="pHdrText" rows="2" style="width:420px; font-family:monospace"
+                    placeholder="（留空 = 不发送任何自定义头）"></textarea>
+        </label>
+
+        <label class="field" style="margin-top:4px">
+          user-agent
+          <input v-model="pUserAgent" :placeholder="`留空 = 使用默认值`" style="width:260px" />
+          <span class="hint">默认：<code>{{ DEFAULT_UA }}</code></span>
+        </label>
+
+        <p class="hint" style="margin:4px 0 0">
           只允许 <code>x-*</code> 自定义头与 <code>user-agent</code>；
-          <code>Authorization</code>/<code>Host</code>/<code>Cookie</code> 等会被引擎拒绝。
-          值里可写 <code>{session}</code>，运行时会替换成当前对话的会话 id。
+          <code>Authorization</code> / <code>Host</code> / <code>Cookie</code> 等会被引擎拒绝。
         </p>
       </div>
     </details>
+
+    <div style="margin-top:8px; display:flex; gap:8px; align-items:center">
+      <button class="btn primary" @click="saveProvider">保存 provider</button>
+      <button class="btn" @click="resetProviderForm">清空表单</button>
+    </div>
+
 
     <!-- 二次确认：请求头会随每次调用发送 -->
     <div v-if="pendingProvider" class="mask">
@@ -1265,6 +1332,11 @@ onMounted(async () => {
 </template>
 
 <style scoped>
+/* D145：高级设置区 */
+.adv-box { display: flex; flex-direction: column; gap: 4px; border: 1px solid #e5e7eb;
+           border-radius: 8px; padding: 8px 10px; background: #fafafa; }
+.adv-row { display: flex; gap: 6px; align-items: baseline; font-size: 13px; }
+
 /* D137：provider 请求头二次确认弹窗 */
 .mask { position: fixed; inset: 0; background: rgba(15, 23, 42, .45); z-index: 60;
         display: flex; align-items: center; justify-content: center; }

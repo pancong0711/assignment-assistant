@@ -18,6 +18,7 @@ import StudentReviewModal from '/home/bot2603/Projects/2609-assignment-assistant
 import GradingRulesCard from '/home/bot2603/Projects/2609-assignment-assistant/app/tests/GradingRulesCard.compiled-8bm5fr.ts'
 import TeacherReportCard from '/home/bot2603/Projects/2609-assignment-assistant/app/tests/TeacherReportCard.compiled-gbyede.ts'
 import TrendCard from '/home/bot2603/Projects/2609-assignment-assistant/app/tests/TrendCard.compiled-dfiz13.ts'
+const DEFAULT_UA = 'assignment-assistant/<版本>'   // 仅用于展示默认值文案
 
 const __sfc_main = /*@__PURE__*/_defineComponent({
   __name: 'AiGradingPanel',
@@ -305,9 +306,13 @@ const llmConfig = ref<{ providers?: any[]; stages?: Record<string, any>; default
 
 /* D137：provider 高级请求头（只有 provider 明确要求时才填，如 opencode-go 的
    x-opencode-session）。保存前必须二次确认并列出实际内容。 */
-const pHdrText = ref('')          // 多行 name=value
+const pHdrText = ref('')          // 其他自定义头（多行 name=value）
 const pUserAgent = ref('')
 const showAdv = ref(false)
+/* D145：会话头改为**勾选式**（引擎本就自动生成 session id，
+   教师不需要、也不应该手写 `{session}` 占位符）。 */
+const pSessionHdr = ref(false)
+const pSessionHdrName = ref('x-opencode-session')
 const pendingProvider = ref<{ name: string; base_url: string; headers: Record<string, string>
                               user_agent: string } | null>(null)
 
@@ -564,18 +569,34 @@ async function saveDir() {
   }
   await loadConfig()
 }
+/** 把「勾选式会话头」与「其他自定义头」合并成最终 headers。 */
+function collectHeaders(): Record<string, string> | { error: string } {
+  const parsed = parseHeaders(pHdrText.value)
+  if ('error' in parsed) return parsed
+  const out: Record<string, string> = { ...parsed }
+  if (pSessionHdr.value) {
+    const name = (pSessionHdrName.value || '').trim() || 'x-opencode-session'
+    if (!/^x-[\w-]+$/i.test(name)) {
+      return { error: `会话头的头名必须是 x-开头的合法头名，收到：${name}` }
+    }
+    // 占位符由前端代填（引擎运行时会替换成自动生成的会话 id）
+    out[name] = '{session}'
+  }
+  return out
+}
+
 async function saveProvider() {
   if (!pName.value.trim()) { msg.value = '请填 provider 名称'; return }
-  const parsed = parseHeaders(pHdrText.value)
-  if ('error' in parsed) { msg.value = parsed.error; return }
-  const hasHdr = Object.keys(parsed).length > 0 || pUserAgent.value.trim() !== ''
+  const merged = collectHeaders()
+  if ('error' in merged) { msg.value = merged.error; return }
+  const hasHdr = Object.keys(merged).length > 0 || pUserAgent.value.trim() !== ''
   if (hasHdr) {
     // D137：请求头会随**每次调用**发到该 provider → 保存前让教师看清实际内容
     pendingProvider.value = { name: pName.value.trim(), base_url: pBase.value.trim(),
-                              headers: parsed, user_agent: pUserAgent.value.trim() }
+                              headers: merged, user_agent: pUserAgent.value.trim() }
     return
   }
-  await doSaveProvider(parsed, '')
+  await doSaveProvider(merged, '')
 }
 
 async function doSaveProvider(headers: Record<string, string>, ua: string) {
@@ -587,10 +608,22 @@ async function doSaveProvider(headers: Record<string, string>, ua: string) {
   })
   if (rep?.ok) {
     const n = Object.keys(headers).length
-    msg.value = `provider「${savedName}」已保存（key 只掩码显示`
-      + (n || ua ? `；请求头 ${n} 项${ua ? ' + 自定义 UA' : ''}` : '') + '）'
-    // D142：保存后**清空表单**，否则新建下一个 provider 时会把上一个的
-    // 请求头/UA 原样带过去（字段一直留着 → 静默污染另一个 provider）。
+    await loadConfig()
+    // D145：明确告诉教师"存了什么"以及"是否真的会生效"
+    const stages = usedByStage(savedName)
+    const parts = [`provider「${savedName}」已保存（key 只掩码显示）`]
+    if (n || ua) {
+      const hdrNames = Object.keys(headers).join('、') || '无'
+      parts.push(`请求头 ${n} 项${n ? `（${hdrNames}）` : ''}${ua ? ' + 自定义 UA' : ''}`)
+    }
+    if (n || ua) {
+      parts.push(stages.length
+        ? `✅ 已分配到 ${stages.map(stageName).join('、')} → 会真正生效`
+        : '⚠️ 但还没分配到「转写段 / 评阅段」——**现在不会生效**，'
+          + '请在下方两段式里选上它')
+    }
+    msg.value = parts.join('；')
+    // D142：保存后清空表单，避免污染下一个 provider
     resetProviderForm()
   } else {
     msg.value = `保存失败：${rep?.error || ''}`
@@ -607,6 +640,8 @@ function resetProviderForm() {
   pBatch.value = false
   pHdrText.value = ''
   pUserAgent.value = ''
+  pSessionHdr.value = false
+  pSessionHdrName.value = 'x-opencode-session'
   showAdv.value = false
 }
 
@@ -630,9 +665,20 @@ function editProvider(p: any) {
   pBase.value = p.base_url
   pBatch.value = !!p.batch_support
   const hdrs = (p.headers || {}) as Record<string, string>
-  pHdrText.value = Object.entries(hdrs).map(([k, v]) => `${k}=${v}`).join('\n')
+  // D145：把"会话头"从普通头里拆出来 → 回填成勾选状态（教师看到的是勾选，不是占位符）
+  const sess = Object.entries(hdrs).find(([, v]) => String(v).includes('{session}'))
+  pSessionHdr.value = !!sess
+  pSessionHdrName.value = sess ? sess[0] : 'x-opencode-session'
+  pHdrText.value = Object.entries(hdrs)
+    .filter(([k]) => !sess || k !== sess[0])
+    .map(([k, v]) => `${k}=${v}`).join('\n')
   pUserAgent.value = String(p.user_agent || '')
   showAdv.value = Object.keys(hdrs).length > 0 || !!p.user_agent
+}
+
+/** 段名 → 中文（提示文案用）。 */
+function stageName(s: string): string {
+  return s === 'transcription' ? '转写段' : s === 'evaluation' ? '评阅段' : s
 }
 async function delProvider(name: string) {
   if (!window.confirm(`删除 provider「${name}」及其本地 key？`)) return
@@ -862,13 +908,13 @@ onMounted(async () => {
   void loadPromptTemplates()
 })
 
-const __returned__ = { props, taskpadStore, kbStore, packStore, rosterStore, msg, imageMode, svgRedraw, allowPartial, busy, progress, get pollTimer() { return pollTimer }, set pollTimer(v) { pollTimer = v }, kbCatalog, kbKind, kbChap, kbIdsSel, kbModel, kbCustomModel, kbKinds, kbChapters, kbIdList, kbPreview, loadKbCatalog, kbPin, kbApply, kbWithRubric, kbPinRubric, kbRequirement, promptTemplates, promptSel, promptBusy, promptMsg, promptIsBuiltin, promptIsDefault, loadPromptTemplates, pickPromptTemplate, askPromptId, savePromptTemplate, doSavePrompt, savePromptAsNew, deletePromptTemplate, setPromptDefault, kbSolveMsg, kbSolving, solveByKb, llmConfig, pHdrText, pUserAgent, showAdv, pendingProvider, parseHeaders, pName, pBase, pKey, pBatch, stProvider, stModel, stBatch, stCustom, modelsForStage, classMap, classDir, works, workKey, padId, packId, mode, tagsSel, limit, reviewOpen, reviewIndex, openReview, reviewModal, resolvedScope, autoReportPending, reportReloadKey, onReviewOpen, rosterTags, padTags, tagOptions, tagHint, rosterStudentsTagged, curWorkDir, students, studentsLoading, drafts, packPads, pads, curWork, ungraded, loadConfig, loadWorks, loadStudents, classDirFor, classDirOptions, suggestDir, saveDir, saveProvider, doSaveProvider, resetProviderForm, usedByStage, confirmSaveProvider, editProvider, delProvider, saveStage, stopPoll, startAi, testLlm, draftOf, aiState, reportMode, renderReports, uploadAll, get tagAutoSelectDone() { return tagAutoSelectDone }, set tagAutoSelectDone(v) { tagAutoSelectDone = v }, PlaygroundPanel, StudentReviewModal, GradingRulesCard, TeacherReportCard, TrendCard }
+const __returned__ = { props, taskpadStore, kbStore, packStore, rosterStore, msg, imageMode, svgRedraw, allowPartial, busy, progress, get pollTimer() { return pollTimer }, set pollTimer(v) { pollTimer = v }, kbCatalog, kbKind, kbChap, kbIdsSel, kbModel, kbCustomModel, kbKinds, kbChapters, kbIdList, kbPreview, loadKbCatalog, kbPin, kbApply, kbWithRubric, kbPinRubric, kbRequirement, promptTemplates, promptSel, promptBusy, promptMsg, promptIsBuiltin, promptIsDefault, loadPromptTemplates, pickPromptTemplate, askPromptId, savePromptTemplate, doSavePrompt, savePromptAsNew, deletePromptTemplate, setPromptDefault, kbSolveMsg, kbSolving, solveByKb, llmConfig, pHdrText, pUserAgent, showAdv, pSessionHdr, pSessionHdrName, DEFAULT_UA, pendingProvider, parseHeaders, pName, pBase, pKey, pBatch, stProvider, stModel, stBatch, stCustom, modelsForStage, classMap, classDir, works, workKey, padId, packId, mode, tagsSel, limit, reviewOpen, reviewIndex, openReview, reviewModal, resolvedScope, autoReportPending, reportReloadKey, onReviewOpen, rosterTags, padTags, tagOptions, tagHint, rosterStudentsTagged, curWorkDir, students, studentsLoading, drafts, packPads, pads, curWork, ungraded, loadConfig, loadWorks, loadStudents, classDirFor, classDirOptions, suggestDir, saveDir, collectHeaders, saveProvider, doSaveProvider, resetProviderForm, usedByStage, confirmSaveProvider, editProvider, stageName, delProvider, saveStage, stopPoll, startAi, testLlm, draftOf, aiState, reportMode, renderReports, uploadAll, get tagAutoSelectDone() { return tagAutoSelectDone }, set tagAutoSelectDone(v) { tagAutoSelectDone = v }, PlaygroundPanel, StudentReviewModal, GradingRulesCard, TeacherReportCard, TrendCard }
 Object.defineProperty(__returned__, '__isScriptSetup', { enumerable: false, value: true })
 return __returned__
 }
 
 })
-import { createElementVNode as _createElementVNode, toDisplayString as _toDisplayString, openBlock as _openBlock, createElementBlock as _createElementBlock, createCommentVNode as _createCommentVNode, createTextVNode as _createTextVNode, Fragment as _Fragment, renderList as _renderList, vModelText as _vModelText, withDirectives as _withDirectives, vModelCheckbox as _vModelCheckbox, vModelSelect as _vModelSelect, normalizeStyle as _normalizeStyle, createVNode as _createVNode, createBlock as _createBlock, createStaticVNode as _createStaticVNode } from "vue"
+import { createElementVNode as _createElementVNode, toDisplayString as _toDisplayString, openBlock as _openBlock, createElementBlock as _createElementBlock, createCommentVNode as _createCommentVNode, createTextVNode as _createTextVNode, Fragment as _Fragment, renderList as _renderList, vModelText as _vModelText, withDirectives as _withDirectives, vModelCheckbox as _vModelCheckbox, vModelSelect as _vModelSelect, normalizeStyle as _normalizeStyle, createVNode as _createVNode, createBlock as _createBlock } from "vue"
 
 const _hoisted_1 = { class: "card" }
 const _hoisted_2 = {
@@ -904,198 +950,207 @@ const _hoisted_18 = ["placeholder"]
 const _hoisted_19 = { class: "field" }
 const _hoisted_20 = { class: "field" }
 const _hoisted_21 = ["open"]
-const _hoisted_22 = { style: {"margin-top":"6px","display":"flex","flex-direction":"column","gap":"6px"} }
-const _hoisted_23 = { class: "field" }
+const _hoisted_22 = { class: "adv-box" }
+const _hoisted_23 = { class: "adv-row" }
 const _hoisted_24 = {
+  key: 0,
   class: "field",
-  style: {"align-items":"flex-start"}
+  style: {"margin-left":"22px"}
 }
 const _hoisted_25 = {
+  class: "field",
+  style: {"align-items":"flex-start","margin-top":"6px"}
+}
+const _hoisted_26 = {
+  class: "field",
+  style: {"margin-top":"4px"}
+}
+const _hoisted_27 = {
   key: 1,
   class: "mask"
 }
-const _hoisted_26 = { class: "dlg" }
-const _hoisted_27 = {
+const _hoisted_28 = { class: "dlg" }
+const _hoisted_29 = {
   class: "hint",
   style: {"margin":"0 0 6px"}
 }
-const _hoisted_28 = { class: "hdrs" }
-const _hoisted_29 = {
+const _hoisted_30 = { class: "hdrs" }
+const _hoisted_31 = {
   key: 0,
   class: "hint",
   style: {"margin":"0 0 6px"}
 }
-const _hoisted_30 = { style: {"display":"flex","gap":"8px","justify-content":"flex-end"} }
-const _hoisted_31 = { style: {"margin-top":"8px"} }
-const _hoisted_32 = { style: {"width":"80px"} }
-const _hoisted_33 = ["onUpdate:modelValue"]
-const _hoisted_34 = ["value"]
+const _hoisted_32 = { style: {"display":"flex","gap":"8px","justify-content":"flex-end"} }
+const _hoisted_33 = { style: {"margin-top":"8px"} }
+const _hoisted_34 = { style: {"width":"80px"} }
 const _hoisted_35 = ["onUpdate:modelValue"]
 const _hoisted_36 = ["value"]
 const _hoisted_37 = ["onUpdate:modelValue"]
-const _hoisted_38 = ["onClick", "title"]
-const _hoisted_39 = {
+const _hoisted_38 = ["value"]
+const _hoisted_39 = ["onUpdate:modelValue"]
+const _hoisted_40 = ["onClick", "title"]
+const _hoisted_41 = {
   key: 2,
   class: "field"
 }
-const _hoisted_40 = ["onClick"]
-const _hoisted_41 = {
+const _hoisted_42 = ["onClick"]
+const _hoisted_43 = {
   key: 2,
   style: {"display":"flex","gap":"8px","align-items":"center","flex-wrap":"wrap"}
 }
-const _hoisted_42 = {
+const _hoisted_44 = {
   class: "hint",
   style: {"width":"240px"}
 }
-const _hoisted_43 = ["value"]
-const _hoisted_44 = ["value"]
-const _hoisted_45 = {
+const _hoisted_45 = ["value"]
+const _hoisted_46 = ["value"]
+const _hoisted_47 = {
   key: 3,
   class: "hint"
 }
-const _hoisted_46 = { style: {"display":"flex","gap":"8px","align-items":"center","flex-wrap":"wrap"} }
-const _hoisted_47 = ["value"]
-const _hoisted_48 = ["value"]
+const _hoisted_48 = { style: {"display":"flex","gap":"8px","align-items":"center","flex-wrap":"wrap"} }
 const _hoisted_49 = ["value"]
-const _hoisted_50 = { class: "field" }
-const _hoisted_51 = {
+const _hoisted_50 = ["value"]
+const _hoisted_51 = ["value"]
+const _hoisted_52 = { class: "field" }
+const _hoisted_53 = {
   class: "field",
   title: "分层 tag 多选：来自「班级与标签」里学生打的 tag + 当前作业纸绑定的 target_tag。不选 = 批阅全部学生"
 }
-const _hoisted_52 = ["value"]
-const _hoisted_53 = ["disabled"]
-const _hoisted_54 = { class: "field" }
-const _hoisted_55 = {
+const _hoisted_54 = ["value"]
+const _hoisted_55 = ["disabled"]
+const _hoisted_56 = { class: "field" }
+const _hoisted_57 = {
   key: 0,
   class: "hint",
   style: {"margin":"4px 0 0","color":"#7a5c00"}
 }
-const _hoisted_56 = {
+const _hoisted_58 = {
   key: 1,
   class: "hint",
   style: {"margin":"4px 0 0"}
 }
-const _hoisted_57 = {
+const _hoisted_59 = {
   key: 2,
   class: "hint",
   style: {"margin":"4px 0 0"}
 }
-const _hoisted_58 = {
+const _hoisted_60 = {
   class: "card",
   style: {"margin":"8px 0","padding":"8px 10px","border-left":"3px solid var(--c-border)"}
 }
-const _hoisted_59 = {
+const _hoisted_61 = {
   class: "field",
   style: {"display":"block","margin":"2px 0"}
 }
-const _hoisted_60 = {
+const _hoisted_62 = {
   class: "field",
   style: {"display":"block","margin":"2px 0"}
 }
-const _hoisted_61 = ["disabled"]
-const _hoisted_62 = ["disabled"]
 const _hoisted_63 = ["disabled"]
 const _hoisted_64 = ["disabled"]
-const _hoisted_65 = {
+const _hoisted_65 = ["disabled"]
+const _hoisted_66 = ["disabled"]
+const _hoisted_67 = {
   class: "hint",
   style: {"display":"inline-flex","align-items":"center","gap":"4px","margin-left":"8px"}
 }
-const _hoisted_66 = {
+const _hoisted_68 = {
   key: 4,
   class: "hint",
   style: {"margin-top":"6px"}
 }
-const _hoisted_67 = {
+const _hoisted_69 = {
   key: 5,
   class: "review-tools"
 }
-const _hoisted_68 = ["disabled"]
-const _hoisted_69 = {
+const _hoisted_70 = ["disabled"]
+const _hoisted_71 = {
   class: "hint",
   style: {"margin":"0"}
 }
-const _hoisted_70 = {
+const _hoisted_72 = {
   key: 0,
   class: "hint",
   style: {"margin":"0","color":"#b45309"}
 }
-const _hoisted_71 = {
+const _hoisted_73 = {
   key: 6,
   class: "review-list-scroll"
 }
-const _hoisted_72 = { class: "review-list-table" }
-const _hoisted_73 = { class: "c" }
-const _hoisted_74 = { class: "c" }
+const _hoisted_74 = { class: "review-list-table" }
 const _hoisted_75 = { class: "c" }
 const _hoisted_76 = { class: "c" }
 const _hoisted_77 = { class: "c" }
 const _hoisted_78 = { class: "c" }
-const _hoisted_79 = ["onClick"]
-const _hoisted_80 = {
+const _hoisted_79 = { class: "c" }
+const _hoisted_80 = { class: "c" }
+const _hoisted_81 = ["onClick"]
+const _hoisted_82 = {
   key: 7,
   class: "hint"
 }
-const _hoisted_81 = { style: {"display":"flex","gap":"8px","align-items":"center","flex-wrap":"wrap"} }
-const _hoisted_82 = ["disabled"]
-const _hoisted_83 = ["disabled"]
+const _hoisted_83 = { style: {"display":"flex","gap":"8px","align-items":"center","flex-wrap":"wrap"} }
 const _hoisted_84 = ["disabled"]
-const _hoisted_85 = { style: {"display":"flex","gap":"8px","align-items":"center","flex-wrap":"wrap"} }
-const _hoisted_86 = ["value"]
-const _hoisted_87 = ["value"]
+const _hoisted_85 = ["disabled"]
+const _hoisted_86 = ["disabled"]
+const _hoisted_87 = { style: {"display":"flex","gap":"8px","align-items":"center","flex-wrap":"wrap"} }
 const _hoisted_88 = ["value"]
 const _hoisted_89 = ["value"]
-const _hoisted_90 = {
+const _hoisted_90 = ["value"]
+const _hoisted_91 = ["value"]
+const _hoisted_92 = {
   class: "field",
   title: "默认勾选：AI 作答即成为生效答案（旧版仍在版本库，可一键 pin 回）"
 }
-const _hoisted_91 = {
+const _hoisted_93 = {
   class: "field",
   title: "不勾=仅 dry-run 预览将作答哪些题；勾=真正调 LLM 并写回 kb/solutions/"
 }
-const _hoisted_92 = {
+const _hoisted_94 = {
   class: "field",
   title: "一次产出「参考解答 + 评阅要点 + 知识点」（带该题型规则摘要），写入同一版本"
 }
-const _hoisted_93 = {
+const _hoisted_95 = {
   key: 2,
   class: "field",
   title: "默认不置顶：AI 要点未经教师确认，不该抢生效答案（D130 验收 5）"
 }
-const _hoisted_94 = {
+const _hoisted_96 = {
   key: 0,
   class: "hint",
   style: {"margin":"2px 0 0"}
 }
-const _hoisted_95 = { style: {"margin":"6px 0"} }
-const _hoisted_96 = { style: {"display":"flex","gap":"6px","align-items":"center","flex-wrap":"wrap","margin-bottom":"4px"} }
-const _hoisted_97 = ["value"]
-const _hoisted_98 = ["disabled"]
-const _hoisted_99 = ["disabled"]
+const _hoisted_97 = { style: {"margin":"6px 0"} }
+const _hoisted_98 = { style: {"display":"flex","gap":"6px","align-items":"center","flex-wrap":"wrap","margin-bottom":"4px"} }
+const _hoisted_99 = ["value"]
 const _hoisted_100 = ["disabled"]
 const _hoisted_101 = ["disabled"]
-const _hoisted_102 = {
+const _hoisted_102 = ["disabled"]
+const _hoisted_103 = ["disabled"]
+const _hoisted_104 = {
   class: "hint",
   style: {"margin":"2px 0 0"}
 }
-const _hoisted_103 = {
+const _hoisted_105 = {
   key: 0,
   style: {"color":"var(--c-primary)"}
 }
-const _hoisted_104 = ["disabled"]
-const _hoisted_105 = {
+const _hoisted_106 = ["disabled"]
+const _hoisted_107 = {
   class: "hint",
   style: {"margin":"4px 0 0"}
 }
-const _hoisted_106 = {
+const _hoisted_108 = {
   key: 0,
   style: {"display":"inline-block","max-width":"100%","overflow-x":"auto","white-space":"nowrap","vertical-align":"bottom"}
 }
-const _hoisted_107 = { key: 1 }
-const _hoisted_108 = {
+const _hoisted_109 = { key: 1 }
+const _hoisted_110 = {
   class: "hint",
   style: {"margin":"6px 0 0"}
 }
-const _hoisted_109 = {
+const _hoisted_111 = {
   key: 1,
   class: "hint"
 }
@@ -1103,17 +1158,17 @@ const _hoisted_109 = {
 export function render(_ctx, _cache, $props, $setup, $data, $options) {
   return (_openBlock(), _createElementBlock(_Fragment, null, [
     _createElementVNode("div", _hoisted_1, [
-      _cache[95] || (_cache[95] = _createElementVNode("h2", null, "AI 辅助批阅", -1 /* CACHED */)),
+      _cache[101] || (_cache[101] = _createElementVNode("h2", null, "AI 辅助批阅", -1 /* CACHED */)),
       ($setup.msg)
         ? (_openBlock(), _createElementBlock("p", _hoisted_2, _toDisplayString($setup.msg), 1 /* TEXT */))
         : _createCommentVNode("v-if", true),
       _createElementVNode("p", _hoisted_3, [
-        _cache[49] || (_cache[49] = _createTextVNode(" 两段式：转写（多模态）→ 评阅（可 batch）｜结果为", -1 /* CACHED */)),
-        _cache[50] || (_cache[50] = _createElementVNode("b", null, "本地批阅草稿", -1 /* CACHED */)),
-        _cache[51] || (_cache[51] = _createTextVNode("，审核后一键上传（未批阅不上传）。 ", -1 /* CACHED */)),
+        _cache[51] || (_cache[51] = _createTextVNode(" 两段式：转写（多模态）→ 评阅（可 batch）｜结果为", -1 /* CACHED */)),
+        _cache[52] || (_cache[52] = _createElementVNode("b", null, "本地批阅草稿", -1 /* CACHED */)),
+        _cache[53] || (_cache[53] = _createTextVNode("，审核后一键上传（未批阅不上传）。 ", -1 /* CACHED */)),
         ($setup.ungraded.length)
           ? (_openBlock(), _createElementBlock(_Fragment, { key: 0 }, [
-              _cache[47] || (_cache[47] = _createTextVNode("尚余 ", -1 /* CACHED */)),
+              _cache[49] || (_cache[49] = _createTextVNode("尚余 ", -1 /* CACHED */)),
               _createElementVNode("b", null, _toDisplayString($setup.ungraded.length), 1 /* TEXT */),
               _createTextVNode(" 名学生未完成批阅（" + _toDisplayString($setup.ungraded.slice(0, 8).join('、')), 1 /* TEXT */),
               ($setup.ungraded.length > 8)
@@ -1121,13 +1176,13 @@ export function render(_ctx, _cache, $props, $setup, $data, $options) {
                     _createTextVNode(" 等")
                   ], 64 /* STABLE_FRAGMENT */))
                 : _createCommentVNode("v-if", true),
-              _cache[48] || (_cache[48] = _createTextVNode("）。", -1 /* CACHED */))
+              _cache[50] || (_cache[50] = _createTextVNode("）。", -1 /* CACHED */))
             ], 64 /* STABLE_FRAGMENT */))
           : _createCommentVNode("v-if", true)
       ]),
-      _cache[96] || (_cache[96] = _createElementVNode("h3", null, "① LLM 设置（provider 统一管理 + 两段式勾选）", -1 /* CACHED */)),
+      _cache[102] || (_cache[102] = _createElementVNode("h3", null, "① LLM 设置（provider 统一管理 + 两段式勾选）", -1 /* CACHED */)),
       _createElementVNode("table", _hoisted_4, [
-        _cache[54] || (_cache[54] = _createElementVNode("thead", null, [
+        _cache[56] || (_cache[56] = _createElementVNode("thead", null, [
           _createElementVNode("tr", null, [
             _createElementVNode("th", { style: {"text-align":"left"} }, "provider"),
             _createElementVNode("th", { style: {"text-align":"left"} }, "base_url"),
@@ -1159,7 +1214,7 @@ export function render(_ctx, _cache, $props, $setup, $data, $options) {
                             _createTextVNode(" · UA")
                           ], 64 /* STABLE_FRAGMENT */))
                         : _createCommentVNode("v-if", true),
-                      _cache[52] || (_cache[52] = _createTextVNode("） ", -1 /* CACHED */)),
+                      _cache[54] || (_cache[54] = _createTextVNode("） ", -1 /* CACHED */)),
                       ($setup.usedByStage(p.name).length)
                         ? (_openBlock(), _createElementBlock("div", _hoisted_10, " 已生效（" + _toDisplayString($setup.usedByStage(p.name).map((x) => x === 'transcription' ? '转写' : '评阅').join('、')) + "段） ", 1 /* TEXT */))
                         : (_openBlock(), _createElementBlock("div", _hoisted_11, "未分配段 → 不会用到"))
@@ -1173,7 +1228,7 @@ export function render(_ctx, _cache, $props, $setup, $data, $options) {
                   href: "javascript:;",
                   onClick: $event => ($setup.editProvider(p))
                 }, "编辑", 8 /* PROPS */, _hoisted_13),
-                _cache[53] || (_cache[53] = _createTextVNode(" ｜", -1 /* CACHED */)),
+                _cache[55] || (_cache[55] = _createTextVNode(" ｜", -1 /* CACHED */)),
                 _createElementVNode("a", {
                   href: "javascript:;",
                   onClick: $event => ($setup.delProvider(p.name))
@@ -1185,7 +1240,7 @@ export function render(_ctx, _cache, $props, $setup, $data, $options) {
       ]),
       _createElementVNode("div", _hoisted_15, [
         _createElementVNode("label", _hoisted_16, [
-          _cache[55] || (_cache[55] = _createTextVNode("名称 ", -1 /* CACHED */)),
+          _cache[57] || (_cache[57] = _createTextVNode("名称 ", -1 /* CACHED */)),
           _withDirectives(_createElementVNode("input", {
             "onUpdate:modelValue": _cache[0] || (_cache[0] = $event => (($setup.pName) = $event)),
             placeholder: "Aliyun",
@@ -1195,7 +1250,7 @@ export function render(_ctx, _cache, $props, $setup, $data, $options) {
           ])
         ]),
         _createElementVNode("label", _hoisted_17, [
-          _cache[56] || (_cache[56] = _createTextVNode("base_url ", -1 /* CACHED */)),
+          _cache[58] || (_cache[58] = _createTextVNode("base_url ", -1 /* CACHED */)),
           _withDirectives(_createElementVNode("input", {
             "onUpdate:modelValue": _cache[1] || (_cache[1] = $event => (($setup.pBase) = $event)),
             placeholder: $setup.llmConfig.default_base_url || 'https://…/compatible-mode/v1',
@@ -1205,7 +1260,7 @@ export function render(_ctx, _cache, $props, $setup, $data, $options) {
           ])
         ]),
         _createElementVNode("label", _hoisted_19, [
-          _cache[57] || (_cache[57] = _createTextVNode("api_key ", -1 /* CACHED */)),
+          _cache[59] || (_cache[59] = _createTextVNode("api_key ", -1 /* CACHED */)),
           _withDirectives(_createElementVNode("input", {
             "onUpdate:modelValue": _cache[2] || (_cache[2] = $event => (($setup.pKey) = $event)),
             type: "password",
@@ -1222,10 +1277,94 @@ export function render(_ctx, _cache, $props, $setup, $data, $options) {
           }, null, 512 /* NEED_PATCH */), [
             [_vModelCheckbox, $setup.pBatch]
           ]),
-          _cache[58] || (_cache[58] = _createTextVNode(" 支持 batch", -1 /* CACHED */))
-        ]),
+          _cache[60] || (_cache[60] = _createTextVNode(" 支持 batch", -1 /* CACHED */))
+        ])
+      ]),
+      _createCommentVNode(" D145：高级设置（在保存键**上方**——先设好再保存） "),
+      _createElementVNode("details", {
+        open: $setup.showAdv,
+        style: {"margin":"8px 0 6px"},
+        onToggle: _cache[8] || (_cache[8] = $event => ($setup.showAdv = ($event.target as HTMLDetailsElement).open))
+      }, [
+        _cache[68] || (_cache[68] = _createElementVNode("summary", {
+          class: "hint",
+          style: {"cursor":"pointer"}
+        }, " ⚙️ 高级：请求头（只有 provider 明确要求时才需要设置） ", -1 /* CACHED */)),
+        _createElementVNode("div", _hoisted_22, [
+          _createElementVNode("label", _hoisted_23, [
+            _withDirectives(_createElementVNode("input", {
+              "onUpdate:modelValue": _cache[4] || (_cache[4] = $event => (($setup.pSessionHdr) = $event)),
+              type: "checkbox"
+            }, null, 512 /* NEED_PATCH */), [
+              [_vModelCheckbox, $setup.pSessionHdr]
+            ]),
+            _cache[61] || (_cache[61] = _createElementVNode("span", null, [
+              _createElementVNode("b", null, "需要会话头"),
+              _createElementVNode("span", { class: "hint" }, "（自动生成会话 id；如 opencode-go 的 /go 路由要求）")
+            ], -1 /* CACHED */))
+          ]),
+          ($setup.pSessionHdr)
+            ? (_openBlock(), _createElementBlock("label", _hoisted_24, [
+                _cache[62] || (_cache[62] = _createTextVNode(" 头名 ", -1 /* CACHED */)),
+                _withDirectives(_createElementVNode("input", {
+                  "onUpdate:modelValue": _cache[5] || (_cache[5] = $event => (($setup.pSessionHdrName) = $event)),
+                  placeholder: "x-opencode-session",
+                  style: {"width":"220px"}
+                }, null, 512 /* NEED_PATCH */), [
+                  [_vModelText, $setup.pSessionHdrName]
+                ]),
+                _cache[63] || (_cache[63] = _createElementVNode("span", { class: "hint" }, [
+                  _createTextVNode("会话 id 由引擎自动生成并填入，"),
+                  _createElementVNode("b", null, "无需你填写")
+                ], -1 /* CACHED */))
+              ]))
+            : _createCommentVNode("v-if", true),
+          _createElementVNode("label", _hoisted_25, [
+            _cache[64] || (_cache[64] = _createTextVNode(" 其他自定义头（每行 name=value） ", -1 /* CACHED */)),
+            _withDirectives(_createElementVNode("textarea", {
+              "onUpdate:modelValue": _cache[6] || (_cache[6] = $event => (($setup.pHdrText) = $event)),
+              rows: "2",
+              style: {"width":"420px","font-family":"monospace"},
+              placeholder: "（留空 = 不发送任何自定义头）"
+            }, null, 512 /* NEED_PATCH */), [
+              [_vModelText, $setup.pHdrText]
+            ])
+          ]),
+          _createElementVNode("label", _hoisted_26, [
+            _cache[66] || (_cache[66] = _createTextVNode(" user-agent ", -1 /* CACHED */)),
+            _withDirectives(_createElementVNode("input", {
+              "onUpdate:modelValue": _cache[7] || (_cache[7] = $event => (($setup.pUserAgent) = $event)),
+              placeholder: `留空 = 使用默认值`,
+              style: {"width":"260px"}
+            }, null, 512 /* NEED_PATCH */), [
+              [_vModelText, $setup.pUserAgent]
+            ]),
+            _createElementVNode("span", { class: "hint" }, [
+              _cache[65] || (_cache[65] = _createTextVNode("默认：", -1 /* CACHED */)),
+              _createElementVNode("code", null, _toDisplayString($setup.DEFAULT_UA))
+            ])
+          ]),
+          _cache[67] || (_cache[67] = _createElementVNode("p", {
+            class: "hint",
+            style: {"margin":"4px 0 0"}
+          }, [
+            _createTextVNode(" 只允许 "),
+            _createElementVNode("code", null, "x-*"),
+            _createTextVNode(" 自定义头与 "),
+            _createElementVNode("code", null, "user-agent"),
+            _createTextVNode("； "),
+            _createElementVNode("code", null, "Authorization"),
+            _createTextVNode(" / "),
+            _createElementVNode("code", null, "Host"),
+            _createTextVNode(" / "),
+            _createElementVNode("code", null, "Cookie"),
+            _createTextVNode(" 等会被引擎拒绝。 ")
+          ], -1 /* CACHED */))
+        ])
+      ], 40 /* PROPS, NEED_HYDRATION */, _hoisted_21),
+      _createElementVNode("div", { style: {"margin-top":"8px","display":"flex","gap":"8px","align-items":"center"} }, [
         _createElementVNode("button", {
-          class: "btn",
+          class: "btn primary",
           onClick: $setup.saveProvider
         }, "保存 provider"),
         _createElementVNode("button", {
@@ -1233,59 +1372,24 @@ export function render(_ctx, _cache, $props, $setup, $data, $options) {
           onClick: $setup.resetProviderForm
         }, "清空表单")
       ]),
-      _createCommentVNode(" D137：高级请求头（默认折叠；只有 provider 明确要求时才填） "),
-      _createElementVNode("details", {
-        open: $setup.showAdv,
-        style: {"margin-top":"6px"},
-        onToggle: _cache[6] || (_cache[6] = $event => ($setup.showAdv = ($event.target as HTMLDetailsElement).open))
-      }, [
-        _cache[62] || (_cache[62] = _createElementVNode("summary", {
-          class: "hint",
-          style: {"cursor":"pointer"}
-        }, " ⚙️ 高级：自定义请求头 / user-agent（按需，如 opencode-go 的 x-opencode-session） ", -1 /* CACHED */)),
-        _createElementVNode("div", _hoisted_22, [
-          _createElementVNode("label", _hoisted_23, [
-            _cache[59] || (_cache[59] = _createTextVNode("user-agent ", -1 /* CACHED */)),
-            _withDirectives(_createElementVNode("input", {
-              "onUpdate:modelValue": _cache[4] || (_cache[4] = $event => (($setup.pUserAgent) = $event)),
-              placeholder: "留空=使用 assignment-assistant/<版本>",
-              style: {"width":"320px"}
-            }, null, 512 /* NEED_PATCH */), [
-              [_vModelText, $setup.pUserAgent]
-            ])
-          ]),
-          _createElementVNode("label", _hoisted_24, [
-            _cache[60] || (_cache[60] = _createTextVNode("请求头（每行 name=value） ", -1 /* CACHED */)),
-            _withDirectives(_createElementVNode("textarea", {
-              "onUpdate:modelValue": _cache[5] || (_cache[5] = $event => (($setup.pHdrText) = $event)),
-              rows: "3",
-              style: {"width":"420px","font-family":"monospace"},
-              placeholder: "x-opencode-session={session}"
-            }, null, 512 /* NEED_PATCH */), [
-              [_vModelText, $setup.pHdrText]
-            ])
-          ]),
-          _cache[61] || (_cache[61] = _createStaticVNode("<p class=\"hint\" style=\"margin:0;\"> 只允许 <code>x-*</code> 自定义头与 <code>user-agent</code>； <code>Authorization</code>/<code>Host</code>/<code>Cookie</code> 等会被引擎拒绝。 值里可写 <code>{session}</code>，运行时会替换成当前对话的会话 id。 </p>", 1))
-        ])
-      ], 40 /* PROPS, NEED_HYDRATION */, _hoisted_21),
       _createCommentVNode(" 二次确认：请求头会随每次调用发送 "),
       ($setup.pendingProvider)
-        ? (_openBlock(), _createElementBlock("div", _hoisted_25, [
-            _createElementVNode("div", _hoisted_26, [
-              _cache[64] || (_cache[64] = _createElementVNode("h3", { style: {"margin":"0 0 8px"} }, "确认保存这些请求头？", -1 /* CACHED */)),
-              _createElementVNode("p", _hoisted_27, " 以下请求头将随**每次调用**发送到 provider「" + _toDisplayString($setup.pendingProvider.name) + "」 （" + _toDisplayString($setup.pendingProvider.base_url || '未填 base_url') + "）： ", 1 /* TEXT */),
-              _createElementVNode("pre", _hoisted_28, _toDisplayString(Object.entries($setup.pendingProvider.headers)
+        ? (_openBlock(), _createElementBlock("div", _hoisted_27, [
+            _createElementVNode("div", _hoisted_28, [
+              _cache[70] || (_cache[70] = _createElementVNode("h3", { style: {"margin":"0 0 8px"} }, "确认保存这些请求头？", -1 /* CACHED */)),
+              _createElementVNode("p", _hoisted_29, " 以下请求头将随**每次调用**发送到 provider「" + _toDisplayString($setup.pendingProvider.name) + "」 （" + _toDisplayString($setup.pendingProvider.base_url || '未填 base_url') + "）： ", 1 /* TEXT */),
+              _createElementVNode("pre", _hoisted_30, _toDisplayString(Object.entries($setup.pendingProvider.headers)
           .map(([k, v]) => `${k}: ${v}`).join('\n') || '（无自定义头）'), 1 /* TEXT */),
               ($setup.pendingProvider.user_agent)
-                ? (_openBlock(), _createElementBlock("p", _hoisted_29, [
-                    _cache[63] || (_cache[63] = _createTextVNode(" user-agent：", -1 /* CACHED */)),
+                ? (_openBlock(), _createElementBlock("p", _hoisted_31, [
+                    _cache[69] || (_cache[69] = _createTextVNode(" user-agent：", -1 /* CACHED */)),
                     _createElementVNode("code", null, _toDisplayString($setup.pendingProvider.user_agent), 1 /* TEXT */)
                   ]))
                 : _createCommentVNode("v-if", true),
-              _createElementVNode("div", _hoisted_30, [
+              _createElementVNode("div", _hoisted_32, [
                 _createElementVNode("button", {
                   class: "btn",
-                  onClick: _cache[7] || (_cache[7] = $event => ($setup.pendingProvider = null))
+                  onClick: _cache[9] || (_cache[9] = $event => ($setup.pendingProvider = null))
                 }, "取消"),
                 _createElementVNode("button", {
                   class: "btn primary",
@@ -1295,25 +1399,25 @@ export function render(_ctx, _cache, $props, $setup, $data, $options) {
             ])
           ]))
         : _createCommentVNode("v-if", true),
-      _createElementVNode("div", _hoisted_31, [
+      _createElementVNode("div", _hoisted_33, [
         (_openBlock(), _createElementBlock(_Fragment, null, _renderList(['transcription', 'evaluation'], (s) => {
           return _createElementVNode("div", {
             key: s,
             style: {"display":"flex","gap":"8px","align-items":"center","margin-top":"4px","flex-wrap":"wrap"}
           }, [
-            _createElementVNode("b", _hoisted_32, _toDisplayString(s === 'transcription' ? '转写段' : '评阅段'), 1 /* TEXT */),
+            _createElementVNode("b", _hoisted_34, _toDisplayString(s === 'transcription' ? '转写段' : '评阅段'), 1 /* TEXT */),
             _withDirectives(_createElementVNode("select", {
               "onUpdate:modelValue": $event => (($setup.stProvider[s]) = $event),
               style: {"min-width":"150px"}
             }, [
-              _cache[65] || (_cache[65] = _createElementVNode("option", { value: "" }, "（选择 provider）", -1 /* CACHED */)),
+              _cache[71] || (_cache[71] = _createElementVNode("option", { value: "" }, "（选择 provider）", -1 /* CACHED */)),
               (_openBlock(true), _createElementBlock(_Fragment, null, _renderList(($setup.llmConfig.providers || []), (p) => {
                 return (_openBlock(), _createElementBlock("option", {
                   key: p.name,
                   value: p.name
-                }, _toDisplayString(p.name), 9 /* TEXT, PROPS */, _hoisted_34))
+                }, _toDisplayString(p.name), 9 /* TEXT, PROPS */, _hoisted_36))
               }), 128 /* KEYED_FRAGMENT */))
-            ], 8 /* PROPS */, _hoisted_33), [
+            ], 8 /* PROPS */, _hoisted_35), [
               [_vModelSelect, $setup.stProvider[s]]
             ]),
             ($setup.modelsForStage(s).length && !$setup.stCustom[s])
@@ -1322,14 +1426,14 @@ export function render(_ctx, _cache, $props, $setup, $data, $options) {
                   "onUpdate:modelValue": $event => (($setup.stModel[s]) = $event),
                   style: {"min-width":"180px"}
                 }, [
-                  _cache[66] || (_cache[66] = _createElementVNode("option", { value: "" }, "（默认）", -1 /* CACHED */)),
+                  _cache[72] || (_cache[72] = _createElementVNode("option", { value: "" }, "（默认）", -1 /* CACHED */)),
                   (_openBlock(true), _createElementBlock(_Fragment, null, _renderList($setup.modelsForStage(s), (m) => {
                     return (_openBlock(), _createElementBlock("option", {
                       key: m,
                       value: m
-                    }, _toDisplayString(m), 9 /* TEXT, PROPS */, _hoisted_36))
+                    }, _toDisplayString(m), 9 /* TEXT, PROPS */, _hoisted_38))
                   }), 128 /* KEYED_FRAGMENT */))
-                ], 8 /* PROPS */, _hoisted_35)), [
+                ], 8 /* PROPS */, _hoisted_37)), [
                   [_vModelSelect, $setup.stModel[s]]
                 ])
               : _withDirectives((_openBlock(), _createElementBlock("input", {
@@ -1337,54 +1441,54 @@ export function render(_ctx, _cache, $props, $setup, $data, $options) {
                   "onUpdate:modelValue": $event => (($setup.stModel[s]) = $event),
                   placeholder: "模型名（填写即记录）",
                   style: {"width":"200px"}
-                }, null, 8 /* PROPS */, _hoisted_37)), [
+                }, null, 8 /* PROPS */, _hoisted_39)), [
                   [_vModelText, $setup.stModel[s]]
                 ]),
             _createElementVNode("button", {
               class: "btn small",
               onClick: $event => ($setup.stCustom[s] = !$setup.stCustom[s]),
               title: $setup.modelsForStage(s).length ? '切换自定义/下拉' : '该 provider 暂无候选'
-            }, _toDisplayString($setup.stCustom[s] ? '用下拉' : '自定义'), 9 /* TEXT, PROPS */, _hoisted_38),
+            }, _toDisplayString($setup.stCustom[s] ? '用下拉' : '自定义'), 9 /* TEXT, PROPS */, _hoisted_40),
             (s === 'evaluation')
-              ? (_openBlock(), _createElementBlock("label", _hoisted_39, [
+              ? (_openBlock(), _createElementBlock("label", _hoisted_41, [
                   _withDirectives(_createElementVNode("input", {
                     type: "checkbox",
-                    "onUpdate:modelValue": _cache[8] || (_cache[8] = $event => (($setup.stBatch) = $event))
+                    "onUpdate:modelValue": _cache[10] || (_cache[10] = $event => (($setup.stBatch) = $event))
                   }, null, 512 /* NEED_PATCH */), [
                     [_vModelCheckbox, $setup.stBatch]
                   ]),
-                  _cache[67] || (_cache[67] = _createTextVNode(" 走 batch", -1 /* CACHED */))
+                  _cache[73] || (_cache[73] = _createTextVNode(" 走 batch", -1 /* CACHED */))
                 ]))
               : _createCommentVNode("v-if", true),
             _createElementVNode("button", {
               class: "btn",
               onClick: $event => ($setup.saveStage(s as 'transcription' | 'evaluation'))
-            }, "保存", 8 /* PROPS */, _hoisted_40)
+            }, "保存", 8 /* PROPS */, _hoisted_42)
           ])
         }), 64 /* STABLE_FRAGMENT */))
       ]),
-      _cache[97] || (_cache[97] = _createElementVNode("h3", { style: {"margin-top":"14px"} }, "② 班级 ↔ 作业纸目录（class_map，按文件名建议）", -1 /* CACHED */)),
+      _cache[103] || (_cache[103] = _createElementVNode("h3", { style: {"margin-top":"14px"} }, "② 班级 ↔ 作业纸目录（class_map，按文件名建议）", -1 /* CACHED */)),
       ($setup.curWork)
-        ? (_openBlock(), _createElementBlock("div", _hoisted_41, [
-            _createElementVNode("span", _hoisted_42, _toDisplayString($setup.curWork.label), 1 /* TEXT */),
+        ? (_openBlock(), _createElementBlock("div", _hoisted_43, [
+            _createElementVNode("span", _hoisted_44, _toDisplayString($setup.curWork.label), 1 /* TEXT */),
             _createCommentVNode(" D123：改为下拉选择真实班级目录，避免手输漏 `classes/` 前缀 "),
             _withDirectives(_createElementVNode("select", {
-              "onUpdate:modelValue": _cache[9] || (_cache[9] = $event => (($setup.classDir[`${$setup.curWork.courseId}:${$setup.curWork.classId}`]) = $event)),
+              "onUpdate:modelValue": _cache[11] || (_cache[11] = $event => (($setup.classDir[`${$setup.curWork.courseId}:${$setup.curWork.classId}`]) = $event)),
               style: {"min-width":"230px"}
             }, [
-              _cache[68] || (_cache[68] = _createElementVNode("option", { value: "" }, "（未关联）", -1 /* CACHED */)),
+              _cache[74] || (_cache[74] = _createElementVNode("option", { value: "" }, "（未关联）", -1 /* CACHED */)),
               (_openBlock(true), _createElementBlock(_Fragment, null, _renderList($setup.classDirOptions, (d) => {
                 return (_openBlock(), _createElementBlock("option", {
                   key: d,
                   value: d
-                }, _toDisplayString(d), 9 /* TEXT, PROPS */, _hoisted_43))
+                }, _toDisplayString(d), 9 /* TEXT, PROPS */, _hoisted_45))
               }), 128 /* KEYED_FRAGMENT */)),
               ($setup.classDir[`${$setup.curWork.courseId}:${$setup.curWork.classId}`]
             && !$setup.classDirOptions.includes($setup.classDir[`${$setup.curWork.courseId}:${$setup.curWork.classId}`]))
                 ? (_openBlock(), _createElementBlock("option", {
                     key: 0,
                     value: $setup.classDir[`${$setup.curWork.courseId}:${$setup.curWork.classId}`]
-                  }, _toDisplayString($setup.classDir[`${$setup.curWork.courseId}:${$setup.curWork.classId}`]) + "（当前映射，目录可能不存在） ", 9 /* TEXT, PROPS */, _hoisted_44))
+                  }, _toDisplayString($setup.classDir[`${$setup.curWork.courseId}:${$setup.curWork.classId}`]) + "（当前映射，目录可能不存在） ", 9 /* TEXT, PROPS */, _hoisted_46))
                 : _createCommentVNode("v-if", true)
             ], 512 /* NEED_PATCH */), [
               [_vModelSelect, $setup.classDir[`${$setup.curWork.courseId}:${$setup.curWork.classId}`]]
@@ -1398,73 +1502,73 @@ export function render(_ctx, _cache, $props, $setup, $data, $options) {
               onClick: $setup.saveDir
             }, "保存映射")
           ]))
-        : (_openBlock(), _createElementBlock("p", _hoisted_45, "先选作业（③ 的下拉）。")),
-      _cache[98] || (_cache[98] = _createElementVNode("h3", { style: {"margin-top":"14px"} }, "③ 任务", -1 /* CACHED */)),
-      _createElementVNode("div", _hoisted_46, [
+        : (_openBlock(), _createElementBlock("p", _hoisted_47, "先选作业（③ 的下拉）。")),
+      _cache[104] || (_cache[104] = _createElementVNode("h3", { style: {"margin-top":"14px"} }, "③ 任务", -1 /* CACHED */)),
+      _createElementVNode("div", _hoisted_48, [
         _withDirectives(_createElementVNode("select", {
-          "onUpdate:modelValue": _cache[10] || (_cache[10] = $event => (($setup.workKey) = $event)),
+          "onUpdate:modelValue": _cache[12] || (_cache[12] = $event => (($setup.workKey) = $event)),
           style: {"min-width":"240px"},
-          onChange: _cache[11] || (_cache[11] = $event => ($setup.loadStudents()))
+          onChange: _cache[13] || (_cache[13] = $event => ($setup.loadStudents()))
         }, [
-          _cache[69] || (_cache[69] = _createElementVNode("option", { value: "" }, "（选择已下载的作业）", -1 /* CACHED */)),
+          _cache[75] || (_cache[75] = _createElementVNode("option", { value: "" }, "（选择已下载的作业）", -1 /* CACHED */)),
           (_openBlock(true), _createElementBlock(_Fragment, null, _renderList($setup.works, (w) => {
             return (_openBlock(), _createElementBlock("option", {
               key: w.key,
               value: w.key
-            }, _toDisplayString(w.label), 9 /* TEXT, PROPS */, _hoisted_47))
+            }, _toDisplayString(w.label), 9 /* TEXT, PROPS */, _hoisted_49))
           }), 128 /* KEYED_FRAGMENT */))
         ], 544 /* NEED_HYDRATION, NEED_PATCH */), [
           [_vModelSelect, $setup.workKey]
         ]),
         _withDirectives(_createElementVNode("select", {
-          "onUpdate:modelValue": _cache[12] || (_cache[12] = $event => (($setup.packId) = $event)),
+          "onUpdate:modelValue": _cache[14] || (_cache[14] = $event => (($setup.packId) = $event)),
           style: {"min-width":"220px"},
-          onChange: _cache[13] || (_cache[13] = $event => ($setup.padId = ''))
+          onChange: _cache[15] || (_cache[15] = $event => ($setup.padId = ''))
         }, [
-          _cache[70] || (_cache[70] = _createElementVNode("option", { value: "" }, "（选择作业包：含多张按 tag 的作业纸）", -1 /* CACHED */)),
+          _cache[76] || (_cache[76] = _createElementVNode("option", { value: "" }, "（选择作业包：含多张按 tag 的作业纸）", -1 /* CACHED */)),
           (_openBlock(true), _createElementBlock(_Fragment, null, _renderList($setup.packStore.packs, (pk) => {
             return (_openBlock(), _createElementBlock("option", {
               key: pk.id,
               value: pk.id
-            }, _toDisplayString(pk.id) + "（" + _toDisplayString((pk.pads ?? []).length) + " 张） ", 9 /* TEXT, PROPS */, _hoisted_48))
+            }, _toDisplayString(pk.id) + "（" + _toDisplayString((pk.pads ?? []).length) + " 张） ", 9 /* TEXT, PROPS */, _hoisted_50))
           }), 128 /* KEYED_FRAGMENT */))
         ], 544 /* NEED_HYDRATION, NEED_PATCH */), [
           [_vModelSelect, $setup.packId]
         ]),
-        _cache[87] || (_cache[87] = _createElementVNode("span", {
+        _cache[93] || (_cache[93] = _createElementVNode("span", {
           class: "hint",
           style: {"margin":"0"}
         }, "或单张作业纸：", -1 /* CACHED */)),
         _withDirectives(_createElementVNode("select", {
-          "onUpdate:modelValue": _cache[14] || (_cache[14] = $event => (($setup.padId) = $event)),
+          "onUpdate:modelValue": _cache[16] || (_cache[16] = $event => (($setup.padId) = $event)),
           style: {"min-width":"200px"},
-          onChange: _cache[15] || (_cache[15] = $event => ($setup.packId = ''))
+          onChange: _cache[17] || (_cache[17] = $event => ($setup.packId = ''))
         }, [
-          _cache[71] || (_cache[71] = _createElementVNode("option", { value: "" }, "（单张作业纸）", -1 /* CACHED */)),
+          _cache[77] || (_cache[77] = _createElementVNode("option", { value: "" }, "（单张作业纸）", -1 /* CACHED */)),
           (_openBlock(true), _createElementBlock(_Fragment, null, _renderList($setup.pads, (p) => {
             return (_openBlock(), _createElementBlock("option", {
               key: p.id,
               value: p.id
-            }, _toDisplayString(p.id) + _toDisplayString(p.tag ? ' · tag ' + p.tag : ''), 9 /* TEXT, PROPS */, _hoisted_49))
+            }, _toDisplayString(p.id) + _toDisplayString(p.tag ? ' · tag ' + p.tag : ''), 9 /* TEXT, PROPS */, _hoisted_51))
           }), 128 /* KEYED_FRAGMENT */))
         ], 544 /* NEED_HYDRATION, NEED_PATCH */), [
           [_vModelSelect, $setup.padId]
         ]),
-        _createElementVNode("label", _hoisted_50, [
-          _cache[73] || (_cache[73] = _createTextVNode("模式 ", -1 /* CACHED */)),
+        _createElementVNode("label", _hoisted_52, [
+          _cache[79] || (_cache[79] = _createTextVNode("模式 ", -1 /* CACHED */)),
           _withDirectives(_createElementVNode("select", {
-            "onUpdate:modelValue": _cache[16] || (_cache[16] = $event => (($setup.mode) = $event))
-          }, [...(_cache[72] || (_cache[72] = [
+            "onUpdate:modelValue": _cache[18] || (_cache[18] = $event => (($setup.mode) = $event))
+          }, [...(_cache[78] || (_cache[78] = [
             _createElementVNode("option", { value: "optimized" }, "优化（给题目/答案）", -1 /* CACHED */),
             _createElementVNode("option", { value: "brute" }, "brute-force（先自己作答再比对）", -1 /* CACHED */)
           ]))], 512 /* NEED_PATCH */), [
             [_vModelSelect, $setup.mode]
           ])
         ]),
-        _createElementVNode("label", _hoisted_51, [
-          _cache[74] || (_cache[74] = _createTextVNode(" tags ", -1 /* CACHED */)),
+        _createElementVNode("label", _hoisted_53, [
+          _cache[80] || (_cache[80] = _createTextVNode(" tags ", -1 /* CACHED */)),
           _withDirectives(_createElementVNode("select", {
-            "onUpdate:modelValue": _cache[17] || (_cache[17] = $event => (($setup.tagsSel) = $event)),
+            "onUpdate:modelValue": _cache[19] || (_cache[19] = $event => (($setup.tagsSel) = $event)),
             multiple: "",
             style: {"min-width":"150px","min-height":"56px"}
           }, [
@@ -1472,7 +1576,7 @@ export function render(_ctx, _cache, $props, $setup, $data, $options) {
               return (_openBlock(), _createElementBlock("option", {
                 key: t,
                 value: t
-              }, _toDisplayString(t), 9 /* TEXT, PROPS */, _hoisted_52))
+              }, _toDisplayString(t), 9 /* TEXT, PROPS */, _hoisted_54))
             }), 128 /* KEYED_FRAGMENT */))
           ], 512 /* NEED_PATCH */), [
             [_vModelSelect, $setup.tagsSel]
@@ -1480,19 +1584,19 @@ export function render(_ctx, _cache, $props, $setup, $data, $options) {
           _createElementVNode("button", {
             class: "btn small",
             type: "button",
-            onClick: _cache[18] || (_cache[18] = $event => ($setup.tagsSel = [...$setup.tagOptions]))
+            onClick: _cache[20] || (_cache[20] = $event => ($setup.tagsSel = [...$setup.tagOptions]))
           }, "全选"),
           _createElementVNode("button", {
             class: "btn small",
             type: "button",
             disabled: !$setup.tagsSel.length,
-            onClick: _cache[19] || (_cache[19] = $event => ($setup.tagsSel = []))
-          }, "清空", 8 /* PROPS */, _hoisted_53)
+            onClick: _cache[21] || (_cache[21] = $event => ($setup.tagsSel = []))
+          }, "清空", 8 /* PROPS */, _hoisted_55)
         ]),
-        _createElementVNode("label", _hoisted_54, [
-          _cache[75] || (_cache[75] = _createTextVNode("限前 ", -1 /* CACHED */)),
+        _createElementVNode("label", _hoisted_56, [
+          _cache[81] || (_cache[81] = _createTextVNode("限前 ", -1 /* CACHED */)),
           _withDirectives(_createElementVNode("input", {
-            "onUpdate:modelValue": _cache[20] || (_cache[20] = $event => (($setup.limit) = $event)),
+            "onUpdate:modelValue": _cache[22] || (_cache[22] = $event => (($setup.limit) = $event)),
             type: "number",
             min: "0",
             style: {"width":"70px"}
@@ -1504,38 +1608,38 @@ export function render(_ctx, _cache, $props, $setup, $data, $options) {
               { number: true }
             ]
           ]),
-          _cache[76] || (_cache[76] = _createTextVNode(" 名", -1 /* CACHED */))
+          _cache[82] || (_cache[82] = _createTextVNode(" 名", -1 /* CACHED */))
         ]),
         _createCommentVNode(" D116-C：tags 为空时给出可操作提示（不再静默空着） "),
         ($setup.tagHint)
-          ? (_openBlock(), _createElementBlock("p", _hoisted_55, " ⚠ " + _toDisplayString($setup.tagHint), 1 /* TEXT */))
+          ? (_openBlock(), _createElementBlock("p", _hoisted_57, " ⚠ " + _toDisplayString($setup.tagHint), 1 /* TEXT */))
           : (!$setup.tagsSel.length)
-            ? (_openBlock(), _createElementBlock("p", _hoisted_56, [...(_cache[77] || (_cache[77] = [
+            ? (_openBlock(), _createElementBlock("p", _hoisted_58, [...(_cache[83] || (_cache[83] = [
                 _createTextVNode(" 未选 tag = ", -1 /* CACHED */),
                 _createElementVNode("b", null, "批阅全部学生", -1 /* CACHED */),
                 _createTextVNode("；但只有打了 tag 的学生才能关联到对应作业纸的题目。 ", -1 /* CACHED */)
               ]))]))
-            : (_openBlock(), _createElementBlock("p", _hoisted_57, [
-                _cache[78] || (_cache[78] = _createTextVNode(" 将只批阅 tag ∈ ", -1 /* CACHED */)),
+            : (_openBlock(), _createElementBlock("p", _hoisted_59, [
+                _cache[84] || (_cache[84] = _createTextVNode(" 将只批阅 tag ∈ ", -1 /* CACHED */)),
                 _createElementVNode("code", null, _toDisplayString($setup.tagsSel.join('、')), 1 /* TEXT */),
-                _cache[79] || (_cache[79] = _createTextVNode(" 的学生。 ", -1 /* CACHED */))
+                _cache[85] || (_cache[85] = _createTextVNode(" 的学生。 ", -1 /* CACHED */))
               ])),
         _createCommentVNode(" D106：转录设置（图片压缩 / SVG 重绘） "),
-        _createElementVNode("div", _hoisted_58, [
-          _cache[83] || (_cache[83] = _createElementVNode("div", { style: {"font-weight":"600","margin-bottom":"4px","font-size":"13px"} }, "转录设置", -1 /* CACHED */)),
-          _createElementVNode("label", _hoisted_59, [
-            _cache[81] || (_cache[81] = _createTextVNode(" 图片发送方式： ", -1 /* CACHED */)),
+        _createElementVNode("div", _hoisted_60, [
+          _cache[89] || (_cache[89] = _createElementVNode("div", { style: {"font-weight":"600","margin-bottom":"4px","font-size":"13px"} }, "转录设置", -1 /* CACHED */)),
+          _createElementVNode("label", _hoisted_61, [
+            _cache[87] || (_cache[87] = _createTextVNode(" 图片发送方式： ", -1 /* CACHED */)),
             _withDirectives(_createElementVNode("select", {
-              "onUpdate:modelValue": _cache[21] || (_cache[21] = $event => (($setup.imageMode) = $event)),
+              "onUpdate:modelValue": _cache[23] || (_cache[23] = $event => (($setup.imageMode) = $event)),
               style: {"min-width":"190px"}
-            }, [...(_cache[80] || (_cache[80] = [
+            }, [...(_cache[86] || (_cache[86] = [
               _createElementVNode("option", { value: "auto" }, "自动压缩（推荐，节省 token/时间）", -1 /* CACHED */),
               _createElementVNode("option", { value: "original" }, "原图直发（不计流量，用于对比转录效果）", -1 /* CACHED */)
             ]))], 512 /* NEED_PATCH */), [
               [_vModelSelect, $setup.imageMode]
             ])
           ]),
-          _cache[84] || (_cache[84] = _createElementVNode("p", {
+          _cache[90] || (_cache[90] = _createElementVNode("p", {
             class: "hint",
             style: {"margin":"2px 0 6px"}
           }, [
@@ -1543,16 +1647,16 @@ export function render(_ctx, _cache, $props, $setup, $data, $options) {
             _createElementVNode("b", null, "原始图片始终保留在本地"),
             _createTextVNode("，压缩只作用于送去模型的副本。 ")
           ], -1 /* CACHED */)),
-          _createElementVNode("label", _hoisted_60, [
+          _createElementVNode("label", _hoisted_62, [
             _withDirectives(_createElementVNode("input", {
               type: "checkbox",
-              "onUpdate:modelValue": _cache[22] || (_cache[22] = $event => (($setup.svgRedraw) = $event))
+              "onUpdate:modelValue": _cache[24] || (_cache[24] = $event => (($setup.svgRedraw) = $event))
             }, null, 512 /* NEED_PATCH */), [
               [_vModelCheckbox, $setup.svgRedraw]
             ]),
-            _cache[82] || (_cache[82] = _createTextVNode(" 让 AI 用 SVG 重绘学生手绘图（默认关） ", -1 /* CACHED */))
+            _cache[88] || (_cache[88] = _createTextVNode(" 让 AI 用 SVG 重绘学生手绘图（默认关） ", -1 /* CACHED */))
           ]),
-          _cache[85] || (_cache[85] = _createElementVNode("p", {
+          _cache[91] || (_cache[91] = _createElementVNode("p", {
             class: "hint",
             style: {"margin":"2px 0 0"}
           }, [
@@ -1568,54 +1672,54 @@ export function render(_ctx, _cache, $props, $setup, $data, $options) {
           disabled: $setup.busy,
           title: "按段测试 LLM 配置（能立刻发现 base_url/key/model 错配）",
           onClick: $setup.testLlm
-        }, "🔍 测试配置", 8 /* PROPS */, _hoisted_61),
+        }, "🔍 测试配置", 8 /* PROPS */, _hoisted_63),
         _createElementVNode("button", {
           class: "btn small",
           disabled: $setup.busy,
           title: "只跑转录（发送作答图 → 得到文字转录）",
-          onClick: _cache[23] || (_cache[23] = $event => ($setup.startAi(['transcribe'])))
-        }, "① 仅转录", 8 /* PROPS */, _hoisted_62),
+          onClick: _cache[25] || (_cache[25] = $event => ($setup.startAi(['transcribe'])))
+        }, "① 仅转录", 8 /* PROPS */, _hoisted_64),
         _createElementVNode("button", {
           class: "btn small",
           disabled: $setup.busy,
           title: "只跑评阅（要求已有转录产物）",
-          onClick: _cache[24] || (_cache[24] = $event => ($setup.startAi(['evaluate'])))
-        }, "② 仅评阅", 8 /* PROPS */, _hoisted_63),
+          onClick: _cache[26] || (_cache[26] = $event => ($setup.startAi(['evaluate'])))
+        }, "② 仅评阅", 8 /* PROPS */, _hoisted_65),
         _createElementVNode("button", {
           class: "btn",
           disabled: $setup.busy,
           title: "完整批阅：转录 → 评阅（不含报告；审核后再用下方「📄 一键生成批阅报告」）",
-          onClick: _cache[25] || (_cache[25] = $event => ($setup.startAi(['transcribe', 'evaluate'])))
-        }, "▶ ③ 完整批阅", 8 /* PROPS */, _hoisted_64),
-        _createElementVNode("label", _hoisted_65, [
+          onClick: _cache[27] || (_cache[27] = $event => ($setup.startAi(['transcribe', 'evaluate'])))
+        }, "▶ ③ 完整批阅", 8 /* PROPS */, _hoisted_66),
+        _createElementVNode("label", _hoisted_67, [
           _withDirectives(_createElementVNode("input", {
             type: "checkbox",
-            "onUpdate:modelValue": _cache[26] || (_cache[26] = $event => (($setup.allowPartial) = $event))
+            "onUpdate:modelValue": _cache[28] || (_cache[28] = $event => (($setup.allowPartial) = $event))
           }, null, 512 /* NEED_PATCH */), [
             [_vModelCheckbox, $setup.allowPartial]
           ]),
-          _cache[86] || (_cache[86] = _createTextVNode(" 有学生转录失败时仍继续（默认中止） ", -1 /* CACHED */))
+          _cache[92] || (_cache[92] = _createTextVNode(" 有学生转录失败时仍继续（默认中止） ", -1 /* CACHED */))
         ])
       ]),
       ($setup.progress)
-        ? (_openBlock(), _createElementBlock("p", _hoisted_66, _toDisplayString($setup.progress), 1 /* TEXT */))
+        ? (_openBlock(), _createElementBlock("p", _hoisted_68, _toDisplayString($setup.progress), 1 /* TEXT */))
         : _createCommentVNode("v-if", true),
-      _cache[99] || (_cache[99] = _createElementVNode("h3", { style: {"margin-top":"14px"} }, "④ 逐生审核（左右两栏弹窗）", -1 /* CACHED */)),
-      _cache[100] || (_cache[100] = _createElementVNode("p", {
+      _cache[105] || (_cache[105] = _createElementVNode("h3", { style: {"margin-top":"14px"} }, "④ 逐生审核（左右两栏弹窗）", -1 /* CACHED */)),
+      _cache[106] || (_cache[106] = _createElementVNode("p", {
         class: "hint",
         style: {"margin":"0 0 6px"}
       }, " 点「审核」打开弹窗：左=作答图；右上=AI 批语（可另存修订版）；右下=人工批阅（可选，AI 原文不被覆盖）。 保存后到 ⑤ 一键生成报告（按每生模式自动出 5 种版式之一）。 ", -1 /* CACHED */)),
       _createCommentVNode(" D127-FIX：固定高度 + 表头粘性 + 滚轮滚动（与「班级与标签」名单表同口径），\n         避免几十人时整页被拉长、需要滚到页底才能看到下面的按钮。 "),
       _createCommentVNode(" D130-FIX2：「读取」按钮。刷新后作业包/作业纸下拉是空的，\n         状态与 tag 依赖引擎反查批阅目录；给教师一个明确的\"重新读取\"入口，\n         并显示这次实际读的是哪个批阅目录（否则空状态无从排查）。 "),
       ($setup.curWork || $setup.students.length)
-        ? (_openBlock(), _createElementBlock("div", _hoisted_67, [
+        ? (_openBlock(), _createElementBlock("div", _hoisted_69, [
             _createElementVNode("button", {
               class: "btn small",
               type: "button",
               disabled: $setup.studentsLoading,
-              onClick: _cache[27] || (_cache[27] = $event => ($setup.loadStudents()))
-            }, " 🔄 读取状态 ", 8 /* PROPS */, _hoisted_68),
-            _createElementVNode("span", _hoisted_69, [
+              onClick: _cache[29] || (_cache[29] = $event => ($setup.loadStudents()))
+            }, " 🔄 读取状态 ", 8 /* PROPS */, _hoisted_70),
+            _createElementVNode("span", _hoisted_71, [
               ($setup.studentsLoading)
                 ? (_openBlock(), _createElementBlock(_Fragment, { key: 0 }, [
                     _createTextVNode("正在读取…")
@@ -1624,9 +1728,9 @@ export function render(_ctx, _cache, $props, $setup, $data, $options) {
                     _createTextVNode(" 已读取 " + _toDisplayString($setup.students.length) + " 名学生 ", 1 /* TEXT */),
                     ($setup.resolvedScope)
                       ? (_openBlock(), _createElementBlock(_Fragment, { key: 0 }, [
-                          _cache[88] || (_cache[88] = _createTextVNode("（批阅目录：", -1 /* CACHED */)),
+                          _cache[94] || (_cache[94] = _createTextVNode("（批阅目录：", -1 /* CACHED */)),
                           _createElementVNode("code", null, _toDisplayString($setup.resolvedScope), 1 /* TEXT */),
-                          _cache[89] || (_cache[89] = _createTextVNode("）", -1 /* CACHED */))
+                          _cache[95] || (_cache[95] = _createTextVNode("）", -1 /* CACHED */))
                         ], 64 /* STABLE_FRAGMENT */))
                       : ($setup.students.length)
                         ? (_openBlock(), _createElementBlock(_Fragment, { key: 1 }, [
@@ -1636,7 +1740,7 @@ export function render(_ctx, _cache, $props, $setup, $data, $options) {
                   ], 64 /* STABLE_FRAGMENT */))
             ]),
             (!$setup.packId && !$setup.padId && $setup.students.length)
-              ? (_openBlock(), _createElementBlock("span", _hoisted_70, [...(_cache[90] || (_cache[90] = [
+              ? (_openBlock(), _createElementBlock("span", _hoisted_72, [...(_cache[96] || (_cache[96] = [
                   _createTextVNode(" · 未选作业包/作业纸：tag 与 AI 状态按", -1 /* CACHED */),
                   _createElementVNode("b", null, "引擎自动识别的批阅目录", -1 /* CACHED */),
                   _createTextVNode("显示； 如需指定具体批次，请在 ③ 区选择。 ", -1 /* CACHED */)
@@ -1645,9 +1749,9 @@ export function render(_ctx, _cache, $props, $setup, $data, $options) {
           ]))
         : _createCommentVNode("v-if", true),
       ($setup.students.length)
-        ? (_openBlock(), _createElementBlock("div", _hoisted_71, [
-            _createElementVNode("table", _hoisted_72, [
-              _cache[91] || (_cache[91] = _createElementVNode("thead", null, [
+        ? (_openBlock(), _createElementBlock("div", _hoisted_73, [
+            _createElementVNode("table", _hoisted_74, [
+              _cache[97] || (_cache[97] = _createElementVNode("thead", null, [
                 _createElementVNode("tr", null, [
                   _createElementVNode("th", { style: {"text-align":"left"} }, "学生"),
                   _createElementVNode("th", null, "tag"),
@@ -1664,27 +1768,27 @@ export function render(_ctx, _cache, $props, $setup, $data, $options) {
                     key: s.key
                   }, [
                     _createElementVNode("td", null, _toDisplayString(s.name), 1 /* TEXT */),
-                    _createElementVNode("td", _hoisted_73, _toDisplayString(s.tag || '—'), 1 /* TEXT */),
-                    _createElementVNode("td", _hoisted_74, [
+                    _createElementVNode("td", _hoisted_75, _toDisplayString(s.tag || '—'), 1 /* TEXT */),
+                    _createElementVNode("td", _hoisted_76, [
                       _createElementVNode("b", {
                         style: _normalizeStyle({ color: $setup.aiState(s).color })
                       }, _toDisplayString($setup.aiState(s).label), 5 /* TEXT, STYLE */)
                     ]),
-                    _createElementVNode("td", _hoisted_75, _toDisplayString($setup.draftOf(s).ai?.score ?? $setup.draftOf(s).score ?? '—'), 1 /* TEXT */),
-                    _createElementVNode("td", _hoisted_76, _toDisplayString($setup.draftOf(s).human?.used ? ($setup.draftOf(s).human.score ?? '✓') : '—'), 1 /* TEXT */),
-                    _createElementVNode("td", _hoisted_77, _toDisplayString($setup.reportMode(s)), 1 /* TEXT */),
-                    _createElementVNode("td", _hoisted_78, [
+                    _createElementVNode("td", _hoisted_77, _toDisplayString($setup.draftOf(s).ai?.score ?? $setup.draftOf(s).score ?? '—'), 1 /* TEXT */),
+                    _createElementVNode("td", _hoisted_78, _toDisplayString($setup.draftOf(s).human?.used ? ($setup.draftOf(s).human.score ?? '✓') : '—'), 1 /* TEXT */),
+                    _createElementVNode("td", _hoisted_79, _toDisplayString($setup.reportMode(s)), 1 /* TEXT */),
+                    _createElementVNode("td", _hoisted_80, [
                       _createElementVNode("button", {
                         class: "btn small",
                         onClick: $event => ($setup.onReviewOpen(i))
-                      }, "审核", 8 /* PROPS */, _hoisted_79)
+                      }, "审核", 8 /* PROPS */, _hoisted_81)
                     ])
                   ]))
                 }), 128 /* KEYED_FRAGMENT */))
               ])
             ])
           ]))
-        : (_openBlock(), _createElementBlock("p", _hoisted_80, [
+        : (_openBlock(), _createElementBlock("p", _hoisted_82, [
             (!$setup.curWork)
               ? (_openBlock(), _createElementBlock(_Fragment, { key: 0 }, [
                   _createTextVNode("未选择作业：先在 ③ 区选「作业」。")
@@ -1694,18 +1798,18 @@ export function render(_ctx, _cache, $props, $setup, $data, $options) {
                     _createTextVNode("正在读取学生清单…")
                   ], 64 /* STABLE_FRAGMENT */))
                 : (_openBlock(), _createElementBlock(_Fragment, { key: 2 }, [
-                    _cache[92] || (_cache[92] = _createTextVNode("该作业暂无学生清单（引擎可能离线，或该作业还没在「作业预览-学习通」下载作答）。 ", -1 /* CACHED */)),
+                    _cache[98] || (_cache[98] = _createTextVNode("该作业暂无学生清单（引擎可能离线，或该作业还没在「作业预览-学习通」下载作答）。 ", -1 /* CACHED */)),
                     _createElementVNode("button", {
                       class: "btn small",
                       type: "button",
                       style: {"margin-left":"6px"},
-                      onClick: _cache[28] || (_cache[28] = $event => ($setup.loadStudents()))
+                      onClick: _cache[30] || (_cache[30] = $event => ($setup.loadStudents()))
                     }, "重新读取")
                   ], 64 /* STABLE_FRAGMENT */))
           ])),
-      _cache[101] || (_cache[101] = _createElementVNode("h3", { style: {"margin-top":"14px"} }, "⑤ 报告 / ⑥ 上传全部", -1 /* CACHED */)),
-      _createElementVNode("div", _hoisted_81, [
-        _cache[93] || (_cache[93] = _createElementVNode("span", {
+      _cache[107] || (_cache[107] = _createElementVNode("h3", { style: {"margin-top":"14px"} }, "⑤ 报告 / ⑥ 上传全部", -1 /* CACHED */)),
+      _createElementVNode("div", _hoisted_83, [
+        _cache[99] || (_cache[99] = _createElementVNode("span", {
           class: "hint",
           style: {"margin":"0"}
         }, " 报告类型**自动**由逐生审核决定（AI批阅报告 / 人工批阅报告 / 人工在前+【附件】AI / …（人工修订）） ", -1 /* CACHED */)),
@@ -1713,20 +1817,20 @@ export function render(_ctx, _cache, $props, $setup, $data, $options) {
           class: "btn",
           disabled: $setup.busy,
           onClick: $setup.renderReports
-        }, "📄 一键生成批阅报告", 8 /* PROPS */, _hoisted_82),
-        _cache[94] || (_cache[94] = _createElementVNode("span", { style: {"flex":"1"} }, null, -1 /* CACHED */)),
+        }, "📄 一键生成批阅报告", 8 /* PROPS */, _hoisted_84),
+        _cache[100] || (_cache[100] = _createElementVNode("span", { style: {"flex":"1"} }, null, -1 /* CACHED */)),
         _createElementVNode("button", {
           class: "btn",
           disabled: $setup.busy,
-          onClick: _cache[29] || (_cache[29] = $event => ($setup.uploadAll(false)))
-        }, "⬆⬆ 上传全部批阅（含打分）", 8 /* PROPS */, _hoisted_83),
+          onClick: _cache[31] || (_cache[31] = $event => ($setup.uploadAll(false)))
+        }, "⬆⬆ 上传全部批阅（含打分）", 8 /* PROPS */, _hoisted_85),
         _createElementVNode("button", {
           class: "btn",
           disabled: $setup.busy,
-          onClick: _cache[30] || (_cache[30] = $event => ($setup.uploadAll(true)))
-        }, "⬆⬆ 强制覆盖上传全部", 8 /* PROPS */, _hoisted_84)
+          onClick: _cache[32] || (_cache[32] = $event => ($setup.uploadAll(true)))
+        }, "⬆⬆ 强制覆盖上传全部", 8 /* PROPS */, _hoisted_86)
       ]),
-      _cache[102] || (_cache[102] = _createElementVNode("p", {
+      _cache[108] || (_cache[108] = _createElementVNode("p", {
         class: "hint",
         style: {"margin-top":"6px"}
       }, " 完整逐生预览（作答图 + 两栏批语 + 旋转/上下位）仍在「作业预览-学习通 → 批阅图片 → 逐生预览」。 ", -1 /* CACHED */)),
@@ -1734,7 +1838,7 @@ export function render(_ctx, _cache, $props, $setup, $data, $options) {
       _createVNode($setup["GradingRulesCard"], {
         "engine-addr": $setup.props.engineAddr,
         token: $setup.props.token,
-        onNotify: _cache[31] || (_cache[31] = (m) => { $setup.progress = m })
+        onNotify: _cache[33] || (_cache[33] = (m) => { $setup.progress = m })
       }, null, 8 /* PROPS */, ["engine-addr", "token"]),
       _createCommentVNode(" D126-B：教师总结报告（易错知识点 + 共现矩阵 + 得分率；只给教师） "),
       _createVNode($setup["TeacherReportCard"], {
@@ -1752,7 +1856,7 @@ export function render(_ctx, _cache, $props, $setup, $data, $options) {
         "reload-key": $setup.reportReloadKey
       }, null, 8 /* PROPS */, ["engine-addr", "token", "class-dir", "reload-key"]),
       _createCommentVNode(" D140：Atopia 已独立为顶层选项卡，这里只留指路提示（避免双入口） "),
-      _cache[103] || (_cache[103] = _createElementVNode("p", {
+      _cache[109] || (_cache[109] = _createElementVNode("p", {
         class: "hint",
         style: {"margin-top":"12px"}
       }, [
@@ -1761,50 +1865,50 @@ export function render(_ctx, _cache, $props, $setup, $data, $options) {
         _createTextVNode(" 选项卡 —— 每次调用都会经过安全 Gate。 ")
       ], -1 /* CACHED */))
     ]),
-    _cache[129] || (_cache[129] = _createElementVNode("h3", { style: {"margin-top":"14px"} }, "⑦ 题库 AI 作答（对题目生成参考答案；不覆盖、可多版本）", -1 /* CACHED */)),
-    _createElementVNode("div", _hoisted_85, [
-      _cache[111] || (_cache[111] = _createElementVNode("span", {
+    _cache[135] || (_cache[135] = _createElementVNode("h3", { style: {"margin-top":"14px"} }, "⑦ 题库 AI 作答（对题目生成参考答案；不覆盖、可多版本）", -1 /* CACHED */)),
+    _createElementVNode("div", _hoisted_87, [
+      _cache[117] || (_cache[117] = _createElementVNode("span", {
         class: "hint",
         style: {"margin":"0"}
       }, "题库：", -1 /* CACHED */)),
       _withDirectives(_createElementVNode("select", {
-        "onUpdate:modelValue": _cache[32] || (_cache[32] = $event => (($setup.kbKind) = $event)),
+        "onUpdate:modelValue": _cache[34] || (_cache[34] = $event => (($setup.kbKind) = $event)),
         style: {"min-width":"120px"}
       }, [
-        _cache[104] || (_cache[104] = _createElementVNode("option", { value: "" }, "（选择题库）", -1 /* CACHED */)),
+        _cache[110] || (_cache[110] = _createElementVNode("option", { value: "" }, "（选择题库）", -1 /* CACHED */)),
         (_openBlock(true), _createElementBlock(_Fragment, null, _renderList($setup.kbKinds, (k) => {
           return (_openBlock(), _createElementBlock("option", {
             key: k,
             value: k
-          }, _toDisplayString(k), 9 /* TEXT, PROPS */, _hoisted_86))
+          }, _toDisplayString(k), 9 /* TEXT, PROPS */, _hoisted_88))
         }), 128 /* KEYED_FRAGMENT */))
       ], 512 /* NEED_PATCH */), [
         [_vModelSelect, $setup.kbKind]
       ]),
-      _cache[112] || (_cache[112] = _createElementVNode("span", {
+      _cache[118] || (_cache[118] = _createElementVNode("span", {
         class: "hint",
         style: {"margin":"0"}
       }, "章节：", -1 /* CACHED */)),
       _withDirectives(_createElementVNode("select", {
-        "onUpdate:modelValue": _cache[33] || (_cache[33] = $event => (($setup.kbChap) = $event)),
+        "onUpdate:modelValue": _cache[35] || (_cache[35] = $event => (($setup.kbChap) = $event)),
         style: {"min-width":"130px"}
       }, [
-        _cache[105] || (_cache[105] = _createElementVNode("option", { value: "" }, "（整库）", -1 /* CACHED */)),
+        _cache[111] || (_cache[111] = _createElementVNode("option", { value: "" }, "（整库）", -1 /* CACHED */)),
         (_openBlock(true), _createElementBlock(_Fragment, null, _renderList($setup.kbChapters, (c) => {
           return (_openBlock(), _createElementBlock("option", {
             key: c,
             value: c
-          }, _toDisplayString(c), 9 /* TEXT, PROPS */, _hoisted_87))
+          }, _toDisplayString(c), 9 /* TEXT, PROPS */, _hoisted_89))
         }), 128 /* KEYED_FRAGMENT */))
       ], 512 /* NEED_PATCH */), [
         [_vModelSelect, $setup.kbChap]
       ]),
-      _cache[113] || (_cache[113] = _createElementVNode("span", {
+      _cache[119] || (_cache[119] = _createElementVNode("span", {
         class: "hint",
         style: {"margin":"0"}
       }, "题号：", -1 /* CACHED */)),
       _withDirectives(_createElementVNode("select", {
-        "onUpdate:modelValue": _cache[34] || (_cache[34] = $event => (($setup.kbIdsSel) = $event)),
+        "onUpdate:modelValue": _cache[36] || (_cache[36] = $event => (($setup.kbIdsSel) = $event)),
         multiple: "",
         style: {"min-width":"200px","min-height":"64px"},
         title: "多选；不选=整章"
@@ -1813,39 +1917,39 @@ export function render(_ctx, _cache, $props, $setup, $data, $options) {
           return (_openBlock(), _createElementBlock("option", {
             key: i.id,
             value: i.id
-          }, _toDisplayString(i.id), 9 /* TEXT, PROPS */, _hoisted_88))
+          }, _toDisplayString(i.id), 9 /* TEXT, PROPS */, _hoisted_90))
         }), 128 /* KEYED_FRAGMENT */))
       ], 512 /* NEED_PATCH */), [
         [_vModelSelect, $setup.kbIdsSel]
       ]),
-      _cache[114] || (_cache[114] = _createElementVNode("span", {
+      _cache[120] || (_cache[120] = _createElementVNode("span", {
         class: "hint",
         style: {"margin":"0"}
       }, "模型：", -1 /* CACHED */)),
       ($setup.modelsForStage('evaluation').length && !$setup.kbCustomModel)
         ? (_openBlock(), _createElementBlock(_Fragment, { key: 0 }, [
             _withDirectives(_createElementVNode("select", {
-              "onUpdate:modelValue": _cache[35] || (_cache[35] = $event => (($setup.kbModel) = $event)),
+              "onUpdate:modelValue": _cache[37] || (_cache[37] = $event => (($setup.kbModel) = $event)),
               style: {"min-width":"160px"}
             }, [
-              _cache[106] || (_cache[106] = _createElementVNode("option", { value: "" }, "（评阅段配置）", -1 /* CACHED */)),
+              _cache[112] || (_cache[112] = _createElementVNode("option", { value: "" }, "（评阅段配置）", -1 /* CACHED */)),
               (_openBlock(true), _createElementBlock(_Fragment, null, _renderList($setup.modelsForStage('evaluation'), (m) => {
                 return (_openBlock(), _createElementBlock("option", {
                   key: m,
                   value: m
-                }, _toDisplayString(m), 9 /* TEXT, PROPS */, _hoisted_89))
+                }, _toDisplayString(m), 9 /* TEXT, PROPS */, _hoisted_91))
               }), 128 /* KEYED_FRAGMENT */))
             ], 512 /* NEED_PATCH */), [
               [_vModelSelect, $setup.kbModel]
             ]),
             _createElementVNode("button", {
               class: "btn small",
-              onClick: _cache[36] || (_cache[36] = $event => ($setup.kbCustomModel = true))
+              onClick: _cache[38] || (_cache[38] = $event => ($setup.kbCustomModel = true))
             }, "自定义")
           ], 64 /* STABLE_FRAGMENT */))
         : (_openBlock(), _createElementBlock(_Fragment, { key: 1 }, [
             _withDirectives(_createElementVNode("input", {
-              "onUpdate:modelValue": _cache[37] || (_cache[37] = $event => (($setup.kbModel) = $event)),
+              "onUpdate:modelValue": _cache[39] || (_cache[39] = $event => (($setup.kbModel) = $event)),
               placeholder: "模型名（空=评阅段配置）",
               style: {"width":"180px"}
             }, null, 512 /* NEED_PATCH */), [
@@ -1853,73 +1957,73 @@ export function render(_ctx, _cache, $props, $setup, $data, $options) {
             ]),
             _createElementVNode("button", {
               class: "btn small",
-              onClick: _cache[38] || (_cache[38] = $event => ($setup.kbCustomModel = false))
+              onClick: _cache[40] || (_cache[40] = $event => ($setup.kbCustomModel = false))
             }, "用下拉")
           ], 64 /* STABLE_FRAGMENT */)),
-      _createElementVNode("label", _hoisted_90, [
-        _withDirectives(_createElementVNode("input", {
-          type: "checkbox",
-          "onUpdate:modelValue": _cache[39] || (_cache[39] = $event => (($setup.kbPin) = $event))
-        }, null, 512 /* NEED_PATCH */), [
-          [_vModelCheckbox, $setup.kbPin]
-        ]),
-        _cache[107] || (_cache[107] = _createTextVNode(" 作答后置顶（默认） ", -1 /* CACHED */))
-      ]),
-      _createElementVNode("label", _hoisted_91, [
-        _withDirectives(_createElementVNode("input", {
-          type: "checkbox",
-          "onUpdate:modelValue": _cache[40] || (_cache[40] = $event => (($setup.kbApply) = $event))
-        }, null, 512 /* NEED_PATCH */), [
-          [_vModelCheckbox, $setup.kbApply]
-        ]),
-        _cache[108] || (_cache[108] = _createTextVNode(" 真正作答并写回 ", -1 /* CACHED */))
-      ]),
       _createElementVNode("label", _hoisted_92, [
         _withDirectives(_createElementVNode("input", {
           type: "checkbox",
-          "onUpdate:modelValue": _cache[41] || (_cache[41] = $event => (($setup.kbWithRubric) = $event))
+          "onUpdate:modelValue": _cache[41] || (_cache[41] = $event => (($setup.kbPin) = $event))
+        }, null, 512 /* NEED_PATCH */), [
+          [_vModelCheckbox, $setup.kbPin]
+        ]),
+        _cache[113] || (_cache[113] = _createTextVNode(" 作答后置顶（默认） ", -1 /* CACHED */))
+      ]),
+      _createElementVNode("label", _hoisted_93, [
+        _withDirectives(_createElementVNode("input", {
+          type: "checkbox",
+          "onUpdate:modelValue": _cache[42] || (_cache[42] = $event => (($setup.kbApply) = $event))
+        }, null, 512 /* NEED_PATCH */), [
+          [_vModelCheckbox, $setup.kbApply]
+        ]),
+        _cache[114] || (_cache[114] = _createTextVNode(" 真正作答并写回 ", -1 /* CACHED */))
+      ]),
+      _createElementVNode("label", _hoisted_94, [
+        _withDirectives(_createElementVNode("input", {
+          type: "checkbox",
+          "onUpdate:modelValue": _cache[43] || (_cache[43] = $event => (($setup.kbWithRubric) = $event))
         }, null, 512 /* NEED_PATCH */), [
           [_vModelCheckbox, $setup.kbWithRubric]
         ]),
-        _cache[109] || (_cache[109] = _createTextVNode(" 同时生成评阅要点 ", -1 /* CACHED */))
+        _cache[115] || (_cache[115] = _createTextVNode(" 同时生成评阅要点 ", -1 /* CACHED */))
       ]),
       ($setup.kbWithRubric)
-        ? (_openBlock(), _createElementBlock("label", _hoisted_93, [
+        ? (_openBlock(), _createElementBlock("label", _hoisted_95, [
             _withDirectives(_createElementVNode("input", {
               type: "checkbox",
-              "onUpdate:modelValue": _cache[42] || (_cache[42] = $event => (($setup.kbPinRubric) = $event))
+              "onUpdate:modelValue": _cache[44] || (_cache[44] = $event => (($setup.kbPinRubric) = $event))
             }, null, 512 /* NEED_PATCH */), [
               [_vModelCheckbox, $setup.kbPinRubric]
             ]),
-            _cache[110] || (_cache[110] = _createTextVNode(" 同时置顶（跳过确认） ", -1 /* CACHED */))
+            _cache[116] || (_cache[116] = _createTextVNode(" 同时置顶（跳过确认） ", -1 /* CACHED */))
           ]))
         : _createCommentVNode("v-if", true)
     ]),
     ($setup.kbWithRubric)
-      ? (_openBlock(), _createElementBlock("p", _hoisted_94, [...(_cache[115] || (_cache[115] = [
+      ? (_openBlock(), _createElementBlock("p", _hoisted_96, [...(_cache[121] || (_cache[121] = [
           _createTextVNode(" ⓘ 要点与解答**同一次生成**（口径一致）。默认", -1 /* CACHED */),
           _createElementVNode("b", null, "不置顶", -1 /* CACHED */),
           _createTextVNode("：先在题库表格里核对要点， 确认无误再「置顶」为生效答案；`copy`/`summary` 按口径不生成 AI 要点。 ", -1 /* CACHED */)
         ]))]))
       : _createCommentVNode("v-if", true),
-    _createElementVNode("div", _hoisted_95, [
+    _createElementVNode("div", _hoisted_97, [
       _createCommentVNode(" D108：提示词模板库 "),
-      _createElementVNode("div", _hoisted_96, [
-        _cache[117] || (_cache[117] = _createElementVNode("label", {
+      _createElementVNode("div", _hoisted_98, [
+        _cache[123] || (_cache[123] = _createElementVNode("label", {
           class: "hint",
           style: {"margin":"0"}
         }, "提示词模板：", -1 /* CACHED */)),
         _withDirectives(_createElementVNode("select", {
-          "onUpdate:modelValue": _cache[43] || (_cache[43] = $event => (($setup.promptSel) = $event)),
+          "onUpdate:modelValue": _cache[45] || (_cache[45] = $event => (($setup.promptSel) = $event)),
           onChange: $setup.pickPromptTemplate,
           style: {"min-width":"220px"}
         }, [
-          _cache[116] || (_cache[116] = _createElementVNode("option", { value: "" }, "（不使用模板 / 单次输入）", -1 /* CACHED */)),
+          _cache[122] || (_cache[122] = _createElementVNode("option", { value: "" }, "（不使用模板 / 单次输入）", -1 /* CACHED */)),
           (_openBlock(true), _createElementBlock(_Fragment, null, _renderList($setup.promptTemplates, (t) => {
             return (_openBlock(), _createElementBlock("option", {
               key: t.id,
               value: t.id
-            }, _toDisplayString(t.default ? '★ ' : '') + _toDisplayString(t.name) + _toDisplayString(t.builtin ? '（内置）' : ''), 9 /* TEXT, PROPS */, _hoisted_97))
+            }, _toDisplayString(t.default ? '★ ' : '') + _toDisplayString(t.name) + _toDisplayString(t.builtin ? '（内置）' : ''), 9 /* TEXT, PROPS */, _hoisted_99))
           }), 128 /* KEYED_FRAGMENT */))
         ], 544 /* NEED_HYDRATION, NEED_PATCH */), [
           [_vModelSelect, $setup.promptSel]
@@ -1929,67 +2033,67 @@ export function render(_ctx, _cache, $props, $setup, $data, $options) {
           disabled: $setup.promptBusy || !$setup.promptSel || $setup.promptIsDefault,
           title: "下次打开面板自动载入该模板",
           onClick: $setup.setPromptDefault
-        }, "设为默认", 8 /* PROPS */, _hoisted_98),
+        }, "设为默认", 8 /* PROPS */, _hoisted_100),
         _createElementVNode("button", {
           class: "btn small",
           disabled: $setup.promptBusy || !$setup.kbRequirement.trim(),
           title: "保存到当前模板（覆盖其内容）",
           onClick: $setup.savePromptTemplate
-        }, "💾 保存", 8 /* PROPS */, _hoisted_99),
+        }, "💾 保存", 8 /* PROPS */, _hoisted_101),
         _createElementVNode("button", {
           class: "btn small",
           disabled: $setup.promptBusy || !$setup.kbRequirement.trim(),
           title: "另存为一个新模板（内置模板改完想留原版时用这个）",
           onClick: $setup.savePromptAsNew
-        }, "＋ 另存为", 8 /* PROPS */, _hoisted_100),
+        }, "＋ 另存为", 8 /* PROPS */, _hoisted_102),
         _createElementVNode("button", {
           class: "btn small",
           disabled: $setup.promptBusy || !$setup.promptSel || $setup.promptIsBuiltin,
           title: "内置模板不可删除",
           onClick: $setup.deletePromptTemplate
-        }, "🗑 删除", 8 /* PROPS */, _hoisted_101)
+        }, "🗑 删除", 8 /* PROPS */, _hoisted_103)
       ]),
-      _cache[127] || (_cache[127] = _createElementVNode("label", {
+      _cache[133] || (_cache[133] = _createElementVNode("label", {
         class: "hint",
         style: {"display":"block","margin":"0 0 4px"}
       }, " 作答要求（会作为「优先满足」附加到每题 prompt；选中模板会载入其内容，可再临时修改，直接点「AI 作答」即生效）： ", -1 /* CACHED */)),
       _withDirectives(_createElementVNode("textarea", {
-        "onUpdate:modelValue": _cache[44] || (_cache[44] = $event => (($setup.kbRequirement) = $event)),
+        "onUpdate:modelValue": _cache[46] || (_cache[46] = $event => (($setup.kbRequirement) = $event)),
         rows: "3",
         placeholder: "例：请画出示意图；用 LaTeX 公式完整推导；输出为 HTML 文档；按「已知/求/解/答」结构写；计算题保留 3 位有效数字……",
         style: {"width":"100%","max-width":"760px","font-family":"inherit","font-size":"13px","padding":"6px 8px","border":"1px solid var(--c-border)","border-radius":"6px","resize":"vertical"}
       }, null, 512 /* NEED_PATCH */), [
         [_vModelText, $setup.kbRequirement]
       ]),
-      _createElementVNode("div", _hoisted_102, [
-        _cache[118] || (_cache[118] = _createTextVNode(" 留空 = 使用系统默认作答风格（规范完整解答，公式用 $..$ / $$..$$）。 模板保存在 ", -1 /* CACHED */)),
-        _cache[119] || (_cache[119] = _createElementVNode("code", null, "<workspace>/prompts/ai-solve/", -1 /* CACHED */)),
-        _cache[120] || (_cache[120] = _createTextVNode("，", -1 /* CACHED */)),
-        _cache[121] || (_cache[121] = _createElementVNode("b", null, "CLI/AI 同样可用", -1 /* CACHED */)),
-        _cache[122] || (_cache[122] = _createTextVNode(" （", -1 /* CACHED */)),
-        _cache[123] || (_cache[123] = _createElementVNode("code", null, "assist prompt list", -1 /* CACHED */)),
-        _cache[124] || (_cache[124] = _createTextVNode(" / ", -1 /* CACHED */)),
-        _cache[125] || (_cache[125] = _createElementVNode("code", null, "kb ai-solve --requirement-template <id>", -1 /* CACHED */)),
-        _cache[126] || (_cache[126] = _createTextVNode("）。 ", -1 /* CACHED */)),
+      _createElementVNode("div", _hoisted_104, [
+        _cache[124] || (_cache[124] = _createTextVNode(" 留空 = 使用系统默认作答风格（规范完整解答，公式用 $..$ / $$..$$）。 模板保存在 ", -1 /* CACHED */)),
+        _cache[125] || (_cache[125] = _createElementVNode("code", null, "<workspace>/prompts/ai-solve/", -1 /* CACHED */)),
+        _cache[126] || (_cache[126] = _createTextVNode("，", -1 /* CACHED */)),
+        _cache[127] || (_cache[127] = _createElementVNode("b", null, "CLI/AI 同样可用", -1 /* CACHED */)),
+        _cache[128] || (_cache[128] = _createTextVNode(" （", -1 /* CACHED */)),
+        _cache[129] || (_cache[129] = _createElementVNode("code", null, "assist prompt list", -1 /* CACHED */)),
+        _cache[130] || (_cache[130] = _createTextVNode(" / ", -1 /* CACHED */)),
+        _cache[131] || (_cache[131] = _createElementVNode("code", null, "kb ai-solve --requirement-template <id>", -1 /* CACHED */)),
+        _cache[132] || (_cache[132] = _createTextVNode("）。 ", -1 /* CACHED */)),
         ($setup.promptMsg)
-          ? (_openBlock(), _createElementBlock("span", _hoisted_103, "｜" + _toDisplayString($setup.promptMsg), 1 /* TEXT */))
+          ? (_openBlock(), _createElementBlock("span", _hoisted_105, "｜" + _toDisplayString($setup.promptMsg), 1 /* TEXT */))
           : _createCommentVNode("v-if", true)
       ]),
       _createElementVNode("button", {
         class: "btn",
         disabled: $setup.kbSolving,
         onClick: $setup.solveByKb
-      }, "▶ " + _toDisplayString($setup.kbApply ? 'AI 作答并写回' : 'AI 作答（dry-run）'), 9 /* TEXT, PROPS */, _hoisted_104)
+      }, "▶ " + _toDisplayString($setup.kbApply ? 'AI 作答并写回' : 'AI 作答（dry-run）'), 9 /* TEXT, PROPS */, _hoisted_106)
     ]),
-    _createElementVNode("div", _hoisted_105, [
-      _cache[128] || (_cache[128] = _createTextVNode("题目预览： ", -1 /* CACHED */)),
+    _createElementVNode("div", _hoisted_107, [
+      _cache[134] || (_cache[134] = _createTextVNode("题目预览： ", -1 /* CACHED */)),
       ($setup.kbPreview)
-        ? (_openBlock(), _createElementBlock("code", _hoisted_106, _toDisplayString($setup.kbPreview), 1 /* TEXT */))
-        : (_openBlock(), _createElementBlock("span", _hoisted_107, "（未选题号：将按整章/整库作答）"))
+        ? (_openBlock(), _createElementBlock("code", _hoisted_108, _toDisplayString($setup.kbPreview), 1 /* TEXT */))
+        : (_openBlock(), _createElementBlock("span", _hoisted_109, "（未选题号：将按整章/整库作答）"))
     ]),
-    _createElementVNode("p", _hoisted_108, " AI 作答**不覆盖**原答案：每次新增一版（含模型名 + 时间戳），默认**置顶为生效答案** （可在「题库编辑器 → solution 🔍 预览」里改选/置顶旧版）；作业纸预览、作业包与批阅统一**实时读取生效版** （置顶版 → 最新版 → 题库 solution 列）。索引状态：" + _toDisplayString($setup.kbStore.solutionsMsg || '（未刷新）'), 1 /* TEXT */),
+    _createElementVNode("p", _hoisted_110, " AI 作答**不覆盖**原答案：每次新增一版（含模型名 + 时间戳），默认**置顶为生效答案** （可在「题库编辑器 → solution 🔍 预览」里改选/置顶旧版）；作业纸预览、作业包与批阅统一**实时读取生效版** （置顶版 → 最新版 → 题库 solution 列）。索引状态：" + _toDisplayString($setup.kbStore.solutionsMsg || '（未刷新）'), 1 /* TEXT */),
     ($setup.kbSolveMsg)
-      ? (_openBlock(), _createElementBlock("p", _hoisted_109, _toDisplayString($setup.kbSolveMsg), 1 /* TEXT */))
+      ? (_openBlock(), _createElementBlock("p", _hoisted_111, _toDisplayString($setup.kbSolveMsg), 1 /* TEXT */))
       : _createCommentVNode("v-if", true),
     ($setup.reviewOpen)
       ? (_openBlock(), _createBlock($setup["StudentReviewModal"], {
@@ -2004,9 +2108,9 @@ export function render(_ctx, _cache, $props, $setup, $data, $options) {
           students: $setup.students,
           drafts: $setup.drafts,
           "start-index": $setup.reviewIndex,
-          onClose: _cache[45] || (_cache[45] = $event => ($setup.reviewOpen = false)),
+          onClose: _cache[47] || (_cache[47] = $event => ($setup.reviewOpen = false)),
           onSaved: $setup.loadStudents,
-          onNotify: _cache[46] || (_cache[46] = (m) => { $setup.progress = String(m) })
+          onNotify: _cache[48] || (_cache[48] = (m) => { $setup.progress = String(m) })
         }, null, 8 /* PROPS */, ["engine-addr", "token", "class-id", "work-id", "task-id", "class-dir", "students", "drafts", "start-index"]))
       : _createCommentVNode("v-if", true),
     _createVNode($setup["PlaygroundPanel"], {
