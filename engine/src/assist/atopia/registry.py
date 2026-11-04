@@ -229,7 +229,13 @@ EXT_DIR = "extensions"
 
 
 def extensions_dir(ws) -> Path:
-    return Path(ws).resolve() / EXT_DIR
+    """D134：扩展落在 `<ws>/atopia/extensions/`（见 paths.py）。
+
+    为什么扩展跟 Atopia 走：它**只对 Atopia 有意义**（消费方唯一），
+    且是可整体丢弃的**覆盖层**——删除 `atopia/` 后必须回内置级别。
+    """
+    from . import paths as P
+    return P.extensions_dir(ws)
 
 
 def load_overrides(ws) -> dict:

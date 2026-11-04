@@ -107,11 +107,25 @@ def _set_serve_ws(ws: Path) -> None:
         pass
 
 
+_ATOPIA_MIGRATED = False
+
+
 def _ws() -> Path:
+    global _ATOPIA_MIGRATED
     if _SERVE_WS is not None:
-        return _SERVE_WS
-    from .workspace import find_workspace
-    return Path(find_workspace(None)).resolve()
+        ws = _SERVE_WS
+    else:
+        from .workspace import find_workspace
+        ws = Path(find_workspace(None)).resolve()
+    if not _ATOPIA_MIGRATED:
+        _ATOPIA_MIGRATED = True
+        # D134：旧 <ws>/assistopia/ 与 <ws>/extensions/ 幂等迁到 <ws>/atopia/
+        try:
+            from .atopia import paths as _ap
+            _ap.ensure_migrated(ws)
+        except Exception:  # noqa: BLE001 —— 迁移不阻断服务
+            pass
+    return ws
 
 
 def _venv_python() -> Path:

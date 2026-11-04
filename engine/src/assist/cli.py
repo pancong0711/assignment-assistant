@@ -30,6 +30,13 @@ def _setup(verbose: bool, ws: "Path | str | None" = None):
         bind_workspace(ws_path)
     except Exception:  # noqa: BLE001 —— 绑定失败不影响主流程
         pass
+    # D134：把 D132 期的 <ws>/assistopia/ 与 <ws>/extensions/ 幂等迁到 <ws>/atopia/
+    # （进程内只做一次；只读环境/失败都不阻断主流程）
+    try:
+        from .atopia import paths as _ap
+        _ap.ensure_migrated(ws_path)
+    except Exception:  # noqa: BLE001
+        pass
     return ws_path
 
 
@@ -1513,6 +1520,49 @@ def atopia_extensions(obj, init, workspace, verbose):
                           .load_overrides(ws),
         "hint": "tools/*.json 只能把级别**调高**；rules/ 与 knowledge-terms.json 可覆盖默认",
     }, ensure_ascii=False, indent=2))
+
+
+@atopia_grp.command("reset")
+@click.option("--keep-extensions/--drop-extensions", "keep_extensions", default=True,
+              show_default=True,
+              help="默认保留 extensions/（教师资产）；--drop-extensions 才一起清掉")
+@click.option("--yes", is_flag=True, help="确认执行（缺省只演练）")
+@click.option("--workspace", "-w", default=None)
+@click.option("--verbose", "-v", is_flag=True)
+@click.pass_obj
+def atopia_reset(obj, keep_extensions, yes, workspace, verbose):
+    """D134：清空 `<ws>/atopia/` 运行状态（护栏回默认 / 清审计）。
+
+    **属 L3：不注册为 AI 工具**（删除类操作一律不给 AI，docs/81 §2）。
+    """
+    from .atopia import paths as P
+    ws = _setup(verbose or obj.get("verbose"), workspace)
+    if not yes:
+        click.echo(json.dumps({
+            "ok": True, "dryRun": True, "root": str(P.atopia_root(ws)),
+            "keepExtensions": keep_extensions,
+            "hint": "确认后加 --yes 执行；默认保留 extensions/",
+        }, ensure_ascii=False, indent=2))
+        return
+    rep = P.reset(ws, keep_extensions=keep_extensions)
+    rep.update({"root": str(P.atopia_root(ws)), "keepExtensions": keep_extensions})
+    click.echo(json.dumps(rep, ensure_ascii=False, indent=2))
+
+
+@atopia_grp.command("migrate")
+@click.option("--force", is_flag=True, help="忽略会话内已迁移缓存，重新执行")
+@click.option("--workspace", "-w", default=None)
+@click.option("--verbose", "-v", is_flag=True)
+@click.pass_obj
+def atopia_migrate(obj, force, workspace, verbose):
+    """D134：把旧位置（`<ws>/assistopia/`、`<ws>/extensions/`）迁到 `<ws>/atopia/`。"""
+    from .atopia import paths as P
+    ws = _setup(verbose or obj.get("verbose"), workspace)
+    if force:
+        P._migrated.discard(str(Path(ws).resolve()))
+    rep = P.ensure_migrated(ws)
+    rep["root"] = str(P.atopia_root(ws))
+    click.echo(json.dumps(rep, ensure_ascii=False, indent=2))
 
 
 @atopia_grp.command("journal")

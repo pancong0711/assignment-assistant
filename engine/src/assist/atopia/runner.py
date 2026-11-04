@@ -19,16 +19,18 @@ from pathlib import Path
 from loguru import logger
 
 from . import limits as L
+from . import paths as P
 from .registry import (L2, L3, Tool, ToolDenied, build_argv, effective_tool,
                        level_at_least, validate_args)
 
-JOURNAL = "atopia/journal.jsonl"
+JOURNAL = f"{P.ROOT}/{P.JOURNAL_FILE}"
 OUTPUT_HEAD_CHARS = 500
 _SENSITIVE_KEYS = ("api_key", "apikey", "token", "secret", "password")
 
 
 def journal_path(ws) -> Path:
-    return Path(ws).resolve() / JOURNAL
+    """D134：审计日志落在 `<ws>/atopia/journal.jsonl`（见 paths.py）。"""
+    return P.journal_path(ws)
 
 
 def _scrub(text: str) -> str:

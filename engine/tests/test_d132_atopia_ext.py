@@ -27,7 +27,7 @@ def test_rules_override_applies(ws: Path):
     from assist.grading import rules as R
     assert R.type_rules(ws, "qa")["perMissingPointDeduct"] == 5
     E.ensure(ws)
-    (ws / "extensions" / "rules" / "grading-rules.json").write_text(
+    (ws / "atopia" / "extensions" / "rules" / "grading-rules.json").write_text(
         json.dumps({"types": {"qa": {"perMissingPointDeduct": 13}}}), encoding="utf-8")
     assert R.type_rules(ws, "qa")["perMissingPointDeduct"] == 13
     # 未覆盖的字段保持内置
@@ -38,7 +38,7 @@ def test_rules_override_cannot_change_algorithm(ws: Path):
     """算法名（mode）是只读项：扩展改了要让计分与提示词保持一致，不允许。"""
     from assist.grading import rules as R
     E.ensure(ws)
-    (ws / "extensions" / "rules" / "grading-rules.json").write_text(
+    (ws / "atopia" / "extensions" / "rules" / "grading-rules.json").write_text(
         json.dumps({"types": {"qa": {"mode": "errorCount"}}}), encoding="utf-8")
     assert R.type_rules(ws, "qa")["mode"] == "missingPoints"
 
@@ -46,7 +46,7 @@ def test_rules_override_cannot_change_algorithm(ws: Path):
 def test_rules_override_broken_file_falls_back(ws: Path):
     from assist.grading import rules as R
     E.ensure(ws)
-    (ws / "extensions" / "rules" / "grading-rules.json").write_text(
+    (ws / "atopia" / "extensions" / "rules" / "grading-rules.json").write_text(
         "{not json", encoding="utf-8")
     assert R.type_rules(ws, "qa")["perMissingPointDeduct"] == 5
 
@@ -55,7 +55,7 @@ def test_rules_override_does_not_block_default_file(ws: Path):
     """扩展存在时，规则文件仍应"缺失即写默认"（既有语义不能被扩展改变）。"""
     from assist.grading import rules as R
     E.ensure(ws)
-    (ws / "extensions" / "rules" / "grading-rules.json").write_text(
+    (ws / "atopia" / "extensions" / "rules" / "grading-rules.json").write_text(
         json.dumps({"types": {"qa": {"perMissingPointDeduct": 13}}}), encoding="utf-8")
     assert not (ws / "grading-rules.json").exists()
     R.read_rules(ws)
@@ -67,7 +67,7 @@ def test_vocab_override_merges_terms(ws: Path):
     from assist.grading import vocab as V
     V.add_term(ws, "动量守恒", aliases=["动量守恒定律"])
     E.ensure(ws)
-    (ws / "extensions" / "knowledge-terms.json").write_text(
+    (ws / "atopia" / "extensions" / "knowledge-terms.json").write_text(
         json.dumps({"terms": [{"term": "完全弹性碰撞", "source": "human"}]},
                    ensure_ascii=False), encoding="utf-8")
     terms = {t["term"] for t in V.load_vocab(ws)["terms"]}
@@ -79,7 +79,7 @@ def test_vocab_override_wins_on_same_term(ws: Path):
     from assist.grading import vocab as V
     V.add_term(ws, "惯性", aliases=["旧别名"])
     E.ensure(ws)
-    (ws / "extensions" / "knowledge-terms.json").write_text(
+    (ws / "atopia" / "extensions" / "knowledge-terms.json").write_text(
         json.dumps({"terms": [{"term": "惯性", "aliases": ["新别名"]}]},
                    ensure_ascii=False), encoding="utf-8")
     hit = next(t for t in V.load_vocab(ws)["terms"] if t["term"] == "惯性")
@@ -115,7 +115,7 @@ def test_write_limits_journaled(ws: Path):
 # ---------------- 升级不触碰 extensions ----------------
 def test_snapshot_and_untouched(ws: Path):
     E.ensure(ws)
-    f = ws / "extensions" / "rules" / "grading-rules.json"
+    f = ws / "atopia" / "extensions" / "rules" / "grading-rules.json"
     f.write_text(json.dumps({"types": {"qa": {"perMissingPointDeduct": 9}}}),
                  encoding="utf-8")
     before = E.snapshot(ws)
@@ -130,7 +130,7 @@ def test_snapshot_and_untouched(ws: Path):
 
 def test_assert_untouched_detects_modification(ws: Path):
     E.ensure(ws)
-    f = ws / "extensions" / "tools" / "a.json"
+    f = ws / "atopia" / "extensions" / "tools" / "a.json"
     f.write_text('{"name":"kb.stats","level":"L2"}', encoding="utf-8")
     before = E.snapshot(ws)
     f.write_text('{"name":"kb.stats","level":"L3"}', encoding="utf-8")
@@ -140,7 +140,7 @@ def test_assert_untouched_detects_modification(ws: Path):
 
 def test_assert_untouched_detects_deletion(ws: Path):
     E.ensure(ws)
-    f = ws / "extensions" / "tools" / "a.json"
+    f = ws / "atopia" / "extensions" / "tools" / "a.json"
     f.write_text("{}", encoding="utf-8")
     before = E.snapshot(ws)
     f.unlink()
@@ -149,7 +149,7 @@ def test_assert_untouched_detects_deletion(ws: Path):
 
 def test_ensure_does_not_clobber_existing(ws: Path):
     E.ensure(ws)
-    f = ws / "extensions" / "rules" / "grading-rules.json"
+    f = ws / "atopia" / "extensions" / "rules" / "grading-rules.json"
     f.write_text('{"x": 1}', encoding="utf-8")
     E.ensure(ws)
     assert f.read_text(encoding="utf-8") == '{"x": 1}'

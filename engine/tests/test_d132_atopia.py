@@ -59,7 +59,7 @@ def test_l3_denied_in_validate_args(ws: Path):
 
 def test_l3_cannot_be_opened_by_extensions(ws: Path):
     """即便扩展把 L3 写成 L0，也必须仍然是 L3（不许降级）。"""
-    d = ws / "extensions" / "tools"
+    d = ws / "atopia" / "extensions" / "tools"
     d.mkdir(parents=True)
     (d / "x.json").write_text(json.dumps({"name": "migrate.apply", "level": "L0"}),
                               encoding="utf-8")
@@ -225,7 +225,7 @@ def test_limits_bad_json_falls_back(ws: Path):
 
 # ---------------- 6. 扩展：只能更严 ----------------
 def test_extension_can_raise_level(ws: Path):
-    d = ws / "extensions" / "tools"
+    d = ws / "atopia" / "extensions" / "tools"
     d.mkdir(parents=True)
     (d / "a.json").write_text(json.dumps({"name": "kb.stats", "level": "L2"}),
                               encoding="utf-8")
@@ -236,7 +236,7 @@ def test_extension_can_raise_level(ws: Path):
 
 
 def test_extension_cannot_lower_level(ws: Path):
-    d = ws / "extensions" / "tools"
+    d = ws / "atopia" / "extensions" / "tools"
     d.mkdir(parents=True)
     (d / "a.json").write_text(
         json.dumps({"name": "kb.tag-knowledge.apply", "level": "L0"}), encoding="utf-8")
@@ -244,7 +244,7 @@ def test_extension_cannot_lower_level(ws: Path):
 
 
 def test_extension_cannot_register_new_tool(ws: Path):
-    d = ws / "extensions" / "tools"
+    d = ws / "atopia" / "extensions" / "tools"
     d.mkdir(parents=True)
     (d / "a.json").write_text(json.dumps({"name": "evil.tool", "level": "L0"}),
                               encoding="utf-8")
@@ -253,7 +253,7 @@ def test_extension_cannot_register_new_tool(ws: Path):
 
 
 def test_extension_broken_file_ignored(ws: Path):
-    d = ws / "extensions" / "tools"
+    d = ws / "atopia" / "extensions" / "tools"
     d.mkdir(parents=True)
     (d / "bad.json").write_text("{not json", encoding="utf-8")
     assert R.load_overrides(ws) == {}
@@ -262,7 +262,7 @@ def test_extension_broken_file_ignored(ws: Path):
 # ---------------- 7. 升级不触碰 extensions ----------------
 def test_extension_dir_is_only_read(ws: Path):
     """加载扩展不写回任何文件（升级时用户扩展必须原样保留）。"""
-    d = ws / "extensions" / "tools"
+    d = ws / "atopia" / "extensions" / "tools"
     d.mkdir(parents=True)
     f = d / "a.json"
     payload = json.dumps({"name": "kb.stats", "level": "L2"})

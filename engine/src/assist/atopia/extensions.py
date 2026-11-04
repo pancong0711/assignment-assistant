@@ -22,7 +22,9 @@ EXT = "extensions"
 
 
 def root(ws) -> Path:
-    return Path(ws).resolve() / EXT
+    """D134：`<ws>/atopia/extensions/`（见 paths.py）。"""
+    from . import paths as P
+    return P.extensions_dir(ws)
 
 
 def ensure(ws) -> Path:

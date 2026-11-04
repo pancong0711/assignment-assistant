@@ -162,7 +162,9 @@ def read_rules(ws) -> dict:
             p.write_text(json.dumps(data, ensure_ascii=False, indent=1), encoding="utf-8")
         except Exception as exc:  # noqa: BLE001 —— 落盘失败也要能用
             logger.warning(f"[规则] 写入默认规则失败（仅内存生效）：{str(exc)[:120]}")
-        return data
+        # D134 修复：**首次读取**（规则文件不存在、刚落盘默认）也必须叠加
+        # `atopia/extensions/rules/` 覆盖，否则新建 workspace 上扩展静默失效。
+        return _apply_extensions(p, data)
     try:
         raw = json.loads(p.read_text(encoding="utf-8"))
         if not isinstance(raw, dict):

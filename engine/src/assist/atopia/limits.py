@@ -12,7 +12,9 @@ from pathlib import Path
 
 from loguru import logger
 
-LIMITS_FILE = "limits.json"
+from . import paths as P
+
+LIMITS_FILE = P.LIMITS_FILE
 
 DEFAULTS = {
     "maxCallsPerSession": 40,
@@ -35,7 +37,8 @@ class LimitExceeded(RuntimeError):
 
 
 def limits_path(ws) -> Path:
-    return Path(ws).resolve() / "atopia" / LIMITS_FILE
+    """D134：护栏落在 `<ws>/atopia/limits.json`（见 paths.py）。"""
+    return P.limits_path(ws)
 
 
 def read_limits(ws) -> dict:
