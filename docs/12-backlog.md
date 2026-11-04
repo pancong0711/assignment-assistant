@@ -922,3 +922,15 @@ rainclass 67/67，PWA↔engine 全等，仅末位浮点四舍五入噪声）。
 - ✅ **留空语义写明**：其他自定义头留空=不发任何头；user-agent 留空=用默认值（并显示默认值）
 - ✅ **保存反馈**：显示"请求头 N 项"与"已分配到 X 段 / ⚠️ 未分配→现在不会生效"
 - ✅ 编辑回填：含 `{session}` 的头拆成勾选状态，其余留在文本框
+
+---
+
+## D146 · Atopia 可选 provider / 模型（2026-10-31 完成）
+
+> 需求单：`docs/93-D146-atopia-provider-model.md`。
+
+- 此前 `/atopia/ask` 只接 `model`，provider 固定取「评阅段」→ 换不了、headers 也未必生效。
+- ✅ 新增 `build_client_for()` 公共构造函数，**Playground 与 Atopia 共用**（防口径漂移）。
+- ✅ `/atopia/ask` 接 `provider`；Atopia 对话页加 provider/模型选择器（记忆在 localStorage）。
+- ✅ 切换 provider 自动新建会话并提示（避免上下文/缓存错位）。
+- 不选 provider → 行为与改动前**完全一致**（向后兼容，有测试锁定）。

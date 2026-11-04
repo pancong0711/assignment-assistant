@@ -2306,7 +2306,9 @@ export interface AtopiaAskResult {
 export async function askAtopia(
   engineAddr: string, token: string | undefined,
   payload: { task: string; sessionId?: string; confirmed?: boolean; confirmedBy?: string
-             protocol?: 'native' | 'json'; maxTurns?: number; model?: string },
+             protocol?: 'native' | 'json'; maxTurns?: number; model?: string
+             /** D146：指定 provider（空=沿用评阅段配置） */
+             provider?: string },
 ): Promise<AtopiaAskResult> {
   const base = normalizeEngineAddr(engineAddr)
   const res = await fetch(engineUrlWithToken(base, '/atopia/ask', token), {

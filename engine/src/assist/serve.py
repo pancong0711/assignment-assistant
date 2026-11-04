@@ -1640,8 +1640,12 @@ class Handler(BaseHTTPRequestHandler):
                 # 因此这里只在"本次请求已带确认"时放行；否则拒绝并让前端弹窗后重发。
                 return conf_note if confirmed else ""
 
+            # D146：Atopia 可选 provider/模型（与 Playground 共用 build_client_for）
             try:
-                client = LLMClient(ws=ws_)
+                from .grading.llm import build_client_for
+                client, _used_model = build_client_for(
+                    ws_, str(payload.get("provider") or ""),
+                    str(payload.get("model") or ""), session_prefix="atopia")
             except LLMConfigError as exc:
                 self._json({"ok": False, "error": f"LLM 未配置：{exc}"}, 400)
                 return

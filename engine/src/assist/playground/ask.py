@@ -18,34 +18,13 @@ DEFAULT_SYSTEM = "你是一位严谨的助手。请直接、准确地回答用�
 
 
 def _client(ws: Path, provider: str = "", model: str = ""):
-    """按 provider/model 构造 LLMClient。
+    """按 provider/model 构造 LLMClient（D146：与 Atopia 共用同一套逻辑）。
 
-    - 指定 provider：取其 base_url/key（providers.py），模型用传入或该 provider 默认；
-    - 未指定：沿用 D86 「评阅段」endpoint（缺省 provider/模型）。
+    - 指定 provider：取其 base_url/key/headers/UA；
+    - 未指定：沿用 D86「评阅段」endpoint。
     """
-    from ..grading.llm import LLMClient
-    from ..grading import providers as prov
-
-    def _with_session(c):
-        # D136：**一次 playground 会话 = 一个对话** → 同一个 session id，
-        # 让 opencode-go 的 prompt 缓存能命中（不是每次请求换新 id）。
-        c.set_session_id(f"playground-{uuid.uuid4().hex[:16]}")
-        return c
-    if provider:
-        p = prov.get_provider(ws, provider)
-        if not p:
-            raise RuntimeError(f"provider 不存在：{provider}")
-        ptype = str(p.get("type") or "api")
-        if ptype != "command":
-            key = p.get("api_key") or ""
-            if not key:
-                raise RuntimeError(f"provider「{provider}」未配置 api_key")
-        settings = {**p, "model": model or (p.get("models") or [""])[0] or ""}
-        client = _with_session(LLMClient(settings=settings))
-        return client, (model or (p.get("models") or [""])[0] or "")
-    ep = prov.stage_endpoint(ws, "evaluation")
-    settings = {**ep, "model": model or ep.get("model") or ""}
-    return _with_session(LLMClient(settings=settings)), (model or ep.get("model") or "")
+    from ..grading.llm import build_client_for
+    return build_client_for(ws, provider, model, session_prefix="playground")
 
 
 def _build_user_text(question: str, attach_paths: "list[str] | None") -> "tuple[str, list[str], list[str]]":

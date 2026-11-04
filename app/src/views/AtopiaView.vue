@@ -10,11 +10,52 @@ import { computed, onMounted, ref } from 'vue'
 import { useSettingsStore } from '../stores/settings'
 import AtopiaPanel from '../components/AtopiaPanel.vue'
 import {
-  askAtopia, fetchAtopiaSessions, type AtopiaAskResult, type AtopiaStep,
+  askAtopia, fetchAtopiaSessions, fetchLlmConfig,
+  type AtopiaAskResult, type AtopiaStep, type LlmProvider,
 } from '../lib/engineClient'
 
 const settings = useSettingsStore()
 const tab = ref<'chat' | 'tools'>('chat')
+
+/* ---------- D146：provider / 模型选择 ----------
+   与 Playground 同源（/llm/config）；空值 = 沿用「评阅段」配置。
+   选择记在 localStorage，下次打开沿用。 */
+const LS_PROV = 'atopia.provider'
+const LS_MODEL = 'atopia.model'
+const providers = ref<LlmProvider[]>([])
+const provider = ref(localStorage.getItem(LS_PROV) || '')
+const model = ref(localStorage.getItem(LS_MODEL) || '')
+const customModel = ref(false)
+
+const modelsOfProvider = computed(() => {
+  const p = providers.value.find((x) => x.name === provider.value)
+  return (p?.models || []) as string[]
+})
+const hasModelChoices = computed(() => modelsOfProvider.value.length > 0)
+
+function onProviderChange() {
+  localStorage.setItem(LS_PROV, provider.value)
+  // 换 provider → 旧模型名多半不适用，清空回落到该 provider 默认
+  model.value = ''
+  localStorage.setItem(LS_MODEL, '')
+  customModel.value = false
+  // 会话中途换 provider 会让上下文/缓存错位 → 明确新建会话
+  if (msgs.value.length) {
+    newSession()
+    errMsg.value = '已切换 provider：为保证上下文与缓存正确，已开始新会话。'
+  }
+}
+
+function onModelChange() {
+  localStorage.setItem(LS_MODEL, model.value)
+}
+
+async function loadProviders() {
+  try {
+    const r = await fetchLlmConfig(settings.engineUrl, settings.engineToken)
+    providers.value = r?.providers || []
+  } catch { providers.value = [] }
+}
 
 /* ---------- 对话 ---------- */
 interface Msg {
@@ -57,6 +98,8 @@ async function send(confirmed = false) {
       sessionId: sessionId.value,
       confirmed,
       confirmedBy: confirmed ? 'teacher:pwa' : undefined,
+      provider: provider.value || undefined,
+      model: model.value || undefined,
     })
     if (r?.sessionId) sessionId.value = r.sessionId
     if (r?.pendingConfirm) {
@@ -111,7 +154,7 @@ async function openSession(id: string) {
   } catch { history.value = [] }
 }
 
-onMounted(() => { newSession(); loadSessions() })
+onMounted(() => { newSession(); loadSessions(); loadProviders() })
 
 const canSend = computed(() => Boolean(input.value.trim()) && !busy.value)
 </script>
@@ -141,6 +184,32 @@ const canSend = computed(() => Boolean(input.value.trim()) && !busy.value)
 
     <!-- ============ 对话 ============ -->
     <template v-if="tab === 'chat'">
+      <div class="picker">
+        <span class="hint" style="margin:0">provider：</span>
+        <select :value="provider" @change="onProviderChange">
+          <option value="">（评阅段配置）</option>
+          <option v-for="p in providers" :key="p.name" :value="p.name">
+            {{ p.name }}{{ p.has_key ? '' : '（无 key）' }}
+          </option>
+        </select>
+        <span class="hint" style="margin:0">模型：</span>
+        <template v-if="hasModelChoices && !customModel">
+          <select :value="model" @change="model = ($event.target as HTMLSelectElement).value; onModelChange()">
+            <option value="">（默认）</option>
+            <option v-for="m in modelsOfProvider" :key="m" :value="m">{{ m }}</option>
+          </select>
+        </template>
+        <input v-else :value="model" placeholder="模型名（空=默认）" style="width:170px"
+               @change="model = ($event.target as HTMLInputElement).value; onModelChange()" />
+        <button class="btn small" @click="customModel = !customModel"
+                :title="hasModelChoices ? '切换下拉/自定义输入' : '该 provider 暂无候选模型'">
+          {{ customModel ? '用下拉' : '自定义' }}
+        </button>
+        <span v-if="provider" class="hint" style="margin:0">
+          （该 provider 的请求头/鉴权生效）
+        </span>
+      </div>
+
       <div class="chat">
         <p v-if="!msgs.length" class="hint">
           例：「看看题库里 chap04 有多少题」「把 chap04 的知识点建议抽出来」
@@ -225,6 +294,10 @@ const canSend = computed(() => Boolean(input.value.trim()) && !busy.value)
 .wrap { padding: 12px 14px; }
 .hint { color: #6b7280; font-size: 12px; }
 .err { color: #b91c1c; font-size: 13px; }
+.picker { display: flex; gap: 6px; align-items: center; flex-wrap: wrap; margin: 0 0 8px;
+          font-size: 13px; }
+.picker select, .picker input { font-size: 13px; padding: 2px 6px; border: 1px solid #d1d5db;
+                                border-radius: 6px; }
 .tabs2 { display: flex; gap: 8px; align-items: center; flex-wrap: wrap; margin: 8px 0; }
 .chat { border: 1px solid #e5e7eb; border-radius: 10px; padding: 10px 12px;
         max-height: 52vh; overflow: auto; background: #fff; }

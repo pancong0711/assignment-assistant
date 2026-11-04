@@ -179,6 +179,42 @@ def _error_hint(body: str) -> str:
     return ""
 
 
+def build_client_for(ws, provider: str = "", model: str = "", *,
+                     session_prefix: str = "assist") -> "tuple[LLMClient, str]":
+    """按 `provider`/`model` 构造 LLMClient（**Playground 与 Atopia 共用**）。
+
+    D146：此前 Playground 与 Atopia 各写一套构造逻辑，容易出现"一边能选 provider、
+    另一边只能吃评阅段配置"的口径漂移。统一到这里：
+
+    - 指定 `provider`：用它的 base_url / key / headers / user_agent；
+    - 未指定：沿用 D86「评阅段」endpoint（= 改动前行为）；
+    - 返回 `(client, 实际使用的模型名)`；
+    - 会话 id **自动生成**（`<prefix>-<hex>`），同一 client 内复用。
+
+    异常：provider 不存在 / 未配置 key → `LLMConfigError`（可读，不静默回落）。
+    """
+    import uuid as _uuid
+    from . import providers as _prov
+
+    def _finish(c: LLMClient, used_model: str):
+        c.set_session_id(f"{session_prefix}-{_uuid.uuid4().hex[:16]}")
+        return c, used_model
+
+    name = str(provider or "").strip()
+    if name:
+        p = _prov.get_provider(ws, name)
+        if not p:
+            raise LLMConfigError(f"provider 不存在：{name}")
+        ptype = str(p.get("type") or "api")
+        if ptype != "command" and not str(p.get("api_key") or ""):
+            raise LLMConfigError(f"provider「{name}」未配置 api_key")
+        used = str(model or (p.get("models") or [""])[0] or "")
+        return _finish(LLMClient(settings={**p, "model": used}), used)
+    ep = _prov.stage_endpoint(ws, "evaluation")
+    used = str(model or ep.get("model") or "")
+    return _finish(LLMClient(settings={**ep, "model": used}), used)
+
+
 class LLMClient:
     """OpenAI 兼容 chat completions 客户端（文本 + 多模态图片）。"""
 

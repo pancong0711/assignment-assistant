@@ -37,6 +37,11 @@ d = M.ensure_chap(ws, 'chap04')
     {'term': '动量守恒', 'aliases': [], 'importance': 'core'}], 'logic': []},
     ensure_ascii=False), encoding='utf-8')
 
+# D146：提供一个 provider 供下拉展示
+from assist.grading import providers as P
+P.save_provider(ws, 'opencode-go', base_url='https://opencode.ai/inference/go/openai/v1',
+                api_key='k', model='m', headers={'x-opencode-session': '{session}'})
+
 S.Handler.ws = ws; S.Handler.token = ''
 s0 = socket.socket(); s0.bind(('127.0.0.1', 0)); port = s0.getsockname()[1]; s0.close()
 httpd = S.ThreadingHTTPServer(('127.0.0.1', port), S.Handler)
@@ -80,6 +85,19 @@ try:
         pg.locator('button', has_text='对话').click()
         pg.wait_for_timeout(300)
         out['backToChat'] = pg.locator('textarea').count() >= 1
+
+        # D146：provider / 模型选择器
+        picker = pg.locator('.picker')
+        out['hasPicker'] = picker.count() == 1
+        sel = picker.locator('select').first
+        opts = sel.locator('option').all_inner_texts()
+        out['providerOptions'] = opts
+        # 选一个 provider → 选择应被记住（localStorage）
+        if len(opts) > 1:
+            sel.select_option(index=1)
+            pg.wait_for_timeout(300)
+            out['providerRemembered'] = pg.evaluate(
+                "() => localStorage.getItem('atopia.provider')") is not None
         out['errors'] = errs
         b.close()
 finally:
@@ -90,6 +108,10 @@ assert not out['errors'], f"JS 错误：{out['errors']}"
 assert out['hasChatTab'] and out['hasToolsTab'], f"页签缺失：{out}"
 assert out['hasInput'], '对话输入框缺失'
 assert out['toolsTabSwitched'] and out['backToChat'], f"页签切换异常：{out}"
+assert out['hasPicker'], '未看到 provider/模型选择器'
+assert len(out['providerOptions']) >= 2, f"provider 下拉为空：{out['providerOptions']}"
+assert out['providerRemembered'], 'provider 选择未记忆'
+print('   provider 选项：', out['providerOptions'])
 print('OK d140-atopia：对话/工具双页签 · 安全 Gate 说明 · 输入框可用')
 PY
 RC=$?

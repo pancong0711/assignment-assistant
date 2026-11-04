@@ -53,6 +53,7 @@
 - `docs/90-D143-translation-question-id.md` — **D143 翻译题库题号重复修复（答案互相覆盖的静默数据损坏）**
 - `docs/91-D144-remove-rubric-toggle.md` — **D144 删除规则卡里的「生成 AI 评阅要点」开关（改为代码口径）**
 - `docs/92-D145-provider-header-ux.md` — **D145 provider 请求头 UI 重做（勾选式会话头 / 顺序 / 留空语义 / 保存反馈）**
+- `docs/93-D146-atopia-provider-model.md` — **D146 Atopia 可选 provider / 模型（与 Playground 共用构造逻辑）**
 - `docs/85-D135-knowledge-hierarchy.md` — **D135 待决：知识点层级（上位/下位概念）方案与取舍**
 - `docs/34-D82-kb-read-order-image-upload-batch.md` — **D82 kb 多文件读取/题目排序/插图参数/草稿修复/上传试跑/batch**
 - `docs/16-xuexitong-integration.md` — **阶段6 学习通整合任务需求单**（登录/读取/下载/上传/发布）
