@@ -9,7 +9,8 @@ import { computed, onMounted, ref } from 'vue'
 import { useSettingsStore } from '../stores/settings'
 import {
   MATERIALS_UPLOAD_EXTS, fetchMaterialsFiles, fetchMaterialsKnowledge,
-  confirmMaterials, extractMaterials, fetchMaterialsList, fetchMaterialsSuggestPreview,
+  confirmMaterials, createMaterialsChap, extractMaterials, fetchMaterialsList,
+  fetchMaterialsSuggestPreview,
   removeMaterialsFile, restoreMaterialsFile, suggestMaterials, uploadMaterialsFiles,
   type MaterialsChap, type MaterialsFile,
 } from '../lib/engineClient'
@@ -286,6 +287,26 @@ function nextStep(c: MaterialsChap): string {
   return '已完成：summary 批阅会以此为依据'
 }
 
+/* D163：新建特征名目录（26C1 等）——此前只能手工在文件系统建 */
+const newChap = ref('')
+const creating = ref(false)
+async function doCreateChap() {
+  const name = newChap.value.trim()
+  if (!name) { msg.value = '请填写特征名（如 26C1）'; return }
+  creating.value = true
+  msg.value = ''
+  try {
+    const r = await createMaterialsChap(settings.engineUrl, settings.engineToken, name)
+    if (!r?.ok) { msg.value = `❌ ${r?.error || '创建失败'}`; return }
+    msg.value = `✅ 已创建「${name}」（可上传授课计划 / PPT）`
+    newChap.value = ''
+    active.value = name
+    await refresh()
+  } catch (e) {
+    msg.value = `创建失败：${String((e as Error).message || e)}`
+  } finally { creating.value = false }
+}
+
 onMounted(refresh)
 defineExpose({ refresh })
 </script>
@@ -300,14 +321,27 @@ defineExpose({ refresh })
     </p>
 
     <div style="display:flex; gap:8px; align-items:center; flex-wrap:wrap; margin:8px 0">
+      <label class="field">新建特征名
+        <input v-model="newChap" placeholder="如 26C1" style="width:130px"
+               @keydown.enter="doCreateChap" />
+      </label>
+      <button class="btn primary" :disabled="creating" @click="doCreateChap">
+        {{ creating ? '创建中…' : '＋ 新建资料文件夹' }}
+      </button>
       <button class="btn" :disabled="loading" @click="refresh">刷新</button>
       <span v-if="msg" class="hint" style="margin:0">{{ msg }}</span>
     </div>
 
-    <p v-if="!loading && !chaps.length" class="hint">
-      还没有任何课堂资料。在 workspace 下建 <code>materials/&lt;章节&gt;/_source/</code> 并放入
-      PPT / PDF / 图片后点「刷新」。
-    </p>
+    <div v-if="!loading && !chaps.length" class="empty">
+      <p class="hint" style="margin:0 0 6px">
+        <b>还没有任何资料文件夹。</b>
+      </p>
+      <p class="hint" style="margin:0">
+        ① 在上方填「特征名」（如 <code>26C1</code>）→ 点「＋ 新建资料文件夹」；
+        ② 选中它后，在右侧「原件」区点「⬆️ 上传附件」（先选类型：授课计划 / PPT / 教材）；
+        ③ 上传完依次跑「① 抽取 → ② AI 建议知识点 → ③ 确认生效」。
+      </p>
+    </div>
 
     <div v-else class="grid">
       <table class="tbl">
@@ -487,6 +521,8 @@ defineExpose({ refresh })
 .md { background: #f9fafb; border: 1px solid #e5e7eb; border-radius: 6px; padding: 8px;
       font-size: 12px; max-height: 320px; overflow: auto; white-space: pre-wrap; }
 .hint { color: #6b7280; font-size: 12px; }
+.empty { border: 1px dashed #d1d5db; border-radius: 10px; padding: 14px 16px;
+         background: #fafafa; }
 .btn.sm { padding: 1px 8px; font-size: 12px; }
 .btn.danger { background: #fee2e2; border-color: #fca5a5; color: #991b1b; }
 .mask { position: fixed; inset: 0; background: rgba(15, 23, 42, .45);

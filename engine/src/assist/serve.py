@@ -1571,6 +1571,28 @@ class Handler(BaseHTTPRequestHandler):
             rep["config"] = providers.public_config(ws)
             self._json(rep, 200 if rep.get("ok") else 400)
             return
+        if u.path == "/materials/create":
+            # D163：新建一个「特征名」资料目录（26C1 等）——PWA 里没有它就只能手工建目录
+            payload: dict = {}
+            try:
+                length = int(self.headers.get("Content-Length") or 0)
+                if length:
+                    payload = json.loads(self.rfile.read(length).decode("utf-8")) or {}
+            except Exception as exc:  # noqa: BLE001
+                self._json({"ok": False, "error": f"bad json: {exc}"}, 400)
+                return
+            from .files import materials as _mc
+            chap = str(payload.get("chap") or "").strip()
+            if not chap:
+                self._json({"ok": False, "error": "请填写特征名（如 26C1）"}, 400)
+                return
+            try:
+                d = _mc.ensure_chap(Path(self.ws).resolve(), chap)
+            except _mc.MaterialsError as exc:
+                self._json({"ok": False, "error": str(exc)}, 400)
+                return
+            self._json({"ok": True, "chap": chap, "path": str(d)})
+            return
         if u.path == "/materials/extract":
             # D137：抽取某章资料（无 LLM 成本）
             payload: dict = {}

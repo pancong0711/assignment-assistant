@@ -163,7 +163,9 @@ def read_translation(xlsx_path: Path, kb_dir: Path) -> dict[str, list[dict]]:
         author = str(row[1]).strip() if len(row) > 1 and row[1] else ""
         book = str(row[2]).strip() if len(row) > 2 and row[2] else ""
         year = str(row[3]).strip() if len(row) > 3 and row[3] else ""
-        tmp = f"请翻译以下内容：\n{saying} (by {author}"
+        # D163：**不在开头换行**——让"请翻译以下内容："与题号在同一行
+        # （此前以 \n 开头，渲染成「2.」后另起一行，与其他题型不一致）。
+        tmp = f"请翻译以下内容：{saying} (by {author}"
         if book:
             tmp += f", {book}"
         if year:

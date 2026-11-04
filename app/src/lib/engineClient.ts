@@ -2342,6 +2342,20 @@ export async function uploadMaterialsFiles(
   return o
 }
 
+/** D163：新建一个「特征名」资料目录（26C1 等）。 */
+export async function createMaterialsChap(
+  engineAddr: string, token: string | undefined, chap: string,
+): Promise<{ ok?: boolean; chap?: string; path?: string; error?: string }> {
+  const base = normalizeEngineAddr(engineAddr)
+  const res = await fetch(engineUrlWithToken(base, '/materials/create', token), {
+    method: 'POST', headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ chap }),
+  })
+  const o = (await res.json().catch(() => ({}))) as any
+  if (!res.ok && !o?.error) throw new Error(`HTTP ${res.status}`)
+  return o
+}
+
 /** D137：抽取某章资料（无 LLM 成本）。 */
 export async function extractMaterials(
   engineAddr: string, token: string | undefined, chap: string, force = false,

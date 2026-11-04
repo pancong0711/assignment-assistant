@@ -1020,6 +1020,18 @@ rainclass 67/67，PWA↔engine 全等，仅末位浮点四舍五入噪声）。
 
 ---
 
+## D163 · 课堂资料页可用性 + 翻译题题号不换行（2026-10-31 完成）
+
+> 需求单：`docs/106-D163-materials-page-and-translation-line.md`。
+
+- ✅ **课堂资料页为空**（三个原因）：① 没有「新建特征名」入口（`list_chaps` 只认有
+  `_source/` 的目录）+ ② 上传键只在选中章节后出现 + ③ 手建目录缺 `_source/` 不列出。
+  新增 `POST /materials/create` + 「＋ 新建资料文件夹」+ 三步空态引导。
+- ✅ **translation 题号另起一行**：`read_translation` 的 content 以 `\n` 开头
+  → 改为同行（引擎 `kb_io` 与 PWA `kbXlsx` 同口径）。
+
+---
+
 ## D147 · Atopia L2 确认精确到「工具 + 参数」（2026-10-31 完成，安全修复）
 
 > 需求单：`docs/94-D147-confirm-scope.md`。

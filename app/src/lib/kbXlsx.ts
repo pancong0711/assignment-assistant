@@ -94,7 +94,8 @@ export function parseTranslationAoA(aoa: unknown[][]): KbRow[] {
     const author = String(colMap.author !== undefined ? r[colMap.author] ?? '' : '').trim()
     const source = String(colMap.source !== undefined ? r[colMap.source] ?? '' : '').trim()
     const year = String(colMap.year !== undefined ? r[colMap.year] ?? '' : '').trim()
-    let content = `请翻译以下内容：\n${name} (by ${author}`
+    // D163：不在开头换行（与引擎 kb_io.read_translation 同口径）
+    let content = `请翻译以下内容：${name} (by ${author}`
     if (source) content += `, ${source}`
     if (year) content += `, ${year}`
     content += '）\n并回答：（1）介绍一下作者及相关理论，'
