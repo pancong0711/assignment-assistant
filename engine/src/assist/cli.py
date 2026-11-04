@@ -1363,19 +1363,27 @@ def roster_rain(obj, files, out, workspace, verbose):
     click.echo(_j.dumps(summary.get("rows", [])[:5], ensure_ascii=False, indent=1))
 
 
-@cli.group("assistopia", help="D132：AI 调用本项目工具的安全工作区（工具白名单 + 分级 + 审计）")
+@cli.group("atopia", help="D134：AI 调用本项目工具的安全工作区（工具白名单 + 分级 + 审计）")
+def atopia_grp():
+    pass
+
+
+# D134：旧名兼容别名（`assist assistopia ...` 仍可用；子命令由同一组注册，
+# 因此在 main 里把旧组挂到新组上即可——见 cli_main 的 alias 处理）。
+@cli.group("assistopia", hidden=True,
+           help="[已更名] 旧名别名，等价于 `assist atopia`（D134）")
 def assistopia_grp():
     pass
 
 
-@assistopia_grp.command("tools")
+@atopia_grp.command("tools")
 @click.option("--workspace", "-w", default=None)
 @click.option("--verbose", "-v", is_flag=True)
 @click.pass_obj
-def assistopia_tools(obj, workspace, verbose):
+def atopia_tools(obj, workspace, verbose):
     """列出工具白名单与风险级别（含 extensions/ 覆盖后的生效级别）。"""
-    from .assistopia import registry as R
-    from .assistopia import limits as LM
+    from .atopia import registry as R
+    from .atopia import limits as LM
     ws = _setup(verbose or obj.get("verbose"), workspace)
     tools = R.effective_tools(ws)
     click.echo(json.dumps({
@@ -1388,19 +1396,19 @@ def assistopia_tools(obj, workspace, verbose):
     }, ensure_ascii=False, indent=2))
 
 
-@assistopia_grp.command("run")
-@click.option("--tool", "tool_name", required=True, help="工具 id（见 assistopia tools）")
+@atopia_grp.command("run")
+@click.option("--tool", "tool_name", required=True, help="工具 id（见 atopia tools）")
 @click.option("--args", "args_json", default="{}", help="参数 JSON，如 '{\"kind\": \"qa\"}'")
 @click.option("--confirm", "confirmed_by", default="",
               help="L2 写入工具的教师确认来源（如 teacher:cli）；不填则拒绝")
 @click.option("--workspace", "-w", default=None)
 @click.option("--verbose", "-v", is_flag=True)
 @click.pass_obj
-def assistopia_run(obj, tool_name, args_json, confirmed_by, workspace, verbose):
+def atopia_run(obj, tool_name, args_json, confirmed_by, workspace, verbose):
     """执行一个 L0/L1（或已确认的 L2）工具；L3 一律拒绝。"""
-    from .assistopia import limits as LM
-    from .assistopia import runner as RN
-    from .assistopia.registry import ToolDenied
+    from .atopia import limits as LM
+    from .atopia import runner as RN
+    from .atopia.registry import ToolDenied
     ws = _setup(verbose or obj.get("verbose"), workspace)
     try:
         args = json.loads(args_json or "{}")
@@ -1423,7 +1431,7 @@ def assistopia_run(obj, tool_name, args_json, confirmed_by, workspace, verbose):
             (rep['stderr'] or rep['stdout'])[:300]}")
 
 
-@assistopia_grp.command("ask")
+@atopia_grp.command("ask")
 @click.argument("task")
 @click.option("--model", default="", help="覆盖模型")
 @click.option("--yes", "auto_yes", is_flag=True,
@@ -1432,10 +1440,10 @@ def assistopia_run(obj, tool_name, args_json, confirmed_by, workspace, verbose):
 @click.option("--workspace", "-w", default=None)
 @click.option("--verbose", "-v", is_flag=True)
 @click.pass_obj
-def assistopia_ask(obj, task, model, auto_yes, max_turns, workspace, verbose):
+def atopia_ask(obj, task, model, auto_yes, max_turns, workspace, verbose):
     """让 AI 在本项目工具上完成一个任务（受分级/护栏/审计约束）。"""
-    from .assistopia import agent as AG
-    from .assistopia import limits as LM
+    from .atopia import agent as AG
+    from .atopia import limits as LM
     from .grading.llm import LLMClient
     ws = _setup(verbose or obj.get("verbose"), workspace)
     client = _rubric_client(ws)
@@ -1459,15 +1467,15 @@ def assistopia_ask(obj, task, model, auto_yes, max_turns, workspace, verbose):
         raise click.ClickException(rep.get("error") or "会话失败")
 
 
-@assistopia_grp.command("limits")
+@atopia_grp.command("limits")
 @click.option("--set", "set_pairs", multiple=True,
               help="设置护栏，如 --set maxCallsPerSession=60（受硬顶约束）")
 @click.option("--workspace", "-w", default=None)
 @click.option("--verbose", "-v", is_flag=True)
 @click.pass_obj
-def assistopia_limits(obj, set_pairs, workspace, verbose):
+def atopia_limits(obj, set_pairs, workspace, verbose):
     """查看/调整护栏（调用次数、L1 成本、超时、会话时长）。"""
-    from .assistopia import limits as LM
+    from .atopia import limits as LM
     ws = _setup(verbose or obj.get("verbose"), workspace)
     if set_pairs:
         patch = {}
@@ -1487,34 +1495,34 @@ def assistopia_limits(obj, set_pairs, workspace, verbose):
                           ensure_ascii=False, indent=2))
 
 
-@assistopia_grp.command("extensions")
+@atopia_grp.command("extensions")
 @click.option("--init", is_flag=True, help="创建 extensions/ 骨架（不覆盖已有内容）")
 @click.option("--workspace", "-w", default=None)
 @click.option("--verbose", "-v", is_flag=True)
 @click.pass_obj
-def assistopia_extensions(obj, init, workspace, verbose):
+def atopia_extensions(obj, init, workspace, verbose):
     """查看/初始化用户扩展目录（升级**永不触碰**）。"""
-    from .assistopia import extensions as E
+    from .atopia import extensions as E
     ws = _setup(verbose or obj.get("verbose"), workspace)
     if init:
         E.ensure(ws)
     click.echo(json.dumps({
         "ok": True, "root": str(E.root(ws)),
         "files": sorted(E.snapshot(ws)),
-        "toolOverrides": __import__("assist.assistopia.registry", fromlist=["x"])
+        "toolOverrides": __import__("assist.atopia.registry", fromlist=["x"])
                           .load_overrides(ws),
         "hint": "tools/*.json 只能把级别**调高**；rules/ 与 knowledge-terms.json 可覆盖默认",
     }, ensure_ascii=False, indent=2))
 
 
-@assistopia_grp.command("journal")
+@atopia_grp.command("journal")
 @click.option("--limit", default=30, type=int, show_default=True)
 @click.option("--workspace", "-w", default=None)
 @click.option("--verbose", "-v", is_flag=True)
 @click.pass_obj
-def assistopia_journal(obj, limit, workspace, verbose):
+def atopia_journal(obj, limit, workspace, verbose):
     """查看审计日志（最近 N 条）。"""
-    from .assistopia import runner as RN
+    from .atopia import runner as RN
     ws = _setup(verbose or obj.get("verbose"), workspace)
     recs = RN.read_journal(ws, limit=limit)
     click.echo(json.dumps({"ok": True, "count": len(recs), "records": recs},
@@ -2706,9 +2714,27 @@ def _emit_json_error(exc: BaseException, exit_code: int) -> None:
     sys.stderr.write(json.dumps(payload, ensure_ascii=False) + "\n")
 
 
+def _alias_assistopia_argv(argv: list[str]) -> list[str]:
+    """D134：`assist assistopia ...` → `assist atopia ...`（旧名永久兼容）。
+
+    只认**第一个**子命令位置；`-w/--workspace` 等全局选项若出现在前面则原样保留。
+    """
+    out = list(argv)
+    for i, tok in enumerate(out):
+        if tok.startswith("-"):
+            continue
+        if tok == "assistopia":
+            out[i] = "atopia"
+        break
+    return out
+
+
 def main():
     """CLI entry：包一层异常处理，支持 ASSIST_JSON_ERRORS 机读错误（便于 AI agent 调）。"""
+    import sys
     json_mode = _json_errors_enabled()
+    if sys.argv and len(sys.argv) > 1:
+        sys.argv = [sys.argv[0], *_alias_assistopia_argv(sys.argv[1:])]
     try:
         cli.main(args=None, standalone_mode=False, obj={})
     except click.ClickException as exc:

@@ -94,7 +94,7 @@ def run_session(client, ws, task: str, *, model: "str | None" = None,
         try:
             raw = client.chat(system_prompt=messages[0]["content"],
                               user_text=_transcript(messages), model=model,
-                              temperature=0.1, max_tokens=2048, step="assistopia")
+                              temperature=0.1, max_tokens=2048, step="atopia")
         except Exception as exc:  # noqa: BLE001
             return {"ok": False, "error": f"模型调用失败：{str(exc)[:200]}",
                     "steps": steps}
@@ -142,7 +142,7 @@ def run_session(client, ws, task: str, *, model: "str | None" = None,
                              "content": "【工具结果】\n" + _brief(rep["stdout"] or rep["stderr"])})
         except ToolDenied as exc:
             steps[-1].update({"ok": False, "denied": True, "reason": str(exc)})
-            logger.warning(f"[assistopia] 拒绝：{exc}")
+            logger.warning(f"[atopia] 拒绝：{exc}")
             return {"ok": False, "error": str(exc), "steps": steps,
                     "answer": f"该操作被安全策略拒绝：{exc}"}
         except L.LimitExceeded as exc:

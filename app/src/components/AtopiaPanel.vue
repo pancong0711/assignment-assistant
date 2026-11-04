@@ -1,18 +1,18 @@
 <script setup lang="ts">
-/** D132：Assistopia 工作区 —— AI 调用本项目工具的**受控**入口。
+/** D132：Atopia 工作区 —— AI 调用本项目工具的**受控**入口。
  *
  *  安全口径（docs/81）：L0/L1 直接执行；**L2 必须教师点击确认**；L3 不开放（连按钮都不给）。
  *  每次调用都在引擎侧写 journal（含 confirmed_by），本页只负责"看清楚 + 确认"。
  */
 import { computed, onMounted, ref } from 'vue'
 import {
-  fetchAssistopiaJournal, fetchAssistopiaTools, runAssistopiaTool,
-  type AssistopiaTool,
+  fetchAtopiaJournal, fetchAtopiaTools, runAtopiaTool,
+  type AtopiaTool,
 } from '../lib/engineClient'
 
 const props = defineProps<{ engineAddr: string; token?: string }>()
 
-const tools = ref<AssistopiaTool[]>([])
+const tools = ref<AtopiaTool[]>([])
 const levels = ref<Record<string, string>>({})
 const limits = ref<Record<string, number>>({})
 const journal = ref<any[]>([])
@@ -21,14 +21,14 @@ const busy = ref(false)
 
 const selected = ref('')
 const argsText = ref('{}')
-const pending = ref<{ tool: AssistopiaTool; args: Record<string, any> } | null>(null)
+const pending = ref<{ tool: AtopiaTool; args: Record<string, any> } | null>(null)
 const output = ref('')
 
 /** L3 不展示为"可执行"——只在末尾列出并明确写"不开放"。 */
 const usable = computed(() => tools.value.filter((t) => t.level !== 'L3'))
 const denied = computed(() => tools.value.filter((t) => t.level === 'L3'))
 const grouped = computed(() => {
-  const g: Record<string, AssistopiaTool[]> = { L0: [], L1: [], L2: [] }
+  const g: Record<string, AtopiaTool[]> = { L0: [], L1: [], L2: [] }
   for (const t of usable.value) (g[t.level] ||= []).push(t)
   return g
 })
@@ -44,7 +44,7 @@ async function refresh() {
   busy.value = true
   msg.value = ''
   try {
-    const r = await fetchAssistopiaTools(props.engineAddr, props.token)
+    const r = await fetchAtopiaTools(props.engineAddr, props.token)
     if (!r?.ok) { msg.value = `读取工具失败：${r?.error || '未知错误'}`; return }
     tools.value = r.tools || []
     levels.value = r.levels || {}
@@ -58,7 +58,7 @@ async function refresh() {
 
 async function loadJournal() {
   try {
-    const r = await fetchAssistopiaJournal(props.engineAddr, props.token, 50)
+    const r = await fetchAtopiaJournal(props.engineAddr, props.token, 50)
     journal.value = (r?.records || []).slice().reverse()
   } catch { journal.value = [] }
 }
@@ -106,11 +106,11 @@ async function confirmRun() {
   await exec(p.tool, p.args, 'teacher:pwa')
 }
 
-async function exec(t: AssistopiaTool, args: Record<string, any>, confirm: string) {
+async function exec(t: AtopiaTool, args: Record<string, any>, confirm: string) {
   busy.value = true
   msg.value = ''
   try {
-    const r = await runAssistopiaTool(props.engineAddr, props.token,
+    const r = await runAtopiaTool(props.engineAddr, props.token,
                                       { tool: t.name, args, confirm })
     if (r?.ok) {
       msg.value = `✅ ${t.name} 执行成功（${r.ms}ms，exit ${r.exit}）`
@@ -132,7 +132,7 @@ defineExpose({ refresh })
 <template>
   <div class="asst">
     <div class="head">
-      <h3 style="margin:0">🧪 Assistopia（AI 可调用的本项目工具）</h3>
+      <h3 style="margin:0">🧪 Atopia（AI 可调用的本项目工具）</h3>
       <span class="hint" style="margin:0">
         只读直接执行；<b>写入需你逐次确认</b>；危险工具不开放。每次调用都记审计日志。
       </span>

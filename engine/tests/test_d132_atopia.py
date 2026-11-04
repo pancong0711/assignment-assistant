@@ -17,9 +17,9 @@ from pathlib import Path
 
 import pytest
 
-from assist.assistopia import limits as L
-from assist.assistopia import registry as R
-from assist.assistopia import runner as RN
+from assist.atopia import limits as L
+from assist.atopia import registry as R
+from assist.atopia import runner as RN
 
 
 @pytest.fixture()
@@ -208,8 +208,8 @@ def test_timeout_kills_and_journals(ws: Path, monkeypatch):
 
 
 def test_limits_hard_capped(ws: Path):
-    (ws / "assistopia").mkdir()
-    (ws / "assistopia" / "limits.json").write_text(
+    (ws / "atopia").mkdir()
+    (ws / "atopia" / "limits.json").write_text(
         json.dumps({"maxCallsPerSession": 999999, "callTimeoutSeconds": 999999}),
         encoding="utf-8")
     lim = L.read_limits(ws)
@@ -218,8 +218,8 @@ def test_limits_hard_capped(ws: Path):
 
 
 def test_limits_bad_json_falls_back(ws: Path):
-    (ws / "assistopia").mkdir()
-    (ws / "assistopia" / "limits.json").write_text("{oops", encoding="utf-8")
+    (ws / "atopia").mkdir()
+    (ws / "atopia" / "limits.json").write_text("{oops", encoding="utf-8")
     assert L.read_limits(ws)["maxCallsPerSession"] == L.DEFAULTS["maxCallsPerSession"]
 
 
@@ -277,19 +277,19 @@ def test_cli_tools_and_run(ws: Path):
     from click.testing import CliRunner
     from assist.cli import cli
     r = CliRunner()
-    out = r.invoke(cli, ["assistopia", "tools", "-w", str(ws)])
+    out = r.invoke(cli, ["atopia", "tools", "-w", str(ws)])
     assert out.exit_code == 0 and "kb.stats" in out.output
-    out = r.invoke(cli, ["assistopia", "run", "--tool", "rules.summary",
+    out = r.invoke(cli, ["atopia", "run", "--tool", "rules.summary",
                          "--args", '{"kind": "qa"}', "-w", str(ws)])
     assert out.exit_code == 0, out.output
-    out = r.invoke(cli, ["assistopia", "journal", "-w", str(ws)])
+    out = r.invoke(cli, ["atopia", "journal", "-w", str(ws)])
     assert out.exit_code == 0 and "rules.summary" in out.output
 
 
 def test_cli_l3_denied(ws: Path):
     from click.testing import CliRunner
     from assist.cli import cli
-    out = CliRunner().invoke(cli, ["assistopia", "run", "--tool", "migrate.apply",
+    out = CliRunner().invoke(cli, ["atopia", "run", "--tool", "migrate.apply",
                                    "-w", str(ws)])
     assert out.exit_code != 0 and "L3" in out.output
 
@@ -312,11 +312,11 @@ def test_serve_tools_and_journal(ws: Path):
     import urllib.request
     base, httpd = _serve(ws)
     try:
-        with urllib.request.urlopen(f"{base}/assistopia/tools", timeout=5) as r:
+        with urllib.request.urlopen(f"{base}/atopia/tools", timeout=5) as r:
             o = _j.loads(r.read().decode())
         assert o["ok"] and any(t["name"] == "kb.stats" for t in o["tools"])
         assert o["levels"]["L2"].startswith("写入")
-        with urllib.request.urlopen(f"{base}/assistopia/journal", timeout=5) as r:
+        with urllib.request.urlopen(f"{base}/atopia/journal", timeout=5) as r:
             j = _j.loads(r.read().decode())
         assert j["ok"] and isinstance(j["records"], list)
     finally:
@@ -330,7 +330,7 @@ def test_serve_run_l3_forbidden(ws: Path):
     base, httpd = _serve(ws)
     try:
         req = urllib.request.Request(
-            f"{base}/assistopia/run", method="POST",
+            f"{base}/atopia/run", method="POST",
             data=_j.dumps({"tool": "migrate.apply"}).encode(),
             headers={"Content-Type": "application/json"})
         import pytest as _pt
@@ -349,7 +349,7 @@ def test_serve_run_l2_requires_confirm(ws: Path):
     base, httpd = _serve(ws)
     try:
         req = urllib.request.Request(
-            f"{base}/assistopia/run", method="POST",
+            f"{base}/atopia/run", method="POST",
             data=_j.dumps({"tool": "rules.reset"}).encode(),
             headers={"Content-Type": "application/json"})
         import pytest as _pt
@@ -358,7 +358,7 @@ def test_serve_run_l2_requires_confirm(ws: Path):
         assert ei.value.code == 403
 
         req2 = urllib.request.Request(
-            f"{base}/assistopia/run", method="POST",
+            f"{base}/atopia/run", method="POST",
             data=_j.dumps({"tool": "rules.reset", "confirm": "teacher:pwa"}).encode(),
             headers={"Content-Type": "application/json"})
         with urllib.request.urlopen(req2, timeout=15) as r:

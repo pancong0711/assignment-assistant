@@ -15,9 +15,9 @@ from pathlib import Path
 
 import pytest
 
-from assist.assistopia import agent as AG
-from assist.assistopia import limits as L
-from assist.assistopia import runner as RN
+from assist.atopia import agent as AG
+from assist.atopia import limits as L
+from assist.atopia import runner as RN
 
 
 class _Client:
@@ -123,8 +123,8 @@ def test_second_turn_sees_tool_result(ws: Path):
 
 # ---------------- 护栏 ----------------
 def test_limit_exceeded_stops_session(ws: Path):
-    (ws / "assistopia").mkdir()
-    (ws / "assistopia" / "limits.json").write_text(
+    (ws / "atopia").mkdir()
+    (ws / "atopia" / "limits.json").write_text(
         json.dumps({"maxCallsPerSession": 1}), encoding="utf-8")
     sess = L.Session("s", L.read_limits(ws))
     r = AG.run_session(_Client([_tool_call("rules.show"), _tool_call("rules.show")]),

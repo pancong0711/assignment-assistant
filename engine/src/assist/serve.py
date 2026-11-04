@@ -547,6 +547,17 @@ def _wm_serve_assets(ws: Path, explicit=None) -> tuple[Path, str]:
     return workspace_assets(ws), "workspace"
 
 
+def _rewrite_legacy_atopia(path: str) -> "tuple[str, bool]":
+    """D134：旧路由 `/assistopia/*` → `/atopia/*`（旧名永久兼容）。
+
+    返回 (新路径, 是否发生了改写)。改写只认**前缀**，不做全局替换，
+    避免误伤路径里恰好含 `assistopia` 的正常资源。
+    """
+    if path == "/assistopia" or path.startswith("/assistopia/"):
+        return "/atopia" + path[len("/assistopia"):], True
+    return path, False
+
+
 def _save_watermark_upload(assets_dir: Path, payload: dict) -> dict:
     """水印图片 base64 → <assets_dir>/watermark/<文件名>（D87 §4 POST /watermark/upload）。
 
@@ -897,6 +908,11 @@ class Handler(BaseHTTPRequestHandler):
 
     def do_POST(self):
         u = urllib.parse.urlparse(self.path)
+        _np, _legacy = _rewrite_legacy_atopia(u.path)
+        if _legacy:
+            # D134：旧名 `/assistopia/*` 永久转发到 `/atopia/*`
+            u = u._replace(path=_np)
+            self.path = urllib.parse.urlunparse(u)
         qs = urllib.parse.parse_qs(u.query)
         if not self._ok_token(qs):
             self._json({"ok": False, "error": "token required"}, 401)
@@ -1912,7 +1928,7 @@ class Handler(BaseHTTPRequestHandler):
                                                    "taskId": task_id, "kind": kind})
             self._json({"ok": True, "job_id": job_id})
             return
-        if u.path == "/assistopia/run":
+        if u.path == "/atopia/run":
             # D132：执行一个工具。**L2 必须带 confirm**（教师在前端点了确认），
             # L3 一律拒绝（由 runner 保证）；每次调用写 journal。
             payload: dict = {}
@@ -1923,9 +1939,9 @@ class Handler(BaseHTTPRequestHandler):
             except Exception as exc:  # noqa: BLE001
                 self._json({"ok": False, "error": f"bad json: {exc}"}, 400)
                 return
-            from .assistopia import limits as _al2
-            from .assistopia import runner as _arn2
-            from .assistopia.registry import ToolDenied as _TD
+            from .atopia import limits as _al2
+            from .atopia import runner as _arn2
+            from .atopia.registry import ToolDenied as _TD
             ws_ = Path(self.ws).resolve()
             tool = str(payload.get("tool") or "")
             args = payload.get("args") if isinstance(payload.get("args"), dict) else {}
@@ -2417,6 +2433,11 @@ class Handler(BaseHTTPRequestHandler):
 
     def do_GET(self):
         u = urllib.parse.urlparse(self.path)
+        _np, _legacy = _rewrite_legacy_atopia(u.path)
+        if _legacy:
+            # D134：旧名 `/assistopia/*` 永久转发到 `/atopia/*`
+            u = u._replace(path=_np)
+            self.path = urllib.parse.urlunparse(u)
         raw_qs = urllib.parse.parse_qs(u.query)
         if not self._ok_token(raw_qs):
             self._json({"ok": False, "error": "token required"}, 401)
@@ -2783,10 +2804,10 @@ class Handler(BaseHTTPRequestHandler):
                                               or stu.get("name") or ""))
             self._json(rep)
             return
-        elif u.path == "/assistopia/tools":
+        elif u.path == "/atopia/tools":
             # D132：工具白名单 + 分级（含扩展覆盖后的生效级别）
-            from .assistopia import limits as _al
-            from .assistopia import registry as _ar
+            from .atopia import limits as _al
+            from .atopia import registry as _ar
             ws_ = Path(self.ws).resolve()
             self._json({"ok": True,
                         "levels": _ar.LEVEL_LABEL,
@@ -2795,8 +2816,8 @@ class Handler(BaseHTTPRequestHandler):
                         "extensions": str(_ar.extensions_dir(ws_)),
                         "tools": [t.to_dict() for t in _ar.effective_tools(ws_)]})
             return
-        elif u.path == "/assistopia/journal":
-            from .assistopia import runner as _arn
+        elif u.path == "/atopia/journal":
+            from .atopia import runner as _arn
             q = urllib.parse.parse_qs(u.query)
             limit = int((q.get("limit") or ["100"])[0] or 100)
             self._json({"ok": True, "records": _arn.read_journal(

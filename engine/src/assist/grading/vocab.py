@@ -78,7 +78,7 @@ def load_vocab(ws) -> dict:
     data["terms"] = [t for t in data["terms"] if isinstance(t, dict) and t.get("term")]
     # D132-T18：叠加 <ws>/extensions/knowledge-terms.json（按 term 合并，扩展优先）
     try:
-        from ..assistopia import extensions as E
+        from ..atopia import extensions as E
         # knowledge-terms.json 直接在 <ws>/ 下 → 其父目录就是 workspace 根
         ext = E.vocab_override(p.parent)
         if ext and isinstance(ext.get("terms"), list):

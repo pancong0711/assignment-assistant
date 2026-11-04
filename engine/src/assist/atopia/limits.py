@@ -35,7 +35,7 @@ class LimitExceeded(RuntimeError):
 
 
 def limits_path(ws) -> Path:
-    return Path(ws).resolve() / "assistopia" / LIMITS_FILE
+    return Path(ws).resolve() / "atopia" / LIMITS_FILE
 
 
 def read_limits(ws) -> dict:
@@ -51,12 +51,12 @@ def read_limits(ws) -> dict:
                         try:
                             out[k] = int(raw[k])
                         except (TypeError, ValueError):
-                            logger.warning(f"[assistopia] limits.{k} 非整数，用默认")
+                            logger.warning(f"[atopia] limits.{k} 非整数，用默认")
         except Exception as exc:  # noqa: BLE001
-            logger.warning(f"[assistopia] {LIMITS_FILE} 解析失败，用默认：{exc}")
+            logger.warning(f"[atopia] {LIMITS_FILE} 解析失败，用默认：{exc}")
     for k, cap in HARD_CAPS.items():
         if out[k] > cap:
-            logger.warning(f"[assistopia] limits.{k}={out[k]} 超过硬顶 {cap}，已夹住")
+            logger.warning(f"[atopia] limits.{k}={out[k]} 超过硬顶 {cap}，已夹住")
             out[k] = cap
         if out[k] <= 0:
             out[k] = DEFAULTS[k]
@@ -130,5 +130,5 @@ def write_limits(ws, patch: dict, *, journal: bool = True) -> dict:
                                     "action": "limits.write", "patch": patch,
                                     "effective": cur}, ensure_ascii=False) + "\n")
         except Exception as exc:  # noqa: BLE001
-            logger.warning(f"[assistopia] limits journal 写入失败：{exc}")
+            logger.warning(f"[atopia] limits journal 写入失败：{exc}")
     return {"ok": True, "limits": cur, "file": str(p)}

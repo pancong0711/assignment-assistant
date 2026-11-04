@@ -2091,9 +2091,9 @@ export async function fetchMaterialsKnowledge(
     base, `/materials/knowledge?${qs.toString()}`, token))) as any
 }
 
-/* ========== D132：Assistopia（工具白名单 / 执行 / 审计） ========== */
+/* ========== D132：Atopia（工具白名单 / 执行 / 审计） ========== */
 
-export interface AssistopiaTool {
+export interface AtopiaTool {
   name: string
   level: 'L0' | 'L1' | 'L2' | 'L3'
   levelLabel: string
@@ -2102,23 +2102,23 @@ export interface AssistopiaTool {
   allowedArgs: Record<string, string>
 }
 
-export async function fetchAssistopiaTools(
+export async function fetchAtopiaTools(
   engineAddr: string, token: string | undefined,
-): Promise<{ ok?: boolean; levels?: Record<string, string>; tools?: AssistopiaTool[]
+): Promise<{ ok?: boolean; levels?: Record<string, string>; tools?: AtopiaTool[]
              limits?: Record<string, number>; hardCaps?: Record<string, number>
              extensions?: string; error?: string }> {
   const base = normalizeEngineAddr(engineAddr)
-  return (await getJson2(engineUrlWithToken(base, '/assistopia/tools', token))) as any
+  return (await getJson2(engineUrlWithToken(base, '/atopia/tools', token))) as any
 }
 
-export async function runAssistopiaTool(
+export async function runAtopiaTool(
   engineAddr: string, token: string | undefined,
   payload: { tool: string; args?: Record<string, any>; confirm?: string; session?: string },
 ): Promise<{ ok?: boolean; error?: string; denied?: boolean; limited?: boolean
              status?: string; level?: string; exit?: number; ms?: number
              stdout?: string; stderr?: string }> {
   const base = normalizeEngineAddr(engineAddr)
-  const res = await fetch(engineUrlWithToken(base, '/assistopia/run', token), {
+  const res = await fetch(engineUrlWithToken(base, '/atopia/run', token), {
     method: 'POST', headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify(payload),
   })
@@ -2127,10 +2127,10 @@ export async function runAssistopiaTool(
   return o
 }
 
-export async function fetchAssistopiaJournal(
+export async function fetchAtopiaJournal(
   engineAddr: string, token: string | undefined, limit = 100,
 ): Promise<{ ok?: boolean; records?: any[]; error?: string }> {
   const base = normalizeEngineAddr(engineAddr)
   return (await getJson2(engineUrlWithToken(
-    base, `/assistopia/journal?limit=${limit}`, token))) as any
+    base, `/atopia/journal?limit=${limit}`, token))) as any
 }

@@ -26,7 +26,7 @@ import PlaygroundPanel from './PlaygroundPanel.vue'
 import StudentReviewModal from './StudentReviewModal.vue'
 import GradingRulesCard from './GradingRulesCard.vue'
 import TeacherReportCard from './TeacherReportCard.vue'
-import AssistopiaPanel from './AssistopiaPanel.vue'
+import AtopiaPanel from './AtopiaPanel.vue'
 const packStore = usePackStore()
 const rosterStore = useRosterStore()
 
@@ -996,8 +996,8 @@ onMounted(async () => {
                        :class-dir="curWorkDir" :task-id="packId || padId"
                        :reload-key="reportReloadKey" />
 
-    <!-- D132：Assistopia（AI 可调用本项目工具；L2 写入逐次确认，L3 不开放） -->
-    <AssistopiaPanel :engine-addr="props.engineAddr" :token="props.token" />
+    <!-- D132：Atopia（AI 可调用本项目工具；L2 写入逐次确认，L3 不开放） -->
+    <AtopiaPanel :engine-addr="props.engineAddr" :token="props.token" />
   </div>
 
     <h3 style="margin-top:14px">⑦ 题库 AI 作答（对题目生成参考答案；不覆盖、可多版本）</h3>

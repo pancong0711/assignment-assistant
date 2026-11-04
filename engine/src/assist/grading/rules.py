@@ -180,7 +180,7 @@ def _apply_extensions(path: Path, data: dict) -> dict:
     的既有语义不变（扩展只**叠加**，不影响默认文件生成）。
     """
     try:
-        from ..assistopia import extensions as E
+        from ..atopia import extensions as E
         ws = path.parent
         merged = E.effective_rules_from(ws, data)
         return merged

@@ -41,11 +41,11 @@ def read_json_override(ws, rel: str) -> "dict | None":
     try:
         data = json.loads(p.read_text(encoding="utf-8"))
         if not isinstance(data, dict):
-            logger.warning(f"[assistopia] 扩展 {rel} 顶层不是对象，已忽略")
+            logger.warning(f"[atopia] 扩展 {rel} 顶层不是对象，已忽略")
             return None
         return data
     except Exception as exc:  # noqa: BLE001
-        logger.warning(f"[assistopia] 扩展 {rel} 解析失败，已忽略：{exc}")
+        logger.warning(f"[atopia] 扩展 {rel} 解析失败，已忽略：{exc}")
         return None
 
 
@@ -66,7 +66,7 @@ def rules_override(ws) -> "dict | None":
     for kind, cfg in list((cleaned.get("types") or {}).items()):
         if isinstance(cfg, dict) and "mode" in cfg:
             # 算法名是只读项（改了会让计分与提示词不一致）
-            logger.warning(f"[assistopia] 扩展不得修改 types.{kind}.mode，已忽略该字段")
+            logger.warning(f"[atopia] 扩展不得修改 types.{kind}.mode，已忽略该字段")
             cfg.pop("mode", None)
     return cleaned
 

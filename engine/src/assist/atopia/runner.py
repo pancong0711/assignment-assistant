@@ -22,7 +22,7 @@ from . import limits as L
 from .registry import (L2, L3, Tool, ToolDenied, build_argv, effective_tool,
                        level_at_least, validate_args)
 
-JOURNAL = "assistopia/journal.jsonl"
+JOURNAL = "atopia/journal.jsonl"
 OUTPUT_HEAD_CHARS = 500
 _SENSITIVE_KEYS = ("api_key", "apikey", "token", "secret", "password")
 
@@ -48,7 +48,7 @@ def _append_journal(ws, rec: dict) -> None:
         with p.open("a", encoding="utf-8") as f:
             f.write(json.dumps(rec, ensure_ascii=False) + "\n")
     except Exception as exc:  # noqa: BLE001
-        logger.warning(f"[assistopia] journal 写入失败：{str(exc)[:120]}")
+        logger.warning(f"[atopia] journal 写入失败：{str(exc)[:120]}")
 
 
 def _cli_argv(argv: list[str], ws: Path) -> list[str]:

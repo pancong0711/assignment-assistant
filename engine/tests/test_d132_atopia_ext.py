@@ -12,8 +12,8 @@ from pathlib import Path
 
 import pytest
 
-from assist.assistopia import extensions as E
-from assist.assistopia import limits as L
+from assist.atopia import extensions as E
+from assist.atopia import limits as L
 
 
 @pytest.fixture()
@@ -90,7 +90,7 @@ def test_vocab_override_wins_on_same_term(ws: Path):
 def test_write_limits_ok_and_persisted(ws: Path):
     rep = L.write_limits(ws, {"maxCallsPerSession": 60})
     assert rep["ok"] and L.read_limits(ws)["maxCallsPerSession"] == 60
-    assert (ws / "assistopia" / "limits.json").is_file()
+    assert (ws / "atopia" / "limits.json").is_file()
 
 
 def test_write_limits_rejects_over_hard_cap(ws: Path):
@@ -108,7 +108,7 @@ def test_write_limits_rejects_unknown_and_nonpositive(ws: Path):
 
 def test_write_limits_journaled(ws: Path):
     L.write_limits(ws, {"callTimeoutSeconds": 90})
-    jl = (ws / "assistopia" / "journal.jsonl").read_text(encoding="utf-8")
+    jl = (ws / "atopia" / "journal.jsonl").read_text(encoding="utf-8")
     assert "limits.write" in jl and "90" in jl
 
 

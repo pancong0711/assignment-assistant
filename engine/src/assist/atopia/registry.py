@@ -247,7 +247,7 @@ def load_overrides(ws) -> dict:
         try:
             data = json.loads(f.read_text(encoding="utf-8"))
         except Exception as exc:  # noqa: BLE001
-            logger.warning(f"[assistopia] 扩展工具文件损坏，忽略 {f.name}: {exc}")
+            logger.warning(f"[atopia] 扩展工具文件损坏，忽略 {f.name}: {exc}")
             continue
         pairs: list[tuple[str, str]] = []
         if isinstance(data, dict) and isinstance(data.get("overrides"), dict):
@@ -258,15 +258,15 @@ def load_overrides(ws) -> dict:
             base = builtin.get(name)
             if base is None:
                 # 不允许扩展**新增**工具（那等于任意命令注入）
-                logger.warning(f"[assistopia] 扩展试图登记未内置的工具，忽略：{name}")
+                logger.warning(f"[atopia] 扩展试图登记未内置的工具，忽略：{name}")
                 continue
             lvl = lvl.upper()
             if lvl not in LEVEL_ORDER:
-                logger.warning(f"[assistopia] 扩展级别非法，忽略：{name}={lvl}")
+                logger.warning(f"[atopia] 扩展级别非法，忽略：{name}={lvl}")
                 continue
             if LEVEL_ORDER[lvl] < LEVEL_ORDER[base]:
                 # 只能更严：降级请求一律拒绝（否则配置文件可给 AI 开写权限）
-                logger.warning(f"[assistopia] 扩展试图**降低**风险级别，已拒绝："
+                logger.warning(f"[atopia] 扩展试图**降低**风险级别，已拒绝："
                                f"{name} {base} → {lvl}")
                 continue
             out[name] = lvl
