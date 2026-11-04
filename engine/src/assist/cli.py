@@ -2590,13 +2590,16 @@ def llm_batch(task_path, jsonl_path, provider_name, limit, submit, poll_id, down
 @click.option("--mode", "mode", default="", type=click.Choice(["", "optimized", "brute"]),
               help="D86：optimized（默认，给题目/答案）| brute（先自己作答再比对）")
 @click.option("--tags", "tags", default="", help="D86：只批阅这些 tag（逗号分隔）")
-@click.option("--limit", "limit", default=0, type=int, help="D86：只处理前 N 名学生（0=全部）")
+@click.option("--limit", "limit", default=0, type=int,
+              help="只处理前 N 名**有作答**的学生（0=全部；D148 修正语义）")
+@click.option("--students", "students", default="",
+              help="D148：只处理这些学生（逗号分隔的姓名）——逐生补批用")
 @click.option("--dry-plan", "dry_plan", is_flag=True, default=False, help="只装配并打印 plan 摘要，不调 LLM")
 @click.option("--workspace", "-w", default=None)
 @click.option("--verbose", "-v", is_flag=True)
 @click.pass_obj
 def grade(obj, task_path, pads_dir, images_dir, rerun, steps, allow_partial, xxt_class, work_id,
-          plan_path, mode, tags, limit, dry_plan, scope_id, workspace, verbose):
+          plan_path, mode, tags, limit, students, dry_plan, scope_id, workspace, verbose):
     """AI 批阅：transcribe → evaluate → report（阶段3；download/upload 属阶段4）。
 
     任务包 grade.steps 驱动；journal 运行记录写入
@@ -2637,7 +2640,14 @@ def grade(obj, task_path, pads_dir, images_dir, rerun, steps, allow_partial, xxt
                                   tags=tag_list,
                                   tasks_dir=Path(pads_dir).expanduser().resolve() if pads_dir else None)
         if limit and plan.get("students"):
-            plan["students"] = plan["students"][:limit]
+            # D148：`--limit N` = 前 N 名**有作答**的学生（不是名单前 N 名）。
+            # 名单来自 roster，没交作业的人也在里面；按名单切片很可能切到没图的人，
+            # 于是报"名单 1 人，0 人有图"（教师实际踩到）。
+            _all = plan["students"]
+            _with_img = [x for x in _all if x.get("images")]
+            plan["students"] = _with_img[:limit]
+            logger.info(f"[批阅] --limit {limit}：名单 {len(_all)} 人 → "
+                        f"有作答 {len(_with_img)} 人 → 本次 {len(plan['students'])} 人")
         _inputs.save_plan(ws, class_dir, plan)
     if dry_plan or (plan and dry_plan):
         click.echo(_json.dumps(_inputs.plan_summary(plan or {}), ensure_ascii=False, indent=1))
@@ -2654,6 +2664,9 @@ def grade(obj, task_path, pads_dir, images_dir, rerun, steps, allow_partial, xxt
         tp.write_text(json.dumps(task, ensure_ascii=False, indent=1), encoding="utf-8")
 
     kwargs = {"images_dir": images_dir} if images_dir else {}
+    _stu = [x.strip() for x in str(students or "").split(",") if x.strip()]
+    if _stu:
+        kwargs["students"] = _stu
     if allow_partial:
         kwargs["allow_partial"] = True
     if plan:

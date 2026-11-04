@@ -376,7 +376,8 @@ def _persist_transcripts(ws, task: dict, plan: "dict | None", transcripts_dir) -
 
 def run_task(task_path: Path, ws: Path, images_dir: Path | None = None,
              rerun: str | None = None, plan: "dict | None" = None,
-             mode: str = "", class_dir: str = "", allow_partial: bool = False) -> dict:
+             mode: str = "", class_dir: str = "", allow_partial: bool = False,
+             students: "list[str] | None" = None) -> dict:
     """任务包 grade 节驱动的执行入口。
 
     Args:
@@ -385,6 +386,9 @@ def run_task(task_path: Path, ws: Path, images_dir: Path | None = None,
         images_dir: 学生作业图片目录（本地批阅；阶段4 download 自动填充）。
         rerun: 指定单个 step 名 → 只重跑该步（参数 Recovery 自 journal）。
         class_dir: D124：班级目录（`classes/<班级>`）。**优先级最高**。
+        students: D148：**只处理这些学生**（逐生补批）。为空=全部。
+            用途：`--limit` 只批了前 N 名后，可对漏掉的学生单独补批，
+            不必整批重跑（否则已批过的学生要重新转写/评阅，浪费额度）。
 
     D124（关键修复）：PWA 传来的 taskpad 里**没有** `class_dir`（它存在浏览器 localStorage），
     而 `grading_dir()` 需要它。此前 cli 只把它给了 `plan`，没写回 `task` →
@@ -418,6 +422,16 @@ def run_task(task_path: Path, ws: Path, images_dir: Path | None = None,
 
     base = grading_dir(ws, task)
     p = _paths(base)
+    # D148：逐生补批 —— 只保留指定学生（必须在 plan 装配之后、任何 IO 之前）
+    want_students = [str(x).strip() for x in (students or []) if str(x).strip()]
+    if want_students and isinstance(plan, dict):
+        _all = plan.get("students") or []
+        _keep = [s for s in _all if str(s.get("name")) in set(want_students)]
+        _missing = [n for n in want_students
+                    if not any(str(s.get("name")) == n for s in _all)]
+        plan = {**plan, "students": _keep}
+        logger.info(f"[批阅] 只处理指定学生 {len(_keep)} 人"
+                    + (f"；plan 中找不到：{_missing}" if _missing else ""))
     # D127：落包快照 —— 事后可核对"这个批阅目录当时用的是哪些作业纸/题目"
     try:
         _snap = {"packId": str(plan.get("packId") or task.get("pack_id") or "") if plan else

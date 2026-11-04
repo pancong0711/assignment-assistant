@@ -216,8 +216,17 @@ def plan_batch_items(ws, task_path, *, provider_name: str = "", mode: str = "opt
     paths = _paths(base)
     items = []
     students = plan.get("students") or []
+    # D148 修复：`--limit N` 的语义是「前 N 名**有作答**的学生」。
+    # 此前是「名单前 N 名」——名单来自 roster（`inputs.assemble` 按 roster 遍历），
+    # 没交作业的学生也在里面，于是 `--limit 1` 很可能取到一个**没图**的人，
+    # 导致"名单 1 人，0 人有图"直接报错（教师实际踩到）。
+    total_roster = len(students)
     if limit:
-        students = students[:limit]
+        with_img = [s for s in students if s.get("images")]
+        students = with_img[:limit]
+        logger.info(f"[批阅] --limit {limit}：按'有作答'筛选 "
+                    f"（名单 {total_roster} 人 → 有作答 {len(with_img)} 人 "
+                    f"→ 本次 {len(students)} 人）")
     names = {str(s.get("name")) for s in students} if students else set()
     for tf in sorted(paths["transcripts"].glob("[!_]*.json")):
         if names and tf.stem not in names:
