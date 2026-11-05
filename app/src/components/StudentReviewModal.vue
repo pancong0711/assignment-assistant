@@ -109,7 +109,20 @@ onMounted(() => { void renderFormulas() })
 const score = ref(''); const comment = ref(''); const humanMode = ref('none')
 const revising = ref(false); const revDraft = ref('')
 
-watch([idx, () => props.drafts], () => {
+/** D170-T4：保存后**不要**用旧草稿覆盖教师刚输入的值。
+ *
+ *  此前：保存成功 → emit('saved') → 父组件重拉草稿 → props.drafts 变 →
+ *  这个 watch 立刻把 `score` 回填成**旧的** human/ai 值 →
+ *  教师看到"分数没变"，以为没生效而反复点（数据其实已保存）。
+ *
+ *  现在：保存成功后置 `justSaved=true`；下一次 watch 只更新**非编辑态**，
+ *  并且在下一次切换学生（idx 变）时清除标记。
+ */
+let justSaved = false
+watch([idx, () => props.drafts], ([newIdx], [oldIdx]) => {
+  // 切换学生 → 一定要回填（这是正确行为）
+  if (newIdx !== oldIdx) justSaved = false
+  if (justSaved) return          // 刚保存过：保留教师的输入，不覆盖
   const d = props.drafts[cur.value?.key || ''] || {}
   score.value = d?.human?.score !== undefined && d?.human?.score !== null
     ? String(d.human.score) : (d?.ai?.score !== undefined && d?.ai?.score !== null ? String(d.ai.score) : '100')
@@ -141,8 +154,12 @@ async function save() {
     payload.revision = { text: revDraft.value }
   }
   const r = await saveXxtGradeDraft(props.engineAddr, props.token, payload)
-  if (r?.ok) { emit('notify', `已保存 ${c.name} 的审核（模式 ${humanMode.value}）`); emit('saved') }
-  else msg.value = r?.error || '保存失败'
+  if (r?.ok) {
+    justSaved = true             // D170-T4：阻止 watch 覆盖刚输入的值
+    msg.value = `✅ 已保存（模式 ${humanMode.value}${humanMode.value === 'none' ? '，仅用 AI 批语' : ''}）`
+    emit('notify', `已保存 ${c.name} 的审核（模式 ${humanMode.value}）`)
+    emit('saved')
+  } else msg.value = r?.error || '保存失败'
 }
 </script>
 

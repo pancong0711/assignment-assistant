@@ -35,6 +35,10 @@ _KIND_ALIASES = {
 }
 SUPPORTED_KINDS = ("problems", "qa", "copy", "distinguish",
                    "innovation", "translation", "summary")
+# D170-T9：合法评阅模式**集中定义**。
+# 此前校验里硬编码了一个四元组，新增 mode 时必然漏改 →
+# write_rules 会静默失败（教师改了规则却存不进去）。新增模式只改这里一处。
+VALID_MODES = ("errorCount", "missingPoints", "checklist", "lengthBased", "topicMatch")
 # D168-B5：`example`（例题库）**刻意不在** SUPPORTED_KINDS 里——
 # 它只做分析、不批阅。normalize_kind 会把未知回落 problems，
 # 所以这里单独声明"分析专用"，供调用方判断（避免例题被当成待批阅题）。
@@ -84,11 +88,20 @@ DEFAULT_RULES: dict = {
             "missingDiagramDeduct": 5,
             "requireDiagram": True,
         },
+        # D170-T9：抄写题改为「主题一致 + 字数下限」。
+        # 教师原话：
+        #   「转写过程很可能多模态模型没有准确转写全部内容，造成理解歧义，
+        #     抄写题不必要判断抄写内容的逻辑，只要内容跟题目末尾括号中文字主题
+        #     一致就好，关键是要抄写一些内容，字数不宜太少。」
+        # 理由：转录来自照片识别，细节必然失真；据此判"没抄全/抄错"会**冤枉学生**。
+        # 而"主题是否跑偏""字数明显不足"是**鲁棒**的判据。
         "copy": {
-            "mode": "checklist",            # 抄写完整性三缺一
-            "perMissingItemDeduct": 5,
-            "checklist": ["题目", "解题过程", "示意图"],
-            "requireDiagram": "if_question_has",   # 题本身有图才要求抄图
+            "mode": "topicMatch",
+            "minChars": 80,                  # 抄写内容下限（字数太少 = 没真抄）
+            "topicMismatchDeduct": 20,       # 与题目主题不符
+            "shortRatioDeduct": {"0.5": 10, "1.0": 5},   # 不足 50% → −10；不足 100% → −5
+            "requireDiagram": False,         # 不再要求抄图（转写不可靠）
+            "ignoredChecks": ["逻辑", "推导", "公式正确性", "是否抄全题目/过程/图"],
         },
         "distinguish": {
             "mode": "lengthBased",          # 辨析角度与依据（较宽）
@@ -272,9 +285,8 @@ def validate_rules(rules: dict) -> list[str]:
                 elif not (lo <= float(v) <= hi):
                     errs.append(f"types.{kind}.{key}={v} 超出范围 [{lo}, {hi}]")
         mode = cfg.get("mode")
-        if mode and mode not in ("errorCount", "missingPoints", "checklist", "lengthBased"):
-            errs.append(f"types.{kind}.mode={mode} 非法"
-                        "（errorCount/missingPoints/checklist/lengthBased）")
+        if mode and mode not in VALID_MODES:
+            errs.append(f"types.{kind}.mode={mode} 非法（合法值：{'/'.join(VALID_MODES)}）")
         ratio = cfg.get("shortRatioDeduct")
         if ratio is not None:
             if not isinstance(ratio, dict) or not ratio:
@@ -351,8 +363,9 @@ _KIND_FOCUS = {
     "problems": "计算/推导题：逐处找错（物理原理、公式、代入、单位、有效数字），"
                 "指出具体哪一步错。",
     "qa": "问答题：检查**评阅要点是否答全**，以及是否画了题目要求的示意图。",
-    "copy": "抄写题：只检查**抄写完整性**（题干要求抄什么就查什么），"
-            "不评价推导/计算/逻辑；不要因为抄的是课本原文而非例题就判不完整。",
+    "copy": "抄写题：只判断 ① 内容是否与**题目末尾括号里的主题**相符；"
+            "② 字数是否太少。**不评价**逻辑/推导/公式正误/是否抄全三项——"
+            "转录来自照片识别，据此判错会冤枉学生。",
     "distinguish": "辨析题：看概念区分是否清晰、依据是否成立；允许表述简略，"
                    "但要有明确判断与理由。",
     "innovation": "创新题：看思考过程与独立见解；超纲设想只要自洽即可，不因超纲扣分。",
@@ -382,6 +395,17 @@ def rule_summary(ws, kind: str) -> str:
         items = "、".join(t.get("checklist") or [])
         lines.append(f"- 逐项核对：{items}；每缺一项扣 {t.get('perMissingItemDeduct', 5)} 分"
                      "（题目本身没有图时，不要求抄示意图）。")
+    elif mode == "topicMatch":
+        ratio = t.get("shortRatioDeduct") or {}
+        tiers = "；".join(f"不足 {float(r) * 100:.0f}% → −{v}"
+                         for r, v in sorted(ratio.items(), key=lambda x: float(x[0])))
+        lines.append(f"- **只做两件事**：① 抄写内容是否与**题目末尾括号里的主题**相符"
+                     f"（不逐字对照 → 不符 −{t.get('topicMismatchDeduct', 20)}）；"
+                     f"② 字数是否达到 {t.get('minChars', 80)} 字（{tiers}）。")
+        ignored = "、".join(t.get("ignoredChecks") or [])
+        if ignored:
+            lines.append(f"- **不要评价**：{ignored}——转录来自照片识别，细节会失真，"
+                         "据此判错会冤枉学生。")
     elif mode == "lengthBased":
         ratio = t.get("shortRatioDeduct") or {}
         tiers = "；".join(f"不足 {float(r) * 100:.0f}% → −{v}"

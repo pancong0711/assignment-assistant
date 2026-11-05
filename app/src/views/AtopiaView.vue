@@ -18,6 +18,10 @@ import {
 
 const settings = useSettingsStore()
 const tab = ref<'chat' | 'tools' | 'work'>('chat')
+/** D170-T7：最大轮数可配（此前硬编码 6，整理长文档时会被截断）。
+ *  上限 20 防止一次会话花掉过多费用。 */
+const MAX_TURNS_LIMIT = 20
+const maxTurns = ref(6)
 
 /* ---------- D146：provider / 模型选择 ----------
    与 Playground 同源（/llm/config）；空值 = 沿用「评阅段」配置。
@@ -106,6 +110,7 @@ async function send(confirmed = false) {
       confirmedArgs: confirmed ? confirming.value?.args : undefined,
       provider: provider.value || undefined,
       model: model.value || undefined,
+      maxTurns: Math.max(1, Math.min(MAX_TURNS_LIMIT, Number(maxTurns.value) || 6)),
     })
     if (r?.sessionId) sessionId.value = r.sessionId
     if (r?.pendingConfirm) {
@@ -382,6 +387,11 @@ const canSend = computed(() => Boolean(input.value.trim()) && !busy.value)
         <span v-if="provider" class="hint" style="margin:0">
           （该 provider 的请求头/鉴权生效）
         </span>
+        <label class="field" title="一次对话最多允许 AI 调用多少轮工具；轮数越多越贵">
+          最大轮数
+          <input v-model.number="maxTurns" type="number" min="1" :max="MAX_TURNS_LIMIT"
+                 style="width:60px" />
+        </label>
       </div>
 
       <div class="chat">

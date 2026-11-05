@@ -36,10 +36,16 @@ def test_other_urls_also_have_clazzid():
 
 
 def test_dup_check_is_per_class():
-    """重复校验必须**逐班**做（此前只查 targets[0]）。"""
+    """重复校验必须**逐班**做（此前只查 targets[0]）。
+
+    D170-T5：还要**按 classId 自行过滤**——平台列表可能只按 courseid 过滤，
+    直接取 workLibraryId 集合会让"逐班校验"变成假逐班（单班/多班都误报）。
+    """
     src = _src(W.publish_work)
     assert "for cid in targets" in src, "重复校验应遍历所有目标班"
-    assert "published_library_ids(storage, course_id, cid" in src
+    # D170-T5：必须拿到原始条目并自行按班级过滤（而不是只取 id 集合）
+    assert "list_class_works(storage, course_id, cid" in src
+    assert "classId" in src, "必须按 classId 自行过滤（不能信任服务端过滤）"
 
 
 def test_failure_carries_page_hint():

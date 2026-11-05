@@ -25,6 +25,8 @@ async function reloadFromEngine() {
 }
 const settings = useSettingsStore()
 const status = ref('')
+/** D170-T2: reload progress flag (avoid "clicked but nothing happened") */
+const reloadBusy = ref(false)
 const caps = detectCapabilities()
 const writeHint = fsWriteHint()
 
@@ -416,9 +418,10 @@ function addChapter() {
       <p>
         <label class="btn as-label btn-file" for="kb-file">载入教师 xlsx…</label>
         <input type="file" accept=".xlsx" hidden id="kb-file" @change="selectXlsx" />
-        <button class="btn" style="margin-left:8px" @click="reloadFromEngine"
-                title="从引擎重读题库 xlsx（AI 标注知识点后，用它把 related 拉回来）">
-          🔄 从引擎重载题库
+        <button class="btn" style="margin-left:8px" :disabled="reloadBusy"
+                @click="reloadFromEngine"
+                title="从引擎重读**当前题库**的 xlsx（AI 标注知识点后，用它把 related 拉回来）">
+          {{ reloadBusy ? '重载中…' : '🔄 从引擎重载题库' }}
         </button>
         <button class="btn" style="margin-left:8px" @click="loadDemoData">载入示例数据</button>
         <button class="btn" style="margin-left:8px" @click="kb.downloadExample(activeKind)">⬇ 下载示例 xlsx（{{ activeKind }}-example.xlsx）</button>

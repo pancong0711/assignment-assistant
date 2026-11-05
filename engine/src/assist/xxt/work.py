@@ -139,19 +139,44 @@ def publish_work(storage, course_id: str, class_id: str, work_library_id: str, *
             return {"ok": False, "error": f"该作业已在班级 {dup} 发布过；同一作业同一班级不允许重复发布，"
                                            "如需修改请先在学习通创建副本（副本+时间戳）后再发布。"}
         # D165：**逐班**校验（此前只查 targets[0]，多班时漏检其它班）
+        # D170-T5：平台列表接口很可能只按 courseid 过滤 → 必须**自行按 classId 过滤**，
+        # 否则目标班没发过也会被判"已发布"（教师实测单班/多班都误报）。
         already: list[str] = []
+        undetermined: list[str] = []
         for cid in targets:
             try:
-                pub = published_library_ids(storage, course_id, cid, str(cpi)) or []
+                rep = list_class_works(storage, course_id, cid, str(cpi))
             except Exception:  # noqa: BLE001
+                undetermined.append(str(cid))
                 continue
-            if str(work_library_id) in [str(x) for x in pub]:
-                already.append(str(cid))
+            items = [x for x in (rep.get("items") or []) if x.get("workLibraryId")]
+            if not items:
+                continue                      # 该班确实没有已发布作业
+            has_cid = any(str(x.get("classId") or "").strip() for x in items)
+            if not has_cid:
+                # 平台没给班级字段 → **无法逐班判定**，宁可只做"整课程已发布"提示
+                # （不再武断拒绝，避免误伤；D170-T5）
+                hit = any(str(x.get("workLibraryId")) == str(work_library_id) for x in items)
+                if hit:
+                    undetermined.append(str(cid))
+                continue
+            for x in items:
+                xc = str(x.get("classId") or "").strip()
+                if xc and xc != str(cid):
+                    continue                  # 别的班的记录，跳过
+                if str(x.get("workLibraryId")) == str(work_library_id):
+                    already.append(str(cid))
+                    break
         if already:
             return {"ok": False,
                     "error": f"该作业已在班级 {already} 发布过（平台侧）；"
                              f"同一作业同一班级不允许重复发布。"
                              f"如需在其他班发布，请确认目标班未被包含在 {already} 中。"}
+        if undetermined:
+            # 无法逐班判定时**不拦**，但把情况带出去（便于教师核对）
+            logger.warning(
+                f"[发布] 班级 {undetermined} 的已发布列表缺少班级字段，无法逐班判定；"
+                f"将按平台实际结果决定成败（若误报重复，请查看 pageHint）")
     from playwright.sync_api import sync_playwright
     from .session import check_session, _launch
     storage = Path(storage)
@@ -968,7 +993,26 @@ def list_class_works(storage, course_id: str, class_id: str, cpi: str = "0") -> 
     return {"ok": True, "courseId": str(course_id), "classId": str(class_id), "cpi": str(cpi), "items": items}
 
 
-def published_library_ids(storage, course_id: str, class_id: str, cpi: str = "0") -> set[str]:
+def published_library_ids(storage, course_id: str, class_id: str, cpi: str = "0",
+                          *, strict: bool = True) -> set[str]:
+    """某**班级**已发布的作业库 id 集合。
+
+    D170-T5 关键修复：平台列表页很可能**只按 courseid 过滤**（class_id 参数不生效），
+    返回的是**整个课程**的已发布作业。此前直接取 `workLibraryId` 集合 →
+    "逐班校验"变成**假逐班**：每个班查到的都是同一份全课程列表 →
+    目标班从未发布过也会被判"已发布"（教师实测：单班/多班都误报）。
+
+    现在按每条记录的 `classId`（页面 viewWork 的第 3 个参数）**自行过滤**：
+    - `strict=True` 且记录带 classId → 只保留属于该班的记录；
+    - `strict=False` 或记录**没有** classId → 全部保留（无法逐班判定，调用方须说明）。
+    """
     rep = list_class_works(storage, course_id, class_id, cpi)
-    return {str(x.get("workLibraryId") or "") for x in (rep.get("items") or []) if x.get("workLibraryId")}
+    items = [x for x in (rep.get("items") or []) if x.get("workLibraryId")]
+    if strict:
+        want = str(class_id).strip()
+        with_cid = [x for x in items if str(x.get("classId") or "").strip()]
+        if with_cid and want:
+            items = [x for x in items
+                     if str(x.get("classId") or "").strip() in ("", want)]
+    return {str(x.get("workLibraryId")) for x in items}
 

@@ -102,23 +102,25 @@ try:
         out['enginePerMissingPoint'] = R.type_rules(ws, 'qa')['perMissingPointDeduct']
         out['summaryUpdated'] = '扣 8 分' in pg.inner_text('body')
 
-        # ---- 扩展项改名：qa 无 checklist，切 copy 改检查项 ----
-        pg.click('.kind-tabs button:has-text("copy")')
+        # ---- 扩展项改名：qa/problems 无 checklist ----
+        # D170-T9：copy 已改为 topicMatch（不再有"抄全三项"），
+        # 现在**唯一**保留 checklist 的类型是 summary → 用它测该扩展项。
+        pg.click('.kind-tabs button:has-text("summary")')
         pg.wait_for_timeout(150)
         chk = pg.locator('.chk-input')
         out['hasChecklistInput'] = chk.count() == 1
-        chk.fill('题目，解题过程，受力图')
+        chk.fill('知识点与概念，重要公式及推导，受力图')
         chk.dispatch_event('change')
         pg.click('button:has-text("保存")')
         pg.wait_for_timeout(800)
-        out['engineChecklist'] = R.type_rules(ws, 'copy')['checklist']
+        out['engineChecklist'] = R.type_rules(ws, 'summary')['checklist']
 
         # ---- 恢复默认（有 confirm） ----
         pg.once('dialog', lambda d: d.accept())
         pg.click('button:has-text("恢复默认")')
         pg.wait_for_timeout(1200)
         out['afterResetPerMissingPoint'] = R.type_rules(ws, 'qa')['perMissingPointDeduct']
-        out['afterResetChecklist'] = R.type_rules(ws, 'copy')['checklist']
+        out['afterResetChecklist'] = R.type_rules(ws, 'summary')['checklist']
         out['pageErrors'] = errs
         b.close()
 finally:
@@ -133,9 +135,9 @@ assert out['engineUnchangedAfterBad'], '越界数值竟然写进了引擎'
 assert out['enginePerMissingPoint'] == 8, f'保存未生效：{out}'
 assert out['summaryUpdated'], '只读摘要未随规则同步（改了数值但提示词没变）'
 assert out['hasChecklistInput'], 'copy 题型缺少「检查项名称」可改扩展'
-assert out['engineChecklist'] == ['题目', '解题过程', '受力图'], f'检查项改名未落盘：{out}'
+assert out['engineChecklist'] == ['知识点与概念', '重要公式及推导', '受力图'], f'检查项改名未落盘：{out}'
 assert out['afterResetPerMissingPoint'] == 5 and \
-       out['afterResetChecklist'] == ['题目', '解题过程', '示意图'], f'恢复默认失败：{out}'
+       out['afterResetChecklist'] == ['知识点与概念', '重要公式及推导', '示意图'], f'恢复默认失败：{out}'
 print('OK d130-rules-browser：真实组件+真实引擎 —— 只读摘要/越界拦截/保存落盘/摘要同步/'
       '扩展项改名/恢复默认 全部通过')
 PY

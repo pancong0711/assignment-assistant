@@ -1812,10 +1812,14 @@ class Handler(BaseHTTPRequestHandler):
                 rep = _mx.extract_chap(Path(self.ws).resolve(), chap,
                                        force=bool(payload.get("force")))
             except _mx.MaterialsError as exc:
-                self._json({"ok": False, "error": str(exc)}, 400)
+                # D170-T6：这是**业务状态**（没有原件/类型不支持），不是请求错误 →
+                # 返回 200 + ok:false，让前端能展示具体原因（此前 400 只显示状态码）
+                self._json({"ok": False, "error": str(exc), "chap": chap,
+                            "errors": [{"file": "", "error": str(exc)}]})
                 return
             rep["chap"] = chap
-            self._json(rep, 200 if rep.get("ok") else 400)
+            # 单个文件失败也属业务结果：200 + ok:false + errors[]（前端逐条展示）
+            self._json(rep)
             return
         if u.path == "/materials/suggest":
             # D137：AI 抽取知识点建议（**会花模型钱**，只写 .ai.json，不生效）

@@ -297,6 +297,19 @@ async function freezeSnapshotIfChosen() {
   } finally { snapshotBusy.value = false }
 }
 
+/** D170-T8：选择了作业包就**立即**冻结快照（不等"写回"）。
+ *  快照是"当时的名单"，与是否写回 workspace 无关；先绑后写更符合直觉。 */
+async function onSnapshotPackChange() {
+  snapshotMsg.value = ''
+  if (!snapshotPackId.value) return
+  await freezeSnapshotIfChosen()
+  // 关联后即可用该包的作业纸预览整班（不再要求回作业纸设计页载入）
+  classPreviewPackOverride.value = snapshotPackId.value
+}
+
+/** 整班预览使用的作业包：优先"关联的包"，否则当前包（D170-T8）。 */
+const classPreviewPackOverride = ref('')
+
 function recompute() {
   if (!roster.students.length) {
     status.value = '请先导入/手动建立名单。'
@@ -436,7 +449,8 @@ const packStore = usePackStore()
  *  会串到**别的作业**的题目。现在只取当前包内的作业纸。
  *  没有选中包时返回空并给出明确提示（不再静默回退全库）。
  */
-const classPackPads = computed(() => packStore.packPadJsons(pad.savedJsons()))
+const classPackPads = computed(() =>
+  packStore.packPadJsons(pad.savedJsons(), classPreviewPackOverride.value || ''))
 
 /** 整班预览的取题来源（当前包）；无包 → 空数组。 */
 function classPadJsons(): Array<{ id: string; json: string }> {
@@ -512,14 +526,15 @@ function previewWholeClass() {
   if (!roster.students.length) { classPreviewMsg.value = '名单为空：先导入/生成带 tag 名单。'; return }
   if (!pad.saved.length) { classPreviewMsg.value = '作业纸清单为空：到「作业纸内容」页保存作业纸后再预览。'; return }
   // D127：整班预览**只出当前作业包内的作业纸**（不再按 tag 从全库反推）
-  if (!packStore.currentId) {
+  const previewPack = classPreviewPackOverride.value || packStore.currentId || ''
+  if (!previewPack) {
     classPreviewMsg.value = '未选择作业包：请先到「作业纸设计」页选择当前作业包（整班预览只出该包内的作业纸，'
       + '避免同一 tag 串到别的批次）。'
     return
   }
   const pk = classPackPads.value
   if (!pk.pads.length) {
-    classPreviewMsg.value = `当前作业包「${packStore.currentId}」内没有可用的作业纸`
+    classPreviewMsg.value = `作业包「${previewPack}」内没有可用的作业纸`
       + (pk.dangling.length ? `（包内引用的 ${pk.dangling.join('、')} 找不到，可能已删除）` : '')
       + '：请先在「作业纸设计」页把作业纸加入该包。'
     return
@@ -1108,20 +1123,22 @@ const nonTranslationRatios = computed(() => roster.ratios.filter((g) => g.tag !=
         </label>
         <span class="hint">其他档合计 {{ (roster.ratioSum * 100).toFixed(1) }}% + translation {{ Math.round(translationRatioPct) }}%（translation 随机散布、与档位切分正交）</span>
       </p>
-      <p>
+      <!-- D170-T8：三个控件同一行，顺序 = 重算 → 关联 → 写回（先算、再绑定、最后落盘） -->
+      <p style="display:flex; gap:8px; align-items:center; flex-wrap:wrap">
         <button class="btn primary" @click="recompute">⚙ 重算综合得分并自动切分打 tag（调比例后必点）</button>
-        <button class="btn" style="margin-left:8px" :disabled="exportDisabled" @click="saveToWorkspace" v-if="dirHandle">写回 workspace roster/</button>
-      </p>
-      <p>
-        <label class="field" title="D168：选中作业包后，本次 tag 结果会冻结成该包的「学生→tag」快照，批阅与统计都以快照为准（保证历史可复现）">
-          本次结果关联到作业包
-          <select v-model="snapshotPackId" style="min-width:180px">
+        <label class="field" title="D168：选中作业包后立即把本次 tag 结果冻结成该包的「学生→tag」快照；批阅与统计都以快照为准（保证历史可复现）">
+          关联作业包
+          <select v-model="snapshotPackId" style="min-width:180px"
+                  @change="onSnapshotPackChange">
             <option value="">（不关联，只更新班级名单）</option>
             <option v-for="p in snapshotPackOptions" :key="p.id" :value="p.id">{{ p.name }}</option>
           </select>
         </label>
-        <span v-if="snapshotBusy" class="hint" style="margin:0">正在冻结快照…</span>
-        <span v-if="snapshotMsg" class="hint" style="margin:0">{{ snapshotMsg }}</span>
+        <button class="btn" :disabled="exportDisabled" @click="saveToWorkspace" v-if="dirHandle">💾 写回 workspace roster/</button>
+      </p>
+      <p v-if="snapshotMsg || snapshotBusy" class="hint" style="margin:0 0 4px">
+        <span v-if="snapshotBusy">正在冻结快照…</span>
+        <span v-else>{{ snapshotMsg }}</span>
       </p>
       <p class="hint" v-if="dirHandle && writeHint">{{ writeHint }}</p>
       <p class="hint">{{ summaryText }}</p>

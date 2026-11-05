@@ -324,11 +324,27 @@ export const useKbStore = defineStore('kb', {
      *  引擎返回结构：`{kind: {chap: [row...]}}`，这里转换成内部 `books[]`。
      *  返回导入的题目总数。
      */
-    adoptEngineKb(raw: Record<string, Record<string, any[]>>): number {
-      const kinds = Object.keys(raw || {})
+    adoptEngineKb(
+      raw: Record<string, Record<string, any[]>>,
+      opts: { onlyKind?: string } = {},
+    ): number {
+      /** D170-T2：**只替换指定 kind**（教师通常只看一个题库）。
+       *
+       *  此前整体替换 `this.books` 并同步 `persist()`：题库几千行时
+       *  Vue 响应式重建整棵树 + localStorage 同步写 → **主线程阻塞数十秒**，
+       *  教师看到的就是"点重载后页面卡死"，并误以为知识点没写进去。
+       *
+       *  现在：
+       *  - `onlyKind` 有值 → 只替换该 kind，其它 kind 原样保留（默认用法）；
+       *  - 无值 → 保留旧行为（全部替换），但走**同一套**轻量构造；
+       *  - `persist()` 交给调用方**防抖**，不在这里同步阻塞。
+       */
+      const allKinds = Object.keys(raw || {})
+      const kinds = opts.onlyKind
+        ? allKinds.filter((k) => k === opts.onlyKind)
+        : allKinds
       let total = 0
-      const next: KbBook[] = []
-      for (const kind of kinds) {
+      const build = (kind: string): KbBook => {
         const chapters = Object.entries(raw[kind] || {}).map(([name, rows]) => {
           total += (rows || []).length
           return {
@@ -345,12 +361,18 @@ export const useKbStore = defineStore('kb', {
             })),
           }
         })
-        next.push({ kind: kind as KbKind, chapters })
+        return { kind: kind as KbKind, chapters }
       }
-      this.books = next as unknown as typeof this.books
+      // 注意：运行时 `books` 是 `Record<kind, KbBook>`（见 allBooks getter），
+      // 尽管 state 声明写成了 `KbBook[]`。
+      const bag = this.books as unknown as Record<string, KbBook>
+      if (opts.onlyKind) {
+        bag[opts.onlyKind] = build(opts.onlyKind)
+      } else {
+        for (const k of kinds) bag[k] = build(k)
+      }
       this.savedAt = new Date().toISOString()
       this.dirty = false
-      this.persist()
       return total
     },
     /** D100-T6：从引擎拉全库生效答案索引（幂等；引擎离线 → 清空索引并回落 xlsx 列）。 */
@@ -434,6 +456,17 @@ export const useKbStore = defineStore('kb', {
       } catch {
         // 题库过大超出 localStorage 配额时静默跳过（内存中仍可编辑/导出）
       }
+    },
+    /** D170-T2：**防抖持久化** —— 大题库同步写 localStorage 会卡住主线程。
+     *  重载/批量导入后用这个；编辑类操作仍用 persist()（数据量小、要求即时）。 */
+    persistDebounced(delayMs = 400) {
+      type T = ReturnType<typeof setTimeout>
+      const g = globalThis as unknown as { __kbPersistTimer?: T }
+      if (g.__kbPersistTimer) clearTimeout(g.__kbPersistTimer)
+      g.__kbPersistTimer = setTimeout(() => {
+        g.__kbPersistTimer = undefined
+        try { this.persist() } catch { /* 配额/隐私模式：忽略 */ }
+      }, delayMs)
     },
     restorePersisted(): boolean {
       const raw = localStorage.getItem(LS_KEY)

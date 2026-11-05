@@ -54,7 +54,18 @@ async function doExtract() {
   stepMsg.value = ''
   try {
     const r = await extractMaterials(settings.engineUrl, settings.engineToken, active.value)
-    stepMsg.value = r?.ok ? '✅ 已抽取（可继续「AI 建议知识点」）' : `❌ ${r?.error || '抽取失败'}`
+    // D170-T6：把逐文件原因展示出来（此前只看到"HTTP 400"，无从下手）
+    const errs = (r as any)?.errors as Array<{ file?: string; error?: string }> | undefined
+    if (r?.ok) {
+      stepMsg.value = '✅ 已抽取（可继续「AI 建议知识点」）'
+    } else {
+      const detail = (errs || [])
+        .map((e) => `${e.file || '（整体）'}：${e.error || ''}`)
+        .filter(Boolean).join('；')
+      stepMsg.value = `❌ ${r?.error || '抽取失败'}`
+        + (detail ? `\n明细：${detail}` : '')
+        + '\n常见原因：该章节 `_source/` 里还没有原件；或文件类型不支持（支持 pptx/docx/xlsx/pdf/图片/md/txt）。'
+    }
     await refresh()
   } catch (e) {
     stepMsg.value = `抽取失败：${String((e as Error).message || e)}`

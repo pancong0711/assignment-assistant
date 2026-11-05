@@ -310,6 +310,19 @@ async function freezeSnapshotIfChosen() {
   } finally { snapshotBusy.value = false }
 }
 
+/** D170-T8：选择了作业包就**立即**冻结快照（不等"写回"）。
+ *  快照是"当时的名单"，与是否写回 workspace 无关；先绑后写更符合直觉。 */
+async function onSnapshotPackChange() {
+  snapshotMsg.value = ''
+  if (!snapshotPackId.value) return
+  await freezeSnapshotIfChosen()
+  // 关联后即可用该包的作业纸预览整班（不再要求回作业纸设计页载入）
+  classPreviewPackOverride.value = snapshotPackId.value
+}
+
+/** 整班预览使用的作业包：优先"关联的包"，否则当前包（D170-T8）。 */
+const classPreviewPackOverride = ref('')
+
 function recompute() {
   if (!roster.students.length) {
     status.value = '请先导入/手动建立名单。'
@@ -442,7 +455,8 @@ const packStore = usePackStore()
  *  会串到**别的作业**的题目。现在只取当前包内的作业纸。
  *  没有选中包时返回空并给出明确提示（不再静默回退全库）。
  */
-const classPackPads = computed(() => packStore.packPadJsons(pad.savedJsons()))
+const classPackPads = computed(() =>
+  packStore.packPadJsons(pad.savedJsons(), classPreviewPackOverride.value || ''))
 
 /** 整班预览的取题来源（当前包）；无包 → 空数组。 */
 function classPadJsons(): Array<{ id: string; json: string }> {
@@ -518,14 +532,15 @@ function previewWholeClass() {
   if (!roster.students.length) { classPreviewMsg.value = '名单为空：先导入/生成带 tag 名单。'; return }
   if (!pad.saved.length) { classPreviewMsg.value = '作业纸清单为空：到「作业纸内容」页保存作业纸后再预览。'; return }
   // D127：整班预览**只出当前作业包内的作业纸**（不再按 tag 从全库反推）
-  if (!packStore.currentId) {
+  const previewPack = classPreviewPackOverride.value || packStore.currentId || ''
+  if (!previewPack) {
     classPreviewMsg.value = '未选择作业包：请先到「作业纸设计」页选择当前作业包（整班预览只出该包内的作业纸，'
       + '避免同一 tag 串到别的批次）。'
     return
   }
   const pk = classPackPads.value
   if (!pk.pads.length) {
-    classPreviewMsg.value = `当前作业包「${packStore.currentId}」内没有可用的作业纸`
+    classPreviewMsg.value = `作业包「${previewPack}」内没有可用的作业纸`
       + (pk.dangling.length ? `（包内引用的 ${pk.dangling.join('、')} 找不到，可能已删除）` : '')
       + '：请先在「作业纸设计」页把作业纸加入该包。'
     return
@@ -805,7 +820,7 @@ const nonTranslationRatios = computed(() => roster.ratios.filter((g) => g.tag !=
  *  M-A S1 单入口，docs/05-D25）；本页保留指向链接 + VC-3「预览整班」
  *  （S2b：纯前端 HTML overlay，不依赖引擎；编排绑定本身仍单入口在内容页）。 */
 
-const __returned__ = { roster, pad, kbStore, settingsStore, caps, status, activeClassDir, gradingPicker, gradingPacks, openGradingPicker, pickGradingPack, presetFamily, presetDesc, presetIsFixed, pickXlsx, rosterPreview, rosterPreviewFile, rosterFailNotice, clearAllAction, importRoster, wideFlash, renameCurrent, renameCurrentTerm, loadClassAction, deleteClassAction, rosterTagCountsOf, createClassAction, addSource, reparseSource, colToggleMsg, sourceRowPreview, sourceRowPreviewFile, sheetChoices, toggleSheetPicker, switchSourceSheet, previewSourceRow, snapshotPackId, snapshotMsg, snapshotBusy, snapshotPackOptions, freezeSnapshotIfChosen, recompute, overviewMsg, exportOverviewXlsx, scoreSources, wideHeaders, orderedWideRows, wideRows, checkedSummary, wideHint, tagBySingleColumn, toggleColumnInclude, setColumnWeight, showClassPreview, classPreviewHtml, classPreviewMsg, classPreviewManifest, previewingClass, classIncludeAnswers, classIncludeWatermark, classIncludePageText, classPreviewFallbackId, classPreviewUnmatched, packStore, classPackPads, classPadJsons, buildClassInputs, classOrderResolver, buildClassPreviewHtml, previewWholeClass, currentPackPadsBound, makeClassSidecar, emitClassSidecar, printClassPreview, downloadClassPreviewHtml, missingTagWarn, pageCount, warnRatio, warnRatioOff, overviewSort, labelSort, compositeScores, sortedIdx, setTag, labelRows, batchNames, batchTag, batchCreateIfAbsent, batchMsg, translationRatioPct, setTranslationRatio, applyBatchTag, setPunish, downloadRosterJsonAndXlsx, downloadTaskPackage, dirHandle, writeHint, saveToWorkspace, exportDisabled, summaryText, fixedSourceCount, nonTranslationRatios, get STUDENT_TAGS() { return STUDENT_TAGS }, get STUDENT_TAG_LABELS() { return STUDENT_TAG_LABELS }, get SCORE_FAMILY_PRESETS() { return SCORE_FAMILY_PRESETS }, get isFixedFamily() { return isFixedFamily }, get scoreFamilyDesc() { return scoreFamilyDesc }, PreviewTableCard }
+const __returned__ = { roster, pad, kbStore, settingsStore, caps, status, activeClassDir, gradingPicker, gradingPacks, openGradingPicker, pickGradingPack, presetFamily, presetDesc, presetIsFixed, pickXlsx, rosterPreview, rosterPreviewFile, rosterFailNotice, clearAllAction, importRoster, wideFlash, renameCurrent, renameCurrentTerm, loadClassAction, deleteClassAction, rosterTagCountsOf, createClassAction, addSource, reparseSource, colToggleMsg, sourceRowPreview, sourceRowPreviewFile, sheetChoices, toggleSheetPicker, switchSourceSheet, previewSourceRow, snapshotPackId, snapshotMsg, snapshotBusy, snapshotPackOptions, freezeSnapshotIfChosen, onSnapshotPackChange, classPreviewPackOverride, recompute, overviewMsg, exportOverviewXlsx, scoreSources, wideHeaders, orderedWideRows, wideRows, checkedSummary, wideHint, tagBySingleColumn, toggleColumnInclude, setColumnWeight, showClassPreview, classPreviewHtml, classPreviewMsg, classPreviewManifest, previewingClass, classIncludeAnswers, classIncludeWatermark, classIncludePageText, classPreviewFallbackId, classPreviewUnmatched, packStore, classPackPads, classPadJsons, buildClassInputs, classOrderResolver, buildClassPreviewHtml, previewWholeClass, currentPackPadsBound, makeClassSidecar, emitClassSidecar, printClassPreview, downloadClassPreviewHtml, missingTagWarn, pageCount, warnRatio, warnRatioOff, overviewSort, labelSort, compositeScores, sortedIdx, setTag, labelRows, batchNames, batchTag, batchCreateIfAbsent, batchMsg, translationRatioPct, setTranslationRatio, applyBatchTag, setPunish, downloadRosterJsonAndXlsx, downloadTaskPackage, dirHandle, writeHint, saveToWorkspace, exportDisabled, summaryText, fixedSourceCount, nonTranslationRatios, get STUDENT_TAGS() { return STUDENT_TAGS }, get STUDENT_TAG_LABELS() { return STUDENT_TAG_LABELS }, get SCORE_FAMILY_PRESETS() { return SCORE_FAMILY_PRESETS }, get isFixedFamily() { return isFixedFamily }, get scoreFamilyDesc() { return scoreFamilyDesc }, PreviewTableCard }
 Object.defineProperty(__returned__, '__isScriptSetup', { enumerable: false, value: true })
 return __returned__
 }
@@ -988,169 +1003,167 @@ const _hoisted_83 = {
 }
 const _hoisted_84 = ["value"]
 const _hoisted_85 = { class: "hint" }
-const _hoisted_86 = ["disabled"]
+const _hoisted_86 = { style: {"display":"flex","gap":"8px","align-items":"center","flex-wrap":"wrap"} }
 const _hoisted_87 = {
   class: "field",
-  title: "D168：选中作业包后，本次 tag 结果会冻结成该包的「学生→tag」快照，批阅与统计都以快照为准（保证历史可复现）"
+  title: "D168：选中作业包后立即把本次 tag 结果冻结成该包的「学生→tag」快照；批阅与统计都以快照为准（保证历史可复现）"
 }
 const _hoisted_88 = ["value"]
-const _hoisted_89 = {
-  key: 0,
-  class: "hint",
-  style: {"margin":"0"}
-}
+const _hoisted_89 = ["disabled"]
 const _hoisted_90 = {
-  key: 1,
-  class: "hint",
-  style: {"margin":"0"}
-}
-const _hoisted_91 = {
   key: 0,
+  class: "hint",
+  style: {"margin":"0 0 4px"}
+}
+const _hoisted_91 = { key: 0 }
+const _hoisted_92 = { key: 1 }
+const _hoisted_93 = {
+  key: 1,
   class: "hint"
 }
-const _hoisted_92 = { class: "hint" }
-const _hoisted_93 = {
+const _hoisted_94 = { class: "hint" }
+const _hoisted_95 = {
   class: "card",
   id: "tag-preview"
 }
-const _hoisted_94 = { style: {"display":"flex","gap":"6px","align-items":"center","flex-wrap":"wrap","margin":"0 0 6px"} }
-const _hoisted_95 = {
+const _hoisted_96 = { style: {"display":"flex","gap":"6px","align-items":"center","flex-wrap":"wrap","margin":"0 0 6px"} }
+const _hoisted_97 = {
   key: 0,
   class: "hint"
 }
-const _hoisted_96 = { class: "hint" }
-const _hoisted_97 = {
+const _hoisted_98 = { class: "hint" }
+const _hoisted_99 = {
   key: 1,
   class: "hint"
 }
-const _hoisted_98 = { class: "field" }
-const _hoisted_99 = { class: "field" }
-const _hoisted_100 = ["value"]
-const _hoisted_101 = {
+const _hoisted_100 = { class: "field" }
+const _hoisted_101 = { class: "field" }
+const _hoisted_102 = ["value"]
+const _hoisted_103 = {
   class: "field",
   style: {"white-space":"nowrap"}
 }
-const _hoisted_102 = ["disabled"]
-const _hoisted_103 = {
+const _hoisted_104 = ["disabled"]
+const _hoisted_105 = {
   key: 0,
   class: "hint"
 }
-const _hoisted_104 = {
+const _hoisted_106 = {
   key: 2,
   open: "",
   style: {"margin-top":"6px"}
 }
-const _hoisted_105 = { style: {"cursor":"pointer","font-size":"13px"} }
-const _hoisted_106 = { class: "table-scroll h360" }
-const _hoisted_107 = {
+const _hoisted_107 = { style: {"cursor":"pointer","font-size":"13px"} }
+const _hoisted_108 = { class: "table-scroll h360" }
+const _hoisted_109 = {
   class: "grid",
   style: {"font-size":"12px"}
 }
-const _hoisted_108 = ["value", "onChange"]
-const _hoisted_109 = ["value"]
-const _hoisted_110 = { style: {"text-align":"center"} }
-const _hoisted_111 = ["checked", "onChange"]
-const _hoisted_112 = {
+const _hoisted_110 = ["value", "onChange"]
+const _hoisted_111 = ["value"]
+const _hoisted_112 = { style: {"text-align":"center"} }
+const _hoisted_113 = ["checked", "onChange"]
+const _hoisted_114 = {
   key: 3,
   class: "notice"
 }
-const _hoisted_113 = {
+const _hoisted_115 = {
   key: 4,
   class: "notice info",
   style: {"margin-top":"6px"}
 }
-const _hoisted_114 = {
+const _hoisted_116 = {
   class: "card",
   id: "output-module"
 }
-const _hoisted_115 = ["disabled"]
-const _hoisted_116 = ["disabled"]
-const _hoisted_117 = {
+const _hoisted_117 = ["disabled"]
+const _hoisted_118 = ["disabled"]
+const _hoisted_119 = {
   class: "hint",
   style: { marginTop: '4px' }
 }
-const _hoisted_118 = { key: 0 }
-const _hoisted_119 = {
+const _hoisted_120 = { key: 0 }
+const _hoisted_121 = {
   key: 0,
   class: "hint"
 }
-const _hoisted_120 = { class: "card" }
-const _hoisted_121 = {
+const _hoisted_122 = { class: "card" }
+const _hoisted_123 = {
   class: "hint",
   style: {"margin":"4px 0"}
 }
-const _hoisted_122 = {
+const _hoisted_124 = {
   class: "field",
   title: "D57-1：不勾=学生版（预览/打印/下载均不含『参考答案：』行）；勾选=教师版"
 }
-const _hoisted_123 = {
+const _hoisted_125 = {
   class: "field",
   title: "D57-1：整班输出的水印图层开关（默认勾选=现状）"
 }
-const _hoisted_124 = {
+const _hoisted_126 = {
   class: "field",
   title: "D57-1：整班输出的页码大字开关（默认勾选=现状）"
 }
-const _hoisted_125 = { class: "hint" }
-const _hoisted_126 = ["disabled"]
-const _hoisted_127 = ["disabled"]
+const _hoisted_127 = { class: "hint" }
 const _hoisted_128 = ["disabled"]
-const _hoisted_129 = {
-  key: 0,
-  class: "hint"
-}
-const _hoisted_130 = {
-  key: 1,
-  class: "hint"
-}
+const _hoisted_129 = ["disabled"]
+const _hoisted_130 = ["disabled"]
 const _hoisted_131 = {
   key: 0,
   class: "hint"
 }
-const _hoisted_132 = ["value"]
+const _hoisted_132 = {
+  key: 1,
+  class: "hint"
+}
 const _hoisted_133 = {
+  key: 0,
+  class: "hint"
+}
+const _hoisted_134 = ["value"]
+const _hoisted_135 = {
   key: 1,
   class: "hint notice warning"
 }
-const _hoisted_134 = {
+const _hoisted_136 = {
   key: 2,
   class: "hint"
 }
-const _hoisted_135 = {
+const _hoisted_137 = {
   key: 3,
   open: "",
   style: {"margin":"6px 0"}
 }
-const _hoisted_136 = {
+const _hoisted_138 = {
   class: "hint",
   style: {"white-space":"pre-wrap","font-size":"11px","background":"var(--c-bg,#f7f7f9)","padding":"8px","border-radius":"6px"}
 }
-const _hoisted_137 = ["srcdoc"]
-const _hoisted_138 = {
+const _hoisted_139 = ["srcdoc"]
+const _hoisted_140 = {
   class: "card",
   id: "class-list"
 }
-const _hoisted_139 = {
+const _hoisted_141 = {
   key: 0,
   class: "grid",
   style: {"font-size":"12px"}
 }
-const _hoisted_140 = {
+const _hoisted_142 = {
   key: 0,
   class: "hint"
 }
-const _hoisted_141 = { style: {"text-align":"center"} }
-const _hoisted_142 = { style: {"font-size":"11px"} }
 const _hoisted_143 = { style: {"text-align":"center"} }
-const _hoisted_144 = { style: {"font-size":"11px","max-width":"180px","word-break":"break-all"} }
-const _hoisted_145 = { style: {"white-space":"nowrap"} }
-const _hoisted_146 = ["disabled", "onClick"]
-const _hoisted_147 = ["disabled", "onClick"]
-const _hoisted_148 = {
+const _hoisted_144 = { style: {"font-size":"11px"} }
+const _hoisted_145 = { style: {"text-align":"center"} }
+const _hoisted_146 = { style: {"font-size":"11px","max-width":"180px","word-break":"break-all"} }
+const _hoisted_147 = { style: {"white-space":"nowrap"} }
+const _hoisted_148 = ["disabled", "onClick"]
+const _hoisted_149 = ["disabled", "onClick"]
+const _hoisted_150 = {
   key: 1,
   class: "hint"
 }
-const _hoisted_149 = {
+const _hoisted_151 = {
   key: 2,
   class: "hint"
 }
@@ -1807,27 +1820,18 @@ export function render(_ctx, _cache, $props, $setup, $data, $options) {
         ]),
         _createElementVNode("span", _hoisted_85, "其他档合计 " + _toDisplayString(($setup.roster.ratioSum * 100).toFixed(1)) + "% + translation " + _toDisplayString(Math.round($setup.translationRatioPct)) + "%（translation 随机散布、与档位切分正交）", 1 /* TEXT */)
       ]),
-      _createElementVNode("p", null, [
+      _createCommentVNode(" D170-T8：三个控件同一行，顺序 = 重算 → 关联 → 写回（先算、再绑定、最后落盘） "),
+      _createElementVNode("p", _hoisted_86, [
         _createElementVNode("button", {
           class: "btn primary",
           onClick: $setup.recompute
         }, "⚙ 重算综合得分并自动切分打 tag（调比例后必点）"),
-        ($setup.dirHandle)
-          ? (_openBlock(), _createElementBlock("button", {
-              key: 0,
-              class: "btn",
-              style: {"margin-left":"8px"},
-              disabled: $setup.exportDisabled,
-              onClick: $setup.saveToWorkspace
-            }, "写回 workspace roster/", 8 /* PROPS */, _hoisted_86))
-          : _createCommentVNode("v-if", true)
-      ]),
-      _createElementVNode("p", null, [
         _createElementVNode("label", _hoisted_87, [
-          _cache[64] || (_cache[64] = _createTextVNode(" 本次结果关联到作业包 ", -1 /* CACHED */)),
+          _cache[64] || (_cache[64] = _createTextVNode(" 关联作业包 ", -1 /* CACHED */)),
           _withDirectives(_createElementVNode("select", {
             "onUpdate:modelValue": _cache[17] || (_cache[17] = $event => (($setup.snapshotPackId) = $event)),
-            style: {"min-width":"180px"}
+            style: {"min-width":"180px"},
+            onChange: $setup.onSnapshotPackChange
           }, [
             _cache[63] || (_cache[63] = _createElementVNode("option", { value: "" }, "（不关联，只更新班级名单）", -1 /* CACHED */)),
             (_openBlock(true), _createElementBlock(_Fragment, null, _renderList($setup.snapshotPackOptions, (p) => {
@@ -1836,21 +1840,30 @@ export function render(_ctx, _cache, $props, $setup, $data, $options) {
                 value: p.id
               }, _toDisplayString(p.name), 9 /* TEXT, PROPS */, _hoisted_88))
             }), 128 /* KEYED_FRAGMENT */))
-          ], 512 /* NEED_PATCH */), [
+          ], 544 /* NEED_HYDRATION, NEED_PATCH */), [
             [_vModelSelect, $setup.snapshotPackId]
           ])
         ]),
-        ($setup.snapshotBusy)
-          ? (_openBlock(), _createElementBlock("span", _hoisted_89, "正在冻结快照…"))
-          : _createCommentVNode("v-if", true),
-        ($setup.snapshotMsg)
-          ? (_openBlock(), _createElementBlock("span", _hoisted_90, _toDisplayString($setup.snapshotMsg), 1 /* TEXT */))
+        ($setup.dirHandle)
+          ? (_openBlock(), _createElementBlock("button", {
+              key: 0,
+              class: "btn",
+              disabled: $setup.exportDisabled,
+              onClick: $setup.saveToWorkspace
+            }, "💾 写回 workspace roster/", 8 /* PROPS */, _hoisted_89))
           : _createCommentVNode("v-if", true)
       ]),
-      ($setup.dirHandle && $setup.writeHint)
-        ? (_openBlock(), _createElementBlock("p", _hoisted_91, _toDisplayString($setup.writeHint), 1 /* TEXT */))
+      ($setup.snapshotMsg || $setup.snapshotBusy)
+        ? (_openBlock(), _createElementBlock("p", _hoisted_90, [
+            ($setup.snapshotBusy)
+              ? (_openBlock(), _createElementBlock("span", _hoisted_91, "正在冻结快照…"))
+              : (_openBlock(), _createElementBlock("span", _hoisted_92, _toDisplayString($setup.snapshotMsg), 1 /* TEXT */))
+          ]))
         : _createCommentVNode("v-if", true),
-      _createElementVNode("p", _hoisted_92, _toDisplayString($setup.summaryText), 1 /* TEXT */)
+      ($setup.dirHandle && $setup.writeHint)
+        ? (_openBlock(), _createElementBlock("p", _hoisted_93, _toDisplayString($setup.writeHint), 1 /* TEXT */))
+        : _createCommentVNode("v-if", true),
+      _createElementVNode("p", _hoisted_94, _toDisplayString($setup.summaryText), 1 /* TEXT */)
     ]),
     _createVNode($setup["PreviewTableCard"], {
       title: "名单预览（表头 + 前 3 行 + 列映射，VC-4）",
@@ -1859,12 +1872,12 @@ export function render(_ctx, _cache, $props, $setup, $data, $options) {
       tone: "ok"
     }, null, 8 /* PROPS */, ["preview", "file-name"]),
     _createCommentVNode(" ============ D50b ③ 标签预览（分布统计 + 每生 tag/punish + 批量打 tag） ============ "),
-    _createElementVNode("div", _hoisted_93, [
+    _createElementVNode("div", _hoisted_95, [
       _cache[74] || (_cache[74] = _createElementVNode("h2", null, [
         _createTextVNode("标签预览 "),
         _createElementVNode("small", { style: {"font-weight":"400","color":"var(--c-muted)"} }, "比例切分结果 + 手动覆盖（special_tag_cfg；docs/13 D50b：原\"特殊标签\"卡更名）")
       ], -1 /* CACHED */)),
-      _createElementVNode("p", _hoisted_94, [
+      _createElementVNode("p", _hoisted_96, [
         _cache[67] || (_cache[67] = _createElementVNode("span", {
           class: "hint",
           style: {"margin":"0"}
@@ -1884,7 +1897,7 @@ export function render(_ctx, _cache, $props, $setup, $data, $options) {
       ]),
       _cache[75] || (_cache[75] = _createElementVNode("p", { class: "hint" }, "调整任何比例 → 在上方「分组比例」卡点「重算并自动切分打 tag」→ 本预览即时变化。手动改 tag = special_tag 覆盖（重算不被冲掉）。", -1 /* CACHED */)),
       ($setup.roster.students.length)
-        ? (_openBlock(), _createElementBlock("p", _hoisted_95, [
+        ? (_openBlock(), _createElementBlock("p", _hoisted_97, [
             _cache[68] || (_cache[68] = _createTextVNode(" 分布：", -1 /* CACHED */)),
             (_openBlock(true), _createElementBlock(_Fragment, null, _renderList($setup.roster.tagCounts, (n, t) => {
               return (_openBlock(), _createElementBlock("code", {
@@ -1892,11 +1905,11 @@ export function render(_ctx, _cache, $props, $setup, $data, $options) {
                 style: {"margin-right":"6px"}
               }, _toDisplayString($setup.STUDENT_TAG_LABELS[t] ?? t) + "×" + _toDisplayString(n), 1 /* TEXT */))
             }), 128 /* KEYED_FRAGMENT */)),
-            _createElementVNode("span", _hoisted_96, "未打 " + _toDisplayString($setup.roster.students.filter((x) => !x.tag).length) + " 人", 1 /* TEXT */)
+            _createElementVNode("span", _hoisted_98, "未打 " + _toDisplayString($setup.roster.students.filter((x) => !x.tag).length) + " 人", 1 /* TEXT */)
           ]))
-        : (_openBlock(), _createElementBlock("p", _hoisted_97, "名单为空时本卡无内容。")),
+        : (_openBlock(), _createElementBlock("p", _hoisted_99, "名单为空时本卡无内容。")),
       _createElementVNode("p", null, [
-        _createElementVNode("label", _hoisted_98, [
+        _createElementVNode("label", _hoisted_100, [
           _cache[69] || (_cache[69] = _createTextVNode("批量打 tag：姓名（逗号/顿号分隔多个学生） ", -1 /* CACHED */)),
           _withDirectives(_createElementVNode("input", {
             type: "text",
@@ -1907,7 +1920,7 @@ export function render(_ctx, _cache, $props, $setup, $data, $options) {
             [_vModelText, $setup.batchNames]
           ])
         ]),
-        _createElementVNode("label", _hoisted_99, [
+        _createElementVNode("label", _hoisted_101, [
           _cache[70] || (_cache[70] = _createTextVNode("tag： ", -1 /* CACHED */)),
           _withDirectives(_createElementVNode("select", {
             "onUpdate:modelValue": _cache[22] || (_cache[22] = $event => (($setup.batchTag) = $event)),
@@ -1917,13 +1930,13 @@ export function render(_ctx, _cache, $props, $setup, $data, $options) {
               return (_openBlock(), _createElementBlock("option", {
                 key: t2,
                 value: t2
-              }, _toDisplayString($setup.STUDENT_TAG_LABELS[t2] ?? t2), 9 /* TEXT, PROPS */, _hoisted_100))
+              }, _toDisplayString($setup.STUDENT_TAG_LABELS[t2] ?? t2), 9 /* TEXT, PROPS */, _hoisted_102))
             }), 128 /* KEYED_FRAGMENT */))
           ], 512 /* NEED_PATCH */), [
             [_vModelSelect, $setup.batchTag]
           ])
         ]),
-        _createElementVNode("label", _hoisted_101, [
+        _createElementVNode("label", _hoisted_103, [
           _withDirectives(_createElementVNode("input", {
             type: "checkbox",
             "onUpdate:modelValue": _cache[23] || (_cache[23] = $event => (($setup.batchCreateIfAbsent) = $event))
@@ -1937,16 +1950,16 @@ export function render(_ctx, _cache, $props, $setup, $data, $options) {
           style: {"margin-left":"8px"},
           onClick: $setup.applyBatchTag,
           disabled: !$setup.batchNames.trim()
-        }, "应用到多个学生", 8 /* PROPS */, _hoisted_102),
+        }, "应用到多个学生", 8 /* PROPS */, _hoisted_104),
         ($setup.batchMsg)
-          ? (_openBlock(), _createElementBlock("span", _hoisted_103, _toDisplayString($setup.batchMsg), 1 /* TEXT */))
+          ? (_openBlock(), _createElementBlock("span", _hoisted_105, _toDisplayString($setup.batchMsg), 1 /* TEXT */))
           : _createCommentVNode("v-if", true)
       ]),
       ($setup.roster.students.length)
-        ? (_openBlock(), _createElementBlock("details", _hoisted_104, [
-            _createElementVNode("summary", _hoisted_105, "每生 tag / punish 一览（" + _toDisplayString($setup.roster.students.length) + " 人 · 点击折叠，表内滚轮查看）", 1 /* TEXT */),
-            _createElementVNode("div", _hoisted_106, [
-              _createElementVNode("table", _hoisted_107, [
+        ? (_openBlock(), _createElementBlock("details", _hoisted_106, [
+            _createElementVNode("summary", _hoisted_107, "每生 tag / punish 一览（" + _toDisplayString($setup.roster.students.length) + " 人 · 点击折叠，表内滚轮查看）", 1 /* TEXT */),
+            _createElementVNode("div", _hoisted_108, [
+              _createElementVNode("table", _hoisted_109, [
                 _cache[73] || (_cache[73] = _createElementVNode("thead", null, [
                   _createElementVNode("tr", null, [
                     _createElementVNode("th", null, "姓名"),
@@ -1971,17 +1984,17 @@ export function render(_ctx, _cache, $props, $setup, $data, $options) {
                             return (_openBlock(), _createElementBlock("option", {
                               key: t,
                               value: t
-                            }, _toDisplayString($setup.STUDENT_TAG_LABELS[t] ?? t), 9 /* TEXT, PROPS */, _hoisted_109))
+                            }, _toDisplayString($setup.STUDENT_TAG_LABELS[t] ?? t), 9 /* TEXT, PROPS */, _hoisted_111))
                           }), 128 /* KEYED_FRAGMENT */))
-                        ], 40 /* PROPS, NEED_HYDRATION */, _hoisted_108)
+                        ], 40 /* PROPS, NEED_HYDRATION */, _hoisted_110)
                       ]),
-                      _createElementVNode("td", _hoisted_110, [
+                      _createElementVNode("td", _hoisted_112, [
                         _createElementVNode("input", {
                           type: "checkbox",
                           checked: s.punish,
                           onChange: $event => ($setup.setPunish(i, $event)),
                           title: "punish：期末补作业统一题集（不参与比例）"
-                        }, null, 40 /* PROPS, NEED_HYDRATION */, _hoisted_111)
+                        }, null, 40 /* PROPS, NEED_HYDRATION */, _hoisted_113)
                       ])
                     ]))
                   }), 128 /* KEYED_FRAGMENT */))
@@ -1992,12 +2005,12 @@ export function render(_ctx, _cache, $props, $setup, $data, $options) {
         : _createCommentVNode("v-if", true)
     ]),
     (!$setup.caps.full && $setup.caps.browserHint)
-      ? (_openBlock(), _createElementBlock("div", _hoisted_112, _toDisplayString($setup.caps.browserHint), 1 /* TEXT */))
+      ? (_openBlock(), _createElementBlock("div", _hoisted_114, _toDisplayString($setup.caps.browserHint), 1 /* TEXT */))
       : _createCommentVNode("v-if", true),
     ($setup.caps.insecure)
-      ? (_openBlock(), _createElementBlock("div", _hoisted_113, " 当前为局域网预览（http://IP，非安全上下文）：导入名单/成绩/题库均可用（文件选择方式）； \"写回 workspace 目录\"不可用——请用下方导出按钮下载文件，教师手动放回 workspace。 " + _toDisplayString($setup.writeHint), 1 /* TEXT */))
+      ? (_openBlock(), _createElementBlock("div", _hoisted_115, " 当前为局域网预览（http://IP，非安全上下文）：导入名单/成绩/题库均可用（文件选择方式）； \"写回 workspace 目录\"不可用——请用下方导出按钮下载文件，教师手动放回 workspace。 " + _toDisplayString($setup.writeHint), 1 /* TEXT */))
       : _createCommentVNode("v-if", true),
-    _createElementVNode("div", _hoisted_114, [
+    _createElementVNode("div", _hoisted_116, [
       _cache[78] || (_cache[78] = _createElementVNode("h2", null, [
         _createTextVNode("产出 "),
         _createElementVNode("small", { style: {"font-weight":"400","color":"var(--c-muted)"} }, "名单带 tag → 引擎可直接用（docs/13 D50b ④产出段）")
@@ -2016,31 +2029,31 @@ export function render(_ctx, _cache, $props, $setup, $data, $options) {
           class: "btn primary",
           disabled: $setup.exportDisabled,
           onClick: $setup.downloadRosterJsonAndXlsx
-        }, "导出 tag 名单（xlsx + JSON）", 8 /* PROPS */, _hoisted_115),
+        }, "导出 tag 名单（xlsx + JSON）", 8 /* PROPS */, _hoisted_117),
         _createElementVNode("button", {
           class: "btn",
           style: {"margin-left":"8px"},
           disabled: $setup.exportDisabled,
           onClick: $setup.downloadTaskPackage
-        }, "下载作业纸（zip，附带说明）", 8 /* PROPS */, _hoisted_116)
+        }, "下载作业纸（zip，附带说明）", 8 /* PROPS */, _hoisted_118)
       ]),
-      _createElementVNode("p", _hoisted_117, [
+      _createElementVNode("p", _hoisted_119, [
         _cache[76] || (_cache[76] = _createTextVNode(" punish 名单（期末补交统一题集，不按层）： ", -1 /* CACHED */)),
         ($setup.roster.tagCounts.punish)
-          ? (_openBlock(), _createElementBlock("code", _hoisted_118, _toDisplayString($setup.roster.students.filter((s) => s.tag === 'punish').map((s) => s.name).join('、')), 1 /* TEXT */))
+          ? (_openBlock(), _createElementBlock("code", _hoisted_120, _toDisplayString($setup.roster.students.filter((s) => s.tag === 'punish').map((s) => s.name).join('、')), 1 /* TEXT */))
           : (_openBlock(), _createElementBlock(_Fragment, { key: 1 }, [
               _createTextVNode("（未勾选）")
             ], 64 /* STABLE_FRAGMENT */))
       ]),
       ($setup.caps.insecure)
-        ? (_openBlock(), _createElementBlock("p", _hoisted_119, [...(_cache[77] || (_cache[77] = [
+        ? (_openBlock(), _createElementBlock("p", _hoisted_121, [...(_cache[77] || (_cache[77] = [
             _createTextVNode("LAN 预览提示：导出为浏览器下载，教师手动放回 workspace 的 ", -1 /* CACHED */),
             _createElementVNode("code", null, "classes/<班级>/roster/", -1 /* CACHED */),
             _createTextVNode(" 即可（写回目录能力需本机 localhost/https 打开）。", -1 /* CACHED */)
           ]))]))
         : _createCommentVNode("v-if", true)
     ]),
-    _createElementVNode("div", _hoisted_120, [
+    _createElementVNode("div", _hoisted_122, [
       _cache[94] || (_cache[94] = _createElementVNode("h2", null, "整班作业纸预览（VC-3：按 tag→作业纸映射，同一打印模板 · 全站唯一整班预览入口）", -1 /* CACHED */)),
       _cache[95] || (_cache[95] = _createElementVNode("p", { class: "hint" }, [
         _createTextVNode(" 变体编排绑定（tag→作业纸 target_tag）在「作业纸内容」页维护（单入口，D25）； 本卡 = **整班分层预览/打印的唯一入口**（docs/13 D43-6 域分层：作业纸设计页只做模板级预览）。 渲染与 CLI "),
@@ -2049,7 +2062,7 @@ export function render(_ctx, _cache, $props, $setup, $data, $options) {
         _createElementVNode("b", null, "同一模板"),
         _createTextVNode("（lib/sheetHtml.ts）：名单里所有人按其 tag 领到对应变体（引擎 batch 同口径）， KaTeX 同源渲染（离线也可）。 ")
       ], -1 /* CACHED */)),
-      _createElementVNode("p", _hoisted_121, [
+      _createElementVNode("p", _hoisted_123, [
         _cache[84] || (_cache[84] = _createElementVNode("b", null, "D127 · 取题来源", -1 /* CACHED */)),
         _cache[85] || (_cache[85] = _createTextVNode("：整班预览", -1 /* CACHED */)),
         _cache[86] || (_cache[86] = _createElementVNode("b", null, "跟随当前选中的作业包", -1 /* CACHED */)),
@@ -2072,7 +2085,7 @@ export function render(_ctx, _cache, $props, $setup, $data, $options) {
             ], 64 /* STABLE_FRAGMENT */))
       ]),
       _createElementVNode("p", null, [
-        _createElementVNode("label", _hoisted_122, [
+        _createElementVNode("label", _hoisted_124, [
           _withDirectives(_createElementVNode("input", {
             type: "checkbox",
             "onUpdate:modelValue": _cache[24] || (_cache[24] = $event => (($setup.classIncludeAnswers) = $event))
@@ -2081,7 +2094,7 @@ export function render(_ctx, _cache, $props, $setup, $data, $options) {
           ]),
           _cache[88] || (_cache[88] = _createTextVNode(" 显示参考答案 ", -1 /* CACHED */))
         ]),
-        _createElementVNode("label", _hoisted_123, [
+        _createElementVNode("label", _hoisted_125, [
           _withDirectives(_createElementVNode("input", {
             type: "checkbox",
             "onUpdate:modelValue": _cache[25] || (_cache[25] = $event => (($setup.classIncludeWatermark) = $event))
@@ -2090,7 +2103,7 @@ export function render(_ctx, _cache, $props, $setup, $data, $options) {
           ]),
           _cache[89] || (_cache[89] = _createTextVNode(" 显示水印图层 ", -1 /* CACHED */))
         ]),
-        _createElementVNode("label", _hoisted_124, [
+        _createElementVNode("label", _hoisted_126, [
           _withDirectives(_createElementVNode("input", {
             type: "checkbox",
             "onUpdate:modelValue": _cache[26] || (_cache[26] = $event => (($setup.classIncludePageText) = $event))
@@ -2099,34 +2112,34 @@ export function render(_ctx, _cache, $props, $setup, $data, $options) {
           ]),
           _cache[90] || (_cache[90] = _createTextVNode(" 显示页码大字 ", -1 /* CACHED */))
         ]),
-        _createElementVNode("span", _hoisted_125, "当前口径：" + _toDisplayString($setup.classIncludeAnswers ? '教师版（含答案）' : '学生版（不含答案）'), 1 /* TEXT */)
+        _createElementVNode("span", _hoisted_127, "当前口径：" + _toDisplayString($setup.classIncludeAnswers ? '教师版（含答案）' : '学生版（不含答案）'), 1 /* TEXT */)
       ]),
       _createElementVNode("p", null, [
         _createElementVNode("button", {
           class: "btn primary",
           disabled: $setup.previewingClass || !$setup.roster.students.length || !$setup.pad.saved.length,
           onClick: $setup.previewWholeClass
-        }, "👁 预览整班（" + _toDisplayString($setup.roster.students.length) + " 名学生 × " + _toDisplayString($setup.pad.saved.length) + " 份作业纸映射）", 9 /* TEXT, PROPS */, _hoisted_126),
+        }, "👁 预览整班（" + _toDisplayString($setup.roster.students.length) + " 名学生 × " + _toDisplayString($setup.pad.saved.length) + " 份作业纸映射）", 9 /* TEXT, PROPS */, _hoisted_128),
         _createElementVNode("button", {
           class: "btn",
           style: {"margin-left":"8px"},
           disabled: !$setup.classPreviewHtml,
           onClick: $setup.printClassPreview
-        }, "🖨 打印整班", 8 /* PROPS */, _hoisted_127),
+        }, "🖨 打印整班", 8 /* PROPS */, _hoisted_129),
         _createElementVNode("button", {
           class: "btn",
           style: {"margin-left":"8px"},
           disabled: !$setup.classPreviewHtml,
           onClick: $setup.downloadClassPreviewHtml
-        }, "⬇ 下载 HTML（自包含）", 8 /* PROPS */, _hoisted_128),
+        }, "⬇ 下载 HTML（自包含）", 8 /* PROPS */, _hoisted_130),
         (!$setup.pad.saved.length)
-          ? (_openBlock(), _createElementBlock("span", _hoisted_129, "（作业纸清单为空：没有可映射的作业纸；先去内容页保存）."))
+          ? (_openBlock(), _createElementBlock("span", _hoisted_131, "（作业纸清单为空：没有可映射的作业纸；先去内容页保存）."))
           : (!$setup.pageCount)
-            ? (_openBlock(), _createElementBlock("span", _hoisted_130, "（名单为空，先导入名单。）"))
+            ? (_openBlock(), _createElementBlock("span", _hoisted_132, "（名单为空，先导入名单。）"))
             : _createCommentVNode("v-if", true)
       ]),
       ($setup.pad.saved.length)
-        ? (_openBlock(), _createElementBlock("p", _hoisted_131, [
+        ? (_openBlock(), _createElementBlock("p", _hoisted_133, [
             _cache[92] || (_cache[92] = _createTextVNode(" 兜底变体（--default 语义，预览用）： ", -1 /* CACHED */)),
             _withDirectives(_createElementVNode("select", {
               "onUpdate:modelValue": _cache[27] || (_cache[27] = $event => (($setup.classPreviewFallbackId) = $event)),
@@ -2137,7 +2150,7 @@ export function render(_ctx, _cache, $props, $setup, $data, $options) {
                 return (_openBlock(), _createElementBlock("option", {
                   key: sv.id,
                   value: sv.id
-                }, _toDisplayString(sv.id), 9 /* TEXT, PROPS */, _hoisted_132))
+                }, _toDisplayString(sv.id), 9 /* TEXT, PROPS */, _hoisted_134))
               }), 128 /* KEYED_FRAGMENT */))
             ], 512 /* NEED_PATCH */), [
               [_vModelSelect, $setup.classPreviewFallbackId]
@@ -2145,15 +2158,15 @@ export function render(_ctx, _cache, $props, $setup, $data, $options) {
           ]))
         : _createCommentVNode("v-if", true),
       ($setup.missingTagWarn)
-        ? (_openBlock(), _createElementBlock("p", _hoisted_133, _toDisplayString($setup.missingTagWarn), 1 /* TEXT */))
+        ? (_openBlock(), _createElementBlock("p", _hoisted_135, _toDisplayString($setup.missingTagWarn), 1 /* TEXT */))
         : _createCommentVNode("v-if", true),
       ($setup.classPreviewMsg)
-        ? (_openBlock(), _createElementBlock("p", _hoisted_134, _toDisplayString($setup.classPreviewMsg), 1 /* TEXT */))
+        ? (_openBlock(), _createElementBlock("p", _hoisted_136, _toDisplayString($setup.classPreviewMsg), 1 /* TEXT */))
         : _createCommentVNode("v-if", true),
       ($setup.classPreviewManifest)
-        ? (_openBlock(), _createElementBlock("details", _hoisted_135, [
+        ? (_openBlock(), _createElementBlock("details", _hoisted_137, [
             _cache[93] || (_cache[93] = _createElementVNode("summary", { style: {"cursor":"pointer","font-size":"13px"} }, "manifest（README：tag→包绑定核对，无引擎可用）", -1 /* CACHED */)),
-            _createElementVNode("pre", _hoisted_136, [
+            _createElementVNode("pre", _hoisted_138, [
               _createElementVNode("code", null, _toDisplayString($setup.classPreviewManifest), 1 /* TEXT */)
             ])
           ]))
@@ -2167,18 +2180,18 @@ export function render(_ctx, _cache, $props, $setup, $data, $options) {
             tabindex: "0",
             title: "整班作业纸预览",
             sandbox: "allow-same-origin allow-scripts"
-          }, null, 8 /* PROPS */, _hoisted_137))
+          }, null, 8 /* PROPS */, _hoisted_139))
         : _createCommentVNode("v-if", true)
     ]),
     _createCommentVNode(" ============ D49-F2 班级清单栏（汇总 + 载入/删除） ============ "),
-    _createElementVNode("div", _hoisted_138, [
+    _createElementVNode("div", _hoisted_140, [
       _cache[98] || (_cache[98] = _createElementVNode("h2", null, [
         _createTextVNode("班级清单 "),
         _createElementVNode("small", { style: {"font-weight":"400","color":"var(--c-muted)"} }, "已添加班级汇总 · 载入/删除（docs/13 D49）")
       ], -1 /* CACHED */)),
       _cache[99] || (_cache[99] = _createElementVNode("p", { class: "hint" }, "新学年归档旧班级、或删除误操作的班级；载入后上方所有模块切换为该班级的工作区。", -1 /* CACHED */)),
       ($setup.roster.classList.length)
-        ? (_openBlock(), _createElementBlock("table", _hoisted_139, [
+        ? (_openBlock(), _createElementBlock("table", _hoisted_141, [
             _cache[96] || (_cache[96] = _createElementVNode("thead", null, [
               _createElementVNode("tr", null, [
                 _createElementVNode("th", null, "班级"),
@@ -2201,36 +2214,36 @@ export function render(_ctx, _cache, $props, $setup, $data, $options) {
                   _createElementVNode("td", null, [
                     _createElementVNode("b", null, _toDisplayString(c.name), 1 /* TEXT */),
                     (c.id === $setup.roster.activeClassId)
-                      ? (_openBlock(), _createElementBlock("span", _hoisted_140, "（当前）"))
+                      ? (_openBlock(), _createElementBlock("span", _hoisted_142, "（当前）"))
                       : _createCommentVNode("v-if", true)
                   ]),
                   _createElementVNode("td", null, _toDisplayString(c.term || '—'), 1 /* TEXT */),
-                  _createElementVNode("td", _hoisted_141, _toDisplayString(c.studentsCount), 1 /* TEXT */),
-                  _createElementVNode("td", _hoisted_142, _toDisplayString(Object.entries($setup.rosterTagCountsOf(c.id)).map(([t, n]) => `${t}×${n}`).join('，') || '—'), 1 /* TEXT */),
-                  _createElementVNode("td", _hoisted_143, _toDisplayString(c.sourceCount), 1 /* TEXT */),
+                  _createElementVNode("td", _hoisted_143, _toDisplayString(c.studentsCount), 1 /* TEXT */),
+                  _createElementVNode("td", _hoisted_144, _toDisplayString(Object.entries($setup.rosterTagCountsOf(c.id)).map(([t, n]) => `${t}×${n}`).join('，') || '—'), 1 /* TEXT */),
+                  _createElementVNode("td", _hoisted_145, _toDisplayString(c.sourceCount), 1 /* TEXT */),
                   _createElementVNode("td", null, _toDisplayString(c.status), 1 /* TEXT */),
-                  _createElementVNode("td", _hoisted_144, _toDisplayString(c.artifacts[0] ? `${c.artifacts[0].name}（${new Date(c.artifacts[0].at).toLocaleDateString()}）` : '—'), 1 /* TEXT */),
+                  _createElementVNode("td", _hoisted_146, _toDisplayString(c.artifacts[0] ? `${c.artifacts[0].name}（${new Date(c.artifacts[0].at).toLocaleDateString()}）` : '—'), 1 /* TEXT */),
                   _createElementVNode("td", null, _toDisplayString(new Date(c.updatedAt).toLocaleDateString()), 1 /* TEXT */),
-                  _createElementVNode("td", _hoisted_145, [
+                  _createElementVNode("td", _hoisted_147, [
                     _createElementVNode("button", {
                       class: "btn small",
                       disabled: c.id === $setup.roster.activeClassId,
                       onClick: $event => ($setup.loadClassAction(c.id))
-                    }, "载入", 8 /* PROPS */, _hoisted_146),
+                    }, "载入", 8 /* PROPS */, _hoisted_148),
                     _createElementVNode("button", {
                       class: "btn small",
                       style: {"margin-left":"4px"},
                       disabled: $setup.roster.classList.length <= 1,
                       onClick: $event => ($setup.deleteClassAction(c.id, c.name))
-                    }, "删除", 8 /* PROPS */, _hoisted_147)
+                    }, "删除", 8 /* PROPS */, _hoisted_149)
                   ])
                 ], 4 /* STYLE */))
               }), 128 /* KEYED_FRAGMENT */))
             ])
           ]))
-        : (_openBlock(), _createElementBlock("p", _hoisted_148, "尚无班级。")),
+        : (_openBlock(), _createElementBlock("p", _hoisted_150, "尚无班级。")),
       ($setup.roster.activeMeta?.artifacts.length)
-        ? (_openBlock(), _createElementBlock("p", _hoisted_149, [
+        ? (_openBlock(), _createElementBlock("p", _hoisted_151, [
             _cache[97] || (_cache[97] = _createTextVNode(" 当前班级产出登记：", -1 /* CACHED */)),
             (_openBlock(true), _createElementBlock(_Fragment, null, _renderList($setup.roster.activeMeta.artifacts.slice(0, 5), (a) => {
               return (_openBlock(), _createElementBlock("code", {

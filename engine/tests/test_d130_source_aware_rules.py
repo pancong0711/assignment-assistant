@@ -101,7 +101,7 @@ def test_rules_corrupt_file_falls_back_and_is_not_overwritten(ws: Path):
     p = ws / R.RULES_FILE
     p.write_text("{not json", encoding="utf-8")
     data = R.read_rules(ws)
-    assert data["types"]["copy"]["mode"] == "checklist"
+    assert data["types"]["copy"]["mode"] == "topicMatch"   # D170-T9
     assert p.read_text(encoding="utf-8") == "{not json"  # 用户文件保留，便于人工救回
 
 
@@ -213,12 +213,31 @@ def test_qa_missing_diagram_deduct(ws: Path):
     assert any("缺示意图" in d for d in r["deductions"])
 
 
-def test_copy_checklist_deduct(ws: Path):
-    a = _analysis([_q(1, kind="copy", copied={"题目": True, "解题过程": False,
-                                             "示意图": False})])
+def test_checklist_mode_deduct(ws: Path):
+    """checklist 模式：每缺一项扣一次。
+
+    D170-T9：`copy` 的默认模式已改为 `topicMatch`（抄写题不再判"抄全三项"），
+    所以这里**显式**把文档类题型设为 checklist 来测该模式本身。
+    """
+    # 用已支持的 kind（copy 默认已改 topicMatch）临时改成 checklist 来测该模式本身
+    data = R.read_rules(ws)
+    data["types"]["distinguish"] = {"mode": "checklist", "perMissingItemDeduct": 5,
+                                    "checklist": ["题目", "解题过程", "示意图"],
+                                    "requireDiagram": "if_question_has"}
+    assert R.write_rules(ws, data)["ok"]
+    a = _analysis([_q(1, kind="distinguish", copied={"题目": True, "解题过程": False,
+                                                     "示意图": False})])
     r = score_from_analysis(a, ws=ws)
     assert r["total_score"] == 90
     assert any("未完成 2 项" in d for d in r["deductions"])
+
+
+def test_copy_topic_match_no_checklist_deduct(ws: Path):
+    """**D170-T9 核心**：抄写题不再因"没抄全三项"扣分。"""
+    a = _analysis([_q(1, kind="copy", copied={"题目": True, "解题过程": False,
+                                             "示意图": False})])
+    r = score_from_analysis(a, ws=ws)
+    assert r["total_score"] == 100, f"抄写题不应按 checklist 扣分：{r['deductions']}"
 
 
 def test_summary_covered_checklist(ws: Path):
@@ -343,7 +362,9 @@ def test_without_items_behaves_like_problems(ws: Path):
 
 def test_rule_summary_mentions_mode_specifics(ws: Path):
     assert "3 倍" in R.rule_summary(ws, "distinguish")
-    assert "未完成" in R.rule_summary(ws, "copy") or "逐项核对" in R.rule_summary(ws, "copy")
+    # D170-T9：copy 改为 topicMatch，摘要讲"主题一致 + 字数"
+    copy_sum = R.rule_summary(ws, "copy")
+    assert "主题" in copy_sum and "字数" in copy_sum
     assert "评阅要点" in R.rule_summary(ws, "qa")
     assert R.rubric_enabled(ws, "qa") is True
     assert R.rubric_enabled(ws, "copy") is False

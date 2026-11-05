@@ -24,7 +24,16 @@ import json
 import re
 from pathlib import Path
 
-_ID_RE = re.compile(r"^[0-9A-Za-z_\-\u4e00-\u9fff.]{1,80}$")
+# D170-T1：id 白名单。
+# 除了字母/数字/下划线/点，还允许**姓名里常见的分隔符**：
+#   · (U+00B7 间隔号) —— 维吾尔族等民族姓名（阿丽古丽·玉苏甫）、俄式姓名（阿·谢·普希金）
+#   • (U+2022 项目符号) / ・(U+30FB 片假名中点) —— 录入时可能被输入法替换
+#   （）与全角括号 —— 少数名单会写成「张三（组长）」
+# 这些字符**不含路径分隔符**，做文件名/报告键都安全。
+_ID_RE = re.compile(r"^[0-9A-Za-z_\-\u4e00-\u9fff.\u00b7\u2022\u30fb\uff08\uff09()（）]{1,80}$")
+
+# 常见但**仍不允许**的字符（用于给出可操作报错）
+_BAD_CHARS_RE = re.compile(r"[\\/:*?\"<>|\x00-\x1f]")
 IMAGE_EXTS = (".png", ".jpg", ".jpeg", ".webp", ".gif", ".bmp")
 
 
@@ -33,12 +42,28 @@ class ItemsError(ValueError):
 
 
 def _clean_id(raw, idx: int) -> str:
+    """校验 id；报错必须**可操作**（教师要知道该改什么）。
+
+    D170-T1 背景：`阿丽古丽·玉苏甫` 因间隔号被拒 → 整份名单批阅失败。
+    现在间隔号已允许；其它非法字符会指出**具体是哪个字符、为什么不行**。
+    """
     s = str(raw or "").strip()
     if not s:
-        raise ItemsError(f"第 {idx + 1} 条缺少 id")
-    if not _ID_RE.match(s):
-        raise ItemsError(f"第 {idx + 1} 条 id 非法（1..80 字符，禁路径分隔符）：{s!r}")
-    return s
+        raise ItemsError(f"第 {idx + 1} 条缺少 id（该条没有题号或学生名）")
+    if _ID_RE.match(s):
+        return s
+    bad = _BAD_CHARS_RE.findall(s)
+    if bad:
+        chars = "、".join(sorted({repr(c) for c in bad}))
+        raise ItemsError(
+            f"第 {idx + 1} 条 id 含**路径分隔符或控制字符**：{chars}（id={s!r}）。"
+            f"这类字符会破坏文件名，请去掉后重试。")
+    if len(s) > 80:
+        raise ItemsError(
+            f"第 {idx + 1} 条 id 过长（{len(s)} > 80 字符）：{s[:30]}…")
+    raise ItemsError(
+        f"第 {idx + 1} 条 id 含不支持的字符（id={s!r}）。"
+        f"允许：中英文/数字/下划线/连字符/点/间隔号·，其余请替换。")
 
 
 def normalize_items(raw, *, base_dir: "str | Path | None" = None) -> list[dict]:

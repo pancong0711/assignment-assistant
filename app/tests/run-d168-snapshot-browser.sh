@@ -66,7 +66,7 @@ try:
             "() => document.body.innerText.includes('重算综合得分')", timeout=20000)
         body = pg.inner_text('body')
         out = {
-            'hasHint': '本次结果关联到作业包' in body,
+            'hasHint': '关联作业包' in body,   # D170-T8：文案改为更短的「关联作业包」
             'hasOptionDefault': '（不关联，只更新班级名单）' in body,
             'hasRecomputeBtn': pg.locator('button', has_text='重算综合得分').count() >= 1,
             'errors': errs,
@@ -76,7 +76,7 @@ finally:
     httpd.shutdown()
 print(json.dumps(out, ensure_ascii=False, indent=1))
 assert not out['errors'], f"JS 错误：{out['errors']}"
-assert out['hasHint'], 'D168：缺少「本次结果关联到作业包」控件'
+assert out['hasHint'], 'D168/D170：缺少「关联作业包」控件'
 assert out['hasOptionDefault'], 'D168：缺少「不关联」默认选项'
 print("OK d168：作业包快照关联控件渲染正常")
 PY

@@ -117,13 +117,17 @@ export const usePackStore = defineStore('packs', {
      *  @param saved 全库已保存作业纸（来自 taskpad store）
      *  @returns 只含当前包内且存在的作业纸；另返回 dangling（包内引用但找不到的 padId）
      */
-    packPadJsons(saved: Array<{ id: string; json: string }>): {
+    /** D170-T8：可指定 packId（默认当前包）。
+     *  班级页「关联作业包」后可直接预览整班，不必回作业纸设计页切换当前包。 */
+    packPadJsons(saved: Array<{ id: string; json: string }>, packIdOverride = ''): {
       pads: Array<{ id: string; json: string; tag: string }>
       dangling: string[]
       packId: string
     } {
-      const packId = this.currentId
-      const refs = this.currentPadRefs
+      const packId = String(packIdOverride || this.currentId || '')
+      const refs = packIdOverride
+        ? ((this.packs.find((p) => p.id === packId) as any)?.pads || [])
+        : this.currentPadRefs
       if (!packId || !refs.length) return { pads: [], dangling: [], packId }
       const byId = new Map(saved.map((x) => [String(x.id), x]))
       const pads: Array<{ id: string; json: string; tag: string }> = []
