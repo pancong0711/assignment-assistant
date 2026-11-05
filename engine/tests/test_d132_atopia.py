@@ -131,7 +131,7 @@ def test_unregistered_arg_rejected(ws: Path):
 
 def test_path_must_stay_in_workspace(ws: Path):
     with pytest.raises(R.ToolDenied) as ei:
-        R.validate_args(R.get_tool("kb.write"), ws, {"input": "../../etc/passwd"})
+        R.validate_args(R.get_tool("fs.read"), ws, {"path": "../../etc/passwd"})
     assert "workspace 内" in str(ei.value)
 
 
@@ -139,8 +139,8 @@ def test_path_inside_workspace_ok(ws: Path):
     (ws / "kb" / "export").mkdir(parents=True, exist_ok=True)
     f = ws / "kb" / "export" / "p.json"
     f.write_text("{}", encoding="utf-8")
-    out = R.validate_args(R.get_tool("kb.write"), ws, {"input": "kb/export/p.json"})
-    assert Path(out["input"]).is_relative_to(ws.resolve())
+    out = R.validate_args(R.get_tool("fs.read"), ws, {"path": "kb/export/p.json"})
+    assert Path(out["path"]).is_relative_to(ws.resolve())
 
 
 def test_flag_injection_in_value_rejected(ws: Path):
@@ -240,7 +240,8 @@ def test_extension_cannot_lower_level(ws: Path):
     d.mkdir(parents=True)
     (d / "a.json").write_text(
         json.dumps({"name": "kb.tag-knowledge.apply", "level": "L0"}), encoding="utf-8")
-    assert R.effective_tool(ws, "kb.tag-knowledge.apply").level == R.L2
+    # D168-B6：该工具已是 L3（AI 不可直接改题库）；扩展**只能升不能降**
+    assert R.effective_tool(ws, "kb.tag-knowledge.apply").level == R.L3
 
 
 def test_extension_cannot_register_new_tool(ws: Path):

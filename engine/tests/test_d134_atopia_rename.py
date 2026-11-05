@@ -53,9 +53,17 @@ def test_legacy_http_path_rewritten():
 
 def test_tool_registry_still_intact():
     """改名不能动工具清单（D148 新增 fs.ls/fs.read/fs.search → 34 个）。
+    L3 写死拒绝——新增工具不得引入新的危险入口。
 
-    L3 仍为 5 个且写死拒绝——新增工具不得引入新的危险入口。
+    D168-B6 变更：L3 从 5 个增到 **8 个**——把三个「直接写题库」的工具
+    （kb.write / kb.tag-knowledge.apply / kb.check-knowledge.apply）主动降为 L3，
+    因为 AI 只能写 `atopia/**`；改题库必须「写建议 → 教师确认 → 引擎落库」。
+    所以这是**收紧**，不是放松。
     """
     from assist.atopia.registry import BUILTIN_TOOLS, L3
-    assert len(BUILTIN_TOOLS) == 34
-    assert len([t for t in BUILTIN_TOOLS if t.level == L3]) == 5
+    assert len(BUILTIN_TOOLS) == 35   # D168-B6：+1（atopia.suggest-kb）
+    assert len([t for t in BUILTIN_TOOLS if t.level == L3]) == 8
+    l3_names = {t.name for t in BUILTIN_TOOLS if t.level == L3}
+    for must in ("kb.write", "kb.tag-knowledge.apply",
+                 "kb.check-knowledge.apply"):
+        assert must in l3_names, f"{must} 必须为 L3（AI 不得直接改题库）"

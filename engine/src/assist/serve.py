@@ -2039,11 +2039,17 @@ class Handler(BaseHTTPRequestHandler):
             if payload.get("sessionId"):
                 client.set_session_id(str(payload.get("sessionId")))
             try:
+                # D168-B6：按场景分组暴露工具（payload.groups=["kb","materials"]）；
+                # 不传 = 全部（旧行为）。
+                _groups = payload.get("groups")
+                _groups = ([str(g) for g in _groups]
+                           if isinstance(_groups, list) and _groups else None)
                 rep = _ag.run_session_auto(
                     client, ws_, task, model=str(payload.get("model") or "") or None,
                     session=sess, confirm=_confirm,
                     max_turns=int(payload.get("maxTurns") or 6),
-                    prefer=str(payload.get("protocol") or "native"))
+                    prefer=str(payload.get("protocol") or "native"),
+                    groups=_groups)
             except _TD3 as exc:
                 self._json({"ok": False, "denied": True, "error": str(exc)}, 403)
                 return
@@ -3560,6 +3566,12 @@ class Handler(BaseHTTPRequestHandler):
             self.send_header("Cache-Control", "no-store")
             self.end_headers()
             self.wfile.write(data)
+            return
+        elif u.path == "/atopia/tool-groups":
+            # D168-B6：工具分组概览（前端"按场景"选择器用）
+            from .atopia import registry as _rg
+            rep = _rg.group_summary(Path(self.ws).resolve())
+            self._json({"ok": True, **rep})
             return
         elif u.path == "/analysis/standard-cooccurrence":
             # D168-B5：**标准共现图**（数据源 = 例题库，反映授课结构）

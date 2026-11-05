@@ -1,7 +1,7 @@
 # D169 需求单：实现路线 + 架构决策（atopia 权限 / 工具治理 / skill / 可视化）
 
 > 日期：2026-11-05
-> 状态：**B1–B5 已完成**（B1/B2/B3/B5 见 `docs/112-D168`）；B6 待做
+> 状态：**B1–B6 全部完成**（B1/B2/B3/B5 见 `docs/112-D168`）
 > 关联：`docs/112-D168`（统计口径）、`docs/109-D166`（知识点 JSON 化）、
 > `docs/110-D167`（2508 整合评估）、`docs/12`
 
@@ -315,7 +315,7 @@ D169-1 atopia 权限收紧（移除 kb.write 等）
 | **B3** | 可视化（D169-4） | ✅ **已完成**（2026-11-05）：`viz.py` + `/analysis/chart` + 体检项 | 1 批 |
 | **B4** | atopia 一键解析 + 任务模板（D169-3） | ✅ **已完成**（2026-11-05）：`atopia-task` 第 7 类 + 工步 0/1 | 1-2 批 |
 | **B5** | example + 标准共现图（D168-T11/T12） | ✅ **已完成**（2026-11-05）：`kb_examples.py` + `⑤-A 标准共现图` | 1 批 |
-| **B6** | 工具治理 + 权限收紧（D169-1/2） | description 升级 + 分组 + 移除危险写 | 1 批 |
+| **B6** | 工具治理 + 权限收紧（D169-1/2） | ✅ **已完成**（2026-11-05）：L3 收紧 + 分组 + when 说明 + CLI Examples | 1 批 |
 
 **建议顺序 B1 → B2 → B3 → B4 → B5 → B6**
 
@@ -381,6 +381,62 @@ D169-1 atopia 权限收紧（移除 kb.write 等）
 返回 HTML 而不是 JSON。结果：**提示词模板下拉一直是空的，且不报错**。
 
 已移到 `do_GET`，并加回归测试（检查路由必须位于 `do_GET` 方法体内）。
+
+## 6.4 B6 实施记录（2026-11-05 完成）
+
+### 权限收紧（安全核心）
+
+| 工具 | 之前 | 现在 | 理由 |
+|---|---|---|---|
+| `kb.write` | L2 | **L3 拒绝** | AI 可一次性覆盖题库 |
+| `kb.tag-knowledge.apply` | L2 | **L3 拒绝** | AI 直接改写知识点 |
+| `kb.check-knowledge.apply` | L2 | **L3 拒绝** | AI 直接改写术语 |
+| `atopia.suggest-kb`（新增） | — | L2 | **安全替代**：只写 `atopia/work/<特征名>/suggest-kb.json` |
+
+> L3 从 5 个增至 8 个 —— 这是**收紧**，不是放松。扩展仍只能升不能降。
+
+### 工具分组（`registry.GROUPS`）
+
+| 组 | 数量 | 说明 |
+|---|---|---|
+| kb | 9 | 题库查看/统计/写建议 |
+| materials | 8 | 章节/原件/知识点清单 |
+| rules | 4 | 评阅规则 |
+| grading | 3 | 知识点建议/要点生成 |
+| fs | 3 | workspace 内只读浏览 |
+| prompt | 2 | 提示词模板 |
+| atopia | 1 | 自己的建议写 |
+| misc | 5 | 其它（含 L3） |
+
+- `tools_by_group(ws, ["kb"])` → 只给该组；**选择空间从 35 降到个位数**；
+- `GET /atopia/tool-groups` 供前端做"按场景"选择器；
+- `/atopia/ask` 支持 `groups: ["kb","materials"]`（不传 = 全部，旧行为不变）。
+
+### 工具说明升级（给模型看的）
+
+`Tool` 新增两个字段：
+
+| 字段 | 给谁看 | 内容 |
+|---|---|---|
+| `summary` | **教师** | 一句话"这是什么" |
+| `when` | **AI** | "何时用 / 何时不用 / 别用的原因" |
+
+`_tool_list_text()` 改用 `when`——模型真正需要的是"什么时候该用"。
+全部 35 个工具（含 L3）都补齐了 `when`；L3 的写成"**禁止**：…，只能由教师…"。
+
+### CLI help 的 Examples
+
+`kb` / `materials` 两个最常用组补了 `Examples:` 段（click docstring），
+外部 agent 靠它学命令用法。
+
+> **踩坑**：`@cli.group(help="...")` 会**覆盖** docstring。要让 docstring 显示，
+> 必须去掉 `help=` 参数。
+
+### 又一次踩到"只读接口放进 do_POST"
+
+`/atopia/tool-groups` 最初写在 `do_POST`，前端 GET → 302 到 Pages。
+与 B4 修 `/prompts/templates` 是**同一类错误**。
+已移入 `do_GET`，并在测试里加了**逐路由**检查（`test_readonly_routes_are_in_do_get`）。
 
 ## 7. 验收标准
 

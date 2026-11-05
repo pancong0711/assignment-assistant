@@ -210,5 +210,9 @@ def test_reset_not_registered_as_ai_tool():
     注意 `rules.reset` 是**评阅规则**恢复默认，与本命令不是一回事。
     """
     names = {t.name for t in R.BUILTIN_TOOLS}
-    assert not any(n.startswith("atopia.") for n in names)
+    # D168-B6：允许 `atopia.suggest-kb`（只写 atopia/ 下的建议文件，安全）；
+    # 但 **管理类** atopia 命令（reset/migrate/clean）仍不得注册为 AI 工具。
     assert "atopia.reset" not in names
+    assert "atopia.migrate" not in names
+    assert "atopia.clean" not in names
+    assert "atopia.suggest-kb" in names      # 这个是故意开给 AI 的

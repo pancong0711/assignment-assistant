@@ -54,11 +54,26 @@ SYSTEM_PROMPT_NATIVE = """你是「Atopia」工作区里的助手，可以调用
 5. 如果任务不需要工具，直接用自然语言回答即可。"""
 
 
+def _tools_for(ws, groups: "list[str] | None"):
+    """D168-B6：按分组取工具（None = 全部）。"""
+    from .registry import tools_by_group
+    try:
+        return tools_by_group(ws, groups)
+    except Exception:  # noqa: BLE001 —— 分组异常时退回全部，不能让会话起不来
+        return effective_tools(ws)
+
+
 def _tool_list_text(tools) -> str:
+    """工具清单（给模型看）。
+
+    D168-B6：用 `when`（何时用/何时不用）而不是 `summary`（给教师的一句话）。
+    `summary` 是"这个工具是什么"，模型真正需要的是"什么时候该用、什么时候别用"。
+    """
     lines = []
     for t in tools:
         args = ", ".join(f"{k}:{v}" for k, v in t.allowed_args.items()) or "无"
-        lines.append(f"- {t.name} [{t.level} {LEVEL_LABEL[t.level]}] {t.summary}"
+        desc = str(getattr(t, "when", "") or t.summary or "").strip()
+        lines.append(f"- {t.name} [{t.level} {LEVEL_LABEL[t.level]}] {desc}"
                      f"（参数：{args}）")
     return "\n".join(lines)
 
@@ -105,7 +120,8 @@ def _ensure_session_id(client, prefix: str) -> str:
 def run_session(client, ws, task: str, *, model: "str | None" = None,
                 session: "L.Session | None" = None,
                 confirm: "callable | None" = None,
-                max_turns: int = MAX_TURNS) -> dict:
+                max_turns: int = MAX_TURNS,
+                groups: "list[str] | None" = None) -> dict:
     """跑一次 Assistopia 会话。
 
     `confirm(tool_name, args)` → 返回确认来源字符串（空/None = 教师拒绝）。
@@ -114,7 +130,8 @@ def run_session(client, ws, task: str, *, model: "str | None" = None,
     ws_p = Path(ws).resolve()
     _ensure_session_id(client, "atopia")
     sess = session or L.Session(session_id="agent", limits=L.read_limits(ws_p))
-    tools = effective_tools(ws_p)
+    # D168-B6：按场景分组暴露（groups=None → 全部，保持旧行为）
+    tools = _tools_for(ws_p, groups)
     usable = [t for t in tools if t.level != L3]
     tool_list = _tool_list_text(usable)
     messages = [{"role": "system", "content": SYSTEM_PROMPT.format(tool_list=tool_list)},
@@ -241,7 +258,8 @@ def _name_from_function(fn_name: str, tools) -> str:
 def run_session_native(client, ws, task: str, *, model: "str | None" = None,
                        session: "L.Session | None" = None,
                        confirm: "callable | None" = None,
-                       max_turns: int = MAX_TURNS) -> dict:
+                       max_turns: int = MAX_TURNS,
+                       groups: "list[str] | None" = None) -> dict:
     """原生 tools 协议会话。
 
     返回结构与 `run_session()` 一致；provider 不支持 tools 时抛
@@ -252,7 +270,7 @@ def run_session_native(client, ws, task: str, *, model: "str | None" = None,
     ws_p = Path(ws).resolve()
     _ensure_session_id(client, "atopia")
     sess = session or L.Session(session_id="agent", limits=L.read_limits(ws_p))
-    tools = effective_tools(ws_p)
+    tools = _tools_for(ws_p, groups)
     usable = [t for t in tools if t.level != L3]
     payload_tools = build_tools_payload(usable)
     messages: list[dict] = [
@@ -345,7 +363,8 @@ def run_session_auto(client, ws, task: str, *, model: "str | None" = None,
                      session: "L.Session | None" = None,
                      confirm: "callable | None" = None,
                      max_turns: int = MAX_TURNS,
-                     prefer: str = "native") -> dict:
+                     prefer: str = "native",
+                     groups: "list[str] | None" = None) -> dict:
     """先试原生 tools；provider 不支持时**自动降级**到 JSON 指令协议。
 
     降级判定只在"明显是协议不支持"的报错上做（`tools`/`function`/400 等），
@@ -355,7 +374,7 @@ def run_session_auto(client, ws, task: str, *, model: "str | None" = None,
 
     if prefer == "json":
         rep = run_session(client, ws, task, model=model, session=session,
-                          confirm=confirm, max_turns=max_turns)
+                          confirm=confirm, max_turns=max_turns, groups=groups)
         rep.setdefault("protocol", "json")
         return rep
     try:
@@ -372,7 +391,7 @@ def run_session_auto(client, ws, task: str, *, model: "str | None" = None,
             raise
         logger.info(f"[atopia] 原生 tools 不受支持，降级 JSON 指令协议：{str(exc)[:160]}")
         rep = run_session(client, ws, task, model=model, session=session,
-                          confirm=confirm, max_turns=max_turns)
+                          confirm=confirm, max_turns=max_turns, groups=groups)
         rep.setdefault("protocol", "json")
         rep["degraded"] = True
         rep["degradedReason"] = str(exc)[:200]

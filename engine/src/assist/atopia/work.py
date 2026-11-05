@@ -404,3 +404,65 @@ def parse_with_task(client, ws, feature: str, *, task_id: str = "",
             "file": saved.get("file"), "path": saved.get("path"),
             "chars": src.get("chars"), "vision": bool(images),
             "truncated": bool(src.get("truncated")), "data": data}
+
+
+# ============================================================================
+# D168-B6：建议写（AI 只能写 atopia/，生效由引擎执行）
+# ============================================================================
+
+SUGGEST_PREFIX = "suggest-"
+
+
+def save_suggest(ws, feature: str, payload: dict, *, kind: str = "kb") -> dict:
+    """把「对题库/资料的修改建议」写到 `atopia/work/<特征名>/`（**不改生效数据**）。
+
+    教师确认流程（docs/113-D169 §1.3）：
+        AI 写 `suggest-<kind>.json` → 教师看 diff → **引擎**执行落库
+
+    `payload` 形状（由调用方决定，这里只做校验与落盘）：
+        {"changes": [{"qid": "...", "related": "...", "reason": "..."}],
+         "note": "为什么建议这样改"}
+    """
+    if not isinstance(payload, dict):
+        raise WorkError("建议内容必须是 JSON 对象")
+    changes = payload.get("changes")
+    if not isinstance(changes, list) or not changes:
+        raise WorkError("建议里没有 changes（空建议不落盘）")
+    d = ensure_feature(ws, feature)
+    fn = f"{SUGGEST_PREFIX}{kind}.json"
+    body = {
+        "feature": feature,
+        "kind": kind,
+        "at": time.strftime("%Y-%m-%d %H:%M:%S"),
+        "count": len(changes),
+        "changes": changes,
+        "note": str(payload.get("note") or ""),
+        "status": "pending",       # pending → 教师确认后由引擎改为 applied
+    }
+    (d / fn).write_text(json.dumps(body, ensure_ascii=False, indent=1), encoding="utf-8")
+    man = _manifest(ws, feature)
+    man.setdefault("suggestions", []).append(
+        {"file": fn, "kind": kind, "count": len(changes),
+         "at": body["at"], "status": "pending"})
+    _save_manifest(ws, feature, man)
+    logger.info(f"[建议写] {fn}（{len(changes)} 条，待教师确认）")
+    return {"ok": True, "file": str(d / fn), "count": len(changes),
+            "note": "这只是建议；教师确认后由引擎落库"}
+
+
+def list_suggests(ws, feature: str) -> list[dict]:
+    """列出某特征名下的待确认建议。"""
+    d = feature_dir(ws, feature)
+    out: list[dict] = []
+    if not d.is_dir():
+        return out
+    for p in sorted(d.glob(f"{SUGGEST_PREFIX}*.json")):
+        try:
+            data = json.loads(p.read_text(encoding="utf-8"))
+        except Exception:  # noqa: BLE001
+            continue
+        out.append({"file": p.name, "kind": data.get("kind"),
+                    "count": int(data.get("count") or 0),
+                    "at": data.get("at"), "status": data.get("status"),
+                    "note": data.get("note")})
+    return out

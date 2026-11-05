@@ -300,8 +300,19 @@ def tex_install(ctx, workspace, verbose):
         ctx.exit(rc)
 
 
-@cli.group(help="题库管理（kb xlsx 为主数据，JSON 为导出副本，05-D3）")
+@cli.group("kb")
 def kb():
+    """题库管理。
+
+    Examples（AI / 脚本最常用）:
+
+    \b
+        assist kb stats --json                     # 各题型 / 章节题数
+        assist kb catalog --json                   # 章节与题号目录
+        assist kb export                           # 导出 JSON（xlsx 读不了，先导出）
+        assist kb tag-knowledge --dry-run --json   # 预览知识点标注（不写库）
+        assist kb ai-solve --kb-kind qa --chap chap04 --with-rubric --apply
+    """
     pass
 
 
@@ -1436,6 +1447,44 @@ def atopia_tools(obj, workspace, verbose):
     }, ensure_ascii=False, indent=2))
 
 
+@atopia_grp.command("suggest-kb")
+@click.option("--feature", required=True, help="特征名（如 26C1）")
+@click.option("--input", "input_path", required=True,
+              help="建议 JSON 文件（含 changes[]），**只读**")
+@click.option("--workspace", "-w", default=None)
+@click.option("--verbose", "-v", is_flag=True)
+@click.pass_obj
+def atopia_suggest_kb(obj, feature, input_path, workspace, verbose):
+    """把题库修改**建议**写到 atopia/work/<特征名>/（**不改题库**）。
+
+    D168-B6：AI 只能写 atopia/；教师确认后由引擎落库。
+
+    Examples:
+
+    \b
+        assist atopia suggest-kb --feature 26C1 --input suggest.json
+
+    建议文件形如：
+        {"changes": [{"qid": "chap04-c1", "related": "库仑定律,电场强度",
+                      "reason": "补全缺失概念"}], "note": "整体说明"}
+    """
+    from .atopia import work as W
+    ws = _setup(verbose or obj.get("verbose"), workspace)
+    p = Path(str(input_path)).expanduser()
+    if not p.is_file():
+        raise click.ClickException(f"建议文件不存在：{p}")
+    try:
+        payload = json.loads(p.read_text(encoding="utf-8"))
+    except Exception as exc:  # noqa: BLE001
+        raise click.ClickException(f"建议文件不是合法 JSON：{exc}")
+    try:
+        rep = W.save_suggest(ws, feature, payload, kind="kb")
+    except W.WorkError as exc:
+        raise click.ClickException(str(exc))
+    rep["suggestions"] = W.list_suggests(ws, feature)
+    click.echo(json.dumps(rep, ensure_ascii=False, indent=2))
+
+
 @atopia_grp.command("run")
 @click.option("--tool", "tool_name", required=True, help="工具 id（见 atopia tools）")
 @click.option("--args", "args_json", default="{}", help="参数 JSON，如 '{\"kind\": \"qa\"}'")
@@ -1672,8 +1721,18 @@ def fs_search(obj, query, glob, max_hits, workspace, verbose):
         raise click.ClickException(str(exc))
 
 
-@cli.group("materials", help="D131：课堂资料库 <ws>/materials/<chap>/（PPT/PDF/讲义 → 知识点清单）")
+@cli.group("materials")
 def materials_grp():
+    """课堂资料（原件 → 抽取 → 知识点清单）。
+
+    Examples:
+
+    \b
+        assist materials list --json               # 有哪些章节
+        assist materials extract --chap 26C1       # 抽取原件为文本（不花钱）
+        assist materials suggest --chap 26C1       # AI 知识点建议（花钱，只写 .ai.json）
+        assist materials confirm --chap 26C1       # 教师确认后生效
+    """
     pass
 
 

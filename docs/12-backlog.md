@@ -1045,6 +1045,29 @@ rainclass 67/67，PWA↔engine 全等，仅末位浮点四舍五入噪声）。
 
 ---
 
+## D168/D169 · B6 工具治理 + 权限收紧（2026-11-05 完成）——本轮规划收口
+
+> 需求单：`docs/113-D169` §6.4
+
+教师关切：「工具越来越多，可能导致使用出错，要写好注释/说明」+「AI 可写 atopia 外有误删风险」。
+
+- ✅ **权限收紧**：`kb.write` / `kb.tag-knowledge.apply` / `kb.check-knowledge.apply`
+  → **L3 拒绝**（AI 不得直接写题库）；L3 从 5 增至 8（是收紧不是放松）
+- ✅ 新增安全替代 `atopia.suggest-kb`（L2）：只写 `atopia/work/<特征名>/suggest-kb.json`
+- ✅ **工具分组**：8 组（kb/materials/rules/grading/fs/prompt/atopia/misc），
+  `tools_by_group()` 把选择空间从 35 降到个位数；`GET /atopia/tool-groups`
+- ✅ **工具说明升级**：`Tool.when`（给 AI 的"何时用/何时不用"）与 `summary`（给教师）分离；
+  35 个工具全部补齐；`_tool_list_text` 改用 `when`
+- ✅ **CLI Examples**：`kb` / `materials` 两组补 `Examples:` 段
+  （踩坑：`@cli.group(help=...)` 会覆盖 docstring，必须去掉 `help=`）
+- 🐞 又踩一次"只读接口放 `do_POST`"（`/atopia/tool-groups` → 302 到 Pages）；
+  已修 + 加逐路由回归测试
+- 验收：pytest **1466**（+15）· build 0 error · selfcheck **37/37** · 脱敏/lint_bat 通过
+- **至此 D168/D169 六批全部完成**（B1 快照 → B2 统计 → B3 可视化 → B4 一键解析 → B5 例题库 → B6 治理）
+- 剩余小项：T13 打印 PDF sidecar、T14 共现图节点交互
+
+---
+
 ## D168 · B5 例题库 + 标准共现图（2026-11-05 完成）
 
 > 需求单：`docs/112-D168` §4.7
