@@ -20,7 +20,11 @@ from loguru import logger
 PROMPTS_DIR = "prompts"
 DEFAULT_SUBDIR = "ai-solve"
 # D151：5 类 system prompt + 原有的"作答要求"片段
-CATEGORIES = ("ai-solve", "transcribe", "evaluate", "solve", "rubric", "termnorm")
+# D168-B4：新增 `atopia-task`（Atopia 文档解析"任务模板"，docs/113-D169 §3.3）。
+# 与其它 6 类的区别：它不是 system prompt，而是**一次完整的文档处理任务**，
+# 额外带 `outputSchema`（期望的 JSON 结构）与 `inputKinds`（适用文档类型）。
+CATEGORIES = ("ai-solve", "transcribe", "evaluate", "solve", "rubric", "termnorm",
+              "atopia-task")
 SUBDIR = DEFAULT_SUBDIR          # 兼容旧引用（= ai-solve）
 MAX_TEXT_LEN = 2000
 MAX_NAME_LEN = 60
@@ -130,6 +134,88 @@ BUILTIN_BY_CATEGORY: dict[str, list[dict]] = {
         "text": "",
         "default": True,
     }],
+    # D168-B4：Atopia 文档解析任务（Three built-in tasks，见 docs/113-D169 §3.3）
+    "atopia-task": [
+        {
+            "id": "knowledge-outline",
+            "name": "知识点清单（授课计划/大纲/教材，默认）",
+            "default": True,
+            "inputKinds": ["plan", "ppt", "textbook", "note"],
+            "outputSchema": {
+                "knowledge": [
+                    {"term": "知识点术语", "aliases": ["别名"],
+                     "importance": "core|supporting",
+                     "chapter": "章节/单元标签（可选）",
+                     "topic": "章内主题（可选）",
+                     "evidence": "文档中的依据（原文片段）"}
+                ],
+                "chapters": [{"name": "章节名", "summary": "一句话"}],
+            },
+            "text": (
+                "你在整理**大学物理课程资料**（授课计划 / 教学大纲 / 教材）。\n"
+                "请从给定文本中抽取**知识点清单**，供教师核对后写入课堂资料（会成为学科批阅依据）。\n\n"
+                "【抽取原则】\n"
+                "1. 只抽**物理概念/定律/方法**（如 库仑定律、电场强度、高斯定理）；\n"
+                "   不要把「第3章」「课时安排」「教学目标」这类**课程管理信息**当知识点；\n"
+                "2. 术语用**规范物理名词**，同义的写进 `aliases`（如 动量守恒 / 动量守恒定律）；\n"
+                "3. `importance`：教材/大纲明确要求的核心内容 = core，其余 = supporting；\n"
+                "4. `chapter` **可选**：文档里有明确章节/单元归属时才填（教师可能不需要章节层级）；\n"
+                "5. `evidence` 必须**逐字引用**原文片段（不超过 40 字），不要自己编；\n"
+                "6. 宁可少抽也不要编造：文本里没有的知识点**不要**写入。\n\n"
+                "【输出格式（严格 JSON）】\n"
+                '{"knowledge": [{"term": "...", "aliases": [], "importance": "core",\n'
+                '               "chapter": "", "topic": "", "evidence": "..."}],\n'
+                ' "chapters": [{"name": "...", "summary": "..."}]}\n\n'
+                "只输出这个 JSON，不要任何解释文字。"
+            ),
+        },
+        {
+            "id": "chapter-tag",
+            "name": "给已有知识点打章节标签",
+            "inputKinds": ["plan", "ppt", "textbook", "note"],
+            "outputSchema": {
+                "tags": [{"term": "已有知识点", "chapter": "章节/单元",
+                          "topic": "章内主题（可选）", "evidence": "依据"}],
+            },
+            "text": (
+                "下面是**课程资料文本** 与 **一批已有关联知识点**。\n"
+                "请判断每个知识点在资料中属于哪个**章节/单元**，输出**标签**。\n\n"
+                "【原则】\n"
+                "1. **不改写知识点名称**，原样返回 `term`；\n"
+                "2. `chapter` 用资料里的原词（如「静电场」「恒定磁场」），不要自己造；\n"
+                "3. 资料里找不到依据的知识点 → **不要输出**（不要猜）；\n"
+                "4. `evidence` 逐字引用原文（≤40 字）。\n\n"
+                "【输出格式（严格 JSON）】\n"
+                '{"tags": [{"term": "...", "chapter": "...", "topic": "", "evidence": "..."}]}\n\n'
+                "只输出这个 JSON。"
+            ),
+        },
+        {
+            "id": "example-extract",
+            "name": "抽取例题（供标准共现图）",
+            "inputKinds": ["textbook", "ppt", "note"],
+            "outputSchema": {
+                "examples": [{"content": "题干", "solution": "解答",
+                              "knowledge": ["涉及知识点"], "source": "出处/页"}],
+            },
+            "text": (
+                "请从**教材/课件文本**中抽取**例题**（含题解的那种）。\n\n"
+                "【为什么抽例题】只有例题能反映「哪些知识点会一起出现」，\n"
+                "这是画**标准知识点共现图**（反映授课结构）的唯一数据来源——\n"
+                "大纲/授课计划只列清单，不产生共现。\n\n"
+                "【原则】\n"
+                "1. **只抽真正的例题**（有题干 + 有解答），不抽习题、不抽正文叙述；\n"
+                "2. `content` 保留题干原意（可精简表达，但不要改数据/条件）；\n"
+                "3. `solution` 可以整理成规范步骤，公式用 LaTeX（行内 $...$）；\n"
+                "4. `knowledge` 列出该例题涉及的物理概念（2–6 个，规范名词）；\n"
+                "5. `source` 标注出处（章节/页码/幻灯片号），便于教师核对。\n\n"
+                "【输出格式（严格 JSON）】\n"
+                '{"examples": [{"content": "...", "solution": "...",\n'
+                '               "knowledge": ["..."], "source": "..."}]}\n\n'
+                "只输出这个 JSON。"
+            ),
+        },
+    ],
 }
 
 
@@ -271,8 +357,13 @@ def get_template(ws, pid: str, category: str = DEFAULT_SUBDIR) -> "dict | None":
 
 def save_template(ws, *, pid: str, name: str, text: str,
                   make_default: bool = False, overwrite_builtin_text: bool = True,
-                  category: str = DEFAULT_SUBDIR) -> dict:
-    """新建或更新模板（含校验）。"""
+                  category: str = DEFAULT_SUBDIR,
+                  output_schema=None, input_kinds=None) -> dict:
+    """新建或更新模板（含校验）。
+
+    D168-B4：`output_schema` / `input_kinds` 仅 `atopia-task` 类使用
+    （任务模板要声明"输出什么结构、适用哪些文档"）；其它类传了也忽略。
+    """
     sid = str(pid or "").strip()
     if not sid:
         return {"ok": False, "error": f"缺少模板 id：{ID_HINT}"}
@@ -297,6 +388,16 @@ def save_template(ws, *, pid: str, name: str, text: str,
         "builtin": bool(existing.get("builtin")),
         "updatedAt": time.strftime("%Y-%m-%d %H:%M:%S"),
     }
+    # D168-B4：`atopia-task` 类模板额外带 outputSchema / inputKinds，
+    # 保存时必须**原样保留**（否则改一次提示词就把任务契约弄丢了）
+    for k in ("outputSchema", "inputKinds"):
+        if k in existing:
+            payload[k] = existing[k]
+    if category == "atopia-task":
+        if output_schema is not None:
+            payload["outputSchema"] = output_schema
+        if input_kinds is not None:
+            payload["inputKinds"] = [str(x) for x in input_kinds if str(x).strip()]
     from ..filelock import atomic_write_text
     atomic_write_text(p, json.dumps(payload, ensure_ascii=False, indent=1))
     if payload["default"]:

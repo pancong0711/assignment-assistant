@@ -101,3 +101,7 @@ kb/knowledge-normalize-log.jsonl
 app/tests/.d168-*
 app/tests/_d168.*.html
 app/tests/_d168_entry.ts
+app/tests/.d168-atopia-*
+app/tests/_d168_atopia.*.html
+app/tests/.d168-atopia.bundle.js
+app/tests/_d168_atopia_entry.ts

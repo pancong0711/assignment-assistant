@@ -4,7 +4,9 @@ import { useSettingsStore } from '/home/bot2603/Projects/2609-assignment-assista
 import AtopiaPanel from '/home/bot2603/Projects/2609-assignment-assistant/app/tests/AtopiaPanel.compiled-1l2ros.ts'
 import {
   askAtopia, fetchAtopiaSessions, fetchAtopiaWork, fetchLlmConfig, uploadAtopiaWork,
+  extractAtopiaWork, parseAtopiaWork, fetchPromptTemplatesByCategory,
   type AtopiaAskResult, type AtopiaStep, type LlmProvider,
+  type AtopiaExtractFile, type PromptTemplate,
 } from '/home/bot2603/Projects/2609-assignment-assistant/app/src/lib/engineClient'
 
 const LS_PROV = 'atopia.provider'
@@ -224,6 +226,73 @@ async function createWorkFeature() {
   await loadWork()
 }
 
+/* ---------- D168-B4：一键解析（工步 0 抽取 → 工步 1 AI 结构化） ----------
+ *  设计取舍：**不做工作流编排**（教师判断正确：文档类型会变，编排器很快变负担）。
+ *  只有两段：抽取是确定性的（免费），AI 结构化靠**可改/可存/可删的任务模板**。 */
+const taskTemplates = ref<PromptTemplate[]>([])
+const taskId = ref('')
+const parseBusy = ref(false)
+const parseMsg = ref('')
+const extractResult = ref<{ files: AtopiaExtractFile[]
+  errors: Array<{ file: string; error: string }>; chars: number } | null>(null)
+const parseResult = ref<any>(null)
+const extraContext = ref('')
+
+async function loadTasks() {
+  try {
+    const r = await fetchPromptTemplatesByCategory(settings.engineUrl, settings.engineToken,
+                                                   'atopia-task')
+    taskTemplates.value = (r?.items || []) as PromptTemplate[]
+    const def = taskTemplates.value.find((t) => (t as any).default)
+    if (!taskId.value) taskId.value = def?.id || taskTemplates.value[0]?.id || ''
+  } catch { taskTemplates.value = [] }
+}
+
+async function doExtract() {
+  if (!workFeature.value) { parseMsg.value = '请先填写特征名'; return }
+  parseBusy.value = true
+  parseMsg.value = '正在抽取（本地工具，不花钱）…'
+  parseResult.value = null
+  try {
+    const r = await extractAtopiaWork(settings.engineUrl, settings.engineToken,
+                                      { feature: workFeature.value })
+    if (!r?.ok && !(r?.files || []).length) {
+      parseMsg.value = `❌ ${r?.error || '抽取失败'}`
+      return
+    }
+    extractResult.value = { files: r.files || [], errors: r.errors || [],
+                            chars: r.chars || 0 }
+    const errN = (r.errors || []).length
+    parseMsg.value = `✅ 抽取完成：${(r.files || []).length} 个文件，共 ${r.chars} 字`
+      + (errN ? `；⚠ ${errN} 个失败（见下方）` : '')
+    await loadWorkDetail()
+  } catch (e) {
+    parseMsg.value = `抽取失败：${String((e as Error).message || e)}`
+  } finally { parseBusy.value = false }
+}
+
+async function doParse() {
+  if (!workFeature.value) { parseMsg.value = '请先填写特征名'; return }
+  if (!taskId.value) { parseMsg.value = '请先选择解析任务'; return }
+  const tname = taskTemplates.value.find((t) => t.id === taskId.value)?.name || taskId.value
+  if (!window.confirm(`将用任务「${tname}」调用模型解析（**会产生费用**）。继续？`)) return
+  parseBusy.value = true
+  parseMsg.value = '正在让 AI 解析，请稍候…'
+  try {
+    const r = await parseAtopiaWork(settings.engineUrl, settings.engineToken, {
+      feature: workFeature.value, taskId: taskId.value,
+      extraContext: extraContext.value.trim(),
+    })
+    if (!r?.ok) { parseMsg.value = `❌ ${r?.error || '解析失败'}`; return }
+    parseResult.value = r
+    parseMsg.value = `✅ 解析完成（${r.taskName || r.taskId}）：${r.count} 条 → ${r.file}`
+      + (r.truncated ? '；⚠ 文本过长已截断' : '')
+    await loadWorkDetail()
+  } catch (e) {
+    parseMsg.value = `解析失败：${String((e as Error).message || e)}`
+  } finally { parseBusy.value = false }
+}
+
 /* ---------- 会话历史 ---------- */
 const sessions = ref<{ id: string; turns: number; mtime: string }[]>([])
 const history = ref<any[]>([])
@@ -240,17 +309,17 @@ async function openSession(id: string) {
   } catch { history.value = [] }
 }
 
-onMounted(() => { newSession(); loadSessions(); loadProviders(); loadWork() })
+onMounted(() => { newSession(); loadSessions(); loadProviders(); loadWork(); loadTasks() })
 
 const canSend = computed(() => Boolean(input.value.trim()) && !busy.value)
 
-const __returned__ = { settings, tab, LS_PROV, LS_MODEL, providers, provider, model, customModel, modelsOfProvider, hasModelChoices, onProviderChange, onModelChange, loadProviders, msgs, input, busy, sessionId, errMsg, pending, confirming, showSteps, newSession, send, confirmPending, workFeatures, workFeature, newFeature, workFiles, workText, workBusy, workMsg, workInput, loadWork, loadWorkDetail, pickWorkFiles, readB64, onWorkFiles, createWorkFeature, sessions, history, loadSessions, openSession, canSend, AtopiaPanel }
+const __returned__ = { settings, tab, LS_PROV, LS_MODEL, providers, provider, model, customModel, modelsOfProvider, hasModelChoices, onProviderChange, onModelChange, loadProviders, msgs, input, busy, sessionId, errMsg, pending, confirming, showSteps, newSession, send, confirmPending, workFeatures, workFeature, newFeature, workFiles, workText, workBusy, workMsg, workInput, loadWork, loadWorkDetail, pickWorkFiles, readB64, onWorkFiles, createWorkFeature, taskTemplates, taskId, parseBusy, parseMsg, extractResult, parseResult, extraContext, loadTasks, doExtract, doParse, sessions, history, loadSessions, openSession, canSend, AtopiaPanel }
 Object.defineProperty(__returned__, '__isScriptSetup', { enumerable: false, value: true })
 return __returned__
 }
 
 })
-import { createElementVNode as _createElementVNode, createTextVNode as _createTextVNode, normalizeClass as _normalizeClass, vModelCheckbox as _vModelCheckbox, withDirectives as _withDirectives, openBlock as _openBlock, createElementBlock as _createElementBlock, createCommentVNode as _createCommentVNode, renderList as _renderList, Fragment as _Fragment, toDisplayString as _toDisplayString, normalizeStyle as _normalizeStyle, vModelText as _vModelText, withModifiers as _withModifiers, withKeys as _withKeys, createVNode as _createVNode } from "vue"
+import { createElementVNode as _createElementVNode, createTextVNode as _createTextVNode, normalizeClass as _normalizeClass, vModelCheckbox as _vModelCheckbox, withDirectives as _withDirectives, openBlock as _openBlock, createElementBlock as _createElementBlock, createCommentVNode as _createCommentVNode, renderList as _renderList, Fragment as _Fragment, toDisplayString as _toDisplayString, normalizeStyle as _normalizeStyle, vModelText as _vModelText, withModifiers as _withModifiers, withKeys as _withKeys, vModelSelect as _vModelSelect, createVNode as _createVNode } from "vue"
 
 const _hoisted_1 = { class: "wrap" }
 const _hoisted_2 = { class: "tabs2" }
@@ -368,11 +437,48 @@ const _hoisted_50 = {
   style: {"margin-top":"8px"}
 }
 const _hoisted_51 = { class: "md" }
+const _hoisted_52 = { style: {"margin-top":"12px","border-top":"1px dashed #d1d5db","padding-top":"10px"} }
+const _hoisted_53 = { style: {"display":"flex","gap":"8px","align-items":"center","flex-wrap":"wrap","margin":"6px 0"} }
+const _hoisted_54 = ["disabled"]
+const _hoisted_55 = { class: "field" }
+const _hoisted_56 = ["value"]
+const _hoisted_57 = ["disabled"]
+const _hoisted_58 = {
+  key: 0,
+  class: "hint",
+  style: {"margin":"4px 0 0","white-space":"pre-wrap"}
+}
+const _hoisted_59 = {
+  key: 1,
+  style: {"margin-top":"6px"}
+}
+const _hoisted_60 = {
+  class: "hint",
+  style: {"margin":"0 0 2px"}
+}
+const _hoisted_61 = { class: "tbl" }
+const _hoisted_62 = { class: "c" }
+const _hoisted_63 = { class: "c" }
+const _hoisted_64 = { class: "c hint" }
+const _hoisted_65 = {
+  key: 0,
+  class: "hint",
+  style: {"margin":"4px 0 0 16px","padding":"0"}
+}
+const _hoisted_66 = {
+  key: 2,
+  style: {"margin-top":"6px"}
+}
+const _hoisted_67 = {
+  class: "hint",
+  style: {"cursor":"pointer"}
+}
+const _hoisted_68 = { class: "md" }
 
 export function render(_ctx, _cache, $props, $setup, $data, $options) {
   return (_openBlock(), _createElementBlock("div", _hoisted_1, [
-    _cache[27] || (_cache[27] = _createElementVNode("h2", { style: {"margin":"0 0 4px"} }, "Atopia（AI 用本项目工具）", -1 /* CACHED */)),
-    _cache[28] || (_cache[28] = _createElementVNode("p", {
+    _cache[36] || (_cache[36] = _createElementVNode("h2", { style: {"margin":"0 0 4px"} }, "Atopia（AI 用本项目工具）", -1 /* CACHED */)),
+    _cache[37] || (_cache[37] = _createElementVNode("p", {
       class: "hint",
       style: {"margin":"0 0 8px"}
     }, [
@@ -394,7 +500,7 @@ export function render(_ctx, _cache, $props, $setup, $data, $options) {
         class: _normalizeClass(["btn", { primary: $setup.tab === 'work' }]),
         onClick: _cache[2] || (_cache[2] = $event => {$setup.tab = 'work'; $setup.loadWork()})
       }, " 📁 工作区（上传/解析） ", 2 /* CLASS */),
-      _cache[14] || (_cache[14] = _createElementVNode("span", { style: {"flex":"1"} }, null, -1 /* CACHED */)),
+      _cache[16] || (_cache[16] = _createElementVNode("span", { style: {"flex":"1"} }, null, -1 /* CACHED */)),
       ($setup.tab === 'chat')
         ? (_openBlock(), _createElementBlock("label", _hoisted_3, [
             _withDirectives(_createElementVNode("input", {
@@ -403,7 +509,7 @@ export function render(_ctx, _cache, $props, $setup, $data, $options) {
             }, null, 512 /* NEED_PATCH */), [
               [_vModelCheckbox, $setup.showSteps]
             ]),
-            _cache[13] || (_cache[13] = _createTextVNode(" 显示工具调用细节 ", -1 /* CACHED */))
+            _cache[15] || (_cache[15] = _createTextVNode(" 显示工具调用细节 ", -1 /* CACHED */))
           ]))
         : _createCommentVNode("v-if", true),
       ($setup.tab === 'chat')
@@ -418,7 +524,7 @@ export function render(_ctx, _cache, $props, $setup, $data, $options) {
     ($setup.tab === 'chat')
       ? (_openBlock(), _createElementBlock(_Fragment, { key: 0 }, [
           _createElementVNode("div", _hoisted_4, [
-            _cache[17] || (_cache[17] = _createElementVNode("span", {
+            _cache[19] || (_cache[19] = _createElementVNode("span", {
               class: "hint",
               style: {"margin":"0"}
             }, "provider：", -1 /* CACHED */)),
@@ -426,7 +532,7 @@ export function render(_ctx, _cache, $props, $setup, $data, $options) {
               value: $setup.provider,
               onChange: $setup.onProviderChange
             }, [
-              _cache[15] || (_cache[15] = _createElementVNode("option", { value: "" }, "（评阅段配置）", -1 /* CACHED */)),
+              _cache[17] || (_cache[17] = _createElementVNode("option", { value: "" }, "（评阅段配置）", -1 /* CACHED */)),
               (_openBlock(true), _createElementBlock(_Fragment, null, _renderList($setup.providers, (p) => {
                 return (_openBlock(), _createElementBlock("option", {
                   key: p.name,
@@ -434,7 +540,7 @@ export function render(_ctx, _cache, $props, $setup, $data, $options) {
                 }, _toDisplayString(p.name) + _toDisplayString(p.has_key ? '' : '（无 key）'), 9 /* TEXT, PROPS */, _hoisted_6))
               }), 128 /* KEYED_FRAGMENT */))
             ], 40 /* PROPS, NEED_HYDRATION */, _hoisted_5),
-            _cache[18] || (_cache[18] = _createElementVNode("span", {
+            _cache[20] || (_cache[20] = _createElementVNode("span", {
               class: "hint",
               style: {"margin":"0"}
             }, "模型：", -1 /* CACHED */)),
@@ -444,7 +550,7 @@ export function render(_ctx, _cache, $props, $setup, $data, $options) {
                   value: $setup.model,
                   onChange: _cache[4] || (_cache[4] = $event => {$setup.model = ($event.target as HTMLSelectElement).value; $setup.onModelChange()})
                 }, [
-                  _cache[16] || (_cache[16] = _createElementVNode("option", { value: "" }, "（默认）", -1 /* CACHED */)),
+                  _cache[18] || (_cache[18] = _createElementVNode("option", { value: "" }, "（默认）", -1 /* CACHED */)),
                   (_openBlock(true), _createElementBlock(_Fragment, null, _renderList($setup.modelsOfProvider, (m) => {
                     return (_openBlock(), _createElementBlock("option", {
                       key: m,
@@ -535,11 +641,11 @@ export function render(_ctx, _cache, $props, $setup, $data, $options) {
           ($setup.pending)
             ? (_openBlock(), _createElementBlock("div", _hoisted_26, [
                 _createElementVNode("div", _hoisted_27, [
-                  _cache[21] || (_cache[21] = _createElementVNode("h3", { style: {"margin":"0 0 8px"} }, "确认让 Atopia 执行这个写入操作？", -1 /* CACHED */)),
+                  _cache[23] || (_cache[23] = _createElementVNode("h3", { style: {"margin":"0 0 8px"} }, "确认让 Atopia 执行这个写入操作？", -1 /* CACHED */)),
                   _createElementVNode("p", _hoisted_28, [
-                    _cache[19] || (_cache[19] = _createTextVNode(" 工具：", -1 /* CACHED */)),
+                    _cache[21] || (_cache[21] = _createTextVNode(" 工具：", -1 /* CACHED */)),
                     _createElementVNode("code", null, _toDisplayString($setup.pending.tool), 1 /* TEXT */),
-                    _cache[20] || (_cache[20] = _createTextVNode("（L2 写入，会修改工作区数据） ", -1 /* CACHED */))
+                    _cache[22] || (_cache[22] = _createTextVNode("（L2 写入，会修改工作区数据） ", -1 /* CACHED */))
                   ]),
                   _createElementVNode("pre", _hoisted_29, _toDisplayString(JSON.stringify($setup.pending.args || {}, null, 1)), 1 /* TEXT */),
                   _createElementVNode("p", _hoisted_30, _toDisplayString($setup.pending.reason || ''), 1 /* TEXT */),
@@ -587,7 +693,7 @@ export function render(_ctx, _cache, $props, $setup, $data, $options) {
         ? (_openBlock(), _createElementBlock(_Fragment, { key: 1 }, [
             _createCommentVNode(" ============ D164：工作区 ============ "),
             _createElementVNode("div", _hoisted_38, [
-              _cache[26] || (_cache[26] = _createElementVNode("p", {
+              _cache[35] || (_cache[35] = _createElementVNode("p", {
                 class: "hint",
                 style: {"margin":"0 0 6px"}
               }, [
@@ -605,7 +711,7 @@ export function render(_ctx, _cache, $props, $setup, $data, $options) {
               ], -1 /* CACHED */)),
               _createElementVNode("div", _hoisted_39, [
                 _createElementVNode("label", _hoisted_40, [
-                  _cache[22] || (_cache[22] = _createTextVNode("特征名 ", -1 /* CACHED */)),
+                  _cache[24] || (_cache[24] = _createTextVNode("特征名 ", -1 /* CACHED */)),
                   _withDirectives(_createElementVNode("input", {
                     "onUpdate:modelValue": _cache[11] || (_cache[11] = $event => (($setup.workFeature) = $event)),
                     placeholder: "如 26C1",
@@ -616,7 +722,7 @@ export function render(_ctx, _cache, $props, $setup, $data, $options) {
                   ])
                 ]),
                 _createElementVNode("label", _hoisted_41, [
-                  _cache[23] || (_cache[23] = _createTextVNode("或新建 ", -1 /* CACHED */)),
+                  _cache[25] || (_cache[25] = _createTextVNode("或新建 ", -1 /* CACHED */)),
                   _withDirectives(_createElementVNode("input", {
                     "onUpdate:modelValue": _cache[12] || (_cache[12] = $event => (($setup.newFeature) = $event)),
                     placeholder: "26C2",
@@ -655,7 +761,7 @@ export function render(_ctx, _cache, $props, $setup, $data, $options) {
               (!$setup.workFiles.length)
                 ? (_openBlock(), _createElementBlock("p", _hoisted_45, "（该特征名下还没有文件。）"))
                 : (_openBlock(), _createElementBlock("table", _hoisted_46, [
-                    _cache[24] || (_cache[24] = _createElementVNode("thead", null, [
+                    _cache[26] || (_cache[26] = _createElementVNode("thead", null, [
                       _createElementVNode("tr", null, [
                         _createElementVNode("th", null, "文件"),
                         _createElementVNode("th", null, "大小"),
@@ -678,13 +784,125 @@ export function render(_ctx, _cache, $props, $setup, $data, $options) {
                   ])),
               ($setup.workText)
                 ? (_openBlock(), _createElementBlock("details", _hoisted_50, [
-                    _cache[25] || (_cache[25] = _createElementVNode("summary", {
+                    _cache[27] || (_cache[27] = _createElementVNode("summary", {
                       class: "hint",
                       style: {"cursor":"pointer"}
                     }, "查看可解析文本（md/txt）", -1 /* CACHED */)),
                     _createElementVNode("pre", _hoisted_51, _toDisplayString($setup.workText.slice(0, 3000)), 1 /* TEXT */)
                   ]))
-                : _createCommentVNode("v-if", true)
+                : _createCommentVNode("v-if", true),
+              _createCommentVNode(" D168-B4：一键解析（两段式） "),
+              _createElementVNode("div", _hoisted_52, [
+                _cache[31] || (_cache[31] = _createElementVNode("h4", { style: {"margin":"0 0 4px"} }, "🔎 一键解析", -1 /* CACHED */)),
+                _cache[32] || (_cache[32] = _createElementVNode("p", {
+                  class: "hint",
+                  style: {"margin":"0 0 6px"}
+                }, [
+                  _createElementVNode("b", null, "工步 0 抽取"),
+                  _createTextVNode("：把 PPT / PDF / Word / md 抽成纯文本（本地工具， "),
+                  _createElementVNode("b", null, "不花钱"),
+                  _createTextVNode("）；"),
+                  _createElementVNode("b", null, "工步 1 AI 解析"),
+                  _createTextVNode("：用下面选的任务模板把文本整理成结构化 JSON （"),
+                  _createElementVNode("b", null, "会花钱"),
+                  _createTextVNode("）。产物只落在本特征名的 "),
+                  _createElementVNode("code", null, "_parsed/"),
+                  _createTextVNode("， 进「课堂资料」仍需你确认（D164）。 ")
+                ], -1 /* CACHED */)),
+                _createElementVNode("div", _hoisted_53, [
+                  _createElementVNode("button", {
+                    class: "btn",
+                    disabled: $setup.parseBusy,
+                    onClick: $setup.doExtract
+                  }, _toDisplayString($setup.parseBusy ? '处理中…' : '① 抽取（免费）'), 9 /* TEXT, PROPS */, _hoisted_54),
+                  _createElementVNode("label", _hoisted_55, [
+                    _cache[28] || (_cache[28] = _createTextVNode("解析任务 ", -1 /* CACHED */)),
+                    _withDirectives(_createElementVNode("select", {
+                      "onUpdate:modelValue": _cache[13] || (_cache[13] = $event => (($setup.taskId) = $event)),
+                      style: {"min-width":"200px"}
+                    }, [
+                      (_openBlock(true), _createElementBlock(_Fragment, null, _renderList($setup.taskTemplates, (t) => {
+                        return (_openBlock(), _createElementBlock("option", {
+                          key: t.id,
+                          value: t.id
+                        }, _toDisplayString(t.name), 9 /* TEXT, PROPS */, _hoisted_56))
+                      }), 128 /* KEYED_FRAGMENT */))
+                    ], 512 /* NEED_PATCH */), [
+                      [_vModelSelect, $setup.taskId]
+                    ])
+                  ]),
+                  _createElementVNode("button", {
+                    class: "btn primary",
+                    disabled: $setup.parseBusy || !$setup.taskId,
+                    onClick: $setup.doParse
+                  }, _toDisplayString($setup.parseBusy ? '解析中…' : '② AI 解析（会花钱）'), 9 /* TEXT, PROPS */, _hoisted_57)
+                ]),
+                _cache[33] || (_cache[33] = _createElementVNode("label", {
+                  class: "hint",
+                  style: {"display":"block","margin":"0 0 4px"}
+                }, " 补充说明（可选，会附在提示词后面）： ", -1 /* CACHED */)),
+                _withDirectives(_createElementVNode("input", {
+                  "onUpdate:modelValue": _cache[14] || (_cache[14] = $event => (($setup.extraContext) = $event)),
+                  placeholder: "例：只关注第 4 章静电场；忽略习题页",
+                  style: {"width":"100%","max-width":"520px","font-size":"13px","padding":"4px 8px","border":"1px solid #d1d5db","border-radius":"6px"}
+                }, null, 512 /* NEED_PATCH */), [
+                  [_vModelText, $setup.extraContext]
+                ]),
+                _cache[34] || (_cache[34] = _createElementVNode("p", {
+                  class: "hint",
+                  style: {"margin":"4px 0 0"}
+                }, " 任务模板可在「知识点」页的提示词模板区修改/另存/新建（类别选「Atopia 解析任务」）。 ", -1 /* CACHED */)),
+                ($setup.parseMsg)
+                  ? (_openBlock(), _createElementBlock("p", _hoisted_58, _toDisplayString($setup.parseMsg), 1 /* TEXT */))
+                  : _createCommentVNode("v-if", true),
+                ($setup.extractResult?.files?.length)
+                  ? (_openBlock(), _createElementBlock("div", _hoisted_59, [
+                      _createElementVNode("p", _hoisted_60, "抽取结果（" + _toDisplayString($setup.extractResult.chars) + " 字）：", 1 /* TEXT */),
+                      _createElementVNode("table", _hoisted_61, [
+                        _cache[29] || (_cache[29] = _createElementVNode("thead", null, [
+                          _createElementVNode("tr", null, [
+                            _createElementVNode("th", null, "文件"),
+                            _createElementVNode("th", null, "类型"),
+                            _createElementVNode("th", null, "字数"),
+                            _createElementVNode("th", null, "引擎")
+                          ])
+                        ], -1 /* CACHED */)),
+                        _createElementVNode("tbody", null, [
+                          (_openBlock(true), _createElementBlock(_Fragment, null, _renderList($setup.extractResult.files, (f) => {
+                            return (_openBlock(), _createElementBlock("tr", {
+                              key: f.file
+                            }, [
+                              _createElementVNode("td", null, _toDisplayString(f.file), 1 /* TEXT */),
+                              _createElementVNode("td", _hoisted_62, _toDisplayString(f.kind), 1 /* TEXT */),
+                              _createElementVNode("td", _hoisted_63, _toDisplayString(f.chars), 1 /* TEXT */),
+                              _createElementVNode("td", _hoisted_64, _toDisplayString(f.engine || (f.images?.length ? '需看图' : '—')), 1 /* TEXT */)
+                            ]))
+                          }), 128 /* KEYED_FRAGMENT */))
+                        ])
+                      ]),
+                      ($setup.extractResult.errors.length)
+                        ? (_openBlock(), _createElementBlock("ul", _hoisted_65, [
+                            (_openBlock(true), _createElementBlock(_Fragment, null, _renderList($setup.extractResult.errors, (e) => {
+                              return (_openBlock(), _createElementBlock("li", {
+                                key: e.file,
+                                style: {"color":"#b45309"}
+                              }, _toDisplayString(e.file) + "：" + _toDisplayString(e.error), 1 /* TEXT */))
+                            }), 128 /* KEYED_FRAGMENT */))
+                          ]))
+                        : _createCommentVNode("v-if", true)
+                    ]))
+                  : _createCommentVNode("v-if", true),
+                ($setup.parseResult)
+                  ? (_openBlock(), _createElementBlock("details", _hoisted_66, [
+                      _createElementVNode("summary", _hoisted_67, " 解析产物预览（" + _toDisplayString($setup.parseResult.primaryKey) + "：" + _toDisplayString($setup.parseResult.count) + " 条） ", 1 /* TEXT */),
+                      _createElementVNode("pre", _hoisted_68, _toDisplayString(JSON.stringify($setup.parseResult.data, null, 1).slice(0, 4000)), 1 /* TEXT */),
+                      _cache[30] || (_cache[30] = _createElementVNode("p", {
+                        class: "hint",
+                        style: {"margin":"2px 0 0"}
+                      }, " → 到「课堂资料」页点「📥 从 Atopia 复制」确认后才会生效。 ", -1 /* CACHED */))
+                    ]))
+                  : _createCommentVNode("v-if", true)
+              ])
             ])
           ], 64 /* STABLE_FRAGMENT */))
         : (_openBlock(), _createElementBlock(_Fragment, { key: 2 }, [

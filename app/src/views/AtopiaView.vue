@@ -11,7 +11,9 @@ import { useSettingsStore } from '../stores/settings'
 import AtopiaPanel from '../components/AtopiaPanel.vue'
 import {
   askAtopia, fetchAtopiaSessions, fetchAtopiaWork, fetchLlmConfig, uploadAtopiaWork,
+  extractAtopiaWork, parseAtopiaWork, fetchPromptTemplatesByCategory,
   type AtopiaAskResult, type AtopiaStep, type LlmProvider,
+  type AtopiaExtractFile, type PromptTemplate,
 } from '../lib/engineClient'
 
 const settings = useSettingsStore()
@@ -218,6 +220,73 @@ async function createWorkFeature() {
   await loadWork()
 }
 
+/* ---------- D168-B4：一键解析（工步 0 抽取 → 工步 1 AI 结构化） ----------
+ *  设计取舍：**不做工作流编排**（教师判断正确：文档类型会变，编排器很快变负担）。
+ *  只有两段：抽取是确定性的（免费），AI 结构化靠**可改/可存/可删的任务模板**。 */
+const taskTemplates = ref<PromptTemplate[]>([])
+const taskId = ref('')
+const parseBusy = ref(false)
+const parseMsg = ref('')
+const extractResult = ref<{ files: AtopiaExtractFile[]
+  errors: Array<{ file: string; error: string }>; chars: number } | null>(null)
+const parseResult = ref<any>(null)
+const extraContext = ref('')
+
+async function loadTasks() {
+  try {
+    const r = await fetchPromptTemplatesByCategory(settings.engineUrl, settings.engineToken,
+                                                   'atopia-task')
+    taskTemplates.value = (r?.items || []) as PromptTemplate[]
+    const def = taskTemplates.value.find((t) => (t as any).default)
+    if (!taskId.value) taskId.value = def?.id || taskTemplates.value[0]?.id || ''
+  } catch { taskTemplates.value = [] }
+}
+
+async function doExtract() {
+  if (!workFeature.value) { parseMsg.value = '请先填写特征名'; return }
+  parseBusy.value = true
+  parseMsg.value = '正在抽取（本地工具，不花钱）…'
+  parseResult.value = null
+  try {
+    const r = await extractAtopiaWork(settings.engineUrl, settings.engineToken,
+                                      { feature: workFeature.value })
+    if (!r?.ok && !(r?.files || []).length) {
+      parseMsg.value = `❌ ${r?.error || '抽取失败'}`
+      return
+    }
+    extractResult.value = { files: r.files || [], errors: r.errors || [],
+                            chars: r.chars || 0 }
+    const errN = (r.errors || []).length
+    parseMsg.value = `✅ 抽取完成：${(r.files || []).length} 个文件，共 ${r.chars} 字`
+      + (errN ? `；⚠ ${errN} 个失败（见下方）` : '')
+    await loadWorkDetail()
+  } catch (e) {
+    parseMsg.value = `抽取失败：${String((e as Error).message || e)}`
+  } finally { parseBusy.value = false }
+}
+
+async function doParse() {
+  if (!workFeature.value) { parseMsg.value = '请先填写特征名'; return }
+  if (!taskId.value) { parseMsg.value = '请先选择解析任务'; return }
+  const tname = taskTemplates.value.find((t) => t.id === taskId.value)?.name || taskId.value
+  if (!window.confirm(`将用任务「${tname}」调用模型解析（**会产生费用**）。继续？`)) return
+  parseBusy.value = true
+  parseMsg.value = '正在让 AI 解析，请稍候…'
+  try {
+    const r = await parseAtopiaWork(settings.engineUrl, settings.engineToken, {
+      feature: workFeature.value, taskId: taskId.value,
+      extraContext: extraContext.value.trim(),
+    })
+    if (!r?.ok) { parseMsg.value = `❌ ${r?.error || '解析失败'}`; return }
+    parseResult.value = r
+    parseMsg.value = `✅ 解析完成（${r.taskName || r.taskId}）：${r.count} 条 → ${r.file}`
+      + (r.truncated ? '；⚠ 文本过长已截断' : '')
+    await loadWorkDetail()
+  } catch (e) {
+    parseMsg.value = `解析失败：${String((e as Error).message || e)}`
+  } finally { parseBusy.value = false }
+}
+
 /* ---------- 会话历史 ---------- */
 const sessions = ref<{ id: string; turns: number; mtime: string }[]>([])
 const history = ref<any[]>([])
@@ -234,7 +303,7 @@ async function openSession(id: string) {
   } catch { history.value = [] }
 }
 
-onMounted(() => { newSession(); loadSessions(); loadProviders(); loadWork() })
+onMounted(() => { newSession(); loadSessions(); loadProviders(); loadWork(); loadTasks() })
 
 const canSend = computed(() => Boolean(input.value.trim()) && !busy.value)
 </script>
@@ -412,6 +481,72 @@ const canSend = computed(() => Boolean(input.value.trim()) && !busy.value)
           <summary class="hint" style="cursor:pointer">查看可解析文本（md/txt）</summary>
           <pre class="md">{{ workText.slice(0, 3000) }}</pre>
         </details>
+
+        <!-- D168-B4：一键解析（两段式） -->
+        <div style="margin-top:12px; border-top:1px dashed #d1d5db; padding-top:10px">
+          <h4 style="margin:0 0 4px">🔎 一键解析</h4>
+          <p class="hint" style="margin:0 0 6px">
+            <b>工步 0 抽取</b>：把 PPT / PDF / Word / md 抽成纯文本（本地工具，
+            <b>不花钱</b>）；<b>工步 1 AI 解析</b>：用下面选的任务模板把文本整理成结构化 JSON
+            （<b>会花钱</b>）。产物只落在本特征名的 <code>_parsed/</code>，
+            进「课堂资料」仍需你确认（D164）。
+          </p>
+          <div style="display:flex; gap:8px; align-items:center; flex-wrap:wrap; margin:6px 0">
+            <button class="btn" :disabled="parseBusy" @click="doExtract">
+              {{ parseBusy ? '处理中…' : '① 抽取（免费）' }}
+            </button>
+            <label class="field">解析任务
+              <select v-model="taskId" style="min-width:200px">
+                <option v-for="t in taskTemplates" :key="t.id" :value="t.id">
+                  {{ t.name }}
+                </option>
+              </select>
+            </label>
+            <button class="btn primary" :disabled="parseBusy || !taskId" @click="doParse">
+              {{ parseBusy ? '解析中…' : '② AI 解析（会花钱）' }}
+            </button>
+          </div>
+          <label class="hint" style="display:block; margin:0 0 4px">
+            补充说明（可选，会附在提示词后面）：
+          </label>
+          <input v-model="extraContext" placeholder="例：只关注第 4 章静电场；忽略习题页"
+                 style="width:100%; max-width:520px; font-size:13px; padding:4px 8px;
+                        border:1px solid #d1d5db; border-radius:6px" />
+          <p class="hint" style="margin:4px 0 0">
+            任务模板可在「知识点」页的提示词模板区修改/另存/新建（类别选「Atopia 解析任务」）。
+          </p>
+          <p v-if="parseMsg" class="hint" style="margin:4px 0 0; white-space:pre-wrap">{{ parseMsg }}</p>
+
+          <div v-if="extractResult?.files?.length" style="margin-top:6px">
+            <p class="hint" style="margin:0 0 2px">抽取结果（{{ extractResult.chars }} 字）：</p>
+            <table class="tbl">
+              <thead><tr><th>文件</th><th>类型</th><th>字数</th><th>引擎</th></tr></thead>
+              <tbody>
+                <tr v-for="f in extractResult.files" :key="f.file">
+                  <td>{{ f.file }}</td>
+                  <td class="c">{{ f.kind }}</td>
+                  <td class="c">{{ f.chars }}</td>
+                  <td class="c hint">{{ f.engine || (f.images?.length ? '需看图' : '—') }}</td>
+                </tr>
+              </tbody>
+            </table>
+            <ul v-if="extractResult.errors.length" class="hint" style="margin:4px 0 0 16px; padding:0">
+              <li v-for="e in extractResult.errors" :key="e.file" style="color:#b45309">
+                {{ e.file }}：{{ e.error }}
+              </li>
+            </ul>
+          </div>
+
+          <details v-if="parseResult" style="margin-top:6px">
+            <summary class="hint" style="cursor:pointer">
+              解析产物预览（{{ parseResult.primaryKey }}：{{ parseResult.count }} 条）
+            </summary>
+            <pre class="md">{{ JSON.stringify(parseResult.data, null, 1).slice(0, 4000) }}</pre>
+            <p class="hint" style="margin:2px 0 0">
+              → 到「课堂资料」页点「📥 从 Atopia 复制」确认后才会生效。
+            </p>
+          </details>
+        </div>
       </div>
     </template>
 

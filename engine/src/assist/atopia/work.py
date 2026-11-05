@@ -202,3 +202,205 @@ def read_parsed(ws, feature: str, name: str) -> dict:
         return json.loads(p.read_text(encoding="utf-8"))
     except Exception as exc:  # noqa: BLE001
         raise WorkError(f"解析文件损坏：{exc}") from None
+
+
+# ============================================================================
+# D168-B4：一键解析（工步 0 抽取 → 工步 1 AI 结构化 → 工步 2 教师确认复制）
+# ============================================================================
+
+EXTRACTED = "_extracted"     # 工步 0 产物：抽取出的纯文本（**免费**）
+
+
+def _extract_dir(ws, feature: str) -> Path:
+    d = ensure_feature(ws, feature)
+    p = d / PARSED / EXTRACTED
+    p.mkdir(parents=True, exist_ok=True)
+    return p
+
+
+def extract_uploads(ws, feature: str, *, force: bool = False) -> dict:
+    """**工步 0**：把 `_upload/` 里的文档抽成纯文本（确定性，**不花模型钱**）。
+
+    分工（docs/113-D169 §3.2）：
+    - PPT/Word → `materials.extract_office`（officecli，回退 soffice）
+    - PDF      → `materials.extract_pdf_text`；无文字时 `pdf_to_images` 出页图
+    - md/txt   → 直接读
+    - 图片     → 记为"需 vision"（工步 1 走多模态）
+
+    产物落 `_parsed/_extracted/<stem>.text.txt`，并返回清单供工步 1 使用。
+    """
+    from ..files import materials as M
+
+    d = ensure_feature(ws, feature)
+    up = d / UPLOAD
+    ex = _extract_dir(ws, feature)
+    out: list[dict] = []
+    errors: list[dict] = []
+    if not up.is_dir():
+        return {"ok": False, "error": f"没有上传目录：{up}", "files": []}
+
+    for p in sorted(x for x in up.rglob("*") if x.is_file()):
+        ext = p.suffix.lower()
+        stem = p.stem
+        tf = ex / f"{stem}.text.txt"
+        try:
+            if ext in (".md", ".txt", ".markdown"):
+                txt = p.read_text(encoding="utf-8", errors="replace")
+                tf.write_text(txt, encoding="utf-8")
+                out.append({"file": p.name, "kind": "text", "chars": len(txt),
+                            "text_file": str(tf), "images": []})
+            elif ext in (".pptx", ".docx", ".xlsx", ".ppt", ".doc", ".xls"):
+                rep = M.extract_office(p, tf)
+                out.append({"file": p.name, "kind": "office",
+                            "chars": int(rep.get("chars") or 0),
+                            "slides": rep.get("slides"),
+                            "text_file": str(tf), "images": [],
+                            "engine": rep.get("engine")})
+            elif ext == ".pdf":
+                t = M.extract_pdf_text(p, out_dir=ex)
+                chars = int(t.get("chars") or 0)
+                imgs: list[str] = []
+                if chars < 200:          # 扫描件/纯图 PDF：出页图走 vision
+                    rep = M.pdf_to_images(p, ex / f"{stem}.pages")
+                    imgs = [str(x) for x in (rep.get("images") or [])]
+                out.append({"file": p.name, "kind": "pdf", "chars": chars,
+                            "text_file": t.get("text_file") or "", "images": imgs,
+                            "engine": t.get("engine")})
+            elif ext in (".png", ".jpg", ".jpeg"):
+                out.append({"file": p.name, "kind": "image", "chars": 0,
+                            "text_file": "", "images": [str(p)]})
+            else:
+                errors.append({"file": p.name, "error": f"不支持的扩展名 {ext}"})
+        except Exception as exc:  # noqa: BLE001 —— 单文件失败不影响其它
+            errors.append({"file": p.name, "error": f"{type(exc).__name__}: {str(exc)[:200]}"})
+
+    man = _manifest(ws, feature)
+    man["extracted"] = {"at": time.strftime("%Y-%m-%d %H:%M:%S"), "files": out}
+    _save_manifest(ws, feature, man)
+    total = sum(int(f.get("chars") or 0) for f in out)
+    return {"ok": not errors, "feature": feature, "files": out, "errors": errors,
+            "chars": total, "dir": str(ex),
+            "needVision": [f for f in out if f.get("images")]}
+
+
+def read_extracted_text(ws, feature: str, *, max_chars: int = 120000) -> dict:
+    """读工步 0 的抽取文本（供工步 1 拼 prompt）。"""
+    ex = _extract_dir(ws, feature)
+    parts: list[str] = []
+    used: list[str] = []
+    for f in sorted(ex.glob("*.text.txt")):
+        try:
+            txt = f.read_text(encoding="utf-8", errors="replace")
+        except OSError:
+            continue
+        if txt.strip():
+            parts.append(f"===== {f.name.replace('.text.txt', '')} =====\n{txt}")
+            used.append(f.name)
+    text = "\n\n".join(parts)
+    truncated = len(text) > max_chars
+    return {"ok": True, "text": text[:max_chars], "chars": len(text),
+            "files": used, "truncated": truncated}
+
+
+def collect_vision_images(ws, feature: str, *, max_images: int = 20) -> list[str]:
+    """工步 0 里需要"看图"的图片（扫描 PDF 页图 + 直接上传的图片）。"""
+    man = _manifest(ws, feature)
+    imgs: list[str] = []
+    for f in ((man.get("extracted") or {}).get("files") or []):
+        for x in (f.get("images") or []):
+            if Path(x).is_file():
+                imgs.append(x)
+    return imgs[:max_images]
+
+
+def save_parsed_result(ws, feature: str, data: dict, *, name: str = "") -> dict:
+    """工步 1 产物落 `_parsed/<名称>.json`（**只是建议**，进 materials 仍需教师确认）。"""
+    res = save_parsed(ws, feature, data, name=name or f"{feature}.json")
+    man = _manifest(ws, feature)
+    man.setdefault("parsedMeta", []).append(
+        {"file": res.get("file"), "at": time.strftime("%Y-%m-%d %H:%M:%S"),
+         "counts": {k: len(v) if isinstance(v, list) else 1
+                    for k, v in (data or {}).items()}})
+    _save_manifest(ws, feature, man)
+    return res
+
+
+# 内置任务 → 期望的输出键（用于取"主要数组"）
+_TASK_PRIMARY_KEY = {
+    "knowledge-outline": "knowledge",
+    "chapter-tag": "tags",
+    "example-extract": "examples",
+}
+
+
+def parse_with_task(client, ws, feature: str, *, task_id: str = "",
+                    model: "str | None" = None, max_chars: int = 120000,
+                    extra_context: str = "") -> dict:
+    """**工步 1**：用某个 `atopia-task` 模板把抽取文本交给模型，产出结构化 JSON。
+
+    - 不传 `task_id` → 用该类的**默认模板**；默认模板 `text` 为空 → 报错（无内置任务可用）；
+    - 文本为空但有待看图 → 走多模态（扫描件/照片）；
+    - 产物只落 `_parsed/`，**绝不**直接写 `materials/`（D131 硬规则）。
+    """
+    from ..files import prompts as P
+    from ..grading.transcribe import parse_llm_json
+
+    ws_path = Path(ws).resolve()
+    tpl = None
+    if task_id:
+        tpl = P.get_template(ws_path, task_id, "atopia-task")
+    else:
+        tpl = P.default_template(ws_path, "atopia-task")
+    if not tpl:
+        return {"ok": False, "error": f"找不到任务模板：{task_id or '(默认)'}"}
+    body = str(tpl.get("text") or "").strip()
+    if not body:
+        return {"ok": False, "error": f"任务模板 {tpl.get('id')} 没有提示词内容"}
+
+    src = read_extracted_text(ws_path, feature, max_chars=max_chars)
+    images = collect_vision_images(ws_path, feature)
+    if not src["text"].strip() and not images:
+        return {"ok": False,
+                "error": ("没有可解析的内容：请先跑「① 抽取」，或确认上传的文件里"
+                          "有文本/可渲染的页图（扫描 PDF 需要 poppler）。")}
+
+    user_parts = [body, "", "【文档内容】"]
+    if src["text"].strip():
+        user_parts.append(src["text"])
+        if src.get("truncated"):
+            user_parts.append("\n【注意】文本过长已截断，只提供前面部分；"
+                              "如遗漏较多请拆分文档后重跑。")
+    else:
+        user_parts.append("（本批资料以图片/扫描件为主，请**依据所附图片**抽取）")
+    if extra_context.strip():
+        user_parts.append("\n【教师补充说明】\n" + extra_context.strip())
+    prompt = "\n".join(user_parts)
+
+    try:
+        if images:
+            raw = client.chat_with_images(
+                system_prompt="这是大学物理课程资料整理，内容完全学术。只输出严格 JSON。",
+                user_text=prompt, image_paths=images, model=model,
+                temperature=0.2, max_tokens=8192, step="materials")
+        else:
+            raw = client.chat(
+                system_prompt="这是大学物理课程资料整理，内容完全学术。只输出严格 JSON。",
+                user_text=prompt, model=model, temperature=0.2,
+                response_format={"type": "json_object"}, max_tokens=8192,
+                step="materials")
+        data = parse_llm_json(raw)
+    except Exception as exc:  # noqa: BLE001
+        logger.warning(f"[atopia 解析] 模型调用失败：{exc}")
+        return {"ok": False, "error": str(exc)[:300]}
+    if not isinstance(data, dict):
+        return {"ok": False, "error": "模型返回的不是 JSON 对象"}
+
+    primary = _TASK_PRIMARY_KEY.get(str(tpl.get("id") or ""), "")
+    items = data.get(primary) if primary else None
+    saved = save_parsed_result(ws_path, feature, data, name=f"{feature}.json")
+    return {"ok": True, "taskId": tpl.get("id"), "taskName": tpl.get("name"),
+            "primaryKey": primary,
+            "count": len(items) if isinstance(items, list) else 0,
+            "file": saved.get("file"), "path": saved.get("path"),
+            "chars": src.get("chars"), "vision": bool(images),
+            "truncated": bool(src.get("truncated")), "data": data}

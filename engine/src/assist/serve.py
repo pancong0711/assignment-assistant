@@ -1673,6 +1673,61 @@ class Handler(BaseHTTPRequestHandler):
                 return
             self._json(rep)
             return
+        if u.path == "/atopia/work/extract":
+            # D168-B4 工步 0：抽取（确定性、**免费**、不调模型）
+            payload: dict = {}
+            try:
+                length = int(self.headers.get("Content-Length") or 0)
+                if length:
+                    payload = json.loads(self.rfile.read(length).decode("utf-8")) or {}
+            except Exception as exc:  # noqa: BLE001
+                self._json({"ok": False, "error": f"bad json: {exc}"}, 400)
+                return
+            from .atopia import work as _aw
+            feat = str(payload.get("feature") or "").strip()
+            try:
+                rep = _aw.extract_uploads(Path(self.ws).resolve(), feat,
+                                          force=bool(payload.get("force")))
+            except _aw.WorkError as exc:
+                self._json({"ok": False, "error": str(exc)}, 400)
+                return
+            self._json(rep, 200 if rep.get("ok") else 400)
+            return
+        if u.path == "/atopia/work/parse":
+            # D168-B4 工步 1：用 atopia-task 模板做 AI 结构化（**会花模型钱**）
+            # 产物只落 _parsed/；进 materials 仍需教师显式确认（D164 已有）。
+            payload: dict = {}
+            try:
+                length = int(self.headers.get("Content-Length") or 0)
+                if length:
+                    payload = json.loads(self.rfile.read(length).decode("utf-8")) or {}
+            except Exception as exc:  # noqa: BLE001
+                self._json({"ok": False, "error": f"bad json: {exc}"}, 400)
+                return
+            from .atopia import work as _aw
+            from .grading.llm import LLMConfigError, LLMClient
+            feat = str(payload.get("feature") or "").strip()
+            if not feat:
+                self._json({"ok": False, "error": "缺少 feature（特征名）"}, 400)
+                return
+            try:
+                client = LLMClient(ws=Path(self.ws).resolve())
+                rep = _aw.parse_with_task(
+                    client, Path(self.ws).resolve(), feat,
+                    task_id=str(payload.get("taskId") or ""),
+                    model=str(payload.get("model") or "") or None,
+                    extra_context=str(payload.get("extraContext") or ""))
+            except LLMConfigError as exc:
+                self._json({"ok": False, "error": f"LLM 未配置：{exc}"}, 400)
+                return
+            except _aw.WorkError as exc:
+                self._json({"ok": False, "error": str(exc)}, 400)
+                return
+            except Exception as exc:  # noqa: BLE001
+                self._json({"ok": False, "error": str(exc)[:300]}, 500)
+                return
+            self._json(rep, 200 if rep.get("ok") else 400)
+            return
         if u.path == "/materials/create":
             # D163：新建一个「特征名」资料目录（26C1 等）——PWA 里没有它就只能手工建目录
             payload: dict = {}
@@ -1785,20 +1840,6 @@ class Handler(BaseHTTPRequestHandler):
             self._json(rep)
             return
         # ---------------- D151：提示词模板（多类别 system prompt） ----------------
-        if u.path == "/prompts/templates":
-            # GET /prompts/templates?category=evaluate
-            from .files import prompts as _pp
-            q = urllib.parse.parse_qs(u.query)
-            cat = str((q.get("category") or ["ai-solve"])[0])
-            ws_ = Path(self.ws).resolve()
-            if cat not in _pp.CATEGORIES:
-                self._json({"ok": False, "error": f"未知类别：{cat}"}, 400)
-                return
-            self._json({"ok": True, "category": cat,
-                        "categories": list(_pp.CATEGORIES),
-                        "items": _pp.list_templates(ws_, cat),
-                        "default": (_pp.default_template(ws_, cat) or {}).get("id", "")})
-            return
         # ---------------- D148：知识点（标注 / 词表 / 要点生成） ----------------
         if u.path == "/knowledge/tag":
             # AI 为题目打知识点标签（默认只标未标注；dryRun 只预览）
@@ -3274,6 +3315,20 @@ class Handler(BaseHTTPRequestHandler):
                 self._json({"ok": True, "effective": sol.effective_map(ws_),
                             "effectiveByKey": sol.effective_by_key(ws_),
                             "digest": sol.solutions_digest(ws_)})
+        elif u.path == "/prompts/templates":
+            # GET /prompts/templates?category=evaluate
+            from .files import prompts as _pp
+            q = urllib.parse.parse_qs(u.query)
+            cat = str((q.get("category") or ["ai-solve"])[0])
+            ws_ = Path(self.ws).resolve()
+            if cat not in _pp.CATEGORIES:
+                self._json({"ok": False, "error": f"未知类别：{cat}"}, 400)
+                return
+            self._json({"ok": True, "category": cat,
+                        "categories": list(_pp.CATEGORIES),
+                        "items": _pp.list_templates(ws_, cat),
+                        "default": (_pp.default_template(ws_, cat) or {}).get("id", "")})
+            return
         elif u.path == "/prompts/ai-solve":
             # D108：提示词模板库（PWA 下拉/默认/删除）
             from .files import prompts as P

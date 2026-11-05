@@ -2454,6 +2454,52 @@ export async function uploadAtopiaWork(
   return o
 }
 
+/* ---------------- D168-B4：Atopia 一键解析 ---------------- */
+
+export interface AtopiaExtractFile {
+  file: string
+  kind: string
+  chars: number
+  text_file: string
+  images: string[]
+  engine?: string
+  slides?: number | null
+}
+
+/** POST /atopia/work/extract：工步 0 —— 抽取（确定性、**免费**、不调模型）。 */
+export async function extractAtopiaWork(
+  engineAddr: string, token: string | undefined,
+  payload: { feature: string; force?: boolean },
+): Promise<{ ok?: boolean; files?: AtopiaExtractFile[]; errors?: Array<{ file: string; error: string }>
+  chars?: number; needVision?: AtopiaExtractFile[]; dir?: string; error?: string }> {
+  const res = await fetch(engineUrlWithToken(
+    normalizeEngineAddr(engineAddr), '/atopia/work/extract', token), {
+    method: 'POST', headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(payload),
+  })
+  const o = (await res.json().catch(() => ({}))) as any
+  if (!res.ok && !o?.error) throw new Error(`HTTP ${res.status}`)
+  return o
+}
+
+/** POST /atopia/work/parse：工步 1 —— 用 atopia-task 模板做 AI 结构化（**会花钱**）。
+ *  产物只落 `atopia/work/<特征名>/_parsed/`，进课堂资料仍需教师确认。 */
+export async function parseAtopiaWork(
+  engineAddr: string, token: string | undefined,
+  payload: { feature: string; taskId?: string; model?: string; extraContext?: string },
+): Promise<{ ok?: boolean; taskId?: string; taskName?: string; primaryKey?: string
+  count?: number; file?: string; chars?: number; vision?: boolean; truncated?: boolean
+  data?: any; error?: string }> {
+  const res = await fetch(engineUrlWithToken(
+    normalizeEngineAddr(engineAddr), '/atopia/work/parse', token), {
+    method: 'POST', headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(payload),
+  })
+  const o = (await res.json().catch(() => ({}))) as any
+  if (!res.ok && !o?.error) throw new Error(`HTTP ${res.status}`)
+  return o
+}
+
 /** 把 Atopia 解析产物复制进课堂资料（**必须**教师确认）。 */
 export async function copyFromAtopia(
   base: string, token: string | undefined,

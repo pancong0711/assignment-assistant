@@ -1,7 +1,7 @@
 # D169 需求单：实现路线 + 架构决策（atopia 权限 / 工具治理 / skill / 可视化）
 
 > 日期：2026-11-05
-> 状态：**B3 已完成**；B1/B2 见 `docs/112-D168`；B4–B6 待做
+> 状态：**B1–B4 已完成**（B1/B2/B3 见 `docs/112-D168`）；B5–B6 待做
 > 关联：`docs/112-D168`（统计口径）、`docs/109-D166`（知识点 JSON 化）、
 > `docs/110-D167`（2508 整合评估）、`docs/12`
 
@@ -313,7 +313,7 @@ D169-1 atopia 权限收紧（移除 kb.write 等）
 | **B1** | 数据快照（D168-T2~T5） | `submissions.json` + `roster-tags/` + 包选择 UI | 1 批 |
 | **B2** | 统计核心（D168-T6~T10） | 词表归并 + 失误次数 + 加权 + 提交率 + 分 tag 共现 | 1-2 批 |
 | **B3** | 可视化（D169-4） | ✅ **已完成**（2026-11-05）：`viz.py` + `/analysis/chart` + 体检项 | 1 批 |
-| **B4** | atopia 一键解析 + 任务模板（D169-3） | 工步 0/1 + `atopia-task` 类 | 1-2 批 |
+| **B4** | atopia 一键解析 + 任务模板（D169-3） | ✅ **已完成**（2026-11-05）：`atopia-task` 第 7 类 + 工步 0/1 | 1-2 批 |
 | **B5** | example + 标准共现图（D168-T11/T12） | `example` kind + 第二套共现图 | 1 批 |
 | **B6** | 工具治理 + 权限收紧（D169-1/2） | description 升级 + 分组 + 移除危险写 | 1 批 |
 
@@ -327,6 +327,60 @@ D169-1 atopia 权限收紧（移除 kb.write 等）
 - B6 是治理，可以随时插入，但**建议等 B2 完成后**（那时工具集稳定了）。
 
 ---
+
+## 6.3 B4 实施记录（2026-11-05 完成）
+
+### 任务模板（第 7 类 `atopia-task`）
+
+复用 D151 的模板 CRUD（可改/存/删/另存/设默认），**新增两个字段**：
+
+| 字段 | 说明 |
+|---|---|
+| `outputSchema` | 期望的 JSON 结构（供前端提示 + 未来校验） |
+| `inputKinds` | 适用文档类型（plan/ppt/textbook/note），供前端过滤 |
+
+**关键修复**：`save_template` 的 payload 原本会**丢掉**这两个字段——
+教师改一次提示词，任务契约就没了。已修复并加测试。
+
+**内置三个任务**：
+
+| id | 用途 |
+|---|---|
+| `knowledge-outline`（默认） | 知识点清单（明确要求"不要抽课程管理信息"、`evidence` 逐字引用） |
+| `chapter-tag` | 给已有知识点打**章节标签**（教师：章节只做标签、不做层级） |
+| `example-extract` | 抽**例题**（标准共现图的唯一数据来源；大纲/PPT 只有清单无共现） |
+
+### 工步 0：`extract_uploads()`（确定性、免费）
+
+| 文件类型 | 抽取方式 |
+|---|---|
+| md/txt | 直接读 |
+| pptx/docx/xlsx/ppt/doc | `materials.extract_office`（officecli → soffice 回退） |
+| pdf | `pdftotext`；文字 < 200 字 → `pdftoppm` 出页图（走 vision） |
+| png/jpg | 直接进 vision 列表 |
+
+产物落 `_parsed/_extracted/*.text.txt`；**单文件失败不影响其它**（逐文件报错）。
+
+### 工步 1：`parse_with_task()`（AI、花钱）
+
+- 选模板（不传则用该类默认）→ 拼"任务提示词 + 文档内容 + 教师补充说明"；
+- 有页图时走 `chat_with_images`，否则走 `chat` + `json_object`；
+- 产物只落 `_parsed/<特征名>.json`，**绝不写 `materials/`**（有测试断言）；
+- 模型异常返回可读错误，不抛栈。
+
+### 接口 + 前端
+
+- `POST /atopia/work/extract`（工步 0）、`POST /atopia/work/parse`（工步 1）
+- Atopia 工作区页签：「🚀 一键解析」区 = ① 抽取（免费）/ ② AI 解析（会花钱，二次确认）
+  + 任务下拉 + 补充说明 + 抽取结果表 + 产物预览
+
+### 🐞 顺带修一个**一直坏着**的接口（D151 遗留）
+
+`/prompts/templates` 是**只读**接口，却写在 `do_POST` 里；前端用 **GET** 调用
+→ 请求落进 `_static` 兜底 → **302 重定向到 GitHub Pages**，
+返回 HTML 而不是 JSON。结果：**提示词模板下拉一直是空的，且不报错**。
+
+已移到 `do_GET`，并加回归测试（检查路由必须位于 `do_GET` 方法体内）。
 
 ## 7. 验收标准
 

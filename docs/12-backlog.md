@@ -1045,6 +1045,24 @@ rainclass 67/67，PWA↔engine 全等，仅末位浮点四舍五入噪声）。
 
 ---
 
+## D168 · B4 Atopia 一键解析 + 任务模板（2026-11-05 完成）
+
+> 需求单：`docs/113-D169` §6.3
+
+- ✅ `atopia-task` 第 7 类模板（复用 D151 CRUD）+ 新字段 `outputSchema`/`inputKinds`
+- ✅ 内置三任务：`knowledge-outline`（默认）/ `chapter-tag` / `example-extract`
+- ✅ 工步 0 `extract_uploads()`：md/txt/Office/PDF/图片，**确定性免费**，逐文件报错
+- ✅ 工步 1 `parse_with_task()`：选模板 → AI 结构化；有页图走 vision；产物只落 `_parsed/`
+- ✅ 接口 `POST /atopia/work/extract`、`POST /atopia/work/parse`
+- ✅ Atopia 工作区「🚀 一键解析」：① 抽取（免费）/ ② AI 解析（二次确认会花钱）
+- 🐞 **修一个一直坏着的接口**：`/prompts/templates` 是只读却写在 `do_POST`，
+  前端 GET → 302 到 Pages → **模板下拉永远空且不报错**（D151 遗留）。已移入 `do_GET` + 回归测试
+- 安全：有测试断言解析产物**绝不写 `materials/`**（D131 硬规则）
+- 验收：pytest **1437**（+22）· build 0 error · selfcheck **37/37**（+1 浏览器回归）· 脱敏/lint_bat 通过
+- 下一步：B5 `example` 题库 + 标准共现图
+
+---
+
 ## D168 · B3 可视化 + 版本 0.5.0 + README 更新（2026-11-05 完成）
 
 > 需求单：`docs/112-D168-metrics-and-snapshot.md` §4.6、`docs/113-D169` §4.4
