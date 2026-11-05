@@ -33,9 +33,10 @@ from loguru import logger
 from . import __version__
 from .xxt import layout as xxt_layout
 
-CHECK_IDS = ("python_env", "uv", "deps", "playwright", "xelatex", "fonts", "settings", "kb",
-              "grading_layout", "workspace_layout", "roster_persist", "class_dir_names")
-INSTALL_ITEMS = ("deps", "playwright", "fonts", "tex_guide", "python_guide", "uv", "kb_init", "katex", "tinytex", "engine_update")
+CHECK_IDS = ("python_env", "uv", "deps", "viz", "playwright", "xelatex", "fonts", "settings",
+              "kb", "grading_layout", "workspace_layout", "roster_persist", "class_dir_names")
+INSTALL_ITEMS = ("deps", "viz", "playwright", "fonts", "tex_guide", "python_guide", "uv",
+                 "kb_init", "katex", "tinytex", "engine_update")
 
 KATEX_VERSION = "0.16.4"
 
@@ -207,6 +208,8 @@ def installer_for(item: str) -> tuple[list[str] | None, str | None]:
         if base is None:
             return [py, "-m", "pip", "install", "-e", engine_root], None
         return base, None
+    if item == "viz":
+        return [_venv_python(), "-m", "pip", "install", "matplotlib", "networkx"], None
     if item == "playwright":
         return [_venv_python(), "-m", "playwright", "install", "chromium"], None
     if item == "fonts":
@@ -247,6 +250,18 @@ def _doctor_checks(ws: Path) -> list[dict]:
                          ("缺: " + ", ".join(missing)) if missing else "openpyxl/reportlab/loguru/httpx/pillow",
                          {"type": "install", "install": "deps"} if missing else {}))
     pw = _playwright_state()
+    # D168-B3：可视化依赖（matplotlib/networkx）——缺失时给**可读提示**，
+    # 不是 import 异常堆栈（docs/113-D169 §4.4）。
+    try:
+        from .grading import viz as _vz
+        _vz_ready = _vz.available()
+    except Exception as exc:  # noqa: BLE001
+        _vz_ready = {"ok": False, "missing": [], "hint": f"探测失败：{exc}"}
+    checks.append(_check(
+        "viz", "green" if _vz_ready.get("ok") else "yellow",
+        "知识点分析图表（matplotlib/networkx）",
+        "已安装" if _vz_ready.get("ok") else (_vz_ready.get("hint") or "未安装"),
+        {} if _vz_ready.get("ok") else {"type": "install", "install": "viz"}))
     checks.append(_check("playwright", "green" if pw == "已安装" else "yellow", "Playwright（阶段6）", pw,
                          {"type": "install", "install": "playwright"}))
     try:
@@ -3343,6 +3358,110 @@ class Handler(BaseHTTPRequestHandler):
                 (str(r.get("_tagSource")) for r in records if r.get("_tagSource")), "none")
             rep["submittedByTag"] = submitted_by_tag
             self._json(rep)
+            return
+        elif u.path == "/analysis/chart":
+            # D168-B3：知识点分析出图（PNG）。引擎算数 + 出图，前端只 <img> 显示。
+            from .grading import teacher_report as _tr
+            from .grading import viz as _vz
+            from .grading import error_stats as _es
+            from .grading import snapshots as _sn
+            from .grading import vocab as _vb
+            q = urllib.parse.parse_qs(u.query)
+            classes = [x for x in str((q.get("classes") or [""])[0]).split(",") if x.strip()]
+            packs = [x for x in str((q.get("packs") or [""])[0]).split(",") if x.strip()]
+            tags = [x for x in str((q.get("tags") or [""])[0]).split(",") if x.strip()]
+            kind = str((q.get("kind") or ["bar"])[0])
+            n = int((q.get("n") or ["2"])[0] or 2)
+            ws_ = Path(self.ws).resolve()
+            ready = _vz.available()
+            if not ready["ok"]:
+                self._json({"ok": False, "needViz": True,
+                            "error": ready.get("hint") or "可视化依赖未安装"}, 501)
+                return
+            if not classes or not packs:
+                self._json({"ok": False, "error": "需要 classes 与 packs 参数"}, 400)
+                return
+            records, sources = _tr.collect_multi(ws_, classes, packs, tags or None)
+            if not records:
+                self._json({"ok": False, "error": "没有找到评阅结果"}, 404)
+                return
+            vocab = _vb.load_vocab(ws_)
+            out_dir = ws_ / "reports" / "charts"
+            stamp = time.strftime("%Y%m%d-%H%M%S")
+            try:
+                if kind == "bar":
+                    sub_by_tag: dict[str, int] = {}
+                    for cd in classes:
+                        for pid in packs:
+                            try:
+                                st = _sn.submit_stats(ws_, cd, pid)
+                            except Exception:  # noqa: BLE001
+                                st = {"ok": False}
+                            if st.get("ok"):
+                                for tag, v in (st.get("byTag") or {}).items():
+                                    sub_by_tag[tag] = (sub_by_tag.get(tag, 0)
+                                                       + int(v.get("submitted") or 0))
+                    if not sub_by_tag:
+                        for r in records:
+                            t = str(r.get("tag") or "").strip()
+                            sub_by_tag[t] = sub_by_tag.get(t, 0) + 1
+                    rep = _es.build_report(records, submitted_by_tag=sub_by_tag,
+                                           vocab=vocab, only_known=True)
+                    path = _vz.bar_error_rates(
+                        rep.get("items") or [],
+                        out_dir / f"error-rate-{stamp}.png",
+                        title="知识点加权失误率（次/人）")
+                else:
+                    sub_by_tag = {}
+                    try:
+                        rep0 = None
+                        for cd in classes:
+                            for pid in packs:
+                                st = _sn.submit_stats(ws_, cd, pid)
+                                if st.get("ok"):
+                                    for tag, v in (st.get("byTag") or {}).items():
+                                        sub_by_tag[tag] = (sub_by_tag.get(tag, 0)
+                                                           + int(v.get("submitted") or 0))
+                        if not sub_by_tag:
+                            for r in records:
+                                t = str(r.get("tag") or "").strip()
+                                sub_by_tag[t] = sub_by_tag.get(t, 0) + 1
+                        rep0 = _es.build_report(records, submitted_by_tag=sub_by_tag,
+                                                vocab=vocab, only_known=True)
+                    except Exception:  # noqa: BLE001
+                        rep0 = {"items": []}
+                    rates = {i["term"]: float(i.get("rate") or 0)
+                             for i in (rep0.get("items") or [])}
+                    path = _vz.cooccurrence_network(
+                        records, out_dir / f"cooccurrence-{stamp}.png", n=n,
+                        vocab=vocab, rates=rates,
+                        title=f"知识点共现网络（{n} 元）")
+            except _vz.VizUnavailable as exc:
+                self._json({"ok": False, "needViz": True, "error": str(exc)}, 501)
+                return
+            except Exception as exc:  # noqa: BLE001
+                self._json({"ok": False, "error": f"出图失败：{str(exc)[:200]}"}, 500)
+                return
+            rel = str(path.relative_to(ws_)).replace("\\", "/")
+            self._json({"ok": True, "kind": kind, "file": rel, "path": str(path),
+                        "bytes": path.stat().st_size, "sources": sources,
+                        "url": f"/analysis/chart/file?name={urllib.parse.quote(path.name)}"})
+            return
+        elif u.path == "/analysis/chart/file":
+            # D168-B3：读取已生成的图（直接给 <img src>）
+            q = urllib.parse.parse_qs(u.query)
+            name = Path(str((q.get("name") or [""])[0])).name
+            f = Path(self.ws).resolve() / "reports" / "charts" / name
+            if not name or not f.is_file():
+                self._json({"ok": False, "error": "图表不存在"}, 404)
+                return
+            data = f.read_bytes()
+            self.send_response(200)
+            self.send_header("Content-Type", "image/png")
+            self.send_header("Content-Length", str(len(data)))
+            self.send_header("Cache-Control", "no-store")
+            self.end_headers()
+            self.wfile.write(data)
             return
         elif u.path == "/analysis/cooccurrence":
             # D168：共现（可按 tag 拆开）+ 自然聚类

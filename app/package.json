@@ -1,7 +1,7 @@
 {
   "name": "assignment-assistant-app",
   "private": true,
-  "version": "0.1.0",
+  "version": "0.5.0",
   "type": "module",
   "description": "大学物理作业纸设计 + AI批阅 工具的静态 PWA 前端（阶段2 骨架）",
   "scripts": {

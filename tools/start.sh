@@ -69,7 +69,12 @@ if [ ! -f "$ENGINE_DIR/pyproject.toml" ]; then
   notepad "$LOG" 2>/dev/null || true
   exit 1
 fi
-"$VP" install -e "$ENGINE_DIR" --index-url "$UV_DEFAULT_INDEX" >> "$LOG" 2>&1
+# D168-B3：安装失败时必须**明确提示**（否则引擎起来后 import matplotlib 报错，
+# 教师只看到一堆堆栈，不知道去重跑 start —— docs/113-D169 §4.4）
+if ! "$VP" install -e "$ENGINE_DIR" --index-url "$UV_DEFAULT_INDEX" >> "$LOG" 2>&1; then
+  echo "[WARN] 引擎依赖安装失败（网络？）。已安装的部分仍可启动；"
+  echo "       知识点分析图表会不可用。请联网后重跑本脚本。日志：$LOG"
+fi
 apply_pending() {
   [ -f "$PENDING" ] || return 0
   if [ ! -f "$STAGE/engine/pyproject.toml" ]; then

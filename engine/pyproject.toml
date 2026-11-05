@@ -1,6 +1,6 @@
 [project]
 name = "assist-engine"
-version = "0.4.0"
+version = "0.5.0"
 description = "assignment-assistant engine: 作业纸设计 + AI 批阅 (CLI / Companion 本地引擎)"
 requires-python = ">=3.11"
 dependencies = [
@@ -18,8 +18,16 @@ dependencies = [
 ]
 
 # D63 T7：学习通只读提取的可选依赖（`uv pip install -e engine[playwright]`；不进主 deps）。
+# D168-B3：知识点分析可视化依赖（matplotlib 等体积大，首次安装慢几分钟）——
+# 独立成 extra，**不拖累**只用作业纸/批阅的教师。
+#   pip install -e engine[viz]     或   pip install -e engine[viz,playwright]
 [project.optional-dependencies]
 playwright = ["playwright>=1.40"]
+viz = [
+    "matplotlib>=3.7",
+    "networkx>=3.0",
+    "numpy>=1.24",
+]
 
 # VB-1 HTML 主通道模板（engine/templates/assignment.html.j2）随 wheel 打包：
 # 仓库形态从 engine/templates 读，安装形态落到包内 assist/templates。

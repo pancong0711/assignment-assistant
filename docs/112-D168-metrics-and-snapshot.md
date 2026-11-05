@@ -1,7 +1,7 @@
 # D168 需求单：知识点失误统计口径 + 数据快照（roster / submissions）
 
 > 日期：2026-11-05
-> 状态：**B1+B2 已实施**（T2–T10 完成；T11–T13 待做）
+> 状态：**B1+B2+B3 已实施**（T2–T10 完成；T11–T13 待做）
 > 关联：`docs/110-D167`（2508 整合评估）、`docs/109-D166`（知识点 JSON 化）、
 > `docs/113-D169`（实现路线与架构）、`docs/12`
 
@@ -470,6 +470,59 @@ JSON 用**原子写**（临时文件 + replace）。
 `KnowledgeView` 新增「⑤-B 知识点失误分析」卡：统计按钮 + 提交人数/权重 +
 **可信度警告** + 失误率表（含分 tag 明细）+ 词表外计数 + 跨包口径 + 每个 tag 的共现图 + 聚类。
 
+## 4.6 B3 实施记录（2026-11-05 完成，可视化）
+
+### 依赖决策（我上轮的判断有误，已修正）
+
+我上轮说「matplotlib 会让引擎体积暴涨」——**是错的**。教师指出得对：
+引擎分发的是源码 zip，`dependencies` 只是声明，用户 `pip install` 时下载。
+
+**改进**：不做成主依赖，而是 **optional extra `[viz]`**（matplotlib/networkx/numpy），
+避免拖慢只用作业纸/批阅的教师。源码包体积不变。
+
+### 新增 `grading/viz.py`
+
+| 函数 | 作用 |
+|---|---|
+| `cooccurrence_share()` | 组合份额 `P_X = c_X / Σ C(N_k, n)`（移植 2508，**去 pandas**） |
+| `node_edge_potential()` | 节点/边关联势 + 层级恒等式 `ΣE = (n−1)V` |
+| `region_partition()` | louvain 社区划分（seed=42 可复现；单点并入最强区） |
+| `bar_error_rates()` | 加权失误率条形图（红高绿低） |
+| `cooccurrence_network()` | 共现网络图（节点大小=关联势，颜色=失误率，圆圈=社区） |
+| `available()` | 依赖探测 + **可读提示** |
+
+**依赖缺失时**：返回 `VizUnavailable`（可读中文），不是 `ImportError` 堆栈。
+
+### 接口
+
+| 路由 | 说明 |
+|---|---|
+| `GET /analysis/chart?classes=&packs=&tags=&kind=bar\|network&n=` | 引擎出图，返回 URL |
+| `GET /analysis/chart/file?name=` | 读取 PNG（给 `<img src>`） |
+
+缺依赖时返回 **501 + `needViz: true` + 可读 hint**。
+
+### 体检项（docs/113-D169 §4.4 要求）
+
+- `CHECK_IDS` 新增 `viz`：已装=green / 未装=yellow + 修复指引；
+- `INSTALL_ITEMS` 新增 `viz`：一键 `pip install matplotlib networkx`；
+- `start.sh` / `start.bat`：**安装失败改为 WARN 并说明"图表不可用"**，
+  而不是静默继续（此前引擎起来后 import 报错，教师看不懂）。
+  > `start.bat` 原本是 `FAIL + pause + exit /b 1`（直接退不出），改为 WARN 继续。
+
+### 前端
+
+`KnowledgeView`「⑤-B」新增「🖼 生成图表」按钮 → 引擎出图 → `<img>` 显示。
+文案明确写"图由**引擎计算并渲染**，页面只负责显示"——守"引擎算数"铁律。
+
+### 可视化分工（回应教师疑问）
+
+教师问：「这相当于要将原本的 python 代码全都转成 html/js 吗？」
+
+**不需要。** 现在（看静态图）Python 一行不用改，前端只 `<img>`；
+将来要"点节点看明细"时，引擎算 x/y 坐标 → 前端 SVG，**算法仍在 Python**。
+已登记为待做（T14）。
+
 ## 5. 任务清单
 
 | # | 内容 | 依赖 | 优先级 |
@@ -487,6 +540,7 @@ JSON 用**原子写**（临时文件 + replace）。
 | T11 | `example` kind + 例题提取（atopia 任务） | D169 | P2 |
 | T12 | 标准共现图（基于 example） | T11 | P2 |
 | T13 | 打印 PDF 的 sidecar（`作业纸-日期.json`） | — | P2 |
+| T14 | 共现图**节点明细交互**（引擎算坐标 → 前端 SVG；算法不翻译） | B3 | P2（登记待做） |
 
 ---
 

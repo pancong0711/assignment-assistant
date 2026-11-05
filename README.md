@@ -6,8 +6,10 @@
   与 2601playwright（学习通 AI 批阅，试行 1 学期）。
 - 目标形态：**Python CLI 引擎 + PWA 网页前端**，数据全部保存在教师本地；
   仓库（MIT）仅含代码与合成示例，不含题库/学生数据/任何密钥。
-- 讨论与设计文档见 `docs/01-architecture.md` 起的系列；当前主体功能已上线，
-  正在进行阶段5/6 产品化收尾（学习通接入最后做）。
+- 讨论与设计文档见 `docs/01-architecture.md` 起的系列；**引擎 v0.5.0 / PWA v0.5.0**，
+  阶段 0–4 已完成、阶段 5 收尾中，阶段 6（学习通）已接入发布/成绩源（见 `docs/16`）。
+- 当前重点：**知识点分析线**（失误率统计 → 共现/聚类 → 可视化）与 **Atopia 任务化解析**，
+  口径与路线见 `docs/112-D168`、`docs/113-D169`。
 
 > 作业纸不是筛选工具，而是沟通的桥梁。分层不是给学生贴标签，
 > 而是让每个学生都能在适合自己的难度上获得练习与反馈。
@@ -25,11 +27,11 @@
 - `docs/02-pwa-feasibility.md` — PWA 可行性结论与风险
 - `docs/03-module-migration.md` — 旧项目 → 新项目迁移映射
 - `docs/04-data-model-and-privacy.md` — 数据契约、脱敏红线、协议声明
-- `docs/05-decisions.md` — 决策记录（D1–D58；与其他文档冲突时以 05 为准）
+- `docs/05-decisions.md` — 决策记录（D1–D58；与其他文档冲突时**以最新需求单为准**）
 - `docs/06-roadmap.md` — 六阶段路线图（0–5，含验收标准）
 - `docs/07-incremental-vs-rewrite.md` — 增量迁移 vs 重写的开发思路判定
 - `docs/11-deployment.md` — GitHub Pages 部署（阶段4b）
-- `docs/13-taskboard.md` — **任务需求单 / 近轮实施记录**（D43–D62）
+- `docs/13-taskboard.md` — 任务需求单（D43–D62 历史；**当前活动需求单见 `docs/112`/`docs/113`**）
 - `docs/15-usage-manual.md` — 教师使用说明（同源 HelpView）
 - `docs/22-D71-engine-launcher-two-phase-update.md` — **D71 扫码导航竞态 + engine 两阶段自更新 + launcher/engine 边界**
 - `docs/23-D72-pwa-extract-preview.md` — **D72 PWA 一键提取账户信息 + 作业纸/批阅报告/过程预览整合**
@@ -57,10 +59,10 @@
 - `docs/94-D147-confirm-scope.md` — **D147 Atopia L2 确认精确到「工具+参数」（安全修复）**
 - `docs/95-D148-atopia-read-project.md` — **D148 Atopia 只读文件能力（fs.ls/read/search）+ 知识点选项卡 + 逐生补批**
 - `docs/96-D149-grading-as-score-source.md` — **D149 AI 批阅成绩作为成绩源（每包一列，未批阅记 0）**
-- `docs/97-D150-plan-atopia-workspace.md` — **D150 规划：Atopia 工作区 + 拷贝到课堂资料（未实施）**
+- `docs/97-D150-plan-atopia-workspace.md` — **D150 规划：Atopia 工作区（D164 已实施）**
 - `docs/98-D151-prompt-templates.md` — **D151 提示词模板中心（5 类 system prompt 可改/可存/可删）**
-- `docs/99-D152-ai-workbench-move.md` — **D152「题库AI+」整合题库 AI 作答（部分实施）**
-- `docs/100-D153-report-multi-select.md` — **D153 教师报告多选班级/作业包/tag（待实施）**
+- `docs/99-D152-ai-workbench-move.md` — **D152「题库AI+」整合题库 AI 作答（已完成）**
+- `docs/100-D153-report-multi-select.md` — **D153 教师报告多选班级/作业包/tag（已完成）**
 - `docs/101-D154-per-student-button-feedback.md` — **D154 逐生审核按钮反馈修复**
 - `docs/102-D155-materials-feature-name.md` — **D155 课堂资料按特征名管理 + 上传按类型归档**
 - `docs/103-D156-D160-grading-quality.md` — **D156–D160 批阅正确性与质量（落错人/结果不变/太简略/转写 schema）**
@@ -73,6 +75,10 @@
 - `docs/110-D167-examAnalysis-integration.md` — **D167 2508 知识点共现/得分率整合评估（只记录，未动代码）**
 - `docs/112-D168-metrics-and-snapshot.md` — **D168 知识点失误统计口径 + 数据快照（roster/submissions）**
 - `docs/113-D169-roadmap-and-architecture.md` — **D169 实现路线 + 架构决策（atopia 权限/工具治理/可视化）**
+- `docs/114-versioning.md` — **版本号规则**（engine / app / launcher 三段，何时升、发布链路）
+
+> **当前活动需求单 = `docs/112-D168`（口径/快照）+ `docs/113-D169`（路线/架构）**；
+> 历史条目保留供追溯，与最新口径冲突时以这两份为准。
 - `docs/85-D135-knowledge-hierarchy.md` — **D135 待决：知识点层级（上位/下位概念）方案与取舍**
 - `docs/34-D82-kb-read-order-image-upload-batch.md` — **D82 kb 多文件读取/题目排序/插图参数/草稿修复/上传试跑/batch**
 - `docs/16-xuexitong-integration.md` — **阶段6 学习通整合任务需求单**（登录/读取/下载/上传/发布）
@@ -95,10 +101,31 @@ assist grade --task a.json --xxt-class c:k --work w   # 程序逐生独立请求
 
 ## 里程碑
 
-见 `docs/06-roadmap.md`（六阶段）。当前：阶段 0/1/2/3/3.5 已完成，
-阶段 4a 主体完成；作业纸 HTML/PDF 主通道、班级分层、批量批阅 CLI、TinyTeX/KaTeX
-可选依赖与 Pages 部署均已上线。剩余重点为阶段5 产品化收尾与阶段6 学习通接入；
-CLI 保持超集，便于 AI agent 在 PWA 不可用时作为备份完成全流程。
+见 `docs/06-roadmap.md`（六阶段）与 `docs/12-backlog.md`（总账）。
+
+- **已完成**：阶段 0/1/2/3/3.5/4；作业纸 HTML/PDF 主通道、班级分层、批量批阅 CLI、
+  TinyTeX/KaTeX、Pages 部署、学习通发布与成绩源；
+- **进行中（阶段 5 收尾）**：知识点分析线（`docs/112-D168`）、Atopia 任务化解析
+  （`docs/113-D169`）、工具面治理；
+- **最后**：阶段 6 学习通剩余项（`docs/16`）。
+- CLI 始终是**超集**：PWA 能做的是 CLI 的子集，便于 AI agent 在网页不可用时接管全流程。
+
+## 依赖安装（可选 extras）
+
+主依赖（`pip install -e engine`）覆盖作业纸与批阅。以下为**按需安装**，不装也能正常用主体功能：
+
+| extra | 内容 | 用途 | 缺失时 |
+|---|---|---|---|
+| `playwright` | playwright | 学习通浏览器自动化 | 学习通功能不可用（体检标黄） |
+| `viz` | matplotlib / networkx / numpy | 知识点失误率图 + 共现网络图 | 图表接口返回 501 + **可读提示** |
+
+```bash
+pip install -e "engine[viz]"            # 只要分析图表
+pip install -e "engine[viz,playwright]" # 图表 + 学习通
+```
+
+> `start.sh` / `start.bat` 每次启动都会执行 `pip install -e`，**会自动补齐新增依赖**；
+> 失败时体检项（`viz`）会标黄并给出可读指引，而不是抛 import 异常。
 
 ## AI / 脚本调用约定
 

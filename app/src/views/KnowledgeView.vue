@@ -11,7 +11,7 @@ import { useSettingsStore } from '../stores/settings'
 import KbAiSolvePanel from '../components/KbAiSolvePanel.vue'
 import { tidyKbRelated, applyKbRelatedTidy, type RelatedTidyItem,
   fetchErrorRates, fetchCooccurrence, type ErrorRateReport,
-  type CooccurrenceGraph } from '../lib/engineClient'
+  type CooccurrenceGraph, buildAnalysisChart, analysisChartSrc } from '../lib/engineClient'
 import TeacherReportCard from '../components/TeacherReportCard.vue'
 import TrendCard from '../components/TrendCard.vue'
 import { KB_KINDS, KB_KIND_LABELS, type KbKind } from '../lib/kb'
@@ -309,6 +309,41 @@ const anaCo = ref<{ overall?: CooccurrenceGraph; byTag?: Record<string, Cooccurr
                     tags?: string[] } | null>(null)
 const anaClusters = ref<Array<{ id: string; members: string[]; size: number }>>([])
 const anaOnlyKnown = ref(true)
+/** D168-B3：引擎出图（PNG），前端只显示 */
+const chartBar = ref('')
+const chartNet = ref('')
+const chartMsg = ref('')
+const chartBusy = ref(false)
+
+async function buildCharts() {
+  if (!selClasses.value.length) { anaMsg.value = '请先勾选班级'; return }
+  const packs = packOptions.value.filter((p) => selPacks.value.includes(p))
+  if (!packs.length) { anaMsg.value = '请先勾选作业包'; return }
+  chartBusy.value = true
+  chartMsg.value = ''
+  try {
+    const tags = selTags.value.split(/[,，\s]+/).map((x) => x.trim()).filter(Boolean)
+    const r1 = await buildAnalysisChart(settings.engineUrl, settings.engineToken,
+      { classes: selClasses.value, packs, tags, kind: 'bar' })
+    if (!r1?.ok) {
+      chartMsg.value = r1?.needViz
+        ? `⚠ ${r1.error}`            // 依赖缺失：引擎已给出可读提示
+        : `❌ ${r1?.error || '失误率图生成失败'}`
+      return
+    }
+    chartBar.value = analysisChartSrc(settings.engineUrl, settings.engineToken, r1.url || '')
+    const r2 = await buildAnalysisChart(settings.engineUrl, settings.engineToken,
+      { classes: selClasses.value, packs, tags, kind: 'network', n: 2 })
+    if (r2?.ok) {
+      chartNet.value = analysisChartSrc(settings.engineUrl, settings.engineToken, r2.url || '')
+      chartMsg.value = '✅ 图表已生成（引擎出图，页面只显示）'
+    } else {
+      chartMsg.value = `⚠ 失误率图已生成；共现图未出：${r2?.error || ''}`
+    }
+  } catch (e) {
+    chartMsg.value = `出图失败：${String((e as Error).message || e)}`
+  } finally { chartBusy.value = false }
+}
 
 async function runAnalysis() {
   if (!selClasses.value.length) { anaMsg.value = '请先勾选班级'; return }
@@ -589,7 +624,33 @@ function confOf(rep: ErrorRateReport | null) {
               <span v-for="m in c.members" :key="m" class="term" style="margin-right:4px">{{ m }}</span>
             </div>
           </template>
+
         </template>
+
+          <!-- D168-B3：图表（引擎出图，前端只显示） -->
+          <div style="margin-top:10px; border-top:1px dashed #d1d5db; padding-top:8px">
+            <div class="row">
+              <button class="btn" :disabled="chartBusy" @click="buildCharts">
+                {{ chartBusy ? '出图中…' : '🖼 生成图表（失误率 / 共现网络）' }}
+              </button>
+              <span v-if="chartMsg" class="hint" style="margin:0">{{ chartMsg }}</span>
+            </div>
+            <p class="hint" style="margin:2px 0 6px">
+              图由<b>引擎计算并渲染</b>（matplotlib），页面只负责显示——
+              避免前后端两套算法算出不同结果。首次使用需安装
+              <code>engine[viz]</code> 依赖（重跑 start 脚本即可）。
+            </p>
+            <div v-if="chartBar" style="margin-bottom:8px">
+              <p class="hint" style="margin:0 0 2px">知识点加权失误率（次/人）</p>
+              <img :src="chartBar" alt="知识点加权失误率条形图"
+                   style="max-width:100%; border:1px solid #e5e7eb; border-radius:6px" />
+            </div>
+            <div v-if="chartNet">
+              <p class="hint" style="margin:0 0 2px">知识点共现网络（颜色=失误率，大小=关联势，圆圈=聚类）</p>
+              <img :src="chartNet" alt="知识点共现网络图"
+                   style="max-width:100%; border:1px solid #e5e7eb; border-radius:6px" />
+            </div>
+          </div>
       </section>
 
       <!-- ⑤ 教师报告（D153：多选班级/作业包/tag） -->

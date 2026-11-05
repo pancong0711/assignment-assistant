@@ -1045,6 +1045,24 @@ rainclass 67/67，PWA↔engine 全等，仅末位浮点四舍五入噪声）。
 
 ---
 
+## D168 · B3 可视化 + 版本 0.5.0 + README 更新（2026-11-05 完成）
+
+> 需求单：`docs/112-D168-metrics-and-snapshot.md` §4.6、`docs/113-D169` §4.4
+
+- ✅ `grading/viz.py`：移植 2508 组合份额/关联势/社区划分（**去 pandas**）+ 两张图
+- ✅ **依赖改 optional extra `[viz]`**（matplotlib/networkx/numpy），不拖慢主安装
+  > 我上轮"matplotlib 会撑大引擎"的判断是错的，已在需求单留档更正
+- ✅ 依赖缺失 → `VizUnavailable` **可读中文**，不是 ImportError 堆栈
+- ✅ 接口 `/analysis/chart`（出图）+ `/analysis/chart/file`（读 PNG）；缺依赖 501 + hint
+- ✅ 体检项 `viz`（green/yellow + 一键修复）；`start.sh`/`start.bat` 安装失败改 **WARN 并说明后果**
+- ✅ 前端「🖼 生成图表」→ 引擎出图 → `<img>`（守"引擎算数"铁律）
+- ✅ **版本升 0.5.0**（engine `pyproject.toml` + app `package.json`，此前长期停在 0.4.0/0.1.0）
+- ✅ **README 更新**：版本/当前重点/依赖 extras 说明/文档索引过期标注/里程碑
+- 验收：pytest **1415**（+11）· build 0 error · selfcheck **36/36** · lint_bat 通过 · 脱敏通过
+- 下一步：B4 atopia 一键解析（工步 0 抽取 + 工步 1 提示词任务）
+
+---
+
 ## D168 · B2 统计核心（2026-11-05 完成）
 
 > 需求单：`docs/112-D168-metrics-and-snapshot.md` §4.5

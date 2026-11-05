@@ -148,10 +148,9 @@ goto ENGINE_DOWNLOAD
 REM engine dir validated at :ENGINE_CHECK (D34 chain)
 "%VPIP%" install -e "%ENGINE_DIR%" --index-url "%UV_DEFAULT_INDEX%" >> "%LOG%" 2>&1
 IF ERRORLEVEL 1 (
-  echo [FAIL] engine dependency install failed - see start.log
-  notepad "%LOG%"
-  pause
-  exit /b 1
+  echo [WARN] engine dependency install failed ^(network?^) - see start.log
+  echo        Already-installed parts still work; knowledge-analysis charts will be unavailable.
+  echo        Please re-run this script after the network recovers.
 )
 :AFTER_DEPS
 if exist "%PENDING%" (

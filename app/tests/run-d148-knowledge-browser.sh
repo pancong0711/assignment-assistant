@@ -75,6 +75,8 @@ try:
             # D168：知识点失误分析
             'hasAnalysis': '知识点失误分析' in body,
             'hasAnalysisBtn': pg.locator('button', has_text='统计失误率与共现').count() >= 1,
+            # D168-B3：引擎出图（前端只显示）
+            'hasChartBtn': pg.locator('button', has_text='生成图表').count() >= 1,
             'errors': errs,
         }
         b.close()
@@ -88,6 +90,7 @@ assert out['hasTidy'], 'D166：缺少「AI 再整理知识点」区块'
 assert out['hasTidyBtn'], 'D166：缺少「生成整理建议」按钮'
 assert out['hasAnalysis'], 'D168：缺少「知识点失误分析」区块'
 assert out['hasAnalysisBtn'], 'D168：缺少「统计失误率与共现」按钮'
+assert out['hasChartBtn'], 'D168-B3：缺少「生成图表」按钮'
 print('OK d148：知识点选项卡（标注 dry-run / 要点生成 / 词表）渲染正常')
 PY
 RC=$?

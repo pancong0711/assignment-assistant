@@ -1667,6 +1667,36 @@ export async function fetchCooccurrence(
   }
 }
 
+/** GET /analysis/chart：让引擎出图（PNG）。kind=bar|network。
+ *  D168-B3：**引擎算数 + 出图**，前端只显示，不重写算法（docs/113 §5.3）。 */
+export async function buildAnalysisChart(
+  engineAddr: string, token: string | undefined,
+  q: { classes: string[]; packs: string[]; tags?: string[]; kind?: 'bar' | 'network'; n?: number },
+): Promise<{ ok?: boolean; url?: string; file?: string; bytes?: number
+  needViz?: boolean; error?: string }> {
+  const qs = new URLSearchParams({
+    classes: q.classes.join(','), packs: q.packs.join(','), kind: q.kind || 'bar',
+  })
+  if (q.tags?.length) qs.set('tags', q.tags.join(','))
+  if (q.n) qs.set('n', String(q.n))
+  const base = normalizeEngineAddr(engineAddr)
+  try {
+    return (await getJson2(engineUrlWithToken(
+      base, `/analysis/chart?${qs.toString()}`, token))) as any
+  } catch (e) {
+    return { ok: false, error: String((e as Error).message || e) }
+  }
+}
+
+/** 图表 URL 转成可直接放进 <img src> 的绝对地址（带 token）。 */
+export function analysisChartSrc(
+  engineAddr: string, token: string | undefined, url: string,
+): string {
+  const base = normalizeEngineAddr(engineAddr)
+  const abs = url.startsWith('http') ? url : `${base}${url}`
+  return token ? engineUrlWithToken(abs, '', token) : abs
+}
+
 /** GET /roster/read?classDir=：从磁盘读回名单（localStorage 丢失时恢复）。 */
 export async function fetchRosterFromEngine(
   engineAddr: string, token: string | undefined, classDir: string,
