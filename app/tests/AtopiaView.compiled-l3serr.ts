@@ -4,7 +4,7 @@ import { useSettingsStore } from '/home/bot2603/Projects/2609-assignment-assista
 import AtopiaPanel from '/home/bot2603/Projects/2609-assignment-assistant/app/tests/AtopiaPanel.compiled-1l2ros.ts'
 import {
   askAtopia, fetchAtopiaSessions, fetchAtopiaWork, fetchLlmConfig, uploadAtopiaWork,
-  extractAtopiaWork, parseAtopiaWork, fetchPromptTemplatesByCategory,
+  extractAtopiaWork, parseAtopiaWork, fetchPromptTemplatesByCategory, importExamples,
   type AtopiaAskResult, type AtopiaStep, type LlmProvider,
   type AtopiaExtractFile, type PromptTemplate,
 } from '/home/bot2603/Projects/2609-assignment-assistant/app/src/lib/engineClient'
@@ -293,6 +293,28 @@ async function doParse() {
   } finally { parseBusy.value = false }
 }
 
+/** D168-B5：把 `example-extract` 的产物导入例题库（只做分析，不布置/不批阅）。 */
+async function importToExamples() {
+  const r = parseResult.value
+  if (!r?.data) return
+  const ex = (r.data.examples || []) as any[]
+  if (!ex.length) { parseMsg.value = '当前产物里没有 examples（请用「抽取例题」任务解析）'; return }
+  if (!window.confirm(`将把 ${ex.length} 条例题写入题库 kb/example.xlsx（只用于标准共现图分析，`
+    + `不会布置给学生）。写前自动快照。确认？`)) return
+  parseBusy.value = true
+  try {
+    const rep = await importExamples(settings.engineUrl, settings.engineToken, {
+      data: r.data, confirm: 'teacher:pwa',
+      chap: String(workFeature.value || 'examples'),
+    })
+    parseMsg.value = rep?.ok
+      ? `✅ 已导入 ${rep.count} 条例题（库内共 ${rep.total} 条）→ 到「知识点」页 ⑤-A 生成标准共现图`
+      : `❌ ${rep?.error || '导入失败'}`
+  } catch (e) {
+    parseMsg.value = `导入失败：${String((e as Error).message || e)}`
+  } finally { parseBusy.value = false }
+}
+
 /* ---------- 会话历史 ---------- */
 const sessions = ref<{ id: string; turns: number; mtime: string }[]>([])
 const history = ref<any[]>([])
@@ -313,7 +335,7 @@ onMounted(() => { newSession(); loadSessions(); loadProviders(); loadWork(); loa
 
 const canSend = computed(() => Boolean(input.value.trim()) && !busy.value)
 
-const __returned__ = { settings, tab, LS_PROV, LS_MODEL, providers, provider, model, customModel, modelsOfProvider, hasModelChoices, onProviderChange, onModelChange, loadProviders, msgs, input, busy, sessionId, errMsg, pending, confirming, showSteps, newSession, send, confirmPending, workFeatures, workFeature, newFeature, workFiles, workText, workBusy, workMsg, workInput, loadWork, loadWorkDetail, pickWorkFiles, readB64, onWorkFiles, createWorkFeature, taskTemplates, taskId, parseBusy, parseMsg, extractResult, parseResult, extraContext, loadTasks, doExtract, doParse, sessions, history, loadSessions, openSession, canSend, AtopiaPanel }
+const __returned__ = { settings, tab, LS_PROV, LS_MODEL, providers, provider, model, customModel, modelsOfProvider, hasModelChoices, onProviderChange, onModelChange, loadProviders, msgs, input, busy, sessionId, errMsg, pending, confirming, showSteps, newSession, send, confirmPending, workFeatures, workFeature, newFeature, workFiles, workText, workBusy, workMsg, workInput, loadWork, loadWorkDetail, pickWorkFiles, readB64, onWorkFiles, createWorkFeature, taskTemplates, taskId, parseBusy, parseMsg, extractResult, parseResult, extraContext, loadTasks, doExtract, doParse, importToExamples, sessions, history, loadSessions, openSession, canSend, AtopiaPanel }
 Object.defineProperty(__returned__, '__isScriptSetup', { enumerable: false, value: true })
 return __returned__
 }
@@ -474,6 +496,7 @@ const _hoisted_67 = {
   style: {"cursor":"pointer"}
 }
 const _hoisted_68 = { class: "md" }
+const _hoisted_69 = ["disabled"]
 
 export function render(_ctx, _cache, $props, $setup, $data, $options) {
   return (_openBlock(), _createElementBlock("div", _hoisted_1, [
@@ -899,7 +922,16 @@ export function render(_ctx, _cache, $props, $setup, $data, $options) {
                       _cache[30] || (_cache[30] = _createElementVNode("p", {
                         class: "hint",
                         style: {"margin":"2px 0 0"}
-                      }, " → 到「课堂资料」页点「📥 从 Atopia 复制」确认后才会生效。 ", -1 /* CACHED */))
+                      }, " → 到「课堂资料」页点「📥 从 Atopia 复制」确认后才会生效。 ", -1 /* CACHED */)),
+                      ($setup.parseResult?.primaryKey === 'examples')
+                        ? (_openBlock(), _createElementBlock("button", {
+                            key: 0,
+                            class: "btn small",
+                            disabled: $setup.parseBusy,
+                            style: {"margin-top":"4px"},
+                            onClick: $setup.importToExamples
+                          }, " 📚 导入例题库（用于标准共现图，不布置给学生） ", 8 /* PROPS */, _hoisted_69))
+                        : _createCommentVNode("v-if", true)
                     ]))
                   : _createCommentVNode("v-if", true)
               ])

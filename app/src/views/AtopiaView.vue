@@ -11,7 +11,7 @@ import { useSettingsStore } from '../stores/settings'
 import AtopiaPanel from '../components/AtopiaPanel.vue'
 import {
   askAtopia, fetchAtopiaSessions, fetchAtopiaWork, fetchLlmConfig, uploadAtopiaWork,
-  extractAtopiaWork, parseAtopiaWork, fetchPromptTemplatesByCategory,
+  extractAtopiaWork, parseAtopiaWork, fetchPromptTemplatesByCategory, importExamples,
   type AtopiaAskResult, type AtopiaStep, type LlmProvider,
   type AtopiaExtractFile, type PromptTemplate,
 } from '../lib/engineClient'
@@ -287,6 +287,28 @@ async function doParse() {
   } finally { parseBusy.value = false }
 }
 
+/** D168-B5：把 `example-extract` 的产物导入例题库（只做分析，不布置/不批阅）。 */
+async function importToExamples() {
+  const r = parseResult.value
+  if (!r?.data) return
+  const ex = (r.data.examples || []) as any[]
+  if (!ex.length) { parseMsg.value = '当前产物里没有 examples（请用「抽取例题」任务解析）'; return }
+  if (!window.confirm(`将把 ${ex.length} 条例题写入题库 kb/example.xlsx（只用于标准共现图分析，`
+    + `不会布置给学生）。写前自动快照。确认？`)) return
+  parseBusy.value = true
+  try {
+    const rep = await importExamples(settings.engineUrl, settings.engineToken, {
+      data: r.data, confirm: 'teacher:pwa',
+      chap: String(workFeature.value || 'examples'),
+    })
+    parseMsg.value = rep?.ok
+      ? `✅ 已导入 ${rep.count} 条例题（库内共 ${rep.total} 条）→ 到「知识点」页 ⑤-A 生成标准共现图`
+      : `❌ ${rep?.error || '导入失败'}`
+  } catch (e) {
+    parseMsg.value = `导入失败：${String((e as Error).message || e)}`
+  } finally { parseBusy.value = false }
+}
+
 /* ---------- 会话历史 ---------- */
 const sessions = ref<{ id: string; turns: number; mtime: string }[]>([])
 const history = ref<any[]>([])
@@ -545,6 +567,10 @@ const canSend = computed(() => Boolean(input.value.trim()) && !busy.value)
             <p class="hint" style="margin:2px 0 0">
               → 到「课堂资料」页点「📥 从 Atopia 复制」确认后才会生效。
             </p>
+            <button v-if="parseResult?.primaryKey === 'examples'" class="btn small"
+                    :disabled="parseBusy" style="margin-top:4px" @click="importToExamples">
+              📚 导入例题库（用于标准共现图，不布置给学生）
+            </button>
           </details>
         </div>
       </div>

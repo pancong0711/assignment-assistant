@@ -1,7 +1,7 @@
 # D168 需求单：知识点失误统计口径 + 数据快照（roster / submissions）
 
 > 日期：2026-11-05
-> 状态：**B1+B2+B3 已实施**（T2–T10 完成；T11–T13 待做）
+> 状态：**B1–B5 已实施**（T2–T12 完成；T13/T14 待做）
 > 关联：`docs/110-D167`（2508 整合评估）、`docs/109-D166`（知识点 JSON 化）、
 > `docs/113-D169`（实现路线与架构）、`docs/12`
 
@@ -523,6 +523,51 @@ JSON 用**原子写**（临时文件 + replace）。
 将来要"点节点看明细"时，引擎算 x/y 坐标 → 前端 SVG，**算法仍在 Python**。
 已登记为待做（T14）。
 
+## 4.7 B5 实施记录（2026-11-05 完成，例题库 + 标准共现图）
+
+### `example` 的定位（关键设计）
+
+| 项 | 决定 |
+|---|---|
+| kind 名 | `example` |
+| 数据源 | Atopia `example-extract` 任务产物 |
+| 用途 | **只做分析**（标准共现图 / 自然聚类） |
+| **不布置、不批阅** | 已加 `rules.ANALYSIS_ONLY_KINDS`；且**刻意不放进** `SUPPORTED_KINDS` |
+
+> 注意一个陷阱：`normalize_kind()` 会把未知 kind **回落成 `problems`**。
+> 如果 `example` 进了批阅链，例题会被当成"待批阅题"。所以这里显式声明"分析专用"。
+
+### 新增 `grading/kb_examples.py`
+
+| 函数 | 作用 |
+|---|---|
+| `examples_from_parsed()` | `{examples:[...]}` → 题库条目；跳过无 `content` 的；`knowledge` 字符串按分隔符拆 |
+| `import_examples()` | 写 `kb/example.xlsx`（**追加续号** / `replace` 整章替换），**写前自动快照** |
+| `load_examples()` / `summary()` | 概览 + `ready`（≥2 条才能画共现） |
+| `examples_as_records()` | 转成**共现算法认识的记录形状**（显式适配，标 `source="example"`） |
+
+### 接口
+
+| 路由 | 说明 |
+|---|---|
+| `POST /kb/examples/import` | 导入例题（**缺 confirm → 403**，与 materials.confirm 同口径） |
+| `GET /kb/examples` | 概览（数据源是否就绪） |
+| `GET /analysis/standard-cooccurrence` | **标准共现图**；例题库不足时返回 404 + 可读指引 |
+
+### 前端
+
+- Atopia 工作区：解析产物是 `examples` 时出现「📚 导入例题库」按钮（二次确认）；
+- KnowledgeView 新增「⑤-A 标准共现图」卡，**与 ⑤-B 作答共现图并列**，
+  文案明确区分两者语义（标准图=授课结构；作答图=学生错误）。
+
+### 两套共现图对照（教师 §2.1 的核心区分）
+
+| | ⑤-A 标准图 | ⑤-B 作答图 |
+|---|---|---|
+| 数据源 | `kb/example.xlsx` 的 `related` | 批阅 `errors[].knowledge[]` |
+| 含义 | 老师怎么教、知识点怎么组织 | 学生怎么错、哪些概念连带出错 |
+| 按 tag 拆 | ❌（无学生数据） | ✅（必须拆） |
+
 ## 5. 任务清单
 
 | # | 内容 | 依赖 | 优先级 |
@@ -537,8 +582,8 @@ JSON 用**原子写**（临时文件 + replace）。
 | T8 | 加权失误率（单班分 tag → 跨班两层 → 跨包归一） | T7 | ✅ B2 |
 | T9 | 提交率 + 可信度判据 | T2,T3,T7 | ✅ B2 |
 | T10 | 分 tag 共现（含全局） | T7 | ✅ B2 |
-| T11 | `example` kind + 例题提取（atopia 任务） | D169 | P2 |
-| T12 | 标准共现图（基于 example） | T11 | P2 |
+| T11 | `example` kind + 例题提取（atopia 任务） | D169 | ✅ B5 |
+| T12 | 标准共现图（基于 example） | T11 | ✅ B5 |
 | T13 | 打印 PDF 的 sidecar（`作业纸-日期.json`） | — | P2 |
 | T14 | 共现图**节点明细交互**（引擎算坐标 → 前端 SVG；算法不翻译） | B3 | P2（登记待做） |
 

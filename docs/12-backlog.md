@@ -1045,6 +1045,24 @@ rainclass 67/67，PWA↔engine 全等，仅末位浮点四舍五入噪声）。
 
 ---
 
+## D168 · B5 例题库 + 标准共现图（2026-11-05 完成）
+
+> 需求单：`docs/112-D168` §4.7
+
+- ✅ `example` kind（**分析专用**：不布置/不批阅；`rules.ANALYSIS_ONLY_KINDS`）
+  > 陷阱：`normalize_kind()` 未知会回落 `problems`，所以刻意不放进 `SUPPORTED_KINDS`
+- ✅ `grading/kb_examples.py`：解析产物 → 题库条目（跳过无题干、字符串 knowledge 拆词）
+  → 写 `kb/example.xlsx`（追加续号/整章替换 + **写前快照**）
+- ✅ `examples_as_records()`：转成共现算法认识的记录形状（标 `source="example"`）
+- ✅ 接口：`POST /kb/examples/import`（缺 confirm→403）、`GET /kb/examples`、
+  `GET /analysis/standard-cooccurrence`（例题不足→404 + 可读指引）
+- ✅ 前端：Atopia「📚 导入例题库」+ KnowledgeView「⑤-A 标准共现图」
+  （与 ⑤-B 作答共现图**并列**，文案区分「授课结构」vs「学生错误」）
+- 验收：pytest **1451**（+14）· build 0 error · selfcheck **37/37** · 脱敏通过
+- 下一步：B6 工具治理 + 权限收紧
+
+---
+
 ## D168 · B4 Atopia 一键解析 + 任务模板（2026-11-05 完成）
 
 > 需求单：`docs/113-D169` §6.3

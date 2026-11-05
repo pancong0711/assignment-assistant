@@ -11,7 +11,8 @@ import { useSettingsStore } from '../stores/settings'
 import KbAiSolvePanel from '../components/KbAiSolvePanel.vue'
 import { tidyKbRelated, applyKbRelatedTidy, type RelatedTidyItem,
   fetchErrorRates, fetchCooccurrence, type ErrorRateReport,
-  type CooccurrenceGraph, buildAnalysisChart, analysisChartSrc } from '../lib/engineClient'
+  type CooccurrenceGraph, buildAnalysisChart, analysisChartSrc,
+  fetchExamplesSummary, fetchStandardCooccurrence, type ExamplesSummary } from '../lib/engineClient'
 import TeacherReportCard from '../components/TeacherReportCard.vue'
 import TrendCard from '../components/TrendCard.vue'
 import { KB_KINDS, KB_KIND_LABELS, type KbKind } from '../lib/kb'
@@ -301,6 +302,35 @@ async function doTidyApply() {
   } finally { tidyBusy.value = false }
 }
 
+/* ---------- D168-B5：标准共现图（数据源=例题库，反映授课结构） ---------- */
+const stdBusy = ref(false)
+const stdMsg = ref('')
+const stdSummary = ref<ExamplesSummary | null>(null)
+const stdCombos = ref<Array<{ terms: string[]; count: number; association: number }>>([])
+const stdClusters = ref<Array<{ id: string; members: string[]; size: number }>>([])
+
+async function loadStandard() {
+  stdBusy.value = true
+  stdMsg.value = ''
+  try {
+    stdSummary.value = await fetchExamplesSummary(settings.engineUrl, settings.engineToken)
+    if (!stdSummary.value?.ready) {
+      stdMsg.value = `例题库还没有足够数据（当前 ${stdSummary.value?.count || 0} 条）。`
+        + '请到「Atopia → 工作区」用「例题抽取」任务解析教材/课件，再导入例题库。'
+      stdCombos.value = []
+      stdClusters.value = []
+      return
+    }
+    const r = await fetchStandardCooccurrence(settings.engineUrl, settings.engineToken, 2)
+    if (!r?.ok) { stdMsg.value = `❌ ${r?.error || '标准共现图生成失败'}`; return }
+    stdCombos.value = r.graphs?.overall?.combos || []
+    stdClusters.value = (r.clusters?.clusters || []) as any
+    stdMsg.value = `✅ 已从 ${stdSummary.value.count} 条例题算出 ${stdCombos.value.length} 组共现`
+  } catch (e) {
+    stdMsg.value = `读取失败：${String((e as Error).message || e)}`
+  } finally { stdBusy.value = false }
+}
+
 /* ---------- D168：知识点加权失误率 + 共现（多班 × 多包 × 多 tag） ---------- */
 const anaBusy = ref(false)
 const anaMsg = ref('')
@@ -519,6 +549,42 @@ function confOf(rep: ErrorRateReport | null) {
           <button class="btn" :disabled="tplBusy || !tplSel || tplIsBuiltin" @click="deleteTpl">🗑 删除</button>
           <span v-if="tplMsg" class="hint" style="margin-left:8px">{{ tplMsg }}</span>
         </p>
+      </section>
+
+      <!-- ⑤-A D168-B5：标准共现图（例题库，反映授课结构） -->
+      <section class="card">
+        <h3>⑤-A 标准共现图（数据源：例题库 · 反映「授课怎么组织」）</h3>
+        <p class="hint">
+          与下面 ⑤-B 的<b>作答共现图</b>语义不同：
+          <b>标准图</b> = 老师怎么教（例题里哪些知识点一起出现）；
+          <b>作答图</b> = 学生怎么错（作业里哪些知识点一起出错）。
+          只有<b>例题</b>能体现「同一题涉及多个知识点」，大纲/授课计划只有清单、画不出共现。
+        </p>
+        <div class="row">
+          <button class="btn" :disabled="stdBusy" @click="loadStandard">
+            {{ stdBusy ? '计算中…' : '📚 从例题库生成标准共现图' }}
+          </button>
+          <span v-if="stdMsg" class="hint" style="margin:0">{{ stdMsg }}</span>
+        </div>
+        <template v-if="stdCombos.length">
+          <table class="tbl" style="margin-top:6px">
+            <thead><tr><th>知识点组合</th><th>共现题数</th><th>归一化关联</th></tr></thead>
+            <tbody>
+              <tr v-for="c in stdCombos.slice(0, 15)" :key="c.terms.join('+')">
+                <td>{{ c.terms.join(' ＋ ') }}</td>
+                <td class="c">{{ c.count }}</td>
+                <td class="c">{{ c.association }}</td>
+              </tr>
+            </tbody>
+          </table>
+          <div v-if="stdClusters.length" style="margin-top:6px">
+            <p class="hint" style="margin:0 0 2px">自然聚类（按例题共现耦合）：</p>
+            <div v-for="c in stdClusters" :key="c.id" style="margin-bottom:3px">
+              <span class="hint">{{ c.id }}（{{ c.size }}）：</span>
+              <span v-for="m in c.members" :key="m" class="term" style="margin-right:4px">{{ m }}</span>
+            </div>
+          </div>
+        </template>
       </section>
 
       <!-- ⑤-B D168：知识点加权失误率 + 共现（可跨班/跨包/跨 tag） -->

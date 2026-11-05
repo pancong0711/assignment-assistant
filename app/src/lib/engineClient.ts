@@ -1697,6 +1697,65 @@ export function analysisChartSrc(
   return token ? engineUrlWithToken(abs, '', token) : abs
 }
 
+/* ---------------- D168-B5：例题库 + 标准共现图 ---------------- */
+
+export interface ExamplesSummary {
+  ok?: boolean
+  kind?: string
+  chapters?: Record<string, number>
+  count?: number
+  terms?: number
+  /** 少于 2 条画不出共现 */
+  ready?: boolean
+  at?: string
+}
+
+/** GET /kb/examples：例题库概览（标准共现图的数据源）。 */
+export async function fetchExamplesSummary(
+  engineAddr: string, token: string | undefined,
+): Promise<ExamplesSummary> {
+  const base = normalizeEngineAddr(engineAddr)
+  try {
+    return (await getJson2(engineUrlWithToken(base, '/kb/examples', token))) as any
+  } catch {
+    return { ok: false, count: 0, ready: false }
+  }
+}
+
+/** POST /kb/examples/import：把 Atopia `example-extract` 产物导入例题库（**必须确认**）。 */
+export async function importExamples(
+  engineAddr: string, token: string | undefined,
+  payload: { data?: any; feature?: string; file?: string; chap?: string
+             replace?: boolean; confirm: string },
+): Promise<{ ok?: boolean; count?: number; total?: number; path?: string
+             error?: string; denied?: boolean }> {
+  const res = await fetch(engineUrlWithToken(
+    normalizeEngineAddr(engineAddr), '/kb/examples/import', token), {
+    method: 'POST', headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(payload),
+  })
+  const o = (await res.json().catch(() => ({}))) as any
+  if (!res.ok && !o?.error) throw new Error(`HTTP ${res.status}`)
+  return o
+}
+
+/** GET /analysis/standard-cooccurrence：**标准共现图**（数据源=例题，反映授课结构）。
+ *  注意与 `/analysis/cooccurrence`（作答共现图，反映学生错误）语义不同。 */
+export async function fetchStandardCooccurrence(
+  engineAddr: string, token: string | undefined, n = 2,
+): Promise<{ ok?: boolean; graphs?: { overall: CooccurrenceGraph; byTag: Record<string, CooccurrenceGraph>
+    tags: string[] }
+  clusters?: { clusters: Array<{ id: string; members: string[]; size: number }> }
+  summary?: ExamplesSummary; needExamples?: boolean; error?: string }> {
+  const base = normalizeEngineAddr(engineAddr)
+  try {
+    return (await getJson2(engineUrlWithToken(
+      base, `/analysis/standard-cooccurrence?n=${n}`, token))) as any
+  } catch (e) {
+    return { ok: false, error: String((e as Error).message || e) }
+  }
+}
+
 /** GET /roster/read?classDir=：从磁盘读回名单（localStorage 丢失时恢复）。 */
 export async function fetchRosterFromEngine(
   engineAddr: string, token: string | undefined, classDir: string,

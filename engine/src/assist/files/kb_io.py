@@ -179,7 +179,10 @@ def read_translation(xlsx_path: Path, kb_dir: Path) -> dict[str, list[dict]]:
 
 
 _KNOWN_KINDS = ("problems", "copy", "qa", "summary", "distinguish",
-                 "innovation", "translation", "copySp", "copyOnly")
+                 "innovation", "translation", "copySp", "copyOnly",
+                 # D168-B5：**例题题库**（从教材/课件抽取）——只用于
+                 # 「标准知识点共现图」（反映授课结构），**不布置给学生、不进批阅**
+                 "example")
 
 
 def _kind_of_xlsx(fn: Path) -> "tuple[str, bool]":

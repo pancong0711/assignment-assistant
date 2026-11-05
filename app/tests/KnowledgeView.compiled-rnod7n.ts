@@ -4,7 +4,8 @@ import { useSettingsStore } from '/home/bot2603/Projects/2609-assignment-assista
 import KbAiSolvePanel from '/home/bot2603/Projects/2609-assignment-assistant/app/tests/KbAiSolvePanel.compiled-pi5ca0.ts'
 import { tidyKbRelated, applyKbRelatedTidy, type RelatedTidyItem,
   fetchErrorRates, fetchCooccurrence, type ErrorRateReport,
-  type CooccurrenceGraph, buildAnalysisChart, analysisChartSrc } from '/home/bot2603/Projects/2609-assignment-assistant/app/src/lib/engineClient'
+  type CooccurrenceGraph, buildAnalysisChart, analysisChartSrc,
+  fetchExamplesSummary, fetchStandardCooccurrence, type ExamplesSummary } from '/home/bot2603/Projects/2609-assignment-assistant/app/src/lib/engineClient'
 import TeacherReportCard from '/home/bot2603/Projects/2609-assignment-assistant/app/tests/TeacherReportCard.compiled-gbyede.ts'
 import TrendCard from '/home/bot2603/Projects/2609-assignment-assistant/app/tests/TrendCard.compiled-dfiz13.ts'
 import { KB_KINDS, KB_KIND_LABELS, type KbKind } from '/home/bot2603/Projects/2609-assignment-assistant/app/src/lib/kb'
@@ -307,6 +308,35 @@ async function doTidyApply() {
   } finally { tidyBusy.value = false }
 }
 
+/* ---------- D168-B5：标准共现图（数据源=例题库，反映授课结构） ---------- */
+const stdBusy = ref(false)
+const stdMsg = ref('')
+const stdSummary = ref<ExamplesSummary | null>(null)
+const stdCombos = ref<Array<{ terms: string[]; count: number; association: number }>>([])
+const stdClusters = ref<Array<{ id: string; members: string[]; size: number }>>([])
+
+async function loadStandard() {
+  stdBusy.value = true
+  stdMsg.value = ''
+  try {
+    stdSummary.value = await fetchExamplesSummary(settings.engineUrl, settings.engineToken)
+    if (!stdSummary.value?.ready) {
+      stdMsg.value = `例题库还没有足够数据（当前 ${stdSummary.value?.count || 0} 条）。`
+        + '请到「Atopia → 工作区」用「例题抽取」任务解析教材/课件，再导入例题库。'
+      stdCombos.value = []
+      stdClusters.value = []
+      return
+    }
+    const r = await fetchStandardCooccurrence(settings.engineUrl, settings.engineToken, 2)
+    if (!r?.ok) { stdMsg.value = `❌ ${r?.error || '标准共现图生成失败'}`; return }
+    stdCombos.value = r.graphs?.overall?.combos || []
+    stdClusters.value = (r.clusters?.clusters || []) as any
+    stdMsg.value = `✅ 已从 ${stdSummary.value.count} 条例题算出 ${stdCombos.value.length} 组共现`
+  } catch (e) {
+    stdMsg.value = `读取失败：${String((e as Error).message || e)}`
+  } finally { stdBusy.value = false }
+}
+
 /* ---------- D168：知识点加权失误率 + 共现（多班 × 多包 × 多 tag） ---------- */
 const anaBusy = ref(false)
 const anaMsg = ref('')
@@ -384,7 +414,7 @@ function confOf(rep: ErrorRateReport | null) {
 }
 
 
-const __returned__ = { settings, msg, busy, terms, kind, chap, loadVocab, catalog, chaps, loadChaps, tplCat, tplItems, tplSel, tplText, tplName, tplBusy, tplMsg, tplCurrent, tplIsBuiltin, wClasses, selClasses, selPacks, selTags, repBusy, repStat, repSources, repMsg, packOptions, loadClasses, genReport, loadTemplates, pickTemplate, onTplCatChange, saveTpl, setTplDefault, deleteTpl, termByChapter, tagDry, tagForce, doTagPreview, doTagApply, tidyItems, tidyPick, tidyForce, tidyMsg, tidyBusy, doTidyPreview, toggleTidy, doTidyApply, anaBusy, anaMsg, anaReport, anaCo, anaClusters, anaOnlyKnown, chartBar, chartNet, chartMsg, chartBusy, buildCharts, runAnalysis, confOf, KbAiSolvePanel, TeacherReportCard, TrendCard, get KB_KINDS() { return KB_KINDS }, get KB_KIND_LABELS() { return KB_KIND_LABELS }, get PROMPT_CATEGORIES() { return PROMPT_CATEGORIES }, get PROMPT_CATEGORY_LABELS() { return PROMPT_CATEGORY_LABELS } }
+const __returned__ = { settings, msg, busy, terms, kind, chap, loadVocab, catalog, chaps, loadChaps, tplCat, tplItems, tplSel, tplText, tplName, tplBusy, tplMsg, tplCurrent, tplIsBuiltin, wClasses, selClasses, selPacks, selTags, repBusy, repStat, repSources, repMsg, packOptions, loadClasses, genReport, loadTemplates, pickTemplate, onTplCatChange, saveTpl, setTplDefault, deleteTpl, termByChapter, tagDry, tagForce, doTagPreview, doTagApply, tidyItems, tidyPick, tidyForce, tidyMsg, tidyBusy, doTidyPreview, toggleTidy, doTidyApply, stdBusy, stdMsg, stdSummary, stdCombos, stdClusters, loadStandard, anaBusy, anaMsg, anaReport, anaCo, anaClusters, anaOnlyKnown, chartBar, chartNet, chartMsg, chartBusy, buildCharts, runAnalysis, confOf, KbAiSolvePanel, TeacherReportCard, TrendCard, get KB_KINDS() { return KB_KINDS }, get KB_KIND_LABELS() { return KB_KIND_LABELS }, get PROMPT_CATEGORIES() { return PROMPT_CATEGORIES }, get PROMPT_CATEGORY_LABELS() { return PROMPT_CATEGORY_LABELS } }
 Object.defineProperty(__returned__, '__isScriptSetup', { enumerable: false, value: true })
 return __returned__
 }
@@ -456,126 +486,145 @@ const _hoisted_41 = {
 }
 const _hoisted_42 = { class: "card" }
 const _hoisted_43 = { class: "row" }
-const _hoisted_44 = { class: "field" }
-const _hoisted_45 = ["disabled"]
-const _hoisted_46 = {
+const _hoisted_44 = ["disabled"]
+const _hoisted_45 = {
   key: 0,
   class: "hint",
   style: {"margin":"0"}
 }
-const _hoisted_47 = {
+const _hoisted_46 = {
+  class: "tbl",
+  style: {"margin-top":"6px"}
+}
+const _hoisted_47 = { class: "c" }
+const _hoisted_48 = { class: "c" }
+const _hoisted_49 = {
+  key: 0,
+  style: {"margin-top":"6px"}
+}
+const _hoisted_50 = { class: "hint" }
+const _hoisted_51 = { class: "card" }
+const _hoisted_52 = { class: "row" }
+const _hoisted_53 = { class: "field" }
+const _hoisted_54 = ["disabled"]
+const _hoisted_55 = {
+  key: 0,
+  class: "hint",
+  style: {"margin":"0"}
+}
+const _hoisted_56 = {
   class: "hint",
   style: {"margin":"6px 0 2px"}
 }
-const _hoisted_48 = { key: 0 }
-const _hoisted_49 = { key: 1 }
-const _hoisted_50 = {
+const _hoisted_57 = { key: 0 }
+const _hoisted_58 = { key: 1 }
+const _hoisted_59 = {
   key: 2,
   style: {"color":"#b45309"}
 }
-const _hoisted_51 = {
+const _hoisted_60 = {
   key: 0,
   style: {"color":"#b45309","font-size":"12px","margin":"0 0 6px"}
 }
-const _hoisted_52 = { class: "tbl" }
-const _hoisted_53 = { class: "c" }
-const _hoisted_54 = { class: "c" }
-const _hoisted_55 = { class: "hint" }
-const _hoisted_56 = { class: "hint" }
-const _hoisted_57 = {
+const _hoisted_61 = { class: "tbl" }
+const _hoisted_62 = { class: "c" }
+const _hoisted_63 = { class: "c" }
+const _hoisted_64 = { class: "hint" }
+const _hoisted_65 = { class: "hint" }
+const _hoisted_66 = {
   key: 1,
   class: "hint",
   style: {"margin":"4px 0 0","color":"#b45309"}
 }
-const _hoisted_58 = {
+const _hoisted_67 = {
   key: 2,
   class: "hint",
   style: {"margin":"4px 0 0"}
 }
-const _hoisted_59 = {
+const _hoisted_68 = {
   class: "hint",
   style: {"margin":"0 0 2px"}
 }
-const _hoisted_60 = {
+const _hoisted_69 = {
   key: 0,
   class: "hint"
 }
-const _hoisted_61 = {
+const _hoisted_70 = {
   key: 1,
   style: {"margin":"0 0 6px 16px","padding":"0","font-size":"13px"}
 }
-const _hoisted_62 = {
+const _hoisted_71 = {
   class: "hint",
   style: {"cursor":"pointer"}
 }
-const _hoisted_63 = { style: {"margin":"2px 0 0 16px","padding":"0","font-size":"13px"} }
-const _hoisted_64 = {
+const _hoisted_72 = { style: {"margin":"2px 0 0 16px","padding":"0","font-size":"13px"} }
+const _hoisted_73 = {
   key: 0,
   class: "hint"
 }
-const _hoisted_65 = { class: "hint" }
-const _hoisted_66 = { style: {"margin-top":"10px","border-top":"1px dashed #d1d5db","padding-top":"8px"} }
-const _hoisted_67 = { class: "row" }
-const _hoisted_68 = ["disabled"]
-const _hoisted_69 = {
+const _hoisted_74 = { class: "hint" }
+const _hoisted_75 = { style: {"margin-top":"10px","border-top":"1px dashed #d1d5db","padding-top":"8px"} }
+const _hoisted_76 = { class: "row" }
+const _hoisted_77 = ["disabled"]
+const _hoisted_78 = {
   key: 0,
   class: "hint",
   style: {"margin":"0"}
 }
-const _hoisted_70 = {
+const _hoisted_79 = {
   key: 0,
   style: {"margin-bottom":"8px"}
 }
-const _hoisted_71 = ["src"]
-const _hoisted_72 = { key: 1 }
-const _hoisted_73 = ["src"]
-const _hoisted_74 = { class: "card" }
-const _hoisted_75 = {
-  key: 0,
-  class: "hint"
-}
-const _hoisted_76 = { class: "row" }
-const _hoisted_77 = ["value"]
-const _hoisted_78 = { class: "row" }
-const _hoisted_79 = ["value"]
-const _hoisted_80 = {
-  key: 0,
-  class: "hint"
-}
-const _hoisted_81 = { class: "row" }
-const _hoisted_82 = { class: "field" }
-const _hoisted_83 = ["disabled"]
+const _hoisted_80 = ["src"]
+const _hoisted_81 = { key: 1 }
+const _hoisted_82 = ["src"]
+const _hoisted_83 = { class: "card" }
 const _hoisted_84 = {
+  key: 0,
+  class: "hint"
+}
+const _hoisted_85 = { class: "row" }
+const _hoisted_86 = ["value"]
+const _hoisted_87 = { class: "row" }
+const _hoisted_88 = ["value"]
+const _hoisted_89 = {
+  key: 0,
+  class: "hint"
+}
+const _hoisted_90 = { class: "row" }
+const _hoisted_91 = { class: "field" }
+const _hoisted_92 = ["disabled"]
+const _hoisted_93 = {
   key: 0,
   class: "hint",
   style: {"margin":"0"}
 }
-const _hoisted_85 = {
+const _hoisted_94 = {
   key: 0,
   class: "hint",
   style: {"margin":"2px 0"}
 }
-const _hoisted_86 = {
+const _hoisted_95 = {
   key: 1,
   style: {"margin-top":"8px"}
 }
-const _hoisted_87 = { class: "tbl" }
-const _hoisted_88 = { class: "card" }
-const _hoisted_89 = { class: "hint" }
-const _hoisted_90 = {
+const _hoisted_96 = { class: "tbl" }
+const _hoisted_97 = { class: "card" }
+const _hoisted_98 = { class: "hint" }
+const _hoisted_99 = {
   key: 0,
   class: "hint"
 }
-const _hoisted_91 = {
+const _hoisted_100 = {
   class: "hint",
   style: {"cursor":"pointer"}
 }
-const _hoisted_92 = { class: "terms" }
+const _hoisted_101 = { class: "terms" }
 
 export function render(_ctx, _cache, $props, $setup, $data, $options) {
   return (_openBlock(), _createElementBlock("div", _hoisted_1, [
-    _cache[57] || (_cache[57] = _createElementVNode("h2", { style: {"margin":"0 0 4px"} }, "知识点（AI 标注 / 题库 AI 作答 / 词表）", -1 /* CACHED */)),
-    _cache[58] || (_cache[58] = _createElementVNode("p", {
+    _cache[61] || (_cache[61] = _createElementVNode("h2", { style: {"margin":"0 0 4px"} }, "知识点（AI 标注 / 题库 AI 作答 / 词表）", -1 /* CACHED */)),
+    _cache[62] || (_cache[62] = _createElementVNode("p", {
       class: "hint",
       style: {"margin":"0 0 8px"}
     }, [
@@ -856,10 +905,82 @@ export function render(_ctx, _cache, $props, $setup, $data, $options) {
             : _createCommentVNode("v-if", true)
         ])
       ]),
-      _createCommentVNode(" ⑤-B D168：知识点加权失误率 + 共现（可跨班/跨包/跨 tag） "),
+      _createCommentVNode(" ⑤-A D168-B5：标准共现图（例题库，反映授课结构） "),
       _createElementVNode("section", _hoisted_42, [
-        _cache[43] || (_cache[43] = _createElementVNode("h3", null, "⑤-B 知识点失误分析（加权失误率 / 共现 / 自然聚类）", -1 /* CACHED */)),
-        _cache[44] || (_cache[44] = _createElementVNode("p", { class: "hint" }, [
+        _cache[34] || (_cache[34] = _createElementVNode("h3", null, "⑤-A 标准共现图（数据源：例题库 · 反映「授课怎么组织」）", -1 /* CACHED */)),
+        _cache[35] || (_cache[35] = _createElementVNode("p", { class: "hint" }, [
+          _createTextVNode(" 与下面 ⑤-B 的"),
+          _createElementVNode("b", null, "作答共现图"),
+          _createTextVNode("语义不同： "),
+          _createElementVNode("b", null, "标准图"),
+          _createTextVNode(" = 老师怎么教（例题里哪些知识点一起出现）； "),
+          _createElementVNode("b", null, "作答图"),
+          _createTextVNode(" = 学生怎么错（作业里哪些知识点一起出错）。 只有"),
+          _createElementVNode("b", null, "例题"),
+          _createTextVNode("能体现「同一题涉及多个知识点」，大纲/授课计划只有清单、画不出共现。 ")
+        ], -1 /* CACHED */)),
+        _createElementVNode("div", _hoisted_43, [
+          _createElementVNode("button", {
+            class: "btn",
+            disabled: $setup.stdBusy,
+            onClick: $setup.loadStandard
+          }, _toDisplayString($setup.stdBusy ? '计算中…' : '📚 从例题库生成标准共现图'), 9 /* TEXT, PROPS */, _hoisted_44),
+          ($setup.stdMsg)
+            ? (_openBlock(), _createElementBlock("span", _hoisted_45, _toDisplayString($setup.stdMsg), 1 /* TEXT */))
+            : _createCommentVNode("v-if", true)
+        ]),
+        ($setup.stdCombos.length)
+          ? (_openBlock(), _createElementBlock(_Fragment, { key: 0 }, [
+              _createElementVNode("table", _hoisted_46, [
+                _cache[32] || (_cache[32] = _createElementVNode("thead", null, [
+                  _createElementVNode("tr", null, [
+                    _createElementVNode("th", null, "知识点组合"),
+                    _createElementVNode("th", null, "共现题数"),
+                    _createElementVNode("th", null, "归一化关联")
+                  ])
+                ], -1 /* CACHED */)),
+                _createElementVNode("tbody", null, [
+                  (_openBlock(true), _createElementBlock(_Fragment, null, _renderList($setup.stdCombos.slice(0, 15), (c) => {
+                    return (_openBlock(), _createElementBlock("tr", {
+                      key: c.terms.join('+')
+                    }, [
+                      _createElementVNode("td", null, _toDisplayString(c.terms.join(' ＋ ')), 1 /* TEXT */),
+                      _createElementVNode("td", _hoisted_47, _toDisplayString(c.count), 1 /* TEXT */),
+                      _createElementVNode("td", _hoisted_48, _toDisplayString(c.association), 1 /* TEXT */)
+                    ]))
+                  }), 128 /* KEYED_FRAGMENT */))
+                ])
+              ]),
+              ($setup.stdClusters.length)
+                ? (_openBlock(), _createElementBlock("div", _hoisted_49, [
+                    _cache[33] || (_cache[33] = _createElementVNode("p", {
+                      class: "hint",
+                      style: {"margin":"0 0 2px"}
+                    }, "自然聚类（按例题共现耦合）：", -1 /* CACHED */)),
+                    (_openBlock(true), _createElementBlock(_Fragment, null, _renderList($setup.stdClusters, (c) => {
+                      return (_openBlock(), _createElementBlock("div", {
+                        key: c.id,
+                        style: {"margin-bottom":"3px"}
+                      }, [
+                        _createElementVNode("span", _hoisted_50, _toDisplayString(c.id) + "（" + _toDisplayString(c.size) + "）：", 1 /* TEXT */),
+                        (_openBlock(true), _createElementBlock(_Fragment, null, _renderList(c.members, (m) => {
+                          return (_openBlock(), _createElementBlock("span", {
+                            key: m,
+                            class: "term",
+                            style: {"margin-right":"4px"}
+                          }, _toDisplayString(m), 1 /* TEXT */))
+                        }), 128 /* KEYED_FRAGMENT */))
+                      ]))
+                    }), 128 /* KEYED_FRAGMENT */))
+                  ]))
+                : _createCommentVNode("v-if", true)
+            ], 64 /* STABLE_FRAGMENT */))
+          : _createCommentVNode("v-if", true)
+      ]),
+      _createCommentVNode(" ⑤-B D168：知识点加权失误率 + 共现（可跨班/跨包/跨 tag） "),
+      _createElementVNode("section", _hoisted_51, [
+        _cache[47] || (_cache[47] = _createElementVNode("h3", null, "⑤-B 知识点失误分析（加权失误率 / 共现 / 自然聚类）", -1 /* CACHED */)),
+        _cache[48] || (_cache[48] = _createElementVNode("p", { class: "hint" }, [
           _createTextVNode(" 口径："),
           _createElementVNode("b", null, "扣分制无固定每题满分"),
           _createTextVNode("，所以看"),
@@ -870,41 +991,41 @@ export function render(_ctx, _cache, $props, $setup, $data, $options) {
           _createElementVNode("code", null, "docs/112-D168"),
           _createTextVNode(" 为准。 ")
         ], -1 /* CACHED */)),
-        _createElementVNode("div", _hoisted_43, [
-          _createElementVNode("label", _hoisted_44, [
+        _createElementVNode("div", _hoisted_52, [
+          _createElementVNode("label", _hoisted_53, [
             _withDirectives(_createElementVNode("input", {
               "onUpdate:modelValue": _cache[10] || (_cache[10] = $event => (($setup.anaOnlyKnown) = $event)),
               type: "checkbox"
             }, null, 512 /* NEED_PATCH */), [
               [_vModelCheckbox, $setup.anaOnlyKnown]
             ]),
-            _cache[32] || (_cache[32] = _createTextVNode(" 只统计词表内/已标注术语（词表外单独计数）", -1 /* CACHED */))
+            _cache[36] || (_cache[36] = _createTextVNode(" 只统计词表内/已标注术语（词表外单独计数）", -1 /* CACHED */))
           ]),
           _createElementVNode("button", {
             class: "btn",
             disabled: $setup.anaBusy,
             onClick: $setup.runAnalysis
-          }, _toDisplayString($setup.anaBusy ? '统计中…' : '📊 统计失误率与共现'), 9 /* TEXT, PROPS */, _hoisted_45),
+          }, _toDisplayString($setup.anaBusy ? '统计中…' : '📊 统计失误率与共现'), 9 /* TEXT, PROPS */, _hoisted_54),
           ($setup.anaMsg)
-            ? (_openBlock(), _createElementBlock("span", _hoisted_46, _toDisplayString($setup.anaMsg), 1 /* TEXT */))
+            ? (_openBlock(), _createElementBlock("span", _hoisted_55, _toDisplayString($setup.anaMsg), 1 /* TEXT */))
             : _createCommentVNode("v-if", true)
         ]),
         ($setup.anaReport?.items?.length)
           ? (_openBlock(), _createElementBlock(_Fragment, { key: 0 }, [
-              _createElementVNode("p", _hoisted_47, [
+              _createElementVNode("p", _hoisted_56, [
                 _createTextVNode(" 提交人数：" + _toDisplayString($setup.anaReport.totalSubmitted) + " 人 ", 1 /* TEXT */),
                 ($setup.anaReport.submittedByTag)
-                  ? (_openBlock(), _createElementBlock("span", _hoisted_48, " （" + _toDisplayString(Object.entries($setup.anaReport.submittedByTag)
+                  ? (_openBlock(), _createElementBlock("span", _hoisted_57, " （" + _toDisplayString(Object.entries($setup.anaReport.submittedByTag)
                     .map(([k, v]) => `${k}:${v}`).join('，')) + "） ", 1 /* TEXT */))
                   : _createCommentVNode("v-if", true),
                 ($setup.anaReport.tagSource === 'snapshot')
-                  ? (_openBlock(), _createElementBlock("span", _hoisted_49, [...(_cache[33] || (_cache[33] = [
+                  ? (_openBlock(), _createElementBlock("span", _hoisted_58, [...(_cache[37] || (_cache[37] = [
                       _createTextVNode("· tag 取自", -1 /* CACHED */),
                       _createElementVNode("b", null, "作业包快照", -1 /* CACHED */),
                       _createTextVNode("（可复现）", -1 /* CACHED */)
                     ]))]))
                   : ($setup.anaReport.tagSource === 'roster')
-                    ? (_openBlock(), _createElementBlock("span", _hoisted_50, [...(_cache[34] || (_cache[34] = [
+                    ? (_openBlock(), _createElementBlock("span", _hoisted_59, [...(_cache[38] || (_cache[38] = [
                         _createTextVNode(" · ⚠ tag 取自", -1 /* CACHED */),
                         _createElementVNode("b", null, "当前名单", -1 /* CACHED */),
                         _createTextVNode("（该包没有快照，建议先在班级页冻结） ", -1 /* CACHED */)
@@ -912,10 +1033,10 @@ export function render(_ctx, _cache, $props, $setup, $data, $options) {
                     : _createCommentVNode("v-if", true)
               ]),
               ($setup.confOf($setup.anaReport).level === 'low')
-                ? (_openBlock(), _createElementBlock("p", _hoisted_51, " ⚠ 样本可信度低：" + _toDisplayString($setup.confOf($setup.anaReport).reasons.join('；')) + " —— 失误率数字仅供参考 ", 1 /* TEXT */))
+                ? (_openBlock(), _createElementBlock("p", _hoisted_60, " ⚠ 样本可信度低：" + _toDisplayString($setup.confOf($setup.anaReport).reasons.join('；')) + " —— 失误率数字仅供参考 ", 1 /* TEXT */))
                 : _createCommentVNode("v-if", true),
-              _createElementVNode("table", _hoisted_52, [
-                _cache[35] || (_cache[35] = _createElementVNode("thead", null, [
+              _createElementVNode("table", _hoisted_61, [
+                _cache[39] || (_cache[39] = _createElementVNode("thead", null, [
                   _createElementVNode("tr", null, [
                     _createElementVNode("th", null, "知识点"),
                     _createElementVNode("th", null, "加权失误率"),
@@ -934,19 +1055,19 @@ export function render(_ctx, _cache, $props, $setup, $data, $options) {
                       _createElementVNode("td", null, [
                         _createElementVNode("b", null, _toDisplayString(it.rate), 1 /* TEXT */)
                       ]),
-                      _createElementVNode("td", _hoisted_53, _toDisplayString(it.errorCount), 1 /* TEXT */),
-                      _createElementVNode("td", _hoisted_54, _toDisplayString(it.errStudents), 1 /* TEXT */),
-                      _createElementVNode("td", _hoisted_55, _toDisplayString(Object.entries(it.byTag).map(([k, v]) => `${k}:${v}`).join('，') || '—'), 1 /* TEXT */),
-                      _createElementVNode("td", _hoisted_56, _toDisplayString(it.questions.join('、') || '—'), 1 /* TEXT */)
+                      _createElementVNode("td", _hoisted_62, _toDisplayString(it.errorCount), 1 /* TEXT */),
+                      _createElementVNode("td", _hoisted_63, _toDisplayString(it.errStudents), 1 /* TEXT */),
+                      _createElementVNode("td", _hoisted_64, _toDisplayString(Object.entries(it.byTag).map(([k, v]) => `${k}:${v}`).join('，') || '—'), 1 /* TEXT */),
+                      _createElementVNode("td", _hoisted_65, _toDisplayString(it.questions.join('、') || '—'), 1 /* TEXT */)
                     ]))
                   }), 128 /* KEYED_FRAGMENT */))
                 ])
               ]),
               (Object.keys($setup.anaReport.unclassified || {}).length)
-                ? (_openBlock(), _createElementBlock("p", _hoisted_57, " 词表外术语（未进主统计）： " + _toDisplayString(Object.entries($setup.anaReport.unclassified || {}).map(([k, v]) => `${k}×${v}`).join('，')), 1 /* TEXT */))
+                ? (_openBlock(), _createElementBlock("p", _hoisted_66, " 词表外术语（未进主统计）： " + _toDisplayString(Object.entries($setup.anaReport.unclassified || {}).map(([k, v]) => `${k}×${v}`).join('，')), 1 /* TEXT */))
                 : _createCommentVNode("v-if", true),
               ($setup.anaReport.crossPack && Object.keys($setup.anaReport.crossPack.terms || {}).length)
-                ? (_openBlock(), _createElementBlock("p", _hoisted_58, " 跨包口径（Σ失误 ÷ Σ总题数 = " + _toDisplayString($setup.anaReport.crossPack.totalQuestions) + " 题）： " + _toDisplayString(Object.entries($setup.anaReport.crossPack.terms)
+                ? (_openBlock(), _createElementBlock("p", _hoisted_67, " 跨包口径（Σ失误 ÷ Σ总题数 = " + _toDisplayString($setup.anaReport.crossPack.totalQuestions) + " 题）： " + _toDisplayString(Object.entries($setup.anaReport.crossPack.terms)
                 .map(([k, v]) => `${k} ${v.rate}（${v.errorCount}次 / ${v.totalQuestions}题）`)
                 .join('；')), 1 /* TEXT */))
                 : _createCommentVNode("v-if", true)
@@ -954,21 +1075,21 @@ export function render(_ctx, _cache, $props, $setup, $data, $options) {
           : _createCommentVNode("v-if", true),
         ($setup.anaCo?.tags?.length)
           ? (_openBlock(), _createElementBlock(_Fragment, { key: 1 }, [
-              _cache[38] || (_cache[38] = _createElementVNode("h4", { style: {"margin":"10px 0 2px"} }, "知识点共现（每个 tag 一张图）", -1 /* CACHED */)),
-              _cache[39] || (_cache[39] = _createElementVNode("p", {
+              _cache[42] || (_cache[42] = _createElementVNode("h4", { style: {"margin":"10px 0 2px"} }, "知识点共现（每个 tag 一张图）", -1 /* CACHED */)),
+              _cache[43] || (_cache[43] = _createElementVNode("p", {
                 class: "hint",
                 style: {"margin":"0 0 4px"}
               }, [
                 _createElementVNode("b", null, "归一化关联"),
                 _createTextVNode(" = P(共现) ÷ ∏P(单项)：>1 表示比随机更常同时出错。 tag 必须拆开看——不同档位的学生错法不同，混算会糊成一团。 ")
               ], -1 /* CACHED */)),
-              _createElementVNode("p", _hoisted_59, [
-                _cache[36] || (_cache[36] = _createElementVNode("b", null, "全局", -1 /* CACHED */)),
+              _createElementVNode("p", _hoisted_68, [
+                _cache[40] || (_cache[40] = _createElementVNode("b", null, "全局", -1 /* CACHED */)),
                 _createTextVNode("（" + _toDisplayString($setup.anaCo.overall?.total) + " 题）", 1 /* TEXT */)
               ]),
               (!($setup.anaCo.overall?.combos || []).length)
-                ? (_openBlock(), _createElementBlock("p", _hoisted_60, "（无共现组合）"))
-                : (_openBlock(), _createElementBlock("ul", _hoisted_61, [
+                ? (_openBlock(), _createElementBlock("p", _hoisted_69, "（无共现组合）"))
+                : (_openBlock(), _createElementBlock("ul", _hoisted_70, [
                     (_openBlock(true), _createElementBlock(_Fragment, null, _renderList(($setup.anaCo.overall?.combos || []).slice(0, 8), (c) => {
                       return (_openBlock(), _createElementBlock("li", {
                         key: c.terms.join('+')
@@ -980,22 +1101,22 @@ export function render(_ctx, _cache, $props, $setup, $data, $options) {
                   key: t,
                   style: {"margin-bottom":"4px"}
                 }, [
-                  _createElementVNode("summary", _hoisted_62, " tag「" + _toDisplayString(t) + "」：" + _toDisplayString($setup.anaCo.byTag?.[t]?.total) + " 题， " + _toDisplayString(($setup.anaCo.byTag?.[t]?.combos || []).length) + " 组共现 ", 1 /* TEXT */),
-                  _createElementVNode("ul", _hoisted_63, [
+                  _createElementVNode("summary", _hoisted_71, " tag「" + _toDisplayString(t) + "」：" + _toDisplayString($setup.anaCo.byTag?.[t]?.total) + " 题， " + _toDisplayString(($setup.anaCo.byTag?.[t]?.combos || []).length) + " 组共现 ", 1 /* TEXT */),
+                  _createElementVNode("ul", _hoisted_72, [
                     (_openBlock(true), _createElementBlock(_Fragment, null, _renderList(($setup.anaCo.byTag?.[t]?.combos || []).slice(0, 8), (c) => {
                       return (_openBlock(), _createElementBlock("li", {
                         key: t + c.terms.join('+')
                       }, _toDisplayString(c.terms.join(' ＋ ')) + "　共现 " + _toDisplayString(c.count) + " 次 · 关联 " + _toDisplayString(c.association), 1 /* TEXT */))
                     }), 128 /* KEYED_FRAGMENT */)),
                     (!($setup.anaCo.byTag?.[t]?.combos || []).length)
-                      ? (_openBlock(), _createElementBlock("li", _hoisted_64, "（无共现组合）"))
+                      ? (_openBlock(), _createElementBlock("li", _hoisted_73, "（无共现组合）"))
                       : _createCommentVNode("v-if", true)
                   ])
                 ]))
               }), 128 /* KEYED_FRAGMENT */)),
               ($setup.anaClusters.length)
                 ? (_openBlock(), _createElementBlock(_Fragment, { key: 2 }, [
-                    _cache[37] || (_cache[37] = _createElementVNode("p", {
+                    _cache[41] || (_cache[41] = _createElementVNode("p", {
                       class: "hint",
                       style: {"margin":"6px 0 2px"}
                     }, " 自然聚类（按共现耦合，不依赖章节层级）： ", -1 /* CACHED */)),
@@ -1004,7 +1125,7 @@ export function render(_ctx, _cache, $props, $setup, $data, $options) {
                         key: c.id,
                         style: {"margin-bottom":"3px"}
                       }, [
-                        _createElementVNode("span", _hoisted_65, _toDisplayString(c.id) + "（" + _toDisplayString(c.size) + "）：", 1 /* TEXT */),
+                        _createElementVNode("span", _hoisted_74, _toDisplayString(c.id) + "（" + _toDisplayString(c.size) + "）：", 1 /* TEXT */),
                         (_openBlock(true), _createElementBlock(_Fragment, null, _renderList(c.members, (m) => {
                           return (_openBlock(), _createElementBlock("span", {
                             key: m,
@@ -1019,18 +1140,18 @@ export function render(_ctx, _cache, $props, $setup, $data, $options) {
             ], 64 /* STABLE_FRAGMENT */))
           : _createCommentVNode("v-if", true),
         _createCommentVNode(" D168-B3：图表（引擎出图，前端只显示） "),
-        _createElementVNode("div", _hoisted_66, [
-          _createElementVNode("div", _hoisted_67, [
+        _createElementVNode("div", _hoisted_75, [
+          _createElementVNode("div", _hoisted_76, [
             _createElementVNode("button", {
               class: "btn",
               disabled: $setup.chartBusy,
               onClick: $setup.buildCharts
-            }, _toDisplayString($setup.chartBusy ? '出图中…' : '🖼 生成图表（失误率 / 共现网络）'), 9 /* TEXT, PROPS */, _hoisted_68),
+            }, _toDisplayString($setup.chartBusy ? '出图中…' : '🖼 生成图表（失误率 / 共现网络）'), 9 /* TEXT, PROPS */, _hoisted_77),
             ($setup.chartMsg)
-              ? (_openBlock(), _createElementBlock("span", _hoisted_69, _toDisplayString($setup.chartMsg), 1 /* TEXT */))
+              ? (_openBlock(), _createElementBlock("span", _hoisted_78, _toDisplayString($setup.chartMsg), 1 /* TEXT */))
               : _createCommentVNode("v-if", true)
           ]),
-          _cache[42] || (_cache[42] = _createElementVNode("p", {
+          _cache[46] || (_cache[46] = _createElementVNode("p", {
             class: "hint",
             style: {"margin":"2px 0 6px"}
           }, [
@@ -1041,8 +1162,8 @@ export function render(_ctx, _cache, $props, $setup, $data, $options) {
             _createTextVNode(" 依赖（重跑 start 脚本即可）。 ")
           ], -1 /* CACHED */)),
           ($setup.chartBar)
-            ? (_openBlock(), _createElementBlock("div", _hoisted_70, [
-                _cache[40] || (_cache[40] = _createElementVNode("p", {
+            ? (_openBlock(), _createElementBlock("div", _hoisted_79, [
+                _cache[44] || (_cache[44] = _createElementVNode("p", {
                   class: "hint",
                   style: {"margin":"0 0 2px"}
                 }, "知识点加权失误率（次/人）", -1 /* CACHED */)),
@@ -1050,12 +1171,12 @@ export function render(_ctx, _cache, $props, $setup, $data, $options) {
                   src: $setup.chartBar,
                   alt: "知识点加权失误率条形图",
                   style: {"max-width":"100%","border":"1px solid #e5e7eb","border-radius":"6px"}
-                }, null, 8 /* PROPS */, _hoisted_71)
+                }, null, 8 /* PROPS */, _hoisted_80)
               ]))
             : _createCommentVNode("v-if", true),
           ($setup.chartNet)
-            ? (_openBlock(), _createElementBlock("div", _hoisted_72, [
-                _cache[41] || (_cache[41] = _createElementVNode("p", {
+            ? (_openBlock(), _createElementBlock("div", _hoisted_81, [
+                _cache[45] || (_cache[45] = _createElementVNode("p", {
                   class: "hint",
                   style: {"margin":"0 0 2px"}
                 }, "知识点共现网络（颜色=失误率，大小=关联势，圆圈=聚类）", -1 /* CACHED */)),
@@ -1063,20 +1184,20 @@ export function render(_ctx, _cache, $props, $setup, $data, $options) {
                   src: $setup.chartNet,
                   alt: "知识点共现网络图",
                   style: {"max-width":"100%","border":"1px solid #e5e7eb","border-radius":"6px"}
-                }, null, 8 /* PROPS */, _hoisted_73)
+                }, null, 8 /* PROPS */, _hoisted_82)
               ]))
             : _createCommentVNode("v-if", true)
         ])
       ]),
       _createCommentVNode(" ⑤ 教师报告（D153：多选班级/作业包/tag） "),
-      _createElementVNode("section", _hoisted_74, [
-        _cache[53] || (_cache[53] = _createElementVNode("h3", null, "⑤ 教师总结报告（可多选班级 / 作业包 / tag）", -1 /* CACHED */)),
-        _cache[54] || (_cache[54] = _createElementVNode("p", { class: "hint" }, " 勾选多个班级与作业包即可看**宏观**情况；tag 留空 = 全部学生。 ", -1 /* CACHED */)),
+      _createElementVNode("section", _hoisted_83, [
+        _cache[57] || (_cache[57] = _createElementVNode("h3", null, "⑤ 教师总结报告（可多选班级 / 作业包 / tag）", -1 /* CACHED */)),
+        _cache[58] || (_cache[58] = _createElementVNode("p", { class: "hint" }, " 勾选多个班级与作业包即可看**宏观**情况；tag 留空 = 全部学生。 ", -1 /* CACHED */)),
         (!$setup.wClasses.length)
-          ? (_openBlock(), _createElementBlock("p", _hoisted_75, " （还没有班级目录：先在「AI 辅助批阅」跑一次批阅。） "))
+          ? (_openBlock(), _createElementBlock("p", _hoisted_84, " （还没有班级目录：先在「AI 辅助批阅」跑一次批阅。） "))
           : (_openBlock(), _createElementBlock(_Fragment, { key: 1 }, [
-              _createElementVNode("div", _hoisted_76, [
-                _cache[45] || (_cache[45] = _createElementVNode("span", {
+              _createElementVNode("div", _hoisted_85, [
+                _cache[49] || (_cache[49] = _createElementVNode("span", {
                   class: "hint",
                   style: {"margin":"0"}
                 }, "班级：", -1 /* CACHED */)),
@@ -1089,15 +1210,15 @@ export function render(_ctx, _cache, $props, $setup, $data, $options) {
                       "onUpdate:modelValue": _cache[11] || (_cache[11] = $event => (($setup.selClasses) = $event)),
                       type: "checkbox",
                       value: c.classDir
-                    }, null, 8 /* PROPS */, _hoisted_77), [
+                    }, null, 8 /* PROPS */, _hoisted_86), [
                       [_vModelCheckbox, $setup.selClasses]
                     ]),
                     _createTextVNode(" " + _toDisplayString(c.name) + "（" + _toDisplayString((c.packs || []).length) + " 个作业包） ", 1 /* TEXT */)
                   ]))
                 }), 128 /* KEYED_FRAGMENT */))
               ]),
-              _createElementVNode("div", _hoisted_78, [
-                _cache[46] || (_cache[46] = _createElementVNode("span", {
+              _createElementVNode("div", _hoisted_87, [
+                _cache[50] || (_cache[50] = _createElementVNode("span", {
                   class: "hint",
                   style: {"margin":"0"}
                 }, "作业包：", -1 /* CACHED */)),
@@ -1110,19 +1231,19 @@ export function render(_ctx, _cache, $props, $setup, $data, $options) {
                       "onUpdate:modelValue": _cache[12] || (_cache[12] = $event => (($setup.selPacks) = $event)),
                       type: "checkbox",
                       value: p
-                    }, null, 8 /* PROPS */, _hoisted_79), [
+                    }, null, 8 /* PROPS */, _hoisted_88), [
                       [_vModelCheckbox, $setup.selPacks]
                     ]),
                     _createTextVNode(" " + _toDisplayString(p), 1 /* TEXT */)
                   ]))
                 }), 128 /* KEYED_FRAGMENT */)),
                 (!$setup.packOptions.length)
-                  ? (_openBlock(), _createElementBlock("span", _hoisted_80, "（所选班级还没有评阅结果）"))
+                  ? (_openBlock(), _createElementBlock("span", _hoisted_89, "（所选班级还没有评阅结果）"))
                   : _createCommentVNode("v-if", true)
               ]),
-              _createElementVNode("div", _hoisted_81, [
-                _createElementVNode("label", _hoisted_82, [
-                  _cache[47] || (_cache[47] = _createTextVNode("tag（逗号分隔，留空=全部） ", -1 /* CACHED */)),
+              _createElementVNode("div", _hoisted_90, [
+                _createElementVNode("label", _hoisted_91, [
+                  _cache[51] || (_cache[51] = _createTextVNode("tag（逗号分隔，留空=全部） ", -1 /* CACHED */)),
                   _withDirectives(_createElementVNode("input", {
                     "onUpdate:modelValue": _cache[13] || (_cache[13] = $event => (($setup.selTags) = $event)),
                     placeholder: "top,middle",
@@ -1135,18 +1256,18 @@ export function render(_ctx, _cache, $props, $setup, $data, $options) {
                   class: "btn primary",
                   disabled: $setup.repBusy,
                   onClick: $setup.genReport
-                }, _toDisplayString($setup.repBusy ? '汇总中…' : '生成报告'), 9 /* TEXT, PROPS */, _hoisted_83),
+                }, _toDisplayString($setup.repBusy ? '汇总中…' : '生成报告'), 9 /* TEXT, PROPS */, _hoisted_92),
                 ($setup.repMsg)
-                  ? (_openBlock(), _createElementBlock("span", _hoisted_84, _toDisplayString($setup.repMsg), 1 /* TEXT */))
+                  ? (_openBlock(), _createElementBlock("span", _hoisted_93, _toDisplayString($setup.repMsg), 1 /* TEXT */))
                   : _createCommentVNode("v-if", true)
               ]),
               ($setup.repSources.length)
-                ? (_openBlock(), _createElementBlock("p", _hoisted_85, " 本次汇总：" + _toDisplayString($setup.repSources.join('；')), 1 /* TEXT */))
+                ? (_openBlock(), _createElementBlock("p", _hoisted_94, " 本次汇总：" + _toDisplayString($setup.repSources.join('；')), 1 /* TEXT */))
                 : _createCommentVNode("v-if", true),
               ($setup.repStat)
-                ? (_openBlock(), _createElementBlock("div", _hoisted_86, [
-                    _createElementVNode("table", _hoisted_87, [
-                      _cache[52] || (_cache[52] = _createElementVNode("thead", null, [
+                ? (_openBlock(), _createElementBlock("div", _hoisted_95, [
+                    _createElementVNode("table", _hoisted_96, [
+                      _cache[56] || (_cache[56] = _createElementVNode("thead", null, [
                         _createElementVNode("tr", null, [
                           _createElementVNode("th", null, "指标"),
                           _createElementVNode("th", null, "值")
@@ -1154,19 +1275,19 @@ export function render(_ctx, _cache, $props, $setup, $data, $options) {
                       ], -1 /* CACHED */)),
                       _createElementVNode("tbody", null, [
                         _createElementVNode("tr", null, [
-                          _cache[48] || (_cache[48] = _createElementVNode("td", null, "已评阅", -1 /* CACHED */)),
+                          _cache[52] || (_cache[52] = _createElementVNode("td", null, "已评阅", -1 /* CACHED */)),
                           _createElementVNode("td", null, _toDisplayString($setup.repStat.students) + " 人", 1 /* TEXT */)
                         ]),
                         _createElementVNode("tr", null, [
-                          _cache[49] || (_cache[49] = _createElementVNode("td", null, "平均分", -1 /* CACHED */)),
+                          _cache[53] || (_cache[53] = _createElementVNode("td", null, "平均分", -1 /* CACHED */)),
                           _createElementVNode("td", null, _toDisplayString($setup.repStat.avg), 1 /* TEXT */)
                         ]),
                         _createElementVNode("tr", null, [
-                          _cache[50] || (_cache[50] = _createElementVNode("td", null, "最高 / 最低", -1 /* CACHED */)),
+                          _cache[54] || (_cache[54] = _createElementVNode("td", null, "最高 / 最低", -1 /* CACHED */)),
                           _createElementVNode("td", null, _toDisplayString($setup.repStat.max) + " / " + _toDisplayString($setup.repStat.min), 1 /* TEXT */)
                         ]),
                         _createElementVNode("tr", null, [
-                          _cache[51] || (_cache[51] = _createElementVNode("td", null, "易错知识点（前 5）", -1 /* CACHED */)),
+                          _cache[55] || (_cache[55] = _createElementVNode("td", null, "易错知识点（前 5）", -1 /* CACHED */)),
                           _createElementVNode("td", null, _toDisplayString(($setup.repStat.knowledge_errors || []).slice(0, 5)
                     .map((x) => `${x.term}(${x.students}人)`).join('、') || '—'), 1 /* TEXT */)
                         ])
@@ -1197,11 +1318,11 @@ export function render(_ctx, _cache, $props, $setup, $data, $options) {
           : _createCommentVNode("v-if", true)
       ]),
       _createCommentVNode(" ③ 词表 "),
-      _createElementVNode("section", _hoisted_88, [
-        _cache[56] || (_cache[56] = _createElementVNode("h3", null, "③ 受控知识点词表", -1 /* CACHED */)),
-        _createElementVNode("p", _hoisted_89, " 共 " + _toDisplayString($setup.terms.length) + " 个术语（按章分组）。AI 标注时优先沿用这里的写法，避免同义漂移。 ", 1 /* TEXT */),
+      _createElementVNode("section", _hoisted_97, [
+        _cache[60] || (_cache[60] = _createElementVNode("h3", null, "③ 受控知识点词表", -1 /* CACHED */)),
+        _createElementVNode("p", _hoisted_98, " 共 " + _toDisplayString($setup.terms.length) + " 个术语（按章分组）。AI 标注时优先沿用这里的写法，避免同义漂移。 ", 1 /* TEXT */),
         (!$setup.terms.length)
-          ? (_openBlock(), _createElementBlock("p", _hoisted_90, [...(_cache[55] || (_cache[55] = [
+          ? (_openBlock(), _createElementBlock("p", _hoisted_99, [...(_cache[59] || (_cache[59] = [
               _createTextVNode(" （还没有词表：先做一次「① AI 知识点标注」，或 CLI ", -1 /* CACHED */),
               _createElementVNode("code", null, "kb vocab harvest", -1 /* CACHED */),
               _createTextVNode("。） ", -1 /* CACHED */)
@@ -1209,8 +1330,8 @@ export function render(_ctx, _cache, $props, $setup, $data, $options) {
           : _createCommentVNode("v-if", true),
         (_openBlock(true), _createElementBlock(_Fragment, null, _renderList($setup.termByChapter, (ts, c) => {
           return (_openBlock(), _createElementBlock("details", { key: c }, [
-            _createElementVNode("summary", _hoisted_91, _toDisplayString(c) + "（" + _toDisplayString(ts.length) + "）", 1 /* TEXT */),
-            _createElementVNode("div", _hoisted_92, [
+            _createElementVNode("summary", _hoisted_100, _toDisplayString(c) + "（" + _toDisplayString(ts.length) + "）", 1 /* TEXT */),
+            _createElementVNode("div", _hoisted_101, [
               (_openBlock(true), _createElementBlock(_Fragment, null, _renderList(ts, (t) => {
                 return (_openBlock(), _createElementBlock("span", {
                   key: t.term,

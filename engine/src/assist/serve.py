@@ -1728,6 +1728,49 @@ class Handler(BaseHTTPRequestHandler):
                 return
             self._json(rep, 200 if rep.get("ok") else 400)
             return
+        if u.path == "/kb/examples/import":
+            # D168-B5：把 Atopia `example-extract` 的产物导入 `kb/example.xlsx`
+            # 例题库**只做分析**（标准共现图），不布置、不批阅。
+            payload: dict = {}
+            try:
+                length = int(self.headers.get("Content-Length") or 0)
+                if length:
+                    payload = json.loads(self.rfile.read(length).decode("utf-8")) or {}
+            except Exception as exc:  # noqa: BLE001
+                self._json({"ok": False, "error": f"bad json: {exc}"}, 400)
+                return
+            confirm = str(payload.get("confirm") or "").strip()
+            if not confirm:
+                self._json({"ok": False, "denied": True,
+                            "error": "导入例题库必须由教师显式确认（缺少 confirm）"}, 403)
+                return
+            from .atopia import work as _aw
+            from .grading import kb_examples as _ke
+            ws_ = Path(self.ws).resolve()
+            data = payload.get("data")
+            if not isinstance(data, dict):
+                # 没直接给数据 → 从 atopia 解析产物读
+                feat = str(payload.get("feature") or "").strip()
+                fname = str(payload.get("file") or "").strip()
+                if not (feat and fname):
+                    self._json({"ok": False, "error": "需要 data，或 feature+file"}, 400)
+                    return
+                try:
+                    data = _aw.read_parsed(ws_, feat, fname)
+                except _aw.WorkError as exc:
+                    self._json({"ok": False, "error": str(exc)}, 400)
+                    return
+            try:
+                rep = _ke.import_examples(
+                    ws_, data,
+                    chap=str(payload.get("chap") or "examples"),
+                    replace=bool(payload.get("replace")))
+            except _ke.ExampleError as exc:
+                self._json({"ok": False, "error": str(exc)}, 400)
+                return
+            rep["confirmed_by"] = confirm
+            self._json(rep, 200 if rep.get("ok") else 400)
+            return
         if u.path == "/materials/create":
             # D163：新建一个「特征名」资料目录（26C1 等）——PWA 里没有它就只能手工建目录
             payload: dict = {}
@@ -3517,6 +3560,35 @@ class Handler(BaseHTTPRequestHandler):
             self.send_header("Cache-Control", "no-store")
             self.end_headers()
             self.wfile.write(data)
+            return
+        elif u.path == "/analysis/standard-cooccurrence":
+            # D168-B5：**标准共现图**（数据源 = 例题库，反映授课结构）
+            # 与 /analysis/cooccurrence（作答共现图）并列，两者语义不同：
+            #   标准图 = 老师怎么教；作答图 = 学生怎么错。
+            from .grading import cooccurrence as _co
+            from .grading import kb_examples as _ke
+            from .grading import vocab as _vb
+            q = urllib.parse.parse_qs(u.query)
+            n = int((q.get("n") or ["2"])[0] or 2)
+            ws_ = Path(self.ws).resolve()
+            sumry = _ke.summary(ws_)
+            if not sumry.get("ready"):
+                self._json({"ok": False, "needExamples": True,
+                            "error": ("例题库为空或太少（需要 ≥2 条带知识点的例题）。"
+                                      "请先在 Atopia 用「example-extract」任务解析教材/课件，"
+                                      "再点「导入例题库」。"),
+                            "summary": sumry}, 404)
+                return
+            records = _ke.examples_as_records(ws_)
+            vocab = _vb.load_vocab(ws_)
+            self._json({"ok": True, "n": n, "summary": sumry,
+                        "graphs": _co.by_tag(records, n=n, vocab=vocab),
+                        "clusters": _co.natural_clusters(records, n=n, vocab=vocab)})
+            return
+        elif u.path == "/kb/examples":
+            # D168-B5：例题库概览（数据源就绪与否）
+            from .grading import kb_examples as _ke
+            self._json(_ke.summary(Path(self.ws).resolve()))
             return
         elif u.path == "/analysis/cooccurrence":
             # D168：共现（可按 tag 拆开）+ 自然聚类

@@ -35,6 +35,10 @@ _KIND_ALIASES = {
 }
 SUPPORTED_KINDS = ("problems", "qa", "copy", "distinguish",
                    "innovation", "translation", "summary")
+# D168-B5：`example`（例题库）**刻意不在** SUPPORTED_KINDS 里——
+# 它只做分析、不批阅。normalize_kind 会把未知回落 problems，
+# 所以这里单独声明"分析专用"，供调用方判断（避免例题被当成待批阅题）。
+ANALYSIS_ONLY_KINDS = ("example",)
 
 
 def normalize_kind(kind: str | None) -> str:
