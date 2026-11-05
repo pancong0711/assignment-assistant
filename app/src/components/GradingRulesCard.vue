@@ -53,6 +53,9 @@ const NUM_FIELDS: { key: string; label: string; hint?: string }[] = [
   { key: 'lengthFactor', label: '长度基准倍率（题长 × n）' },
   { key: 'lengthFloorChars', label: '长度基准下限（字数）' },
   { key: 'irrelevantDeduct', label: '完全无关扣分' },
+  // D170-T9：抄写题（topicMatch）专用
+  { key: 'minChars', label: '抄写字数下限（字）' },
+  { key: 'topicMismatchDeduct', label: '主题不符扣分' },
   { key: 'noSignatureDeduct', label: '无签名扣分' },
   { key: 'writingDeduct', label: '书写规范扣分上限' },
   { key: 'floor', label: '总分下限' },

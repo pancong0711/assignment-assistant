@@ -62,6 +62,8 @@ const draft = computed(() => {
 })
 const aiSet = computed(() => draft.value.ai || {})
 const revisionText = computed(() => String((draft.value.revision || {}).text || ''))
+/** D170-T10：修订版是否**已写入引擎草稿库**（区别于"正在编辑、还没保存"）。 */
+const revisionSavedInStore = computed(() => Boolean(revisionText.value))
 
 /** 作答原件文件名。
  *  D126：**优先用 students[].images**（来自 `<XXT_HOME>/pages/review/<classId>/<workId>/`
@@ -257,6 +259,14 @@ async function save() {
             <span class="hint" style="margin-left:8px">
               修订 = 在 AI 批语基础上改；报告将按行**标红**改动，AI 原文不被覆盖。
             </span>
+          </p>
+          <!-- D170-T10：修订版存在哪、在哪能看到（教师反馈"保存后找不到"） -->
+          <p v-if="revisionText" class="hint" style="margin:0 0 6px; color:#0369a1">
+            修订版已保存在<b>引擎草稿库</b>（<code>grade-drafts</code>，不是本机文件）：
+            它会在<b>导出报告</b>时按行标红体现，也可返回本行重新「编辑修订版」。
+            想看全文：点上方「编辑修订版」即可展开当前修订内容。
+            <br />状态：已修订（{{ revisionText.length }} 字）
+            <template v-if="!revisionSavedInStore">· ⚠ 本页尚未保存，点下方「💾 保存到本地」才会写入引擎</template>
           </p>
           <textarea v-if="revising" v-model="revDraft" rows="5" style="width:100%; font-family:inherit"
                     placeholder="AI 批语的人工修订版（支持 LaTeX $...$）"></textarea>

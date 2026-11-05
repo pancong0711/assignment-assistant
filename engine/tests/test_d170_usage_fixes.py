@@ -153,3 +153,63 @@ def test_extract_error_is_readable_for_missing_sources(tmp_path: Path):
     else:
         # 没有原件时不应崩；应返回可读的 0 结果（不抛）
         assert rep["sources"] == 0
+
+
+# ---------------- T9b：抄写题字段必须可在规则卡调整 ----------------
+
+def test_copy_rule_fields_are_editable(tmp_path: Path):
+    """教师要在界面上调「字数下限」——字段必须在 _NUM_RANGES 里，否则改不了。"""
+    from assist.grading import rules as R
+
+    for key in ("minChars", "topicMismatchDeduct"):
+        assert key in R._NUM_RANGES, f"{key} 缺范围定义 → 规则卡改不了"
+
+    data = R.read_rules(tmp_path)
+    data["types"]["copy"]["minChars"] = 120
+    assert R.write_rules(tmp_path, data)["ok"]
+    assert R.type_rules(tmp_path, "copy")["minChars"] == 120
+
+
+def test_copy_rule_rejects_out_of_range(tmp_path: Path):
+    from assist.grading import rules as R
+    data = R.read_rules(tmp_path)
+    data["types"]["copy"]["minChars"] = 99999
+    r = R.write_rules(tmp_path, data)
+    assert r["ok"] is False and "minChars" in str(r.get("error") or "")
+
+
+# ---------------- 修订版：必须能进报告（否则"保存后看不到"） ----------------
+
+def test_revision_shows_up_in_report():
+    """D170-T10：另存修订版后，**导出报告**应带「人工修订」标注并按行标红。"""
+    from assist.grading.report import _mode_report_md
+
+    md, kind = _mode_report_md(
+        student="张三",
+        ai={"score": 80, "comment": "第一行\n第二行"},
+        human={}, human_mode="none",
+        revision={"text": "第一行\n第二行（教师补充）"}, revised=True)
+    assert kind == "ai-revised", f"报告应标为人工修订版，实际 {kind}"
+    assert "人工修订" in md
+    assert "教师补充" in md
+    assert "[[R]]" in md or "revised" in md, "改动行应有标红标记"
+
+
+def test_no_revision_reports_plain_ai():
+    from assist.grading.report import _mode_report_md
+    md, kind = _mode_report_md(student="张三", ai={"score": 80, "comment": "原文"},
+                               human={}, human_mode="none", revision={}, revised=False)
+    assert kind == "ai"
+    assert "人工修订" not in md
+
+
+def test_revision_survives_grade_store_roundtrip(tmp_path: Path):
+    """修订版要真的存进草稿库并能读回（否则关掉页面就丢了）。"""
+    from assist.xxt import grade_store as G
+
+    G.save_draft_sets(tmp_path, "c1", "w1", "张三",
+                      human_mode="none", revision={"text": "修订后的批语"})
+    got = G.read_drafts_normalized(tmp_path, "c1", "w1")
+    d = got.get("张三") or {}
+    assert (d.get("revision") or {}).get("text") == "修订后的批语"
+    assert d.get("revised") is True

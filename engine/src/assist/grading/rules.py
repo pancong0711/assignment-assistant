@@ -165,6 +165,9 @@ _NUM_RANGES: dict[str, tuple[float, float]] = {
     "lengthFactor": (1, 10),
     "lengthFloorChars": (0, 1000),
     "irrelevantDeduct": (0, 100),
+    # D170-T9：抄写题（topicMatch）—— 字数下限与主题不符扣分
+    "minChars": (0, 5000),
+    "topicMismatchDeduct": (0, 100),
 }
 
 
