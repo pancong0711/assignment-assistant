@@ -71,6 +71,8 @@
 - `docs/108-D165-publish-cross-class.md` — **D165 跨班发布误判「已发布」（URL 缺 clazzid）**
 - `docs/109-D166-escape-and-related-json.md` — **D166 LaTeX 转义根因 + 知识点 JSON 化 + AI 再整理**
 - `docs/110-D167-examAnalysis-integration.md` — **D167 2508 知识点共现/得分率整合评估（只记录，未动代码）**
+- `docs/112-D168-metrics-and-snapshot.md` — **D168 知识点失误统计口径 + 数据快照（roster/submissions）**
+- `docs/113-D169-roadmap-and-architecture.md` — **D169 实现路线 + 架构决策（atopia 权限/工具治理/可视化）**
 - `docs/85-D135-knowledge-hierarchy.md` — **D135 待决：知识点层级（上位/下位概念）方案与取舍**
 - `docs/34-D82-kb-read-order-image-upload-batch.md` — **D82 kb 多文件读取/题目排序/插图参数/草稿修复/上传试跑/batch**
 - `docs/16-xuexitong-integration.md` — **阶段6 学习通整合任务需求单**（登录/读取/下载/上传/发布）
