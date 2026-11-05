@@ -2135,6 +2135,81 @@ class Handler(BaseHTTPRequestHandler):
                             combine=bool(payload.get("combine", False)))
             self._json(rep, 200 if rep.get("ok") else 400)
             return
+        if u.path == "/kb/related/apply":
+            # D166：写入知识点（追加版本，可追溯）。改前自动快照。
+            payload: dict = {}
+            try:
+                length = int(self.headers.get("Content-Length") or 0)
+                if length:
+                    payload = json.loads(self.rfile.read(length).decode("utf-8")) or {}
+            except Exception as exc:  # noqa: BLE001
+                self._json({"ok": False, "error": f"bad json: {exc}"}, 400)
+                return
+            from .grading import rubric as _rb
+            kb = str(payload.get("kb") or "").strip()
+            chap = str(payload.get("chap") or "").strip()
+            qid = str(payload.get("qid") or "").strip()
+            terms = payload.get("terms")
+            if not (kb and chap and qid):
+                self._json({"ok": False, "error": "缺少 kb/chap/qid"}, 400)
+                return
+            if not isinstance(terms, list):
+                self._json({"ok": False, "error": "terms 必须是字符串数组"}, 400)
+                return
+            rep = _rb.apply_related(Path(self.ws).resolve(), [{
+                "kb": kb, "chap": chap, "qid": qid,
+                "related": "，".join(str(t).strip() for t in terms if str(t).strip()),
+                "meta": {"source": str(payload.get("source") or "human"),
+                         "note": str(payload.get("note") or "PWA 写入")}}])
+            self._json(rep, 200 if rep.get("ok") else 400)
+        if u.path == "/kb/related/tidy":
+            # D166：AI 再整理知识点 —— **只产出建议**（diff），不落盘；
+            # 教师逐题勾选后再调 /kb/related/tidy/apply 写回。
+            payload: dict = {}
+            try:
+                length = int(self.headers.get("Content-Length") or 0)
+                if length:
+                    payload = json.loads(self.rfile.read(length).decode("utf-8")) or {}
+            except Exception as exc:  # noqa: BLE001
+                self._json({"ok": False, "error": f"bad json: {exc}"}, 400)
+                return
+            from .grading import related_tidy as _rt
+            from .grading.llm import LLMConfigError, LLMClient
+            ids = payload.get("ids")
+            ids = [str(i) for i in ids] if isinstance(ids, list) else None
+            ws_ = Path(self.ws).resolve()
+            try:
+                client = LLMClient(ws=ws_)
+                rep = _rt.tidy_related(
+                    client, ws_,
+                    kind=str(payload.get("kb") or ""),
+                    chap=str(payload.get("chap") or ""),
+                    ids=ids, force=bool(payload.get("force")),
+                    model=str(payload.get("model") or "") or None)
+            except LLMConfigError as exc:
+                self._json({"ok": False, "error": f"LLM 未配置：{exc}"}, 400)
+                return
+            except Exception as exc:  # noqa: BLE001
+                self._json({"ok": False, "error": str(exc)[:300]}, 500)
+                return
+            self._json(rep, 200 if rep.get("ok") else 400)
+        if u.path == "/kb/related/tidy/apply":
+            # D166：把教师**勾选后**的整理结果写回（追加版本 + 自动快照）
+            payload: dict = {}
+            try:
+                length = int(self.headers.get("Content-Length") or 0)
+                if length:
+                    payload = json.loads(self.rfile.read(length).decode("utf-8")) or {}
+            except Exception as exc:  # noqa: BLE001
+                self._json({"ok": False, "error": f"bad json: {exc}"}, 400)
+                return
+            items = payload.get("items")
+            if not isinstance(items, list) or not items:
+                self._json({"ok": False, "error": "缺少 items（教师勾选的条目）"}, 400)
+                return
+            from .grading import related_tidy as _rt
+            rep = _rt.apply_tidy(Path(self.ws).resolve(), items)
+            self._json(rep, 200 if rep.get("ok") else 400)
         if u.path == "/kb/ai-solve":
             payload: dict = {}
             try:
@@ -3128,6 +3203,17 @@ class Handler(BaseHTTPRequestHandler):
             rid = urllib.parse.unquote(u.path[len("/playground/record/"):])
             d = pgs.read_record(Path(self.ws).resolve(), rid)
             self._json(d or {"ok": False, "error": f"记录不存在：{rid}"}, 200 if d else 404)
+        elif (u.path.startswith("/kb/related/") and not u.path.startswith("/kb/related/apply")
+              and not u.path.startswith("/kb/related/tidy")):
+            # D166：知识点完整视图（供 PWA 预览弹窗：版本/来源/词表命中）
+            from .grading import rubric as _rb
+            qid = urllib.parse.unquote(u.path[len("/kb/related/"):])
+            q = urllib.parse.parse_qs(u.query)
+            kb = (q.get("kb") or [""])[0]
+            chap = (q.get("chap") or [""])[0]
+            fb = (q.get("fallback") or [""])[0]
+            self._json(_rb.get_related(Path(self.ws).resolve(), kb=kb, chap=chap,
+                                       qid=qid, fallback=fb))
         elif u.path.startswith("/kb/solutions/"):
             from .files import solutions as sol
             qid = urllib.parse.unquote(u.path[len("/kb/solutions/"):])

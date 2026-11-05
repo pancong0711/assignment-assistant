@@ -66,6 +66,77 @@ def set_meta(ws, kb: str, chap: str, qid: str, patch: dict) -> dict:
     return cur
 
 
+# ---------------- D166：知识点版本化（与 D89-N3 答案版本库同构） ----------------
+def add_related_version(ws, *, kb: str, chap: str, qid: str, terms: "list[str]",
+                        source: str = "ai", model: str = "", note: str = "",
+                        pin: bool = True) -> dict:
+    """把一次知识点变更追加为 `versions[]` 里的一版（**可追溯**，不覆盖历史）。
+
+    D166 动机：此前 `apply_related` 直接覆写 `related` 列，教师的原标注、
+    AI 的每次整理都不可回溯——与参考答案的多版本机制（D89-N3）不一致。
+    """
+    from .vocab import join_terms, load_vocab, split_terms
+    meta = read_meta(ws)
+    key = _meta_key(kb, chap, qid)
+    cur = dict(meta.get(key) or {})
+    versions = list(cur.get("versions") or [])
+    clean = split_terms(join_terms(terms))
+    vid = f"v{len(versions) + 1}"
+    entry = {"id": vid, "terms": clean, "source": source, "at": _now()}
+    if model:
+        entry["model"] = model
+    if note:
+        entry["note"] = note
+    versions.append(entry)
+    cur.update({"related": join_terms(clean), "versions": versions,
+                "updatedAt": _now()})
+    # 词表命中情况（术语是否在受控词表里）
+    try:
+        known = {str(t.get("term") or "").strip()
+                 for t in (load_vocab(ws).get("terms") or []) if t.get("term")}
+    except Exception:  # noqa: BLE001
+        known = set()
+    cur["vocabHits"] = [t for t in clean if t in known]
+    cur["vocabMisses"] = [t for t in clean if t not in known]
+    if pin:
+        cur["pinned_by"] = source
+        cur["pinnedVersion"] = vid
+    meta[key] = cur
+    write_meta(ws, meta)
+    return {"ok": True, "version": vid, "related": cur["related"],
+            "vocabHits": cur["vocabHits"], "vocabMisses": cur["vocabMisses"]}
+
+
+def _now() -> str:
+    return time.strftime("%Y-%m-%d %H:%M:%S")
+
+
+def get_related(ws, *, kb: str, chap: str, qid: str, fallback: str = "") -> dict:
+    """读取某题知识点的完整视图（供 PWA 预览弹窗）。
+
+    返回 {qid, related, versions[], suggested, pinned_by, vocabHits, vocabMisses,
+          inVocab, fromKbFallback}。
+    """
+    from .vocab import load_vocab, split_terms
+    m = get_meta(ws, kb, chap, qid)
+    related = str(m.get("related") or fallback or "")
+    terms = split_terms(related)
+    try:
+        known = {str(t.get("term") or "").strip()
+                 for t in (load_vocab(ws).get("terms") or []) if t.get("term")}
+    except Exception:  # noqa: BLE001
+        known = set()
+    return {"ok": True, "kb": kb, "chap": chap, "qid": qid,
+            "related": related, "terms": terms,
+            "versions": list(m.get("versions") or []),
+            "suggested": str(m.get("suggested") or ""),
+            "pinned_by": str(m.get("pinned_by") or ""),
+            "pinnedVersion": str(m.get("pinnedVersion") or ""),
+            "vocabHits": [t for t in terms if t in known],
+            "vocabMisses": [t for t in terms if t not in known],
+            "fromKbFallback": not bool(m.get("versions"))}
+
+
 def is_pinned_by_human(ws, kb: str, chap: str, qid: str) -> bool:
     return str(get_meta(ws, kb, chap, qid).get("pinned_by") or "") == "human"
 
@@ -98,8 +169,16 @@ RUBRIC_PROMPT = """你是一位大学物理教研组老师，正在为**批阅**
 - `diagram.required` 只在题干明确要求画图时才为 true。
 
 【JSON 转义（必须遵守）】
-- LaTeX 反斜杠在 JSON 字符串里必须写成两个反斜杠（例：frac 要写成双反斜杠 + frac）；
-- 只写一个反斜杠会变成非法转义或控制字符，公式会显示成乱码。"""
+- LaTeX 命令的反斜杠，在 JSON 字符串里**一律写成两个反斜杠**；
+- 只写一个反斜杠会被 JSON 当成转义字符吃掉，公式在预览里就会变成乱码。
+
+常见的三种坏法与后果（务必避免）：
+- 单反斜杠 + times → 反斜杠 + t 被当成制表符，公式里出现「制表符 + 若干空格 + imes」；
+- 单反斜杠 + frac  → 反斜杠 + f 被当成换页符，正文只剩「rac」，分数整段消失；
+- 单反斜杠 + nabla → 反斜杠 + n 被当成换行，公式被截断成两行。
+
+正确写法：times、frac、beta、theta、nabla、varepsilon、forall 等命令前面，
+在 JSON 字符串中**必须都是两个反斜杠**。"""
 
 
 def build_rubric_prompt(*, ws, kind: str, content: str, solution: str = "",
@@ -313,6 +392,20 @@ def apply_related(ws, updates: "list[dict]") -> dict:
                     e["related"] = qmap[qid]["related"]
                     if qmap[qid].get("meta"):
                         set_meta(ws, kind, chap, qid, qmap[qid]["meta"])
+                    # D166：每次写入都追加一版（可追溯；不覆盖历史）
+                    try:
+                        add_related_version(
+                            ws, kb=kind, chap=chap, qid=qid,
+                            terms=str(qmap[qid]["related"]).split(","),
+                            source=str((qmap[qid].get("meta") or {})
+                                       .get("source") or "human"),
+                            model=str((qmap[qid].get("meta") or {})
+                                      .get("model") or ""),
+                            note=str((qmap[qid].get("meta") or {})
+                                     .get("note") or "写回题库"),
+                            pin=True)
+                    except Exception as exc:  # noqa: BLE001 —— 版本记录失败不影响写回
+                        logger.warning(f"[知识点] 版本记录失败 {kind}/{chap}/{qid}：{exc}")
                     written += 1
             kb_data[chap] = entries
         kb_io.write_chapters_preserving(xlsx, kb_data)

@@ -14,6 +14,7 @@ from pathlib import Path
 
 from loguru import logger
 from openpyxl import Workbook, load_workbook
+from openpyxl.comments import Comment
 
 COLUMNS = ["id", "content", "img_path", "page", "related", "type", "solution", "note"]
 
@@ -277,8 +278,12 @@ def write_xlsx(xlsx_path: Path, chapters: dict[str, list[dict]],
     wb.remove(wb.active)
     for sheet, entries in chapters.items():
         ws = wb.create_sheet(title=sheet)
-        # D105：solution 列表头加注（说明这里是摘要，完整答案在 json）
-        ws.append([SOLUTION_COLUMN_NOTE if c == "solution" else c for c in columns])
+        # D166：表头必须写**标准列名**（`solution`），说明改放单元格批注。
+        # 此前把注释塞进表头 → read_xlsx 按 `solution` 匹配不到 → 读回时 solution 列消失。
+        ws.append(list(columns))
+        if "solution" in columns:
+            ci = list(columns).index("solution") + 1
+            ws.cell(1, ci).comment = Comment(SOLUTION_COLUMN_NOTE, "assist")
         for e in entries:
             ws.append([_cell(e, c) for c in columns])
     wb.save(xlsx_path)

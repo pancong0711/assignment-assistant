@@ -1687,6 +1687,113 @@ export async function fetchKbSolutions(
   }
 }
 
+/* ---------------- D166：知识点（与参考答案版本库同构） ---------------- */
+
+export interface RelatedVersion {
+  id: string
+  terms: string[]
+  source: 'ai' | 'human' | string
+  model?: string
+  at?: string
+  note?: string
+}
+
+export interface RelatedDoc {
+  ok?: boolean
+  kb?: string
+  chap?: string
+  qid?: string
+  /** 生效知识点（逗号分隔字符串，与 xlsx `related` 列同写法） */
+  related?: string
+  terms?: string[]
+  versions?: RelatedVersion[]
+  /** AI 建议（尚未采纳） */
+  suggested?: string
+  pinned_by?: string
+  pinnedVersion?: string
+  /** 命中的受控词表术语 */
+  vocabHits?: string[]
+  /** 词表外术语（建议再整理时归一） */
+  vocabMisses?: string[]
+  /** 无版本记录、来自 xlsx `related` 旧列 */
+  fromKbFallback?: boolean
+  error?: string
+}
+
+/** GET /kb/related/<qid>：知识点完整视图（版本 / 来源 / 词表命中）。 */
+export async function fetchKbRelated(
+  engineAddr: string, token: string | undefined, qid: string,
+  scope: { kb?: string; chap?: string; fallback?: string } = {},
+): Promise<RelatedDoc> {
+  const base = normalizeEngineAddr(engineAddr)
+  const qs = new URLSearchParams()
+  if (scope.kb) qs.set('kb', scope.kb)
+  if (scope.chap) qs.set('chap', scope.chap)
+  if (scope.fallback) qs.set('fallback', scope.fallback)
+  const path = `/kb/related/${encodeURIComponent(qid)}${qs.toString() ? `?${qs}` : ''}`
+  try {
+    return (await getJson2(engineUrlWithToken(base, path, token))) as RelatedDoc
+  } catch {
+    return { qid, terms: [], versions: [] }
+  }
+}
+
+/** POST /kb/related/apply：写入知识点（引擎侧追加版本 + 快照）。 */
+export async function applyKbRelated(
+  engineAddr: string, token: string | undefined,
+  payload: { kb: string; chap: string; qid: string; terms: string[]
+             source?: string; note?: string },
+): Promise<{ ok?: boolean; written?: number; error?: string; snapshot?: string[] }> {
+  const res = await fetch(engineUrlWithToken(
+    normalizeEngineAddr(engineAddr), '/kb/related/apply', token), {
+    method: 'POST', headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(payload),
+  })
+  const o = (await res.json().catch(() => ({}))) as any
+  if (!res.ok && !o?.error) throw new Error(`HTTP ${res.status}`)
+  return o
+}
+
+export interface RelatedTidyItem {
+  qid: string
+  kb: string
+  chap: string
+  note?: string
+  diff: { before: string[]; after: string[]; added: string[]; removed: string[]
+          merged_from: string[]; dropped: string[]; changed: boolean }
+}
+
+/** POST /kb/related/tidy：AI 再整理知识点（**只产出建议**，不落盘）。 */
+export async function tidyKbRelated(
+  engineAddr: string, token: string | undefined,
+  payload: { kb: string; chap?: string; ids?: string[]; force?: boolean; model?: string },
+): Promise<{ ok?: boolean; items?: RelatedTidyItem[]; skipped?: any[]
+             planned?: number; returned?: number; error?: string; note?: string }> {
+  const res = await fetch(engineUrlWithToken(
+    normalizeEngineAddr(engineAddr), '/kb/related/tidy', token), {
+    method: 'POST', headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(payload),
+  })
+  const o = (await res.json().catch(() => ({}))) as any
+  if (!res.ok && !o?.error) throw new Error(`HTTP ${res.status}`)
+  return o
+}
+
+/** POST /kb/related/tidy/apply：把教师**勾选后**的整理结果写回。 */
+export async function applyKbRelatedTidy(
+  engineAddr: string, token: string | undefined,
+  items: { qid: string; kb: string; chap: string; terms: string[]; note?: string }[],
+): Promise<{ ok?: boolean; written?: number; error?: string }> {
+  const res = await fetch(engineUrlWithToken(
+    normalizeEngineAddr(engineAddr), '/kb/related/tidy/apply', token), {
+    method: 'POST', headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ items }),
+  })
+  const o = (await res.json().catch(() => ({}))) as any
+  if (!res.ok && !o?.error) throw new Error(`HTTP ${res.status}`)
+  return o
+}
+
 /** D110：作用域键（与引擎 `solutions.scope_id` 同口径）：`kb__chap__qid`。 */
 export function solutionScopeKey(qid: string, kb?: string, chap?: string): string {
   const clean = (v?: string) => String(v ?? '').trim().replace(/[\/]/g, '-').replace(/__+/g, '_')

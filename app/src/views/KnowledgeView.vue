@@ -9,6 +9,7 @@
 import { computed, onMounted, ref, watch } from 'vue'
 import { useSettingsStore } from '../stores/settings'
 import KbAiSolvePanel from '../components/KbAiSolvePanel.vue'
+import { tidyKbRelated, applyKbRelatedTidy, type RelatedTidyItem } from '../lib/engineClient'
 import TeacherReportCard from '../components/TeacherReportCard.vue'
 import TrendCard from '../components/TrendCard.vue'
 import { KB_KINDS, KB_KIND_LABELS, type KbKind } from '../lib/kb'
@@ -244,6 +245,60 @@ async function doTagApply() {
   finally { busy.value = '' }
 }
 
+/* ---------- D166：AI 再整理（归一/合并/拆分，逐题确认） ---------- */
+const tidyItems = ref<RelatedTidyItem[]>([])
+const tidyPick = ref<Set<string>>(new Set())
+const tidyForce = ref(false)
+const tidyMsg = ref('')
+const tidyBusy = ref(false)
+
+async function doTidyPreview() {
+  tidyBusy.value = true
+  tidyMsg.value = '正在让 AI 整理知识点（会产生模型费用）…'
+  tidyItems.value = []
+  tidyPick.value = new Set()
+  try {
+    const r = await tidyKbRelated(settings.engineUrl, settings.engineToken, {
+      kb: kind.value, chap: chap.value || undefined, force: tidyForce.value,
+    })
+    if (!r?.ok) { tidyMsg.value = `❌ ${r?.error || '整理失败'}`; return }
+    const items = (r.items || []).filter((it) => it.diff?.changed)
+    tidyItems.value = items
+    // 默认勾选**有变化**的题（没变化的不用教师操作）
+    tidyPick.value = new Set(items.map((it) => it.qid))
+    const skipped = (r.skipped || []).length
+    tidyMsg.value = items.length
+      ? `整理完成：${items.length} 题有建议变更${skipped ? `；${skipped} 题跳过（教师锁定）` : ''}。逐题核对后勾选写入。`
+      : `整理完成：没有需要变更的题目${skipped ? `（${skipped} 题因教师锁定被跳过）` : ''}。`
+  } catch (e) {
+    tidyMsg.value = `整理失败：${String((e as Error).message || e)}`
+  } finally { tidyBusy.value = false }
+}
+
+function toggleTidy(qid: string) {
+  const s = new Set(tidyPick.value)
+  if (s.has(qid)) s.delete(qid); else s.add(qid)
+  tidyPick.value = s
+}
+
+async function doTidyApply() {
+  const picked = tidyItems.value.filter((it) => tidyPick.value.has(it.qid))
+  if (!picked.length) { tidyMsg.value = '没有勾选任何题目'; return }
+  if (!window.confirm(`将把 ${picked.length} 题的知识点写回题库（追加新版本 + 自动快照）。确认？`)) return
+  tidyBusy.value = true
+  try {
+    const r = await applyKbRelatedTidy(settings.engineUrl, settings.engineToken,
+      picked.map((it) => ({ qid: it.qid, kb: it.kb, chap: it.chap,
+                            terms: it.diff.after, note: it.note || 'AI 再整理' })))
+    tidyMsg.value = r?.ok
+      ? `✅ 已写入 ${r.written} 题（旧版本保留，可回退）`
+      : `❌ ${r?.error || '写入失败'}`
+    if (r?.ok) { tidyItems.value = []; tidyPick.value = new Set() }
+  } catch (e) {
+    tidyMsg.value = `写入失败：${String((e as Error).message || e)}`
+  } finally { tidyBusy.value = false }
+}
+
 </script>
 
 <template>
@@ -295,6 +350,47 @@ async function doTagApply() {
             </tbody>
           </table>
         </template>
+      </section>
+
+      <!-- ①-B D166：AI 再整理（归一/合并/拆分） -->
+      <section class="card">
+        <h3>①-B AI 再整理知识点（归一 / 合并 / 拆分）</h3>
+        <p class="hint">
+          把同一概念的不同写法合并（如「动量守恒律」→「动量守恒」）、统一到受控词表术语。
+          <b>只产出建议</b>，你逐题核对勾选后才写回（追加版本，不覆盖历史）。
+          教师锁定的题默认跳过。
+        </p>
+        <div class="row">
+          <label class="field"><input v-model="tidyForce" type="checkbox" />
+            连教师锁定的题也整理（慎用）</label>
+          <button class="btn" :disabled="tidyBusy" @click="doTidyPreview">
+            {{ tidyBusy ? '整理中…' : '🤖 生成整理建议' }}
+          </button>
+          <button class="btn primary" :disabled="tidyBusy || !tidyPick.size"
+                  @click="doTidyApply">
+            写入勾选的 {{ tidyPick.size }} 题
+          </button>
+        </div>
+        <p v-if="tidyMsg" class="hint" style="white-space:pre-wrap">{{ tidyMsg }}</p>
+        <table v-if="tidyItems.length" class="tbl">
+          <thead>
+            <tr><th style="width:30px"></th><th>题号</th><th>整理前</th><th>整理后</th><th>说明</th></tr>
+          </thead>
+          <tbody>
+            <tr v-for="it in tidyItems" :key="it.qid">
+              <td><input type="checkbox" :checked="tidyPick.has(it.qid)"
+                         @change="toggleTidy(it.qid)" /></td>
+              <td>{{ it.qid }}</td>
+              <td class="hint">{{ it.diff.before.join('、') || '（空）' }}</td>
+              <td>
+                <span v-for="t in it.diff.after" :key="t" class="term" style="margin-right:4px">{{ t }}</span>
+                <span v-for="t in it.diff.removed" :key="'r' + t"
+                      class="hint" style="margin-right:4px; text-decoration:line-through">{{ t }}</span>
+              </td>
+              <td class="hint">{{ it.note || '—' }}</td>
+            </tr>
+          </tbody>
+        </table>
       </section>
 
       <!-- ② 题库 AI 作答（D152：⑦ 区整体平移过来，能力与批阅页一致） -->

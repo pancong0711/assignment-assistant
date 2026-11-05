@@ -4,7 +4,8 @@ import { KB_KINDS, KB_KIND_LABELS, type KbKind } from '../lib/kb'
 import { useKbStore, getKbDirHandle } from '../stores/kb'
 import { detectCapabilities, fsWriteHint, writeFileInDir } from '../lib/fsAccess'
 import { useSettingsStore } from '../stores/settings'
-import { fetchKbSolutions, mutateKbSolution, type SolutionVersion } from '../lib/engineClient'
+import { fetchKbSolutions, mutateKbSolution, type SolutionVersion,
+  fetchKbRelated, applyKbRelated, type RelatedDoc } from '../lib/engineClient'
 import { renderMathIn, KATEX_DONE_ATTR } from '../lib/katexRender'
 import { fetchKbFull } from '../lib/engineClient'
 import { renderRich } from '../lib/richdoc'
@@ -47,6 +48,71 @@ const solShown = computed<SolutionVersion | null>(() => {
   if (solPick.value) return solVersions.value.find((v) => v.id === solPick.value) || null
   return solVersions.value.find((v) => v.pinned) || solVersions.value[solVersions.value.length - 1] || null
 })
+
+/* ---------- D166：知识点预览（与参考答案预览同构） ----------
+ * 权威数据在 `kb/knowledge-meta.json`（版本 + 来源 + 词表命中），
+ * xlsx `related` 列只是速查。弹窗可看历史版本、词表命中，并可编辑后写回（追加版本）。 */
+const relOpen = ref(false)
+const relQid = ref('')
+const relContent = ref('')
+const relDoc = ref<RelatedDoc | null>(null)
+const relBusy = ref(false)
+const relMsg = ref('')
+const relDraft = ref('')
+const relEditing = ref(false)
+
+async function openRelated(row: { id: string; content: string; related: string }) {
+  relOpen.value = true
+  relQid.value = row.id
+  relContent.value = row.content
+  relDoc.value = null
+  relDraft.value = row.related || ''
+  relEditing.value = false
+  relMsg.value = ''
+  relBusy.value = true
+  try {
+    const r = await fetchKbRelated(settings.engineUrl, settings.engineToken, row.id, {
+      kb: activeKind.value, chap: activeChap.value, fallback: row.related || '',
+    })
+    relDoc.value = r
+    relDraft.value = (r.terms || []).join('，') || row.related || ''
+  } catch (e) {
+    relMsg.value = `读取失败：${String((e as Error).message || e)}`
+  } finally { relBusy.value = false }
+}
+
+function closeRelated() {
+  relOpen.value = false
+  relDoc.value = null
+  relEditing.value = false
+  relMsg.value = ''
+}
+
+async function saveRelated() {
+  if (!relQid.value) return
+  relBusy.value = true
+  relMsg.value = ''
+  try {
+    const terms = relDraft.value
+      .split(/[，,;；、/|]+/).map((t) => t.trim()).filter(Boolean)
+    const r = await applyKbRelated(settings.engineUrl, settings.engineToken, {
+      kb: activeKind.value, chap: activeChap.value, qid: relQid.value,
+      terms, source: 'human', note: 'PWA 编辑',
+    })
+    if (!r?.ok) { relMsg.value = `❌ ${r?.error || '保存失败'}`; return }
+    relMsg.value = '✅ 已保存为新版本（自动快照，可回退）'
+    relEditing.value = false
+    // 同步到表格里的 related 列，并刷新弹窗
+    const row = kb.book(activeKind.value).chapters
+      .find((c) => c.name === activeChap.value)?.rows.find((x) => x.id === relQid.value)
+    if (row) { row.related = terms.join(','); kb.touch(); kb.persist() }
+    const fresh = await fetchKbRelated(settings.engineUrl, settings.engineToken, relQid.value,
+                                       { kb: activeKind.value, chap: activeChap.value })
+    relDoc.value = fresh
+  } catch (e) {
+    relMsg.value = `保存失败：${String((e as Error).message || e)}`
+  } finally { relBusy.value = false }
+}
 
 async function openSolution(row: { id: string; content: string; solution: string }) {
   solOpen.value = true
@@ -422,6 +488,14 @@ function addChapter() {
                     @click="uploadFig(r)">📷</button>
                 </div>
               </template>
+              <template v-else-if="col === 'related'">
+                <div style="display:flex; align-items:center; gap:4px">
+                  <input v-model="r.related" @change="kb.touch(); kb.persist()"
+                         style="min-width:60px" />
+                  <button class="btn small" title="查看知识点版本 / 词表命中，并可编辑写回（D166）"
+                          @click="openRelated(r)">🔍</button>
+                </div>
+              </template>
               <template v-else-if="col === 'solution'">
                 <div style="display:flex; align-items:center; gap:4px">
                   <span class="hint" style="margin:0; max-width:180px; overflow:hidden; text-overflow:ellipsis; white-space:nowrap"
@@ -454,6 +528,86 @@ function addChapter() {
       <p class="hint">说明：纯浏览不需要引擎；以上操作都在浏览器内完成。</p>
     </div>
   </section>
+
+    <!-- D166：知识点预览/编辑弹窗（与参考答案预览同构） -->
+    <div v-if="relOpen" class="backdrop" @click.self="closeRelated">
+      <div class="modal" style="max-width:620px; width:92vw; max-height:84vh; overflow:auto">
+        <h3 style="margin-top:0">知识点 · <code>{{ relQid }}</code></h3>
+        <p class="hint" style="margin:0 0 6px">题目内容：</p>
+        <div class="sol-math"
+             style="border:1px solid var(--c-border); border-radius:6px; padding:8px; margin-bottom:10px">
+          <div v-if="relContent" v-html="renderRich(relContent)"></div>
+          <span v-else class="hint">（无题干）</span>
+        </div>
+
+        <p v-if="relBusy" class="hint">读取中…</p>
+        <template v-else-if="relDoc">
+          <p class="hint" style="margin:0 0 4px">
+            当前生效知识点（{{ (relDoc.terms || []).length }} 个）：
+            <span v-if="relDoc.fromKbFallback" class="hint">（来自题库 related 旧列，尚未建立版本库）</span>
+            <span v-if="relDoc.pinned_by" class="hint">· 由 {{ relDoc.pinned_by === 'human' ? '教师' : 'AI' }} 锁定</span>
+          </p>
+          <div class="terms" style="margin-bottom:8px">
+            <span v-for="t in (relDoc.terms || [])" :key="t" class="term">{{ t }}</span>
+            <span v-if="!(relDoc.terms || []).length" class="hint">（空）</span>
+          </div>
+
+          <p class="hint" style="margin:0 0 2px">受控词表核对：</p>
+          <p class="hint" style="margin:0 0 8px">
+            <span v-if="(relDoc.vocabHits || []).length">
+              ✅ 命中 {{ relDoc.vocabHits!.length }} 个：{{ relDoc.vocabHits!.join('、') }}
+            </span>
+            <span v-if="(relDoc.vocabMisses || []).length" style="color:#b45309; display:block">
+              ⚠ 词表外 {{ relDoc.vocabMisses!.length }} 个：{{ relDoc.vocabMisses!.join('、') }}
+              （建议归一为词表术语）
+            </span>
+            <span v-if="!(relDoc.vocabHits || []).length && !(relDoc.vocabMisses || []).length"
+                  class="hint">（无）</span>
+          </p>
+
+          <p class="hint" style="margin:0 0 4px">
+            历史版本（{{ (relDoc.versions || []).length }} 版，追加不可覆盖）：
+          </p>
+          <ul style="list-style:none; padding:0; margin:0 0 8px">
+            <li v-for="v in (relDoc.versions || [])" :key="v.id"
+                style="display:flex; align-items:flex-start; gap:8px; padding:4px 0;
+                       border-bottom:1px dashed var(--c-border); font-size:13px">
+              <b style="min-width:34px">{{ v.id }}</b>
+              <span style="flex:1">
+                {{ (v.terms || []).join('、') || '（空）' }}
+                <span class="hint">{{ v.source === 'ai' ? 'AI' : '人工' }}<template v-if="v.model"> · {{ v.model }}</template><template v-if="v.at"> · {{ v.at }}</template><template v-if="v.note"> · {{ v.note }}</template></span>
+              </span>
+              <span v-if="relDoc.pinnedVersion === v.id" title="当前生效">★</span>
+            </li>
+            <li v-if="!(relDoc.versions || []).length" class="hint">（暂无版本记录）</li>
+          </ul>
+
+          <template v-if="!relEditing">
+            <button class="btn small primary" :disabled="relBusy" @click="relEditing = true">
+              ✏️ 编辑知识点
+            </button>
+          </template>
+          <template v-else>
+            <label class="hint" style="display:block; margin:0 0 2px">
+              用逗号/顿号分隔；保存会**追加新版本**（不覆盖历史，自动快照）
+            </label>
+            <textarea v-model="relDraft" rows="3"
+              style="width:100%; font-family:inherit; font-size:13px; padding:6px 8px;
+                     border:1px solid var(--c-border); border-radius:6px"></textarea>
+            <p style="margin:6px 0 0; display:flex; gap:8px">
+              <button class="btn small primary" :disabled="relBusy" @click="saveRelated">
+                保存为新版本
+              </button>
+              <button class="btn small" :disabled="relBusy" @click="relEditing = false">取消</button>
+            </p>
+          </template>
+        </template>
+        <p v-if="relMsg" class="hint" style="margin:6px 0 0">{{ relMsg }}</p>
+        <div style="display:flex; justify-content:flex-end; margin-top:8px">
+          <button class="btn" @click="closeRelated">关闭</button>
+        </div>
+      </div>
+    </div>
 
     <!-- D89-N4：solution 多版本预览/管理弹窗 -->
     <div v-if="solOpen" class="backdrop" @click.self="closeSolution">

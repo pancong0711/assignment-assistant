@@ -69,6 +69,9 @@ try:
             'hasRubric': '参考解答 + 评阅要点' in body,
             'hasVocab': '受控知识点词表' in body,
             'hasPreviewBtn': pg.locator('button', has_text='预览（dry-run）').count() >= 1,
+            # D166：AI 再整理 + 知识点预览
+            'hasTidy': 'AI 再整理知识点' in body,
+            'hasTidyBtn': pg.locator('button', has_text='生成整理建议').count() >= 1,
             'errors': errs,
         }
         b.close()
@@ -78,6 +81,8 @@ print(json.dumps(out, ensure_ascii=False, indent=1))
 assert not out['errors'], f"JS 错误：{out['errors']}"
 assert out['hasTag'] and out['hasRubric'] and out['hasVocab'], f"三块缺失：{out}"
 assert out['hasPreviewBtn'], '缺少 dry-run 预览按钮'
+assert out['hasTidy'], 'D166：缺少「AI 再整理知识点」区块'
+assert out['hasTidyBtn'], 'D166：缺少「生成整理建议」按钮'
 print('OK d148：知识点选项卡（标注 dry-run / 要点生成 / 词表）渲染正常')
 PY
 RC=$?

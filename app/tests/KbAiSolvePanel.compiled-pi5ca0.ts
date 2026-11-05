@@ -65,8 +65,10 @@ watch(kbChap, () => { kbIdsSel.value = [] })
 /* ---------- 作答选项 ---------- */
 const kbPin = ref(true); const kbApply = ref(false)
 const kbWithRubric = ref(false); const kbPinRubric = ref(false)
-/** D152：同时把知识点写回题库（走 apply_related，改前自动快照） */
-const kbTagKnowledge = ref(false)
+/** D152：同时把知识点写回题库（走 apply_related，改前自动快照）
+ *  D166：默认**勾选**——教师反馈「AI 作答后看不到知识点」，
+ *  生成要点时知识点本就在同一次输出里，不写回等于白算。 */
+const kbTagKnowledge = ref(true)
 const kbRequirement = ref('')
 
 /* ---------- 提示词模板（D108/D151） ---------- */

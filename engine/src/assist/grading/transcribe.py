@@ -113,7 +113,10 @@ def parse_llm_json(raw: str) -> dict:
     D148：模型常把 LaTeX 直接写进 JSON，导致两种坏情况：
     1. **能解析但内容被改坏**：`\frac` → 换页符 + `rac`；
     2. **不能解析**：出现裸反斜杠。
-    这里先正常解析；失败时做一次"转义修复"重试；成功但含控制字符时也用修复版。
+
+    D166：**解析之后**统一过一遍 `_sanitize_latex`（把吃坏的命令还原）。
+    这是最可靠的位置——此时双反斜杠已变单反斜杠，边界清晰，
+    不会像在原始文本上猜那样误伤合法 `\\`（此前会让"守规矩的输出"更坏）。
     """
     cleaned = raw.strip()
     for p in ("```json", "```"):
@@ -138,38 +141,158 @@ def parse_llm_json(raw: str) -> dict:
                  _escape_control_chars(_escape_bare_backslashes(repaired))]
         for cand in cands:
             try:
-                return json.loads(cand)
+                return _sanitize_latex(json.loads(cand))
             except json.JSONDecodeError:
                 continue
         raise
     # 关键：`\f` 是**合法** JSON 转义，所以 json.loads 会"成功"，
-    # 但内容已被改成换页符。必须**在原始文本里**查这种"可疑的 LaTeX 前导"，
-    # 例如 `\frac` `\beta` `\times` `\rho`（都紧跟在一个被吃掉的首字母上）。
+    # 但内容已被改成换页符。原始文本里能看出来的，先修文本再解析；
+    # 无论哪条路，最后都过 `_sanitize_latex`（D166：它是兜底，也是主力）。
     if _looks_like_eaten_latex(body):
         try:
-            return json.loads(_fix_latex_in_json(body))
+            return _sanitize_latex(json.loads(_fix_latex_in_json(body)))
         except json.JSONDecodeError:
-            return data
-    return data
+            pass
+    return _sanitize_latex(data)
+
+
+def _odd_backslash_positions(body: str) -> "set[int]":
+    r"""返回 body 中**属于"单个未配对反斜杠"**的位置索引。
+
+    判定：从左往右扫描，连续 k 个反斜杠时，第 1、3、5… 个（奇数位）是"未配对"的，
+    第 2、4、6… 个是配对成 `\\`（JSON 的合法转义）。
+    例：`\\frac`（2 个）→ 都不算未配对（模型守规矩）；
+        `\,\t`（1 个 + 1 个）→ 两个都是未配对（模型偷懒）。
+    """
+    pos: set[int] = set()
+    i = 0
+    n = len(body)
+    while i < n:
+        if body[i] != "\\":
+            i += 1
+            continue
+        j = i
+        while j < n and body[j] == "\\":
+            j += 1
+        run = j - i
+        for k in range(0, run, 2):      # 每对反斜杠的第一个 → 未配对的那个
+            pos.add(i + k)
+        i = j
+    return pos
 
 
 def _fix_latex_in_json(body: str) -> str:
-    r"""把 JSON 文本里"会被误当转义"的 LaTeX 命令改写成 `\命令`。
+    r"""把 JSON 文本里"会被误当转义"的 LaTeX 命令改写成 `\\命令`。
 
-    例：`"rac{1}{2}"` → `"\frac{1}{2}"`（JSON 解析后得到字面 `rac`）。
-    只有 `  	 
- 
-` 后面**紧跟已知 LaTeX 结尾**时才改，
-    避免把真正的换行/制表符改坏。
+    例：`"\frac{1}{2}"` → `"\\frac{1}{2}"`（JSON 解析后得到字面 `\frac`）。
+    只改**单个反斜杠**后被吃掉首字母的图案；`\\frac`（模型已按规范写双反斜杠）
+    **绝对不动**——见 D166 修复（此前会把合法的 `\\` 也补成 `\\\`）。
     """
-    import re as _re
-    tails = "rac|orall|lat|eta|ar|heta|an|imes|ho|ightarrow|abla|ot|im|elta|u|psilon"
-    pat = _re.compile(r'\\([fbtrn])((?:' + tails + r')[A-Za-z]*)')
-    return pat.sub(lambda m: "\\\\" + m.group(1) + m.group(2), body)
+    odd = _odd_backslash_positions(body)
+
+    def sub(m: "re.Match[str]") -> str:
+        if m.start() not in odd:
+            return m.group(0)           # 成对反斜杠：模型守规矩，不动
+        return "\\\\" + m.group(1) + m.group(2)
+
+    pat = re.compile(r"\\([fbtrn])(\s*(?:" + _LATEX_TAIL_PATTERN + r")[A-Za-z]*)")
+    return pat.sub(sub, body)
 
 
+# 已知 LaTeX 命令的"尾巴"（首字母被 JSON 转义吃掉后剩下的部分）。
+# 顺序无关（已按长度倒序排：长尾巴在前，避免 ra 抢先匹配 rac）。
 _LATEX_TAILS = ("rac", "orall", "lat", "eta", "ar", "heta", "an", "imes",
-                "ho", "ightarrow", "abla", "u", "ot", "im", "psilon", "elta")
+                "ho", "ightarrow", "abla", "ot", "im", "psilon", "elta",
+                "ec", "ox", "ullet", "egin", "ecause")
+_LATEX_TAIL_PATTERN = "|".join(sorted(_LATEX_TAILS, key=len, reverse=True))
+
+
+# 首字母 → 该字母开头的已知 LaTeX 命令尾巴（用于把**已解析出**的字符串还原）。
+# 例：控制符 \t 后面接 "imes" → 还原成 \times。
+_LATEX_CMDS = {
+    "f": ("rac", "orall", "lat", "lushleft", "lushright"),
+    "b": ("eta", "ar", "ot", "ullet", "egin", "ecause", "oldsymbol", "inom", "oxed"),
+    "t": ("imes", "heta", "au", "anh", "ext", "frac", "herefore", "op", "riangle",
+          "ilde"),
+    "n": ("abla", "ewline", "eq", "ot", "u"),
+    "r": ("ho", "ightarrow", "ight", "angle", "ank", "m"),
+    "v": ("arepsilon", "ec", "arphi", "artheta", "dots"),
+}
+
+
+def _eaten_patterns() -> "list[tuple[re.Pattern[str], str]]":
+    """构造「坏形态 → 还原」正则表（D166 L3 后置净化用）。
+
+    覆盖三种坏形态（都出现在**已解析出**的字符串里）：
+      1. 双反斜杠 + 空白* + 尾巴    —— `_fix_latex_in_json` 过度修复的产物
+      2. 控制符（\\f \\b \\t \\n \\r \\v）+ 空白* + 尾巴 —— 原样残留
+      3. 反斜杠 + 控制符 + 空白* + 尾巴 —— 混合形态（反斜杠后紧跟被吃掉的字符）
+      4. 反斜杠 + 字母（t/f/b/n/r/v 字面量）+ 空白* + 尾巴 —— L2 修复后残留的
+         "已在 JSON 声明的转义"，解析成 Python 字符串后仍是 `\t` 两字符形态
+    """
+    out: "list[tuple[re.Pattern[str], str]]" = []
+    for head, tails in _LATEX_CMDS.items():
+        tail_alt = "|".join(sorted(tails, key=len, reverse=True))
+        # 替换串必须写 `\\\\`（re.sub 里 `\\` 才是字面反斜杠）；
+        # 直接写 `"\\" + head` 会被 re.sub 当成转义（`\f` → 换页符）——D166 踩过。
+        repl_src = "\\\\" + head + r"\1"
+        # 形态 1：双反斜杠 + 可选空白 + 尾巴 → 单反斜杠 + 首字母 + 尾巴
+        out.append((re.compile(r"\\\\\s*(" + tail_alt + r")[A-Za-z]*"), repl_src))
+        ctrl = {"f": "\x0c", "b": "\x08", "t": "\t", "n": "\n", "r": "\r",
+                "v": "\x0b"}[head]
+        # 形态 2：控制符 + 可选空白 + 尾巴
+        out.append((re.compile(re.escape(ctrl) + r"\s*(" + tail_alt + r")[A-Za-z]*"),
+                    repl_src))
+        # 形态 3：反斜杠 + 控制符 + 空白* + 尾巴
+        out.append((re.compile(r"\\" + re.escape(ctrl) + r"\s*(" + tail_alt + r")[A-Za-z]*"),
+                    repl_src))
+        # 形态 4：反斜杠 + 字面量字母 + **至少一个空白** + 尾巴。
+        # 只修「字母与尾巴之间隔着空白」的形态（`\t        imes`）——
+        # 紧贴着尾巴的（`\frac`）是**正确 LaTeX**，绝对不能动
+        # （D166 调试踩过：加了 `\s*` 会把好的 `\frac` 改成 `\f rac`）。
+        out.append((re.compile(r"\\" + head + r"\s+(" + tail_alt + r")[A-Za-z]*"),
+                    repl_src))
+    return out
+
+
+_EATEN_PATTERNS: "list[tuple[re.Pattern[str], str]] | None" = None
+
+
+def _sanitize_latex_text(text: str) -> str:
+    """D166：对**已解析出的字符串**还原被吃坏的 LaTeX（最可靠的位置）。
+
+    为什么放在解析之后：此时 JSON 的双反斜杠已变成单反斜杠，边界清晰，
+    不需要猜原始 JSON 文本，也就不会像 `_fix_latex_in_json` 那样误伤合法 `\\`。
+
+    **只还原「能对上已知 LaTeX 命令尾巴」的图案**，其余控制符/换行一律保留——
+    因此真换行（`第一行\\n第二行`）、真缩进、普通英文都不会被改。
+    """
+    global _EATEN_PATTERNS
+    if not isinstance(text, str) or not text:
+        return text
+    # 快速跳：明显干净的文本直接返回（避免无谓正则扫描）。
+    # 注意：必须包含"反斜杠"本身——L2 修复后的形态是 `\t`+空白+`imes`（反斜杠+字母），
+    # 既不含 TAB 也不含双反斜杠，只看控制符会漏掉（D166 调试踩过）。
+    if "\\" not in text and not any(
+            c in text for c in ("\x0c", "\x08", "\t", "\x0b", "\n", "\r")):
+        return text
+    if _EATEN_PATTERNS is None:
+        _EATEN_PATTERNS = _eaten_patterns()
+    out = text
+    for pat, repl in _EATEN_PATTERNS:
+        out = pat.sub(repl, out)
+    return out
+
+
+def _sanitize_latex(data):
+    """递归净化解析结果里的所有字符串（dict/list/str 都处理）。"""
+    if isinstance(data, str):
+        return _sanitize_latex_text(data)
+    if isinstance(data, list):
+        return [_sanitize_latex(x) for x in data]
+    if isinstance(data, dict):
+        return {k: _sanitize_latex(v) for k, v in data.items()}
+    return data
 
 
 def _looks_like_eaten_latex(body: str) -> bool:
@@ -178,9 +301,13 @@ def _looks_like_eaten_latex(body: str) -> bool:
     例：模型写 `\frac`（JSON 文本里是反斜杠+f+r+a+c），json.loads 后
     变成 `\x0c` + `rac`。所以原始文本里会出现 `\frac` 这种
     "反斜杠 + 单个字母 + 已知 LaTeX 结尾"的组合。
+
+    D166：**必须排除 `\\frac`（双反斜杠）**——那是模型按规范写出的正确形式，
+    此前会把合法 `\\` 当成"被吃掉"再补一个，反而弄坏（见 docs/109 §1.2）。
     """
-    import re as _re
-    return bool(_re.search(r"\\[fbtrn](rac|eta|heta|imes|ho|abla|ot|elta|orall|lat)", body))
+    _re = re
+    return bool(_re.search(
+        r"(?<!\\)\\[fbtrn](?:" + _LATEX_TAIL_PATTERN + r")", body))
 
 
 def student_from_filename(fn: Path) -> str:
