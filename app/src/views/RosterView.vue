@@ -18,6 +18,7 @@ import { downloadData, detectCapabilities, fsWriteHint, pickReadFileFsa } from '
 import { useKbStore } from '../stores/kb'
 import { useSettingsStore } from '../stores/settings'
 import { fetchGradingPacks, fetchGradingScores, saveTagsSnapshot } from '../lib/engineClient'
+import { buildSheetSidecar, sidecarFileName, type SheetSidecar } from '../lib/sheetSidecar'
 import { stringifyClassHtml, printSheetHtml, expandPadItems,
   type SheetHtmlPadInput, type SheetHtmlStudent } from '../lib/sheetHtml'
 import type { KbKind } from '../lib/kb'
@@ -551,8 +552,64 @@ function previewWholeClass() {
 }
 
 /** 打印当前整班 HTML（隐藏 iframe → contentWindow.print，与打印主通道同语义） */
+/** D168-T13：整班输出的追溯 sidecar（打印/下载时同步产出）。
+ *  教师习惯是"打印 PDF 保存"，PDF 本身零元数据；这份 JSON 记录
+ *  「哪个包、哪些作业纸、发给哪些学生、谁什么 tag、用了哪些开关」。 */
+function currentPackPadsBound(): Array<{ padId: string; tag: string }> {
+  const out: Array<{ padId: string; tag: string }> = []
+  for (const s of pad.saved) {
+    try {
+      const p = parseTaskpad(JSON.parse(s.json))
+      out.push({ padId: s.id, tag: padInferredTag(p.items, p.target_tag) || '' })
+    } catch { /* 损坏包忽略 */ }
+  }
+  return out
+}
+
+function makeClassSidecar(purpose: 'print' | 'download'): SheetSidecar | null {
+  if (!roster.students.length) return null
+  try {
+    const pk = packStore.currentId
+      ? { id: packStore.currentId, name: String(packStore.current?.name || '') }
+      : { id: '', name: '' }
+    const boundPads = currentPackPadsBound()
+    const padByStudent: Record<string, string> = {}
+    for (const st of roster.students) {
+      const hit = boundPads.find((b) => b.tag && b.tag === (st.tag || ''))
+      if (hit) padByStudent[st.name] = hit.padId
+    }
+    return buildSheetSidecar({
+      packId: pk.id, packName: pk.name, purpose,
+      pads: boundPads,
+      students: roster.students.map((x) => ({
+        name: x.name, number: x.number, tag: x.tag })),
+      padByStudent,
+      options: {
+        includeAnswers: classIncludeAnswers.value,
+        includeWatermark: classIncludeWatermark.value,
+        includePageText: classIncludePageText.value,
+      },
+    })
+  } catch {
+    return null
+  }
+}
+
+/** 写入 sidecar：已连目录则写同目录，否则下载（与 HTML 同批产出）。 */
+function emitClassSidecar(purpose: 'print' | 'download') {
+  const sc = makeClassSidecar(purpose)
+  if (!sc) return
+  const stamp = new Date().toISOString().slice(0, 10)
+  const name = sidecarFileName(`class-sheet-${stamp}.html`)
+  try {
+    downloadData(JSON.stringify(sc, null, 1), name, 'application/json')
+  } catch { /* 下载失败不阻断打印 */ }
+}
+
 function printClassPreview() {
-  if (classPreviewHtml.value) printSheetHtml(classPreviewHtml.value)
+  if (!classPreviewHtml.value) return
+  emitClassSidecar('print')          // 先产出 sidecar，再打开打印对话框
+  printSheetHtml(classPreviewHtml.value)
 }
 
 /** 下载 = 自包含 HTML（KaTeX 内联；资源拉取失败回退同源 relative 版） */
@@ -581,8 +638,10 @@ async function downloadClassPreviewHtml() {
       katex: 'raw', katexRaw: raw,
     })
     downloadData(html, `class-sheet-preview-${new Date().toISOString().slice(0, 10)}.html`, 'text/html')
+    emitClassSidecar('download')     // D168-T13：与 HTML 同批产出追溯 JSON
   } catch {
     downloadData(classPreviewHtml.value, `class-sheet-preview-${new Date().toISOString().slice(0, 10)}.html`, 'text/html')
+    emitClassSidecar('download')
   }
 }
 

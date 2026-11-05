@@ -1,7 +1,7 @@
 # D168 需求单：知识点失误统计口径 + 数据快照（roster / submissions）
 
 > 日期：2026-11-05
-> 状态：**B1–B5 已实施**（T2–T12 完成；T13/T14 待做）
+> 状态：**B1–B5 + T13 已实施**（T2–T13 完成；T14 待做）
 > 关联：`docs/110-D167`（2508 整合评估）、`docs/109-D166`（知识点 JSON 化）、
 > `docs/113-D169`（实现路线与架构）、`docs/12`
 
@@ -568,6 +568,52 @@ JSON 用**原子写**（临时文件 + replace）。
 | 含义 | 老师怎么教、知识点怎么组织 | 学生怎么错、哪些概念连带出错 |
 | 按 tag 拆 | ❌（无学生数据） | ✅（必须拆） |
 
+## 4.8 T13 实施记录（2026-11-05 完成，整班输出追溯 sidecar）
+
+### 问题（教师 §3.3 原话）
+
+> 预览整班的作业纸之后打印 PDF 保存了，而不是生成 batch 或 json 文件，
+> 这样一些信息就有可能丢失。
+
+**打印出来的 PDF 是零元数据的**——事后无法回答"这份 PDF 对应哪个作业包、
+发给哪些学生、谁什么 tag"。
+
+### 实施
+
+新增 `app/src/lib/sheetSidecar.ts`（**纯函数**，便于单测）：
+
+| 导出 | 作用 |
+|---|---|
+| `buildSheetSidecar()` | 生成 sidecar 内容 |
+| `sidecarFileName()` | HTML 名 → 同名 `.json`（便于配对） |
+
+**记录内容**：
+
+```json
+{"version": 1, "kind": "class-sheet-output", "generatedAt": "...",
+ "packId": "hw1", "packName": "第一次作业", "purpose": "print|download",
+ "pads": [{"padId": "pad-top", "tag": "top"}],
+ "students": [{"name": "张三", "number": "2023001", "tag": "top", "padId": "pad-top"}],
+ "options": {"includeAnswers": false, "includeWatermark": true, "includePageText": true},
+ "unboundTags": ["unknown_tag"],
+ "counts": {"students": 4, "pads": 2}}
+```
+
+### 落点（重要：不是那个禁用按钮）
+
+排查发现：`SheetOutputSection` 的「🖨 打印级 PDF（模板，需引擎）」是**禁用占位按钮**
+（点击只弹提示）。教师真实使用的路径是**「班级与标签」页的整班预览**：
+
+- `printClassPreview()`（🖨 打印整班）→ **先产出 sidecar，再打开打印对话框**；
+- `downloadClassPreviewHtml()`（下载 HTML）→ **与 HTML 同批产出 sidecar**。
+
+### 关键设计
+
+- `padId` 由 **tag → 作业纸绑定**推出（`padByStudent` 可显式覆盖）；
+- `unboundTags` **显式列出**未绑定 tag 的学生——事后能看出"这些人当时没作业纸"；
+- 开关（含答案/水印/页码）一并记录，便于复现同一版式；
+- sidecar **只描述输出**，不改任何生效数据。
+
 ## 5. 任务清单
 
 | # | 内容 | 依赖 | 优先级 |
@@ -584,7 +630,7 @@ JSON 用**原子写**（临时文件 + replace）。
 | T10 | 分 tag 共现（含全局） | T7 | ✅ B2 |
 | T11 | `example` kind + 例题提取（atopia 任务） | D169 | ✅ B5 |
 | T12 | 标准共现图（基于 example） | T11 | ✅ B5 |
-| T13 | 打印 PDF 的 sidecar（`作业纸-日期.json`） | — | P2 |
+| T13 | 打印 PDF 的 sidecar（`作业纸-日期.json`） | — | ✅ 已完成 |
 | T14 | 共现图**节点明细交互**（引擎算坐标 → 前端 SVG；算法不翻译） | B3 | P2（登记待做） |
 
 ---
