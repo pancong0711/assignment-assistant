@@ -1045,6 +1045,23 @@ rainclass 67/67，PWA↔engine 全等，仅末位浮点四舍五入噪声）。
 
 ---
 
+## D168 · B1 数据快照（2026-11-05 完成）
+
+> 需求单：`docs/112-D168-metrics-and-snapshot.md` §4.4
+
+解决教师问题：「换作业包后 roster 变了，批阅之前的作业时 tag 依据会不会丢？」
+
+- ✅ 新增 `grading/snapshots.py`：`roster-tags/<packId>.json`（**学号主键**）+ `submissions.json`（含图片张数）
+- ✅ 批阅集成 `_write_grade_snapshots()`：**快照存在 → tag 以快照为准**（可复现）；
+  不存在 → 自动补写（`auto-at-grade`）；与当前 roster 不一致 → 警告不阻断；失败只告警
+- ✅ 接口：`POST/GET /roster/tags-snapshot`、`GET /grade/submissions`
+- ✅ 前端：「重算并打 tag」下加**作业包下拉**（不选=旧行为；选了=冻结快照）
+- ✅ **T5 调整**：学生级 tag 映射**只存 `roster-tags/`**，`pack.json` 不重复（避免双写不一致）
+- 验收：pytest **1375**（+21）· build 0 error · selfcheck **36/36**（+1 浏览器回归）· 脱敏通过
+- 下一步：B2 统计核心（T6 词表归并 → T7 失误次数 → T8 加权 → T9 提交率 → T10 分 tag 共现）
+
+---
+
 ## D168/D169 · 统计口径 + 数据快照 + 实现路线（2026-11-05 登记，待实施）
 
 > 需求单：`docs/112-D168-metrics-and-snapshot.md`（口径）、`docs/113-D169-roadmap-and-architecture.md`（路线/架构）

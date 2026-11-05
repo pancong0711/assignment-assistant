@@ -17,7 +17,7 @@ import { parseTaskpad, padInferredTag } from '../lib/taskpad'
 import { downloadData, detectCapabilities, fsWriteHint, pickReadFileFsa } from '../lib/fsAccess'
 import { useKbStore } from '../stores/kb'
 import { useSettingsStore } from '../stores/settings'
-import { fetchGradingPacks, fetchGradingScores } from '../lib/engineClient'
+import { fetchGradingPacks, fetchGradingScores, saveTagsSnapshot } from '../lib/engineClient'
 import { stringifyClassHtml, printSheetHtml, expandPadItems,
   type SheetHtmlPadInput, type SheetHtmlStudent } from '../lib/sheetHtml'
 import type { KbKind } from '../lib/kb'
@@ -263,12 +263,46 @@ async function previewSourceRow(idx: number) {
   }
 }
 
+/* ---------- D168：把本次 tag 结果冻结成某作业包的快照 ----------
+ * 教师使用习惯（docs/112-D168 §3.3）：预览整班作业纸后**打印 PDF**，
+ * 不生成 batch/json —— 元数据会丢。所以在「重算并打 tag」时把 roster 固化下来。
+ * 不选作业包 = 只更新班级 roster（旧行为不变）。 */
+const snapshotPackId = ref('')
+const snapshotMsg = ref('')
+const snapshotBusy = ref(false)
+
+const snapshotPackOptions = computed(() =>
+  (packStore.packs || []).map((p) => ({ id: p.id, name: (p as any).name || p.id })))
+
+async function freezeSnapshotIfChosen() {
+  const pid = String(snapshotPackId.value || '').trim()
+  const cd = activeClassDir.value
+  if (!pid || !cd) return
+  snapshotBusy.value = true
+  try {
+    const r = await saveTagsSnapshot(settingsStore.engineUrl, settingsStore.engineToken, {
+      classDir: cd, packId: pid,
+      students: roster.students.map((x) => ({
+        number: x.number, name: x.name, tag: x.tag })),
+      source: 'recompute-tags',
+    })
+    snapshotMsg.value = r?.ok
+      ? (r.created
+          ? `✅ 已冻结「${pid}」的学生→tag 快照（${r.count} 人）`
+          : `ℹ 「${pid}」快照已存在，未覆盖（${r.skipped || ''}）。如需更新请用「刷新快照」`)
+      : `❌ 快照写入失败：${r?.error || '未知错误'}`
+  } catch (e) {
+    snapshotMsg.value = `快照写入失败：${String((e as Error).message || e)}`
+  } finally { snapshotBusy.value = false }
+}
+
 function recompute() {
   if (!roster.students.length) {
     status.value = '请先导入/手动建立名单。'
     return
   }
   status.value = roster.recomputeFromChecked()
+  void freezeSnapshotIfChosen()
 }
 
 /* ---------- D46-4 总览导出 xlsx（SheetJS aoa；未勾选源列保留、表头加"[未参与]"标注） ---------- */
@@ -1018,6 +1052,17 @@ const nonTranslationRatios = computed(() => roster.ratios.filter((g) => g.tag !=
       <p>
         <button class="btn primary" @click="recompute">⚙ 重算综合得分并自动切分打 tag（调比例后必点）</button>
         <button class="btn" style="margin-left:8px" :disabled="exportDisabled" @click="saveToWorkspace" v-if="dirHandle">写回 workspace roster/</button>
+      </p>
+      <p>
+        <label class="field" title="D168：选中作业包后，本次 tag 结果会冻结成该包的「学生→tag」快照，批阅与统计都以快照为准（保证历史可复现）">
+          本次结果关联到作业包
+          <select v-model="snapshotPackId" style="min-width:180px">
+            <option value="">（不关联，只更新班级名单）</option>
+            <option v-for="p in snapshotPackOptions" :key="p.id" :value="p.id">{{ p.name }}</option>
+          </select>
+        </label>
+        <span v-if="snapshotBusy" class="hint" style="margin:0">正在冻结快照…</span>
+        <span v-if="snapshotMsg" class="hint" style="margin:0">{{ snapshotMsg }}</span>
       </p>
       <p class="hint" v-if="dirHandle && writeHint">{{ writeHint }}</p>
       <p class="hint">{{ summaryText }}</p>

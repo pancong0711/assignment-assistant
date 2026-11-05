@@ -1012,6 +1012,30 @@ class Handler(BaseHTTPRequestHandler):
             rep["files"] = _mup.files_of(Path(self.ws).resolve(), chap)
             self._json(rep)
             return
+        if u.path == "/roster/tags-snapshot":
+            # D168：「重算并打 tag」关联作业包 → 立即冻结该包的 学生→tag 快照
+            payload: dict = {}
+            try:
+                length = int(self.headers.get("Content-Length") or 0)
+                if length:
+                    payload = json.loads(self.rfile.read(length).decode("utf-8")) or {}
+            except Exception as exc:  # noqa: BLE001
+                self._json({"ok": False, "error": f"bad json: {exc}"}, 400)
+                return
+            from .grading import snapshots as _sn
+            try:
+                rep = _sn.write_tags_snapshot(
+                    Path(self.ws).resolve(),
+                    str(payload.get("classDir") or ""),
+                    str(payload.get("packId") or ""),
+                    payload.get("students") or [],
+                    source=str(payload.get("source") or _sn.SOURCE_RECOMPUTE),
+                    force=bool(payload.get("force")))
+            except _sn.SnapshotError as exc:
+                self._json({"ok": False, "error": str(exc)}, 400)
+                return
+            self._json(rep, 200 if rep.get("ok") else 400)
+            return
         if u.path == "/roster/write":
             # D120：名单落盘（路径由引擎权威决定：<ws>/<class_dir>/roster/roster.xlsx）
             payload: dict = {}
@@ -3241,6 +3265,41 @@ class Handler(BaseHTTPRequestHandler):
             ws_ = Path(self.ws).resolve()
             self._json({"ok": True, "items": P.list_templates(ws_),
                         "default": (P.default_template(ws_) or {}).get("id", "")})
+        elif u.path == "/roster/tags-snapshot":
+            # D168：快照列表（无 packId）/ 单包明细 + 与当前 roster 的差异（有 packId）
+            from .grading import snapshots as _sn
+            q = urllib.parse.parse_qs(u.query)
+            class_dir = str((q.get("classDir") or [""])[0])
+            pack_id = str((q.get("packId") or [""])[0]).strip()
+            ws_ = Path(self.ws).resolve()
+            try:
+                if not pack_id:
+                    self._json({"ok": True, "items": _sn.list_tags_snapshots(ws_, class_dir)})
+                    return
+                snap = _sn.read_tags_snapshot(ws_, class_dir, pack_id)
+                if not snap.get("ok"):
+                    self._json(snap, 404)
+                    return
+                self._json({**snap,
+                            "diff": _sn.diff_against_roster(ws_, class_dir, pack_id),
+                            "tagCounts": _sn.tag_counts(ws_, class_dir, pack_id)})
+            except _sn.SnapshotError as exc:
+                self._json({"ok": False, "error": str(exc)}, 400)
+            return
+        elif u.path == "/grade/submissions":
+            # D168：作答名单 + 提交率（分母 = roster-tags 快照）
+            from .grading import snapshots as _sn
+            q = urllib.parse.parse_qs(u.query)
+            ws_ = Path(self.ws).resolve()
+            class_dir = str((q.get("classDir") or [""])[0])
+            pack_id = str((q.get("packId") or [""])[0]).strip()
+            try:
+                sub = _sn.read_submissions(ws_, class_dir, pack_id)
+                stats = _sn.submit_stats(ws_, class_dir, pack_id)
+                self._json({"ok": True, "submissions": sub, "stats": stats})
+            except _sn.SnapshotError as exc:
+                self._json({"ok": False, "error": str(exc)}, 400)
+            return
         elif u.path == "/roster/read":
             from .files import roster_io
             q = urllib.parse.parse_qs(u.query)

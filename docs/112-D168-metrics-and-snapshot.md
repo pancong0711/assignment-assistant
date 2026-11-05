@@ -1,7 +1,7 @@
 # D168 需求单：知识点失误统计口径 + 数据快照（roster / submissions）
 
 > 日期：2026-11-05
-> 状态：**需求单（待实施）**
+> 状态：**B1 已实施**（T2–T5 完成；T6–T13 待做）
 > 关联：`docs/110-D167`（2508 整合评估）、`docs/109-D166`（知识点 JSON 化）、
 > `docs/113-D169`（实现路线与架构）、`docs/12`
 
@@ -361,15 +361,71 @@ classes/<班>/
 
 ---
 
+## 4.4 B1 实施记录（2026-11-05 完成）
+
+### 新增模块 `grading/snapshots.py`
+
+| 函数 | 作用 |
+|---|---|
+| `write_tags_snapshot()` | 写 `roster-tags/<packId>.json`；**已存在默认不覆盖**（防批阅中途改掉历史依据） |
+| `read_tags_snapshot()` | 读快照（缺失返回 `missing`，不抛异常） |
+| `list_tags_snapshots()` | 列该班全部包快照（供 UI 显示锁定状态） |
+| `diff_against_roster()` | 快照 vs 当前 roster 差异（**按学号**比对：added/removed/tagChanged） |
+| `tag_counts()` | tag → 人数（提交率分母） |
+| `write_submissions()` / `read_submissions()` | 作答名单（含 `imageCount` + `unrecognized`） |
+| `submit_stats()` | 提交率（按 tag + 合计） |
+
+**安全**：`class_dir` 走 `safe_class_dir` + 越界校验；`packId` 禁路径分隔符与 `..`；
+JSON 用**原子写**（临时文件 + replace）。
+
+### 批阅集成：`flow._write_grade_snapshots()`
+
+**关键行为**（这是"保证可复现"的落点）：
+
+1. **快照存在 → 学生 tag 以快照为准**（即使前端 plan 里 tag 变了），并记日志；
+2. 快照不存在 → 自动补写，`source=auto-at-grade`；
+3. 每次批阅刷新 `submissions.json`；
+4. 快照与当前 roster 不一致 → **警告但不阻断**，提示去刷新；
+5. **任何快照失败只告警，绝不影响批阅**。
+
+### 关于 T5 的调整（`pack.json` 不重复存 tag）
+
+原计划在 `pack.json` 里加学生级 tag 映射。实施时发现**没有必要**：
+
+- `pack.json` 记的是"这个包用了哪些作业纸（padId + tag）"——**包级**信息；
+- 学生级 tag 已在 `roster-tags/<packId>.json`——**人员级**信息；
+- 两处都存会产生"改了一处忘另一处"的风险。
+
+**决定**：`pack.json` 保持不变；学生级映射**唯一真源 = `roster-tags/<packId>.json`**。
+
+### HTTP 接口
+
+| 路由 | 方法 | 说明 |
+|---|---|---|
+| `/roster/tags-snapshot` | POST | 冻结快照（「重算并打 tag」选包时） |
+| `/roster/tags-snapshot` | GET | 列全部 / 单包明细 + 差异 + tagCounts |
+| `/grade/submissions` | GET | 作答名单 + 提交率 |
+
+### 前端
+
+`RosterView.vue`「重算并打 tag」下新增：
+
+```
+本次结果关联到作业包：[（不关联，只更新班级名单） / 作业包1 / ...]
+```
+
+- 不选 = 只更新班级 roster（**旧行为不变**）；
+- 选了 = 重算后自动冻结快照，并显示"已冻结 N 人"或"快照已存在，未覆盖"。
+
 ## 5. 任务清单
 
 | # | 内容 | 依赖 | 优先级 |
 |---|---|---|---|
 | T1 | 口径文档本文定稿 | — | ✅ 本文 |
-| T2 | `submissions.json` 落盘（批阅时写） | — | P0 |
-| T3 | `roster-tags/<packId>.json` 快照（含「重算并打 tag」包选择） | — | P0 |
-| T4 | 批阅时无快照 → 自动补写（`auto-at-grade`） | T3 | P0 |
-| T5 | `pack.json` 扩展学生级 tag 映射 | T3 | P0 |
+| T2 | `submissions.json` 落盘（批阅时写） | — | ✅ B1 |
+| T3 | `roster-tags/<packId>.json` 快照（含「重算并打 tag」包选择） | — | ✅ B1 |
+| T4 | 批阅时无快照 → 自动补写（`auto-at-grade`） | T3 | ✅ B1 |
+| T5 | `pack.json` 扩展学生级 tag 映射 | T3 | ✅ B1（**改为由 `roster-tags/` 承担**） |
 | T6 | 词表别名归并（`split_terms` + aliases） | — | P1 |
 | T7 | 失误次数统计（`errors[].knowledge[]` 计数） | T2,T3 | P1 |
 | T8 | 加权失误率（单班分 tag → 跨班两层 → 跨包归一） | T7 | P1 |

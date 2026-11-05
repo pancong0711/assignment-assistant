@@ -277,6 +277,84 @@ def _run_transcribe(ctx: dict, client, transcripts_dir: Path) -> list[Path]:
     return [Path(it["out"]) for it in (report.get("items") or []) if it.get("ok") and it.get("out")]
 
 
+def _write_grade_snapshots(ws, task: dict, plan: dict) -> dict:
+    """D168：批阅时落两种快照（失败只告警，绝不影响批阅）。
+
+    **返回「锁定 tag 后」的 plan**：若快照已存在，学生 tag 一律以快照为准
+    （否则 roster 变更会让"保证可复现"落空）。
+
+    1. `roster-tags/<packId>.json` —— 学生→tag 映射（**首次批阅即冻结**）；
+       已存在则**不覆盖**（防批阅中途 roster 变更改掉历史依据）；
+    2. `grading/<packId>/submissions.json` —— 谁交了、交了几张图。
+    """
+    from . import snapshots as _snap
+    class_dir = str(task.get("class_dir") or "").strip()
+    pack_id = str((plan or {}).get("packId") or task.get("pack_id") or "")
+    if not class_dir or not pack_id:
+        logger.debug("[快照] class_dir/pack_id 缺失，跳过 D168 快照")
+        return plan
+    students = [s for s in ((plan or {}).get("students") or []) if isinstance(s, dict)]
+    if not students:
+        return plan
+    # 1) roster-tags：只在**没有**快照时补写（source 标 auto-at-grade）
+    try:
+        cur = _snap.read_tags_snapshot(ws, class_dir, pack_id)
+        if cur.get("missing"):
+            _snap.write_tags_snapshot(
+                ws, class_dir, pack_id,
+                [{"name": s.get("name"), "number": s.get("number"),
+                  "tag": s.get("tag")} for s in students],
+                source=_snap.SOURCE_AUTO_GRADE)
+        else:
+            diff = _snap.diff_against_roster(ws, class_dir, pack_id)
+            if diff.get("changed"):
+                logger.warning(
+                    f"[快照] 作业包 {pack_id} 的 roster 与快照不一致"
+                    f"（新增 {len(diff.get('added') or [])}、"
+                    f"移出 {len(diff.get('removed') or [])}、"
+                    f"tag 变更 {len(diff.get('tagChanged') or [])}）——"
+                    f"本次仍按**快照**的 tag 批阅以保证可复现；"
+                    f"如需按新名单，请在「班级与标签」刷新快照")
+    except Exception as exc:  # noqa: BLE001
+        logger.warning(f"[快照] roster-tags 写入失败：{str(exc)[:160]}")
+    # 2) submissions：每次批阅都刷新（本次实际处理的作答）
+    try:
+        _snap.write_submissions(
+            ws, class_dir, pack_id,
+            [{"name": s.get("name"), "number": s.get("number"),
+              "tag": s.get("tag"), "images": s.get("images") or []}
+             for s in students],
+            source="plan")
+    except Exception as exc:  # noqa: BLE001
+        logger.warning(f"[快照] submissions 写入失败：{str(exc)[:160]}")
+    # 3) 按快照锁定 tag（关键：保证"再次批阅同一包"的依据不变）
+    locked = _snap.read_tags_snapshot(ws, class_dir, pack_id)
+    if not locked.get("ok"):
+        return plan
+    by_num: dict[str, str] = {}
+    by_name: dict[str, str] = {}
+    for s in (locked.get("students") or []):
+        num = str(s.get("number") or "").strip()
+        nm = str(s.get("name") or "").strip()
+        if num:
+            by_num[num] = str(s.get("tag") or "")
+        if nm:
+            by_name[nm] = str(s.get("tag") or "")
+    out_students = []
+    changed = 0
+    for s in students:
+        num = str(s.get("number") or "").strip()
+        nm = str(s.get("name") or "").strip()
+        snap_tag = by_num.get(num) if num and num in by_num else by_name.get(nm)
+        if snap_tag is not None and snap_tag != str(s.get("tag") or ""):
+            changed += 1
+            s = {**s, "tag": snap_tag}
+        out_students.append(s)
+    if changed:
+        logger.info(f"[快照] 按 roster-tags/{pack_id}.json 锁定 {changed} 名学生的 tag")
+    return {**plan, "students": out_students}
+
+
 def _only_students(ctx: dict) -> "set[str]":
     """D156：本次只处理哪些学生（`--students` / plan 已被裁到这些人）。
 
@@ -476,6 +554,9 @@ def run_task(task_path: Path, ws: Path, images_dir: Path | None = None,
                                         encoding="utf-8")
     except Exception as exc:  # noqa: BLE001 —— 快照失败不影响批阅
         logger.warning(f"[pack] 写入 pack.json 失败：{str(exc)[:120]}")
+    # D168：roster-tags 快照 + 作答名单（docs/112-D168 §3）——**保证历史可复现**
+    # 注意：返回**锁定 tag 后**的 plan（快照存在时以快照为准）
+    plan = _write_grade_snapshots(ws, task, plan)
     journal = base / "journal.jsonl"
     run_id = time.strftime("%Y%m%d-%H%M") + "-" + uuid.uuid4().hex[:6]
 

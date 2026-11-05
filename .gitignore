@@ -98,3 +98,6 @@ knowledge-terms.json
 materials/
 kb/knowledge-meta.json
 kb/knowledge-normalize-log.jsonl
+app/tests/.d168-*
+app/tests/_d168.*.html
+app/tests/_d168_entry.ts

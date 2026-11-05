@@ -1509,6 +1509,84 @@ export async function saveRosterToEngine(
   return o
 }
 
+/* ---------------- D168：作业包快照（roster-tags / submissions） ---------------- */
+
+export interface TagsSnapshot {
+  ok?: boolean
+  classDir?: string
+  packId?: string
+  generatedAt?: string
+  /** recompute-tags（重算并打 tag 时写入）/ auto-at-grade（批阅时补写）/ manual-refresh */
+  source?: string
+  students?: Array<{ number: string; name: string; tag: string; composite?: number }>
+  tagCounts?: Record<string, number>
+  diff?: {
+    changed: boolean
+    added: Array<{ number: string; name: string }>
+    removed: Array<{ number: string; name: string }>
+    tagChanged: Array<{ number: string; name: string; from: string; to: string }>
+  }
+  missing?: boolean
+  error?: string
+}
+
+/** POST /roster/tags-snapshot：把「学生→tag」冻结成某作业包的快照。 */
+export async function saveTagsSnapshot(
+  engineAddr: string, token: string | undefined,
+  payload: { classDir: string; packId: string
+    students: Array<{ number?: string; name: string; tag?: string; composite?: number }>
+    source?: string; force?: boolean },
+): Promise<{ ok?: boolean; path?: string; count?: number; created?: boolean
+             skipped?: string; error?: string }> {
+  const res = await fetch(engineUrlWithToken(
+    normalizeEngineAddr(engineAddr), '/roster/tags-snapshot', token), {
+    method: 'POST', headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(payload),
+  })
+  const o = (await res.json().catch(() => ({}))) as any
+  if (!res.ok && !o?.error) throw new Error(`HTTP ${res.status}`)
+  return o
+}
+
+/** GET /roster/tags-snapshot：无 packId 列全部快照；有 packId 返回明细 + 与当前 roster 的差异。 */
+export async function fetchTagsSnapshot(
+  engineAddr: string, token: string | undefined,
+  classDir: string, packId = '',
+): Promise<TagsSnapshot & { items?: Array<{ packId: string; generatedAt: string
+  source: string; count: number }> }> {
+  const qs = new URLSearchParams({ classDir })
+  if (packId) qs.set('packId', packId)
+  const base = normalizeEngineAddr(engineAddr)
+  try {
+    return (await getJson2(engineUrlWithToken(
+      base, `/roster/tags-snapshot?${qs.toString()}`, token))) as any
+  } catch {
+    return { ok: false, items: [] }
+  }
+}
+
+/** GET /grade/submissions：作答名单 + 提交率（分母 = roster-tags 快照）。 */
+export async function fetchSubmissions(
+  engineAddr: string, token: string | undefined, classDir: string, packId: string,
+): Promise<{ ok?: boolean
+  submissions?: { ok?: boolean; missing?: boolean
+    submitted?: Array<{ number: string; name: string; tag: string
+                        images: string[]; imageCount: number }>
+    unrecognized?: string[] }
+  stats?: { ok?: boolean; byTag?: Record<string, { expected: number
+    submitted: number; rate: number }>
+    total?: { expected: number; submitted: number; rate: number }
+    unrecognized?: number; error?: string } }> {
+  const qs = new URLSearchParams({ classDir, packId })
+  const base = normalizeEngineAddr(engineAddr)
+  try {
+    return (await getJson2(engineUrlWithToken(
+      base, `/grade/submissions?${qs.toString()}`, token))) as any
+  } catch {
+    return { ok: false }
+  }
+}
+
 /** GET /roster/read?classDir=：从磁盘读回名单（localStorage 丢失时恢复）。 */
 export async function fetchRosterFromEngine(
   engineAddr: string, token: string | undefined, classDir: string,
