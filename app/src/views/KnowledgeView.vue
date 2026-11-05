@@ -9,7 +9,9 @@
 import { computed, onMounted, ref, watch } from 'vue'
 import { useSettingsStore } from '../stores/settings'
 import KbAiSolvePanel from '../components/KbAiSolvePanel.vue'
-import { tidyKbRelated, applyKbRelatedTidy, type RelatedTidyItem } from '../lib/engineClient'
+import { tidyKbRelated, applyKbRelatedTidy, type RelatedTidyItem,
+  fetchErrorRates, fetchCooccurrence, type ErrorRateReport,
+  type CooccurrenceGraph } from '../lib/engineClient'
 import TeacherReportCard from '../components/TeacherReportCard.vue'
 import TrendCard from '../components/TrendCard.vue'
 import { KB_KINDS, KB_KIND_LABELS, type KbKind } from '../lib/kb'
@@ -299,6 +301,47 @@ async function doTidyApply() {
   } finally { tidyBusy.value = false }
 }
 
+/* ---------- D168：知识点加权失误率 + 共现（多班 × 多包 × 多 tag） ---------- */
+const anaBusy = ref(false)
+const anaMsg = ref('')
+const anaReport = ref<ErrorRateReport | null>(null)
+const anaCo = ref<{ overall?: CooccurrenceGraph; byTag?: Record<string, CooccurrenceGraph>
+                    tags?: string[] } | null>(null)
+const anaClusters = ref<Array<{ id: string; members: string[]; size: number }>>([])
+const anaOnlyKnown = ref(true)
+
+async function runAnalysis() {
+  if (!selClasses.value.length) { anaMsg.value = '请先勾选班级'; return }
+  const packs = packOptions.value.filter((p) => selPacks.value.includes(p))
+  if (!packs.length) { anaMsg.value = '请先勾选作业包'; return }
+  anaBusy.value = true
+  anaMsg.value = '正在统计…'
+  anaReport.value = null
+  anaCo.value = null
+  anaClusters.value = []
+  try {
+    const tags = selTags.value.split(/[,，\s]+/).map((x) => x.trim()).filter(Boolean)
+    const rep = await fetchErrorRates(settings.engineUrl, settings.engineToken,
+      { classes: selClasses.value, packs, tags, onlyKnown: anaOnlyKnown.value })
+    if (!rep?.ok) { anaMsg.value = `❌ ${rep?.error || '统计失败'}`; return }
+    anaReport.value = rep
+    const co = await fetchCooccurrence(settings.engineUrl, settings.engineToken,
+      { classes: selClasses.value, packs, tags, n: 2 })
+    if (co?.ok && co.graphs) {
+      anaCo.value = co.graphs
+      anaClusters.value = co.clusters?.clusters || []
+    }
+    anaMsg.value = `✅ 统计完成：${(rep.items || []).length} 个知识点`
+      + (rep.tagSource === 'roster' ? '；⚠ 部分作业包没有 roster 快照，tag 取自当前名单' : '')
+  } catch (e) {
+    anaMsg.value = `统计失败：${String((e as Error).message || e)}`
+  } finally { anaBusy.value = false }
+}
+
+function confOf(rep: ErrorRateReport | null) {
+  return rep?.confidence || { level: 'ok' as const, reasons: [] }
+}
+
 </script>
 
 <template>
@@ -441,6 +484,112 @@ async function doTidyApply() {
           <button class="btn" :disabled="tplBusy || !tplSel || tplIsBuiltin" @click="deleteTpl">🗑 删除</button>
           <span v-if="tplMsg" class="hint" style="margin-left:8px">{{ tplMsg }}</span>
         </p>
+      </section>
+
+      <!-- ⑤-B D168：知识点加权失误率 + 共现（可跨班/跨包/跨 tag） -->
+      <section class="card">
+        <h3>⑤-B 知识点失误分析（加权失误率 / 共现 / 自然聚类）</h3>
+        <p class="hint">
+          口径：<b>扣分制无固定每题满分</b>，所以看<b>失误次数</b>而不是得分率；
+          同一题同一知识点错 2 次记 2 次。
+          <b>加权失误率</b> = Σ_tag（该 tag 失误率 × 该 tag 已提交人数占比），单位「次/人」。
+          统计口径以 <code>docs/112-D168</code> 为准。
+        </p>
+        <div class="row">
+          <label class="field"><input v-model="anaOnlyKnown" type="checkbox" />
+            只统计词表内/已标注术语（词表外单独计数）</label>
+          <button class="btn" :disabled="anaBusy" @click="runAnalysis">
+            {{ anaBusy ? '统计中…' : '📊 统计失误率与共现' }}
+          </button>
+          <span v-if="anaMsg" class="hint" style="margin:0">{{ anaMsg }}</span>
+        </div>
+
+        <template v-if="anaReport?.items?.length">
+          <p class="hint" style="margin:6px 0 2px">
+            提交人数：{{ anaReport.totalSubmitted }} 人
+            <span v-if="anaReport.submittedByTag">
+              （{{ Object.entries(anaReport.submittedByTag)
+                    .map(([k, v]) => `${k}:${v}`).join('，') }}）
+            </span>
+            <span v-if="anaReport.tagSource === 'snapshot'">· tag 取自<b>作业包快照</b>（可复现）</span>
+            <span v-else-if="anaReport.tagSource === 'roster'" style="color:#b45309">
+              · ⚠ tag 取自<b>当前名单</b>（该包没有快照，建议先在班级页冻结）
+            </span>
+          </p>
+          <p v-if="confOf(anaReport).level === 'low'" style="color:#b45309; font-size:12px; margin:0 0 6px">
+            ⚠ 样本可信度低：{{ confOf(anaReport).reasons.join('；') }}
+            —— 失误率数字仅供参考
+          </p>
+          <table class="tbl">
+            <thead>
+              <tr>
+                <th>知识点</th><th>加权失误率</th><th>失误次数</th><th>出错人数</th>
+                <th>分 tag 明细</th><th>涉及题号</th>
+              </tr>
+            </thead>
+            <tbody>
+              <tr v-for="it in anaReport.items" :key="it.term">
+                <td>{{ it.term }}</td>
+                <td><b>{{ it.rate }}</b></td>
+                <td class="c">{{ it.errorCount }}</td>
+                <td class="c">{{ it.errStudents }}</td>
+                <td class="hint">
+                  {{ Object.entries(it.byTag).map(([k, v]) => `${k}:${v}`).join('，') || '—' }}
+                </td>
+                <td class="hint">{{ it.questions.join('、') || '—' }}</td>
+              </tr>
+            </tbody>
+          </table>
+          <p v-if="Object.keys(anaReport.unclassified || {}).length"
+             class="hint" style="margin:4px 0 0; color:#b45309">
+            词表外术语（未进主统计）：
+            {{ Object.entries(anaReport.unclassified || {}).map(([k, v]) => `${k}×${v}`).join('，') }}
+          </p>
+          <p v-if="anaReport.crossPack && Object.keys(anaReport.crossPack.terms || {}).length"
+             class="hint" style="margin:4px 0 0">
+            跨包口径（Σ失误 ÷ Σ总题数 = {{ anaReport.crossPack.totalQuestions }} 题）：
+            {{ Object.entries(anaReport.crossPack.terms)
+                .map(([k, v]) => `${k} ${v.rate}（${v.errorCount}次 / ${v.totalQuestions}题）`)
+                .join('；') }}
+          </p>
+        </template>
+
+        <template v-if="anaCo?.tags?.length">
+          <h4 style="margin:10px 0 2px">知识点共现（每个 tag 一张图）</h4>
+          <p class="hint" style="margin:0 0 4px">
+            <b>归一化关联</b> = P(共现) ÷ ∏P(单项)：&gt;1 表示比随机更常同时出错。
+            tag 必须拆开看——不同档位的学生错法不同，混算会糊成一团。
+          </p>
+          <p class="hint" style="margin:0 0 2px"><b>全局</b>（{{ anaCo.overall?.total }} 题）</p>
+          <p v-if="!(anaCo.overall?.combos || []).length" class="hint">（无共现组合）</p>
+          <ul v-else style="margin:0 0 6px 16px; padding:0; font-size:13px">
+            <li v-for="c in (anaCo.overall?.combos || []).slice(0, 8)" :key="c.terms.join('+')">
+              {{ c.terms.join(' ＋ ') }}　共现 {{ c.count }} 次 · 关联 {{ c.association }}
+            </li>
+          </ul>
+          <details v-for="t in anaCo.tags" :key="t" style="margin-bottom:4px">
+            <summary class="hint" style="cursor:pointer">
+              tag「{{ t }}」：{{ anaCo.byTag?.[t]?.total }} 题，
+              {{ (anaCo.byTag?.[t]?.combos || []).length }} 组共现
+            </summary>
+            <ul style="margin:2px 0 0 16px; padding:0; font-size:13px">
+              <li v-for="c in (anaCo.byTag?.[t]?.combos || []).slice(0, 8)"
+                  :key="t + c.terms.join('+')">
+                {{ c.terms.join(' ＋ ') }}　共现 {{ c.count }} 次 · 关联 {{ c.association }}
+              </li>
+              <li v-if="!(anaCo.byTag?.[t]?.combos || []).length" class="hint">（无共现组合）</li>
+            </ul>
+          </details>
+          <template v-if="anaClusters.length">
+            <p class="hint" style="margin:6px 0 2px">
+              自然聚类（按共现耦合，不依赖章节层级）：
+            </p>
+            <div v-for="c in anaClusters" :key="c.id" style="margin-bottom:3px">
+              <span class="hint">{{ c.id }}（{{ c.size }}）：</span>
+              <span v-for="m in c.members" :key="m" class="term" style="margin-right:4px">{{ m }}</span>
+            </div>
+          </template>
+        </template>
       </section>
 
       <!-- ⑤ 教师报告（D153：多选班级/作业包/tag） -->

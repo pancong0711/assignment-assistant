@@ -51,6 +51,145 @@ def split_terms(raw: str) -> list[str]:
     return out
 
 
+# ---------------- D168：别名归并 + 标签（docs/112-D168 §4.1） ----------------
+# 问题：`动量守恒` / `动量守恒定律` / `动量守恒律` 是同一概念，
+# 但 split_terms 只做分隔符标准化 → 统计时被拆成 4 个条目 → 共现与失误率失真。
+# 解决：词表 term 自带 aliases，统计前先把别名归一到规范名。
+
+
+def alias_map(vocab: dict) -> dict[str, str]:
+    """构造「别名/规范名 → 规范名」映射（大小写不敏感，去空白）。
+
+    规范名本身也映射到自己，便于统一调用。
+    """
+    out: dict[str, str] = {}
+    for t in (vocab or {}).get("terms") or []:
+        if not isinstance(t, dict):
+            continue
+        term = str(t.get("term") or "").strip()
+        if not term:
+            continue
+        out[_norm_key(term)] = term
+        for a in (t.get("aliases") or []):
+            al = str(a or "").strip()
+            # 别名冲突时**保留先出现的**（并告警）——不静默改写，避免调试困难
+            if al and _norm_key(al) not in out:
+                out[_norm_key(al)] = term
+    return out
+
+
+def _norm_key(s: str) -> str:
+    """比较用的归一键：去空白 + 小写（中文大小写无影响，英文术语有效）。"""
+    return re.sub(r"\s+", "", str(s or "")).lower()
+
+
+def resolve_canonical(term: str, amap: dict[str, str]) -> str:
+    """把一个术语归一到规范名；不在词表里的原样返回。
+
+    注意：与既有 `canonical(vocab, term)`（按 term 查词条 dict）**不是同一个东西**，
+    这里只做「别名 → 规范名」的字符串映射。
+    """
+    t = str(term or "").strip()
+    return amap.get(_norm_key(t), t)
+
+
+def normalize_terms(terms: "list[str]", vocab: dict,
+                    *, keep_unknown: bool = True) -> "tuple[list[str], list[str]]":
+    """术语列表 → (规范术语列表, 词表外术语列表)。
+
+    - 别名 → 规范名（去重、保序）；
+    - `keep_unknown=True` 时词表外术语原样保留（默认；统计侧再决定要不要）。
+
+    **词表为空时全部视为"已认可"**（D168 修正）：空词表意味着"还没建立词表"，
+    此时把所有术语都打进 `unknown` 会让统计**完全空白**——那是错的。
+    只有"建立了词表但术语不在其中"才算词表外。
+    """
+    amap = alias_map(vocab)
+    known: set[str] = {_norm_key(v) for v in amap.values()}
+    vocab_empty = not known
+    out: list[str] = []
+    unknown: list[str] = []
+    for t in terms or []:
+        raw = str(t or "").strip()
+        if not raw:
+            continue
+        c = resolve_canonical(raw, amap)
+        if vocab_empty or _norm_key(c) in known:
+            if c not in out:
+                out.append(c)
+        else:
+            if keep_unknown and raw not in out:
+                out.append(raw)
+            if raw not in unknown:
+                unknown.append(raw)
+    return out, unknown
+
+
+def split_terms_normalized(raw: str, vocab: dict,
+                           *, keep_unknown: bool = True) -> "tuple[list[str], list[str]]":
+    """`split_terms` + 别名归并（统计入口统一用它）。"""
+    return normalize_terms(split_terms(raw), vocab, keep_unknown=keep_unknown)
+
+
+def term_tags(vocab: dict) -> dict[str, list[str]]:
+    """术语 → 标签列表（如 ["模型"] / ["例"] / ["数学"]）。
+
+    与 2508 `考点词表.yaml` 的 `tags` 对齐（docs/110 §1）。
+    """
+    out: dict[str, list[str]] = {}
+    for t in (vocab or {}).get("terms") or []:
+        if not isinstance(t, dict):
+            continue
+        term = str(t.get("term") or "").strip()
+        if not term:
+            continue
+        tags = [str(x).strip() for x in (t.get("tags") or []) if str(x).strip()]
+        if tags:
+            out[term] = tags
+    return out
+
+
+def add_alias(ws, term: str, alias: str, *, source: str = "human") -> dict:
+    """给某术语追加一个别名（教师/AI 归一后调用）。
+
+    术语不存在时先创建（source 标传入值）。返回 {ok, term, aliases}。
+    """
+    term_s = str(term or "").strip()
+    alias_s = str(alias or "").strip()
+    if not term_s or not alias_s:
+        return {"ok": False, "error": "term 与 alias 都不能为空"}
+    if _norm_key(term_s) == _norm_key(alias_s):
+        return {"ok": False, "error": "别名与规范名相同，无需添加"}
+    data = load_vocab(ws)
+    by_term = {str(t.get("term")): t for t in data["terms"]}
+    t = by_term.get(term_s)
+    if t is None:
+        # 别名已被别的术语占用 → 拒绝（避免歧义）
+        amap = alias_map(data)
+        owner = amap.get(_norm_key(alias_s))
+        if owner and owner != term_s:
+            return {"ok": False,
+                    "error": f"别名「{alias_s}」已属于术语「{owner}」，不能同时属于「{term_s}」"}
+        t = {"term": term_s, "aliases": [alias_s], "source": source,
+             "count": 0, "updatedAt": time.strftime("%Y-%m-%d %H:%M:%S")}
+        data["terms"].append(t)
+    else:
+        aliases = [str(a).strip() for a in (t.get("aliases") or []) if str(a).strip()]
+        if alias_s in aliases:
+            return {"ok": True, "term": term_s, "aliases": aliases, "unchanged": True}
+        amap = alias_map(data)
+        owner = amap.get(_norm_key(alias_s))
+        if owner and owner != term_s:
+            return {"ok": False,
+                    "error": f"别名「{alias_s}」已属于术语「{owner}」"}
+        aliases.append(alias_s)
+        t["aliases"] = aliases
+        t["updatedAt"] = time.strftime("%Y-%m-%d %H:%M:%S")
+    save_vocab(ws, data)
+    return {"ok": True, "term": term_s,
+            "aliases": [str(a) for a in (t.get("aliases") or [])]}
+
+
 def join_terms(terms: list[str]) -> str:
     """术语列表 → 题库 `related` 列写法（英文逗号，无空格）。"""
     seen: list[str] = []

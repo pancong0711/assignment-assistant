@@ -1,7 +1,7 @@
 # D168 需求单：知识点失误统计口径 + 数据快照（roster / submissions）
 
 > 日期：2026-11-05
-> 状态：**B1 已实施**（T2–T5 完成；T6–T13 待做）
+> 状态：**B1+B2 已实施**（T2–T10 完成；T11–T13 待做）
 > 关联：`docs/110-D167`（2508 整合评估）、`docs/109-D166`（知识点 JSON 化）、
 > `docs/113-D169`（实现路线与架构）、`docs/12`
 
@@ -417,6 +417,59 @@ JSON 用**原子写**（临时文件 + replace）。
 - 不选 = 只更新班级 roster（**旧行为不变**）；
 - 选了 = 重算后自动冻结快照，并显示"已冻结 N 人"或"快照已存在，未覆盖"。
 
+## 4.5 B2 实施记录（2026-11-05 完成，T6–T10）
+
+### 新增 `grading/error_stats.py`
+
+| 函数 | 作用 |
+|---|---|
+| `collect_errors()` | 从 `evaluations/*.json` 计失误次数；**同一题同一知识点错 2 次记 2 次**；低置信度不计 |
+| `weighted_error_rate()` | 按 tag 失误率 → 按**已提交人数**占比加权（不是班级人数） |
+| `confidence()` | 提交率 < 60% 或人数 < 5 → `low`（防"提交少+正确率高→假性低失误率"） |
+| `cross_pack_rate()` | 跨包 = **Σ失误 ÷ Σ总题数**（教师拍板，非按包平均） |
+| `build_report()` | 一站式：统计 + 加权 + 可信度 + 分 tag 明细 |
+
+### 新增 `grading/cooccurrence.py`
+
+| 函数 | 作用 |
+|---|---|
+| `occurrence_prob()` | 一阶：知识点在多少比例的题里出错 |
+| `cooccurrence()` | n 元共现 + **归一化关联** `P(组合) / ∏P(单项)` |
+| `by_tag()` | **每个 tag 一张图** + 全局图 |
+| `natural_clusters()` | 按共现耦合做自然聚类（不依赖章节层级） |
+
+### 词表别名归并（`vocab.py`）
+
+- `alias_map()` / `normalize_terms()` / `split_terms_normalized()`：别名 → 规范名；
+- `term_tags()`：术语标签（对齐 2508 `考点词表.yaml` 的 tags）；
+- `add_alias()`：追加别名（含"已被其它术语占用"的冲突拒绝）。
+
+### 两个调试中发现的问题（都已修正并写进测试）
+
+1. **🔴 归一化关联恒等于 1.0**：原实现写成"rate 逐个除以单项概率"，
+   每次除法又把 `total` 乘回去 → 结果永远是 1.0。改为先算分母再除。
+2. **🔴 空词表导致统计全空**：`only_known=True` 时，词表为空会把**所有**术语
+   打进"词表外"，主统计为空。修正为：**词表为空 = 尚未建立词表，全部视为已认可**；
+   只有"建立了词表但术语不在其中"才算词表外。
+
+### 报告口径修正（`teacher_report.collect_multi`）
+
+- tag **优先取该包的 roster 快照**（`_tag_map_for_pack`），无快照才回落当前名单；
+- 每条记录补 `tag` 与 `_tagSource`（`snapshot` / `roster` / `none`），
+  前端据此提示"tag 取自当前名单，建议先冻结快照"。
+
+### 接口
+
+| 路由 | 说明 |
+|---|---|
+| `GET /analysis/errors?classes=&packs=&tags=&onlyKnown=` | 加权失误率 + 跨包 + 可信度 + 分 tag |
+| `GET /analysis/cooccurrence?classes=&packs=&tags=&n=` | 每 tag 一张共现图 + 自然聚类 |
+
+### 前端
+
+`KnowledgeView` 新增「⑤-B 知识点失误分析」卡：统计按钮 + 提交人数/权重 +
+**可信度警告** + 失误率表（含分 tag 明细）+ 词表外计数 + 跨包口径 + 每个 tag 的共现图 + 聚类。
+
 ## 5. 任务清单
 
 | # | 内容 | 依赖 | 优先级 |
@@ -426,11 +479,11 @@ JSON 用**原子写**（临时文件 + replace）。
 | T3 | `roster-tags/<packId>.json` 快照（含「重算并打 tag」包选择） | — | ✅ B1 |
 | T4 | 批阅时无快照 → 自动补写（`auto-at-grade`） | T3 | ✅ B1 |
 | T5 | `pack.json` 扩展学生级 tag 映射 | T3 | ✅ B1（**改为由 `roster-tags/` 承担**） |
-| T6 | 词表别名归并（`split_terms` + aliases） | — | P1 |
-| T7 | 失误次数统计（`errors[].knowledge[]` 计数） | T2,T3 | P1 |
-| T8 | 加权失误率（单班分 tag → 跨班两层 → 跨包归一） | T7 | P1 |
-| T9 | 提交率 + 可信度判据 | T2,T3,T7 | P1 |
-| T10 | 分 tag 共现（含全局） | T7 | P1 |
+| T6 | 词表别名归并（`split_terms` + aliases） | — | ✅ B2 |
+| T7 | 失误次数统计（`errors[].knowledge[]` 计数） | T2,T3 | ✅ B2 |
+| T8 | 加权失误率（单班分 tag → 跨班两层 → 跨包归一） | T7 | ✅ B2 |
+| T9 | 提交率 + 可信度判据 | T2,T3,T7 | ✅ B2 |
+| T10 | 分 tag 共现（含全局） | T7 | ✅ B2 |
 | T11 | `example` kind + 例题提取（atopia 任务） | D169 | P2 |
 | T12 | 标准共现图（基于 example） | T11 | P2 |
 | T13 | 打印 PDF 的 sidecar（`作业纸-日期.json`） | — | P2 |

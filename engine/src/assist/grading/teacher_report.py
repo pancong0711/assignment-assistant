@@ -52,6 +52,38 @@ def load_evaluations(eval_dir) -> list[dict]:
     return out
 
 
+def _tag_map_for_pack(ws, class_dir: str, pack_id: str) -> "tuple[dict[str, str], str]":
+    """D168：取某作业包的「姓名 → tag」映射。
+
+    **优先 roster 快照**（`roster-tags/<packId>.json`）——保证统计可复现；
+    无快照时回落当前名单，返回值第二项标 `roster`（区别于 `snapshot`）。
+    """
+    try:
+        from . import snapshots as _snap
+        snap = _snap.read_tags_snapshot(ws, class_dir, pack_id)
+        if snap.get("ok") and snap.get("students"):
+            m = {}
+            for st in snap["students"]:
+                nm = str(st.get("name") or "").strip()
+                if nm:
+                    m[nm] = str(st.get("tag") or "").strip()
+            return m, "snapshot"
+    except Exception as exc:  # noqa: BLE001 —— 快照异常不阻断报告
+        logger.warning(f"[教师报告] 读快照失败（回落当前名单）：{exc}")
+    try:
+        from ..files import roster_io
+        ros = roster_io.read_roster_file(ws, class_dir) or {}
+        m = {}
+        for st in (ros.get("students") or []):
+            nm = str(st.get("name") or "").strip()
+            if nm:
+                m[nm] = str(st.get("tag") or st.get("group") or "").strip()
+        return m, "roster"
+    except Exception as exc:  # noqa: BLE001
+        logger.warning(f"[教师报告] 读取名单失败：{exc}")
+        return {}, "none"
+
+
 def collect_multi(ws, class_dirs: "list[str]", pack_ids: "list[str]",
                   tags: "list[str] | None" = None) -> "tuple[list[dict], list[str]]":
     """D153：从**多个班级 × 多个作业包**收集评阅结果（教师报告多选）。
@@ -69,18 +101,6 @@ def collect_multi(ws, class_dirs: "list[str]", pack_ids: "list[str]",
         cd_s = str(cd or "").strip().strip("/")
         if not cd_s:
             continue
-        # tag 过滤：从名单读 姓名 → tag
-        name_tag: dict[str, str] = {}
-        if want_tags:
-            try:
-                from ..files import roster_io
-                ros = roster_io.read_roster_file(ws_p, cd_s) or {}
-                for st in (ros.get("students") or []):
-                    nm = str(st.get("name") or "").strip()
-                    if nm:
-                        name_tag[nm] = str(st.get("tag") or st.get("group") or "").strip()
-            except Exception as exc:  # noqa: BLE001
-                logger.warning(f"[教师报告] 读取名单失败（不按 tag 过滤）：{exc}")
         for pid in (pack_ids or []):
             pid_s = str(pid or "").strip()
             if not pid_s:
@@ -88,12 +108,19 @@ def collect_multi(ws, class_dirs: "list[str]", pack_ids: "list[str]",
             ev = ws_p / cd_s / "grading" / pid_s / "evaluations"
             if not ev.is_dir():
                 continue
+            # D168：tag **优先取该包的 roster 快照**（保证可复现）；
+            # 无快照时回落到当前名单（并为将来统计留出"未经快照"的信号）。
+            name_tag, tag_source = _tag_map_for_pack(ws_p, cd_s, pid_s)
             got = load_evaluations(ev)
             if want_tags and name_tag:
                 got = [r for r in got
                        if name_tag.get(str(r.get("student") or "")) in want_tags]
             for r in got:
                 r.setdefault("_sourcePack", f"{cd_s}/{pid_s}")
+                nm = str(r.get("student") or "")
+                if nm in name_tag:
+                    r.setdefault("tag", name_tag[nm])
+                r.setdefault("_tagSource", tag_source)
             records.extend(got)
             sources.append(f"{cd_s}/{pid_s}")
     return records, sources

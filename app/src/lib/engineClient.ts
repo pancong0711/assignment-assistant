@@ -1587,6 +1587,86 @@ export async function fetchSubmissions(
   }
 }
 
+/* ---------------- D168：知识点失误统计 / 共现分析 ---------------- */
+
+export interface ErrorRateItem {
+  term: string
+  /** 加权失误率（次/人）：Σ_tag [该 tag 失误率 × 该 tag 提交人数占比] */
+  rate: number
+  /** 分 tag 明细（教师 §1.3.1：放大细节时要看） */
+  byTag: Record<string, number>
+  errorCount: number
+  errStudents: number
+  questions: string[]
+}
+
+export interface ErrorRateReport {
+  ok?: boolean
+  items?: ErrorRateItem[]
+  weights?: Record<string, number>
+  totalSubmitted?: number
+  confidence?: { level: 'ok' | 'low'; reasons: string[] }
+  unclassified?: Record<string, number>
+  crossPack?: { terms: Record<string, { rate: number; errorCount: number
+    totalQuestions: number; packs: Record<string, number> }>
+    totalQuestions: number }
+  perPack?: Array<{ packId: string; classDir: string
+    byTerm: Record<string, number>; totalQuestions: number; submitted: number }>
+  sources?: string[]
+  /** snapshot（用 roster 快照，可复现）/ roster（无快照回落当前名单） */
+  tagSource?: string
+  submittedByTag?: Record<string, number>
+  error?: string
+}
+
+export interface CooccurrenceGraph {
+  total: number
+  combos: Array<{ terms: string[]; count: number; rate: number; association: number }>
+}
+
+/** GET /analysis/errors：加权失误率（多班 × 多包 × 多 tag 组合）。 */
+export async function fetchErrorRates(
+  engineAddr: string, token: string | undefined,
+  q: { classes: string[]; packs: string[]; tags?: string[]; onlyKnown?: boolean },
+): Promise<ErrorRateReport> {
+  const qs = new URLSearchParams({
+    classes: q.classes.join(','), packs: q.packs.join(','),
+  })
+  if (q.tags?.length) qs.set('tags', q.tags.join(','))
+  if (q.onlyKnown === false) qs.set('onlyKnown', '0')
+  const base = normalizeEngineAddr(engineAddr)
+  try {
+    return (await getJson2(engineUrlWithToken(
+      base, `/analysis/errors?${qs.toString()}`, token))) as any
+  } catch (e) {
+    return { ok: false, error: String((e as Error).message || e) }
+  }
+}
+
+/** GET /analysis/cooccurrence：共现（每 tag 一张图）+ 自然聚类。 */
+export async function fetchCooccurrence(
+  engineAddr: string, token: string | undefined,
+  q: { classes: string[]; packs: string[]; tags?: string[]; n?: number },
+): Promise<{ ok?: boolean
+  graphs?: { overall: CooccurrenceGraph; byTag: Record<string, CooccurrenceGraph>
+             tags: string[] }
+  clusters?: { clusters: Array<{ id: string; members: string[]; size: number }>
+               edges: Array<{ a: string; b: string; count: number; association: number }> }
+  sources?: string[]; error?: string }> {
+  const qs = new URLSearchParams({
+    classes: q.classes.join(','), packs: q.packs.join(','),
+  })
+  if (q.tags?.length) qs.set('tags', q.tags.join(','))
+  if (q.n) qs.set('n', String(q.n))
+  const base = normalizeEngineAddr(engineAddr)
+  try {
+    return (await getJson2(engineUrlWithToken(
+      base, `/analysis/cooccurrence?${qs.toString()}`, token))) as any
+  } catch (e) {
+    return { ok: false, error: String((e as Error).message || e) }
+  }
+}
+
 /** GET /roster/read?classDir=：从磁盘读回名单（localStorage 丢失时恢复）。 */
 export async function fetchRosterFromEngine(
   engineAddr: string, token: string | undefined, classDir: string,

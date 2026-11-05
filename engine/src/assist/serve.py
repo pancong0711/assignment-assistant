@@ -3286,6 +3286,85 @@ class Handler(BaseHTTPRequestHandler):
             except _sn.SnapshotError as exc:
                 self._json({"ok": False, "error": str(exc)}, 400)
             return
+        elif u.path == "/analysis/errors":
+            # D168：知识点加权失误率（tag 加权 + 跨班两层 + 跨包按总题数）
+            from .grading import error_stats as _es
+            from .grading import snapshots as _sn
+            from .grading import teacher_report as _tr
+            from .grading import vocab as _vb
+            q = urllib.parse.parse_qs(u.query)
+            classes = [x for x in str((q.get("classes") or [""])[0]).split(",") if x.strip()]
+            packs = [x for x in str((q.get("packs") or [""])[0]).split(",") if x.strip()]
+            tags = [x for x in str((q.get("tags") or [""])[0]).split(",") if x.strip()]
+            only_known = str((q.get("onlyKnown") or ["1"])[0]) != "0"
+            ws_ = Path(self.ws).resolve()
+            if not classes or not packs:
+                self._json({"ok": False, "error": "需要 classes 与 packs 参数"}, 400)
+                return
+            records, sources = _tr.collect_multi(ws_, classes, packs, tags or None)
+            if not records:
+                self._json({"ok": False, "error": "没有找到评阅结果",
+                            "sources": sources}, 404)
+                return
+            # 每个包各自的提交人数（来自 D168 快照；缺失则用记录数兜底）
+            submitted_by_tag: dict[str, int] = {}
+            per_pack = []
+            for cd in classes:
+                for pid in packs:
+                    try:
+                        st = _sn.submit_stats(ws_, cd, pid)
+                    except Exception:  # noqa: BLE001
+                        st = {"ok": False}
+                    if st.get("ok"):
+                        for tag, v in (st.get("byTag") or {}).items():
+                            submitted_by_tag[tag] = (submitted_by_tag.get(tag, 0)
+                                                     + int(v.get("submitted") or 0))
+                    got = [r for r in records
+                           if str(r.get("_sourcePack")) == f"{cd}/{pid}"]
+                    stats_p = _es.collect_errors(got)
+                    per_pack.append({
+                        "packId": pid, "classDir": cd,
+                        "byTerm": {k: v["count"] for k, v in stats_p["byTerm"].items()},
+                        "totalQuestions": stats_p["totals"]["questions"],
+                        "submitted": len(got),
+                    })
+            if not submitted_by_tag:
+                # 无快照：用"有评阅记录的人数"兜底，并在响应里明确标出
+                for r in records:
+                    t = str(r.get("tag") or "").strip()
+                    submitted_by_tag[t] = submitted_by_tag.get(t, 0) + 1
+            vocab = _vb.load_vocab(ws_)
+            rep = _es.build_report(records, submitted_by_tag=submitted_by_tag,
+                                   vocab=vocab, only_known=only_known)
+            rep["crossPack"] = _es.cross_pack_rate(per_pack)
+            rep["perPack"] = per_pack
+            rep["sources"] = sources
+            rep["tagSource"] = next(
+                (str(r.get("_tagSource")) for r in records if r.get("_tagSource")), "none")
+            rep["submittedByTag"] = submitted_by_tag
+            self._json(rep)
+            return
+        elif u.path == "/analysis/cooccurrence":
+            # D168：共现（可按 tag 拆开）+ 自然聚类
+            from .grading import cooccurrence as _co
+            from .grading import teacher_report as _tr
+            from .grading import vocab as _vb
+            q = urllib.parse.parse_qs(u.query)
+            classes = [x for x in str((q.get("classes") or [""])[0]).split(",") if x.strip()]
+            packs = [x for x in str((q.get("packs") or [""])[0]).split(",") if x.strip()]
+            tags = [x for x in str((q.get("tags") or [""])[0]).split(",") if x.strip()]
+            n = int((q.get("n") or ["2"])[0] or 2)
+            ws_ = Path(self.ws).resolve()
+            if not classes or not packs:
+                self._json({"ok": False, "error": "需要 classes 与 packs 参数"}, 400)
+                return
+            records, sources = _tr.collect_multi(ws_, classes, packs, tags or None)
+            vocab = _vb.load_vocab(ws_)
+            self._json({"ok": True, "n": n,
+                        "graphs": _co.by_tag(records, n=n, vocab=vocab),
+                        "clusters": _co.natural_clusters(records, n=n, vocab=vocab),
+                        "sources": sources})
+            return
         elif u.path == "/grade/submissions":
             # D168：作答名单 + 提交率（分母 = roster-tags 快照）
             from .grading import snapshots as _sn

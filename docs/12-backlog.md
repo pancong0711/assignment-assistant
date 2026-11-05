@@ -1045,6 +1045,24 @@ rainclass 67/67，PWA↔engine 全等，仅末位浮点四舍五入噪声）。
 
 ---
 
+## D168 · B2 统计核心（2026-11-05 完成）
+
+> 需求单：`docs/112-D168-metrics-and-snapshot.md` §4.5
+
+- ✅ `grading/error_stats.py`：失误次数（同题同知识点错 2 次记 2 次）→ 按 tag 加权
+  （分母=**已提交人数**）→ 跨班两层 → 跨包 **Σ失误÷Σ总题数**（教师拍板）
+- ✅ `grading/cooccurrence.py`：n 元共现 + **归一化关联** `P(组合)/∏P(单项)` +
+  **每个 tag 一张图** + 自然聚类（不依赖章节）
+- ✅ 词表别名归并（`alias_map`/`normalize_terms`/`add_alias`）+ `term_tags`
+- ✅ 可信度判据（提交率<60% 或 人数<5 → ⚠️）
+- ✅ `teacher_report.collect_multi` 的 tag **优先取 roster 快照**，并标 `_tagSource`
+- ✅ 接口 `/analysis/errors`、`/analysis/cooccurrence`；前端「⑤-B 知识点失误分析」卡
+- 🐞 修正两个真 bug：①归一化关联恒为 1.0（除法写错）②空词表导致统计全空
+- 验收：pytest **1404**（+29）· build 0 error · selfcheck **36/36** · 脱敏通过
+- 下一步：B3 可视化（2508 matplotlib 出 PNG）/ B4 atopia 一键解析
+
+---
+
 ## D168 · B1 数据快照（2026-11-05 完成）
 
 > 需求单：`docs/112-D168-metrics-and-snapshot.md` §4.4
