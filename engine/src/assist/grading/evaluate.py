@@ -400,6 +400,43 @@ def _q_deduction(q: dict, t: dict, g: dict) -> tuple[float, list[str], list[str]
                 pts += fb_deduct
         rules.append("checklist")
 
+    elif mode == "topicMatch":
+        # D171-T3：抄写题 —— **只判两件事**：主题是否相符 + 字数是否充足。
+        # 教师原话：
+        #   「转写过程很可能多模态模型没有准确转写全部内容，造成理解歧义，
+        #     抄写题不必要判断抄写内容的逻辑，只要内容跟题目末尾括号中文字主题一致就好，
+        #     关键是要抄写一些内容，字数不宜太少。」
+        # 注意：**不读 errors**（模型可能因逻辑问题生成 error，那会冤枉学生）。
+        topic = str(q.get("topic_match") or "").strip().lower()
+        mm_deduct = float(t.get("topicMismatchDeduct") or 20)
+        d = 0.0
+        if topic == "mismatch":
+            d = mm_deduct
+            steps.append(f"抄写内容与题目主题不符 −{d:g}")
+        elif topic == "partial":
+            d = mm_deduct / 2
+            steps.append(f"抄写内容与题目主题部分相符 −{d:g}")
+        # 字数：以转写原文重算，不信模型自报（与 lengthBased 同口径）
+        a_chars = q.get("answer_chars")
+        if not isinstance(a_chars, int):
+            a_chars = _text_len(str(q.get("answer_text") or ""))
+        min_chars = int(t.get("minChars") or 0)
+        if min_chars > 0 and a_chars < min_chars:
+            ratio = a_chars / min_chars
+            tiers = sorted(((float(k), float(v)) for k, v in
+                            (t.get("shortRatioDeduct") or {}).items()), key=lambda x: x[0])
+            sd = 0.0
+            for thr, val in tiers:
+                if ratio < thr:
+                    sd = val
+                    break
+            if sd > 0:
+                steps.append(f"抄写 {a_chars} 字 / 下限 {min_chars} 字"
+                             f"（{ratio * 100:.0f}%） −{sd:g}")
+                d += sd
+        pts += d
+        rules.append("topicMatch")
+
     elif mode == "lengthBased":
         # 基准 = 题目字数 × factor，下限保护 max(factor×题长, floor)（docs/78 §3.3）
         q_chars = _text_len(str(q.get("question_text") or ""))

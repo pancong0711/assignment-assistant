@@ -110,6 +110,7 @@ onMounted(() => { void renderFormulas() })
 /* 人工批阅编辑态 */
 const score = ref(''); const comment = ref(''); const humanMode = ref('none')
 const revising = ref(false); const revDraft = ref('')
+const savingRev = ref(false)
 
 /** D170-T4：保存后**不要**用旧草稿覆盖教师刚输入的值。
  *
@@ -139,6 +140,31 @@ function next() { if (idx.value < props.students.length - 1) idx.value++ }
 function imgUrl(f: string) { return xxtReviewFileUrl(props.engineAddr, props.token, props.classId, props.workId, f) }
 
 function startRevise() { revising.value = true; revDraft.value = revisionText.value || String(aiSet.value.comment || '') }
+
+/** D171-T5：**只保存修订版**（不改人工批阅）。
+ *
+ *  此前修订框在上方，唯一的保存键在下方"人工批阅"区，且那个键同时写
+ *  human + revision + humanMode → 教师分不清"我保存的是修订还是人工批阅"。
+ */
+async function saveRevisionOnly() {
+  const c = cur.value
+  if (!c) return
+  if (!revDraft.value.trim()) { msg.value = '修订内容为空'; return }
+  savingRev.value = true
+  try {
+    const r = await saveXxtGradeDraft(props.engineAddr, props.token, {
+      classId: props.classId, workId: props.workId, key: c.key, student: c.name,
+      taskId: props.taskId, classDir: props.classDir,
+      revision: { text: revDraft.value },
+    })
+    if (r?.ok) {
+      justSaved = true
+      msg.value = '✅ 修订版已保存（AI 原文不受影响；导出报告时按行标红）'
+      revising.value = false
+      emit('saved')
+    } else msg.value = r?.error || '保存修订版失败'
+  } finally { savingRev.value = false }
+}
 
 async function save() {
   const c = cur.value
@@ -270,6 +296,13 @@ async function save() {
           </p>
           <textarea v-if="revising" v-model="revDraft" rows="5" style="width:100%; font-family:inherit"
                     placeholder="AI 批语的人工修订版（支持 LaTeX $...$）"></textarea>
+          <p v-if="revising" style="margin:4px 0">
+            <button class="btn small primary" :disabled="savingRev" @click="saveRevisionOnly">
+              {{ savingRev ? '保存中…' : '💾 保存修订版' }}
+            </button>
+            <button class="btn small" :disabled="savingRev" @click="revising = false">取消</button>
+            <span class="hint" style="margin-left:8px">只保存修订版，<b>不改</b>人工批阅</span>
+          </p>
 
           <h4 style="margin-top:10px">人工批阅（可选）</h4>
           <p style="display:flex; gap:8px; align-items:center; flex-wrap:wrap; margin:0 0 6px">

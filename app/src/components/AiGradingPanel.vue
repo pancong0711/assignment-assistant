@@ -32,6 +32,8 @@ const svgRedraw = ref(false)
  *  引擎与 PWA 此前都已支持（`--allow-partial` / `allowPartial`），但界面没有入口，
  *  `allowPartial` 参数形同虚设 —— 用户遇到个别学生限流/读图失败时无路可走。 */
 const allowPartial = ref(false)
+/** D171-T1：强制重做（覆盖已有转写/评阅产物，会重新花额度） */
+const forceRedo = ref(false)
 const busy = ref(false)
 const progress = ref('')
 let pollTimer: number | undefined
@@ -184,7 +186,8 @@ async function runOne(s: any, mode: 'transcribe' | 'evaluate' | 'full') {
   }
   const steps = mode === 'full' ? ['transcribe', 'evaluate']
     : mode === 'transcribe' ? ['transcribe'] : ['evaluate']
-  const label = mode === 'full' ? '完整批阅' : mode === 'transcribe' ? '转写' : '批阅'
+  // D171-T1：与上方三键同口径，去掉「完整」这个不准确的叫法
+  const label = mode === 'full' ? '转写+批阅' : mode === 'transcribe' ? '转写' : '批阅'
   rowBusy.value = s.name
   rowMsg.value = { ...rowMsg.value, [s.name]: `⏳ ${label}中…` }
   try {
@@ -254,6 +257,8 @@ const students = ref<Array<{ name: string; key: string; tag?: string; images?: s
 /** D117：学生清单加载中（供逐生审核空态提示） */
 const studentsLoading = ref(false)
 const drafts = ref<Record<string, any>>({})
+/** D171-T8: name -> tag, from roster/snapshot; used to tell "new" from "unassigned". */
+const rosterTagByName = ref<Record<string, string> | null>(null)
 
 // D89：优先按"作业包"选择（一次分层作业的全部作业纸）；包内每张按 tag 自动匹配学生
 const packPads = computed(() => {
@@ -338,6 +343,16 @@ async function loadStudents() {
       // D126：带上作答原件文件名（逐生审核要显示原图）
       images: Array.isArray(s.images) ? s.images.map(String) : [],
     }))
+    // D171-T8：建立"姓名 → tag"映射用于诊断（引擎回的 students 已带 tag；
+    // 缺失时用 null 表示"无法判断"，避免误报"新增"）
+    try {
+      const m: Record<string, string> = {}
+      for (const x of (st.students || []) as any[]) {
+        const nm = String(x.name || '')
+        if (nm) m[nm] = String(x.tag || '')
+      }
+      rosterTagByName.value = m
+    } catch { rosterTagByName.value = null }
     // D116：tag 选项来自本地 roster + 作业纸 target_tag，可能晚于本函数就绪；
     // 由下面的 watch(tagOptions) 负责"首次就绪时默认全选"。
   } catch (e) { msg.value = `读取学生/草稿失败：${String(e)}` }
@@ -545,7 +560,17 @@ async function startAi(steps?: string[]) {
   // D126：按 steps 显示对应文案（此前一律写「AI 批阅」，点"仅转录"时误导）
   const onlyTranscribe = st.length === 1 && st[0] === 'transcribe'
   const onlyEvaluate = st.length === 1 && st[0] === 'evaluate'
-  const jobName = onlyTranscribe ? 'AI 转写' : (onlyEvaluate ? 'AI 评阅' : 'AI 批阅')
+  const jobName = onlyTranscribe ? 'AI 转写' : (onlyEvaluate ? 'AI 评阅' : 'AI 转写+批阅')
+  // D171-T1：强制重做 → 覆盖已有产物并重新调用模型（此前「转写+批阅」不传 force，
+  // 会被后端"跳过已有结果"静默吞掉，教师以为跑完了其实只做了转写）。
+  const doForce = forceRedo.value === true
+  const nStu = students.value.length
+  if (doForce && nStu) {
+    const what = onlyTranscribe ? '转写' : (onlyEvaluate ? '评阅' : '转写与评阅')
+    if (!window.confirm(
+      `已勾选「强制重做」：将对 ${nStu} 名学生**重新调用大模型做${what}**，`
+      + `并覆盖已有${what}结果。\n这会重新消耗额度，确定继续？`)) return
+  }
   busy.value = true
   progress.value = `正在装配任务清单并启动${jobName}……`
   try {
@@ -559,6 +584,7 @@ async function startAi(steps?: string[]) {
       imageMode: imageMode.value,      // D106
       svgRedraw: svgRedraw.value,      // D106
       ...(steps && steps.length ? { steps } : {}),   // D125：分步批阅
+      ...(doForce ? { force: true } : {}),           // D171-T1：强制重做
       ...(allowPartial.value ? { allowPartial: true } : {}),   // D126-FIX：部分失败仍继续
     })
     stopPoll()
@@ -622,6 +648,20 @@ function draftOf(s: { key?: string; name?: string; altKeys?: string[] }): Record
   return {}
 }
 /** D127：AI 状态 —— 让"跑过什么"在表上可见（此前只有 AI 分，跑完转写也看不出变化）。 */
+/** D171-T8：学生 tag 诊断标记。 */
+function tagMark(s: { key?: string; name?: string; tag?: string }): { text: string; color: string; why: string } {
+  const t = String(s.tag || '').trim()
+  if (t) return { text: t, color: 'inherit', why: '' }
+  const map = rosterTagByName.value
+  const inRoster = map ? Object.prototype.hasOwnProperty.call(map, String(s.name || '')) : true
+  if (!inRoster) {
+    return { text: '新增', color: '#b45309',
+             why: '该生不在本作业名单（可能是生成作业后才加入班级）：需单独制作作业纸并单独批阅' }
+  }
+  return { text: '(未分配)', color: '#b45309',
+           why: '该生在名单里但没有 tag：请到「班级与标签」为其打 tag 后再批阅' }
+}
+
 function aiState(s: { key: string; name?: string; altKeys?: string[] }): { label: string; color: string } {
   const d = draftOf(s)
   const ai = d.ai || {}
@@ -947,10 +987,15 @@ onMounted(async () => {
       <button class="btn small" :disabled="busy" title="只跑转录（发送作答图 → 得到文字转录）"
               @click="startAi(['transcribe'])">① 仅转录</button>
       <button class="btn small" :disabled="busy" title="只跑评阅（要求已有转录产物）"
-              @click="startAi(['evaluate'])">② 仅评阅</button>
+              @click="startAi(['evaluate'])">② 批阅</button>
       <button class="btn" :disabled="busy"
-              title="完整批阅：转录 → 评阅（不含报告；审核后再用下方「📄 一键生成批阅报告」）"
-              @click="startAi(['transcribe', 'evaluate'])">▶ ③ 完整批阅</button>
+              title="转写 + 批阅：两件事一起做（不含报告；审核后再用下方「📄 一键生成批阅报告」）"
+              @click="startAi(['transcribe', 'evaluate'])">▶ ③ 转写+批阅</button>
+      <label class="hint" style="display:inline-flex; align-items:center; gap:4px; margin-left:8px"
+             title="勾选后：三个键都会**重新调用大模型并覆盖**已有产物（会重新花额度）">
+        <input type="checkbox" v-model="forceRedo" />
+        ☑ 强制重做（覆盖已有结果，会重新花额度）
+      </label>
       <label class="hint" style="display:inline-flex; align-items:center; gap:4px; margin-left:8px">
         <input type="checkbox" v-model="allowPartial" />
         有学生转录失败时仍继续（默认中止）
@@ -997,7 +1042,9 @@ onMounted(async () => {
         <tbody>
           <tr v-for="(s, i) in students" :key="s.key">
             <td>{{ s.name }}</td>
-            <td class="c">{{ s.tag || '—' }}</td>
+            <td class="c" :title="tagMark(s).why">
+              <span :style="{ color: tagMark(s).color }">{{ tagMark(s).text || '—' }}</span>
+            </td>
             <td class="c">
               <b :style="{ color: aiState(s).color }">{{ aiState(s).label }}</b>
               <div v-if="draftOf(s).ai?.at" class="hint" style="font-size:11px">

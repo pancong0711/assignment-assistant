@@ -225,9 +225,14 @@ KIND_OUTPUT_SCHEMA_HINT = {
   覆盖题目参考答案中的全部要点（每个要点一条）；
 - `has_diagram`: 题目要求画图时，学生是否画了（题目不要求画图时一律填 true）。""",
     "copy": """【抄写题输出要求】每题除通用字段外，必须给：
-- `copied`: {"题目": true/false, "解题过程": true/false, "示意图": true/false}
-  逐项判断是否**抄全**；题目本身没有图时 `示意图` 填 true（不作要求）。
-- **不要**评价推导对错、计算结果、逻辑推理。""",
+- `topic_match`: "match" | "partial" | "mismatch"
+  学生抄写的内容，是否与**题目末尾括号里的主题**相符（不是逐字对照，只看主题）；
+- `answer_chars`: 学生本题抄写的字数（整数）。
+
+**只判断这两件事**：主题是否相符、字数是否充足。
+**不要评价**：逻辑对错、推导是否完整、公式是否正确、是否抄全了题目/过程/图——
+转录来自照片识别，细节必然失真，据此判错会冤枉学生。
+`errors` 只用于「主题不符」与「字数不足」，**不要**为逻辑问题生成 error。""",
     "distinguish": """【辨析题输出要求】每题除通用字段外，必须给：
 - `answer_chars`: 学生本题作答字数（整数，只数作答正文，不数抄写的题干）；
 - `relevance`: "relevant" | "partial" | "irrelevant"（是否在回答问题本身）。
@@ -525,6 +530,9 @@ EVALUATION_SCHEMA = {
                                               "enum": ["materials", "heuristic"]},
                             # distinguish / innovation / translation：长度档
                             "answer_chars": {"type": "integer"},
+                            # D171-T3：抄写题（topicMatch）——主题是否与题意相符
+                            "topic_match": {"type": "string",
+                                            "enum": ["match", "partial", "mismatch"]},
                             "relevance": {"type": "string",
                                           "enum": ["relevant", "partial", "irrelevant"]},
                             # D130-T0：本题实际来源（便于报告标注"本题来源"）

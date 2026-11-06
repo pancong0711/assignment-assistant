@@ -12,6 +12,7 @@ import {
   confirmMaterials, copyFromAtopia, createMaterialsChap, extractMaterials,
   fetchAtopiaWork, fetchMaterialsList, fetchMaterialsSuggestPreview,
   removeMaterialsFile, restoreMaterialsFile, suggestMaterials, uploadMaterialsFiles,
+  fetchLlmConfig, type LlmProvider,
   type MaterialsChap, type MaterialsFile,
 } from '../lib/engineClient'
 
@@ -41,6 +42,40 @@ const UP_KINDS = [
 const fileMsg = ref('')
 const pendingRemove = ref<MaterialsFile | null>(null)
 const pendingRestore = ref<MaterialsFile | null>(null)
+
+/** D171-T7：AI 建议知识点的 provider / 模型。
+ *  默认**跟随评阅段配置**（教师建议），但可显式覆盖（存 localStorage）。 */
+const suggestProviders = ref<LlmProvider[]>([])
+const suggestProvider = ref('')
+const suggestModel = ref('')
+const LS_SUGGEST_MODEL = 'assignment-assistant.materials.suggestModel.v1'
+
+async function loadSuggestProviders() {
+  try {
+    const r = await fetchLlmConfig(settings.engineUrl, settings.engineToken)
+    suggestProviders.value = (r?.providers || []) as LlmProvider[]
+    const saved = localStorage.getItem(LS_SUGGEST_MODEL)
+    if (saved) {
+      try {
+        const o = JSON.parse(saved)
+        suggestProvider.value = String(o.provider || '')
+        suggestModel.value = String(o.model || '')
+      } catch { /* 忽略坏值 */ }
+    }
+  } catch { suggestProviders.value = [] }
+}
+
+function saveSuggestChoice() {
+  localStorage.setItem(LS_SUGGEST_MODEL,
+    JSON.stringify({ provider: suggestProvider.value, model: suggestModel.value }))
+}
+
+/** 当前生效的模型描述（未指定 = 跟随评阅段配置）。 */
+const suggestModelLabel = computed(() => {
+  if (suggestModel.value.trim()) return suggestModel.value.trim()
+  if (suggestProvider.value) return `${suggestProvider.value}（默认模型）`
+  return '跟随评阅段配置（evaluate）'
+})
 
 /* D137：抽取 / AI 建议 / 确认生效 */
 const stepBusy = ref<'extract' | 'suggest' | 'confirm' | ''>('')
@@ -78,7 +113,8 @@ async function doSuggest() {
   stepBusy.value = 'suggest'
   stepMsg.value = '正在让 AI 抽取知识点，请稍候…'
   try {
-    const r = await suggestMaterials(settings.engineUrl, settings.engineToken, active.value)
+    const r = await suggestMaterials(settings.engineUrl, settings.engineToken, active.value,
+                                     suggestModel.value.trim())
     stepMsg.value = r?.ok
       ? '✅ 已生成 AI 建议（尚未生效，请核对后点「确认生效」）'
       : `❌ ${r?.error || '生成失败'}`
@@ -368,7 +404,7 @@ async function doCreateChap() {
   } finally { creating.value = false }
 }
 
-onMounted(refresh)
+onMounted(() => { refresh(); loadSuggestProviders() })
 defineExpose({ refresh })
 </script>
 
@@ -470,9 +506,22 @@ defineExpose({ refresh })
           <button class="btn" :disabled="stepBusy !== '' || !cur.sources" @click="doExtract">
             {{ stepBusy === 'extract' ? '抽取中…' : '① 抽取' }}
           </button>
+          <label class="field" title="默认跟随评阅段配置；如需单独指定可在此选择（会记住）">
+            建议用模型
+            <select v-model="suggestProvider" @change="saveSuggestChoice"
+                    style="font-size:13px; max-width:150px">
+              <option value="">（跟随评阅配置）</option>
+              <option v-for="p in suggestProviders" :key="p.name" :value="p.name">
+                {{ p.name }}{{ p.has_key ? '' : '（无 key）' }}
+              </option>
+            </select>
+            <input v-model="suggestModel" placeholder="模型名（空=默认）" style="width:150px"
+                   @change="saveSuggestChoice" />
+          </label>
           <button class="btn" :disabled="stepBusy !== '' || !cur.extracted" @click="doSuggest">
             {{ stepBusy === 'suggest' ? '生成中…' : '② AI 建议知识点' }}
           </button>
+          <span class="hint" style="margin:0">当前模型：{{ suggestModelLabel }}</span>
           <button class="btn primary" :disabled="stepBusy !== '' || !cur.hasAiSuggest"
                   @click="askConfirm">
             {{ stepBusy === 'confirm' ? '处理中…' : '③ 确认生效' }}

@@ -656,19 +656,20 @@ def run_task(task_path: Path, ws: Path, images_dir: Path | None = None,
         _persist_transcripts(ws, task, plan, ctx["transcripts_dir"])
 
     # D86 §6：批阅完成后把结果落成"本地批阅草稿"（PWA 人工批阅栏可直接查看/修改/一键上传）
-    if plan:
-        cid = str((plan.get("classId") or "")).strip()
-        wid = str((plan.get("workId") or "")).strip()
-        if cid and wid:
-            try:
-                from .drafts import save_drafts_from_grading
-                saved = save_drafts_from_grading(ws, class_id=cid, work_id=wid,
-                                                 task_id=grading_scope_id(task, plan),
-                                                 class_dir=str(plan.get("classDir") or ""),
-                                                 kind=str(ctx.get("report_kind") or "ai"))
-                logger.info(f"[草稿] 已写入本地批阅草稿 {saved.get('count')} 份（kind={ctx.get('report_kind')}）")
-            except Exception as exc:  # noqa: BLE001
-                logger.warning(f"[草稿] 写入本地草稿失败（不影响批阅结果）：{str(exc)[:160]}")
+    #
+    # D171-T2：**这一步不能静默失败**。教师反馈「审核里看不到 AI 批语、状态还是已转写」，
+    # 根因就是这里：`plan` 缺 classId/workId 时整段被跳过，或写失败只 warning，
+    # 于是 evaluations/*.json 有产物、草稿库却没有 → PWA 状态判定（要求 ai.comment+ai.score）
+    # 永远停在「已转写」。
+    draft_rep = _persist_evaluations_to_drafts(ws, task, plan, ctx)
+    # 只在**真的出错**时记 fail；"没有 plan"（CLI 直接跑）属正常路径，不写 journal
+    if draft_rep.get("error") or (draft_rep.get("skipped") and plan):
+        journal_append(journal, {
+            "ts": time.strftime("%Y-%m-%d %H:%M:%S"), "run_id": run_id,
+            "step": "drafts", "status": "fail",
+            "error": str(draft_rep.get("error") or draft_rep.get("skipped"))[:300]})
+        logger.error(f"[草稿] 未写入本地批阅草稿：{draft_rep.get('error') or draft_rep.get('skipped')}"
+                     f"（这会导致 PWA 逐生审核看不到 AI 批语）")
 
     # run 汇总记录（D8：任务包 = 执行历史；任务包内 journal 数组不入库但存在于工作区副本）
     summary_rec = {"ts": time.strftime("%Y-%m-%d %H:%M:%S"), "run_id": run_id,
@@ -676,6 +677,37 @@ def run_task(task_path: Path, ws: Path, images_dir: Path | None = None,
                    "bucket": str(base), "usage": ctx.get("usage") or {}}
     journal_append(journal, summary_rec)
     return summary_rec
+
+
+def _persist_evaluations_to_drafts(ws, task: dict, plan: "dict | None", ctx: dict) -> dict:
+    """D171-T2：把 `evaluations/*.json` 落进本地批阅草稿库（PWA 逐生审核的数据源）。
+
+    返回 {"ok", "count"} 或 {"skipped"/"error": 原因} —— **调用方必须检查**，
+    因为跳过会让教师"看不到 AI 批语"却没有任何提示。
+    """
+    if not plan:
+        return {"skipped": "没有 plan（未走 PWA 批量批阅路径）"}
+    cid = str((plan.get("classId") or "")).strip()
+    # D171-T2：workId 可能只在 task 里（serve 用 --work 传入），这里兜底
+    wid = str((plan.get("workId") or task.get("workId")
+               or task.get("work_id") or "")).strip()
+    if not cid or not wid:
+        return {"skipped": f"缺少 classId/workId（classId={cid!r}, workId={wid!r}）"
+                           "—— 无法定位草稿库，PWA 将看不到 AI 批语"}
+    try:
+        from .drafts import save_drafts_from_grading
+        saved = save_drafts_from_grading(
+            ws, class_id=cid, work_id=wid,
+            task_id=grading_scope_id(task, plan),
+            class_dir=str(plan.get("classDir") or ""),
+            kind=str(ctx.get("report_kind") or "ai"))
+    except Exception as exc:  # noqa: BLE001 —— 仍不阻断批阅，但要**明确报错**
+        return {"error": f"写入草稿失败：{str(exc)[:200]}"}
+    if not saved.get("ok"):
+        return {"error": f"写入草稿失败：{saved.get('error') or '未知原因'}"}
+    logger.info(f"[草稿] 已写入本地批阅草稿 {saved.get('count')} 份"
+                f"（kind={ctx.get('report_kind')}）")
+    return {"ok": True, "count": saved.get("count")}
 
 
 def _session_per_student(client, ctx) -> None:

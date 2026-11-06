@@ -117,6 +117,7 @@ onMounted(() => { void renderFormulas() })
 /* 人工批阅编辑态 */
 const score = ref(''); const comment = ref(''); const humanMode = ref('none')
 const revising = ref(false); const revDraft = ref('')
+const savingRev = ref(false)
 
 /** D170-T4：保存后**不要**用旧草稿覆盖教师刚输入的值。
  *
@@ -147,6 +148,31 @@ function imgUrl(f: string) { return xxtReviewFileUrl(props.engineAddr, props.tok
 
 function startRevise() { revising.value = true; revDraft.value = revisionText.value || String(aiSet.value.comment || '') }
 
+/** D171-T5：**只保存修订版**（不改人工批阅）。
+ *
+ *  此前修订框在上方，唯一的保存键在下方"人工批阅"区，且那个键同时写
+ *  human + revision + humanMode → 教师分不清"我保存的是修订还是人工批阅"。
+ */
+async function saveRevisionOnly() {
+  const c = cur.value
+  if (!c) return
+  if (!revDraft.value.trim()) { msg.value = '修订内容为空'; return }
+  savingRev.value = true
+  try {
+    const r = await saveXxtGradeDraft(props.engineAddr, props.token, {
+      classId: props.classId, workId: props.workId, key: c.key, student: c.name,
+      taskId: props.taskId, classDir: props.classDir,
+      revision: { text: revDraft.value },
+    })
+    if (r?.ok) {
+      justSaved = true
+      msg.value = '✅ 修订版已保存（AI 原文不受影响；导出报告时按行标红）'
+      revising.value = false
+      emit('saved')
+    } else msg.value = r?.error || '保存修订版失败'
+  } finally { savingRev.value = false }
+}
+
 async function save() {
   const c = cur.value
   if (!c) return
@@ -171,7 +197,7 @@ async function save() {
   } else msg.value = r?.error || '保存失败'
 }
 
-const __returned__ = { props, emit, idx, rotate, showTranscript, pane, reportNonce, reportUrl, hasReport, openReport, showReportTab, layout, msg, cur, draft, aiSet, revisionText, revisionSavedInStore, answerImages, transcriptText, transcriptHtml, aiCommentHtml, transcriptEl, aiCommentEl, renderFormulas, score, comment, humanMode, revising, revDraft, get justSaved() { return justSaved }, set justSaved(v) { justSaved = v }, prev, next, imgUrl, startRevise, save }
+const __returned__ = { props, emit, idx, rotate, showTranscript, pane, reportNonce, reportUrl, hasReport, openReport, showReportTab, layout, msg, cur, draft, aiSet, revisionText, revisionSavedInStore, answerImages, transcriptText, transcriptHtml, aiCommentHtml, transcriptEl, aiCommentEl, renderFormulas, score, comment, humanMode, revising, revDraft, savingRev, get justSaved() { return justSaved }, set justSaved(v) { justSaved = v }, prev, next, imgUrl, startRevise, saveRevisionOnly, save }
 Object.defineProperty(__returned__, '__isScriptSetup', { enumerable: false, value: true })
 return __returned__
 }
@@ -226,12 +252,18 @@ const _hoisted_23 = {
   class: "hint",
   style: {"margin":"0 0 6px","color":"#0369a1"}
 }
-const _hoisted_24 = { style: {"display":"flex","gap":"8px","align-items":"center","flex-wrap":"wrap","margin":"0 0 6px"} }
-const _hoisted_25 = { class: "field" }
-const _hoisted_26 = { class: "field" }
-const _hoisted_27 = { style: {"margin":"8px 0 0","display":"flex","gap":"8px","align-items":"center","flex-wrap":"wrap"} }
-const _hoisted_28 = { style: {"margin":"8px 0 0","display":"flex","gap":"8px","align-items":"center"} }
-const _hoisted_29 = {
+const _hoisted_24 = {
+  key: 4,
+  style: {"margin":"4px 0"}
+}
+const _hoisted_25 = ["disabled"]
+const _hoisted_26 = ["disabled"]
+const _hoisted_27 = { style: {"display":"flex","gap":"8px","align-items":"center","flex-wrap":"wrap","margin":"0 0 6px"} }
+const _hoisted_28 = { class: "field" }
+const _hoisted_29 = { class: "field" }
+const _hoisted_30 = { style: {"margin":"8px 0 0","display":"flex","gap":"8px","align-items":"center","flex-wrap":"wrap"} }
+const _hoisted_31 = { style: {"margin":"8px 0 0","display":"flex","gap":"8px","align-items":"center"} }
+const _hoisted_32 = {
   key: 0,
   class: "hint"
 }
@@ -239,7 +271,7 @@ const _hoisted_29 = {
 export function render(_ctx, _cache, $props, $setup, $data, $options) {
   return (_openBlock(), _createElementBlock("div", {
     class: "backdrop",
-    onClick: _cache[14] || (_cache[14] = _withModifiers($event => ($setup.emit('close')), ["self"]))
+    onClick: _cache[15] || (_cache[15] = _withModifiers($event => ($setup.emit('close')), ["self"]))
   }, [
     _createElementVNode("div", _hoisted_1, [
       _createElementVNode("div", _hoisted_2, [
@@ -247,7 +279,7 @@ export function render(_ctx, _cache, $props, $setup, $data, $options) {
           _createTextVNode("逐生审核：" + _toDisplayString($setup.cur?.name || '—') + " ", 1 /* TEXT */),
           _createElementVNode("span", _hoisted_4, "（第 " + _toDisplayString($setup.idx + 1) + " / " + _toDisplayString($props.students.length) + " 位 · tag " + _toDisplayString($setup.cur?.tag || '—') + "）", 1 /* TEXT */)
         ]),
-        _cache[15] || (_cache[15] = _createElementVNode("span", { style: {"flex":"1"} }, null, -1 /* CACHED */)),
+        _cache[16] || (_cache[16] = _createElementVNode("span", { style: {"flex":"1"} }, null, -1 /* CACHED */)),
         _createElementVNode("button", {
           class: "btn",
           disabled: $setup.idx <= 0,
@@ -282,7 +314,7 @@ export function render(_ctx, _cache, $props, $setup, $data, $options) {
         _createElementVNode("div", {
           style: _normalizeStyle({ flex: $setup.layout === 'rows' ? 'none' : '1', minWidth: '280px', width: $setup.layout === 'rows' ? '100%' : 'auto' })
         }, [
-          _cache[16] || (_cache[16] = _createElementVNode("h4", null, "学生作答", -1 /* CACHED */)),
+          _cache[17] || (_cache[17] = _createElementVNode("h4", null, "学生作答", -1 /* CACHED */)),
           _createElementVNode("div", _hoisted_7, [
             (_openBlock(true), _createElementBlock(_Fragment, null, _renderList($setup.answerImages, (f) => {
               return (_openBlock(), _createElementBlock("img", {
@@ -322,7 +354,7 @@ export function render(_ctx, _cache, $props, $setup, $data, $options) {
                       class: "report-frame",
                       title: "批阅报告预览"
                     }, null, 8 /* PROPS */, _hoisted_12)),
-                _cache[17] || (_cache[17] = _createElementVNode("p", {
+                _cache[18] || (_cache[18] = _createElementVNode("p", {
                   class: "hint",
                   style: {"margin-top":"4px"}
                 }, " 这里预览的就是要发给学生/上传平台的报告（含转写原文、评分与扣分依据）。 若显示\"尚未生成报告\"，先点下方「📄 一键生成批阅报告」。 ", -1 /* CACHED */))
@@ -330,8 +362,8 @@ export function render(_ctx, _cache, $props, $setup, $data, $options) {
             : (_openBlock(), _createElementBlock(_Fragment, { key: 1 }, [
                 _createCommentVNode(" D126：AI 转写（便于对照原图，确认 AI 识别是否准确） "),
                 _createElementVNode("h4", _hoisted_13, [
-                  _cache[18] || (_cache[18] = _createTextVNode(" AI 转写 ", -1 /* CACHED */)),
-                  _cache[19] || (_cache[19] = _createElementVNode("span", {
+                  _cache[19] || (_cache[19] = _createTextVNode(" AI 转写 ", -1 /* CACHED */)),
+                  _cache[20] || (_cache[20] = _createElementVNode("span", {
                     class: "hint",
                     style: {"font-weight":"400"}
                   }, " （AI 从作答图识别出的文字；与左侧原图对照可发现识别偏差） ", -1 /* CACHED */)),
@@ -356,7 +388,7 @@ export function render(_ctx, _cache, $props, $setup, $data, $options) {
                     ? (_openBlock(), _createElementBlock("p", _hoisted_15, " （暂无转写内容。请按顺序排查：① 该生是否根本没参与本次转写（如「仅评阅」、 或批阅发生在 D126 之前，那时不保存转写）——重跑「① 仅转录」即可；② 多数学生转录 失败时，勾选「有学生转录失败时仍继续」再看；③ 若「仅转录」提示完成、文件夹里也有 transcripts/*.json，但这里仍为空 → 属于**目录口径不一致**（草稿与转写不在同一 grading 目录），请把该作业的 grading 目录名反馈给开发者。） "))
                     : _createCommentVNode("v-if", true),
                 _createElementVNode("h4", _hoisted_16, [
-                  _cache[20] || (_cache[20] = _createTextVNode("AI 批语 ", -1 /* CACHED */)),
+                  _cache[21] || (_cache[21] = _createTextVNode("AI 批语 ", -1 /* CACHED */)),
                   _createElementVNode("span", _hoisted_17, "（只读基线" + _toDisplayString($setup.aiSet.score != null ? ` · 评分 ${$setup.aiSet.score}` : '') + "）", 1 /* TEXT */)
                 ]),
                 _createElementVNode("div", _hoisted_18, [
@@ -376,7 +408,7 @@ export function render(_ctx, _cache, $props, $setup, $data, $options) {
                     class: "btn small",
                     onClick: $setup.startRevise
                   }, _toDisplayString($setup.revisionText ? '编辑修订版' : '另存修订版…'), 1 /* TEXT */),
-                  _cache[21] || (_cache[21] = _createElementVNode("span", {
+                  _cache[22] || (_cache[22] = _createElementVNode("span", {
                     class: "hint",
                     style: {"margin-left":"8px"}
                   }, " 修订 = 在 AI 批语基础上改；报告将按行**标红**改动，AI 原文不被覆盖。 ", -1 /* CACHED */))
@@ -384,14 +416,14 @@ export function render(_ctx, _cache, $props, $setup, $data, $options) {
                 _createCommentVNode(" D170-T10：修订版存在哪、在哪能看到（教师反馈\"保存后找不到\"） "),
                 ($setup.revisionText)
                   ? (_openBlock(), _createElementBlock("p", _hoisted_23, [
-                      _cache[22] || (_cache[22] = _createTextVNode(" 修订版已保存在", -1 /* CACHED */)),
-                      _cache[23] || (_cache[23] = _createElementVNode("b", null, "引擎草稿库", -1 /* CACHED */)),
-                      _cache[24] || (_cache[24] = _createTextVNode("（", -1 /* CACHED */)),
-                      _cache[25] || (_cache[25] = _createElementVNode("code", null, "grade-drafts", -1 /* CACHED */)),
-                      _cache[26] || (_cache[26] = _createTextVNode("，不是本机文件）： 它会在", -1 /* CACHED */)),
-                      _cache[27] || (_cache[27] = _createElementVNode("b", null, "导出报告", -1 /* CACHED */)),
-                      _cache[28] || (_cache[28] = _createTextVNode("时按行标红体现，也可返回本行重新「编辑修订版」。 想看全文：点上方「编辑修订版」即可展开当前修订内容。 ", -1 /* CACHED */)),
-                      _cache[29] || (_cache[29] = _createElementVNode("br", null, null, -1 /* CACHED */)),
+                      _cache[23] || (_cache[23] = _createTextVNode(" 修订版已保存在", -1 /* CACHED */)),
+                      _cache[24] || (_cache[24] = _createElementVNode("b", null, "引擎草稿库", -1 /* CACHED */)),
+                      _cache[25] || (_cache[25] = _createTextVNode("（", -1 /* CACHED */)),
+                      _cache[26] || (_cache[26] = _createElementVNode("code", null, "grade-drafts", -1 /* CACHED */)),
+                      _cache[27] || (_cache[27] = _createTextVNode("，不是本机文件）： 它会在", -1 /* CACHED */)),
+                      _cache[28] || (_cache[28] = _createElementVNode("b", null, "导出报告", -1 /* CACHED */)),
+                      _cache[29] || (_cache[29] = _createTextVNode("时按行标红体现，也可返回本行重新「编辑修订版」。 想看全文：点上方「编辑修订版」即可展开当前修订内容。 ", -1 /* CACHED */)),
+                      _cache[30] || (_cache[30] = _createElementVNode("br", null, null, -1 /* CACHED */)),
                       _createTextVNode("状态：已修订（" + _toDisplayString($setup.revisionText.length) + " 字） ", 1 /* TEXT */),
                       (!$setup.revisionSavedInStore)
                         ? (_openBlock(), _createElementBlock(_Fragment, { key: 0 }, [
@@ -411,13 +443,35 @@ export function render(_ctx, _cache, $props, $setup, $data, $options) {
                       [_vModelText, $setup.revDraft]
                     ])
                   : _createCommentVNode("v-if", true),
-                _cache[33] || (_cache[33] = _createElementVNode("h4", { style: {"margin-top":"10px"} }, "人工批阅（可选）", -1 /* CACHED */)),
-                _createElementVNode("p", _hoisted_24, [
-                  _createElementVNode("label", _hoisted_25, [
-                    _cache[31] || (_cache[31] = _createTextVNode("模式 ", -1 /* CACHED */)),
+                ($setup.revising)
+                  ? (_openBlock(), _createElementBlock("p", _hoisted_24, [
+                      _createElementVNode("button", {
+                        class: "btn small primary",
+                        disabled: $setup.savingRev,
+                        onClick: $setup.saveRevisionOnly
+                      }, _toDisplayString($setup.savingRev ? '保存中…' : '💾 保存修订版'), 9 /* TEXT, PROPS */, _hoisted_25),
+                      _createElementVNode("button", {
+                        class: "btn small",
+                        disabled: $setup.savingRev,
+                        onClick: _cache[8] || (_cache[8] = $event => ($setup.revising = false))
+                      }, "取消", 8 /* PROPS */, _hoisted_26),
+                      _cache[31] || (_cache[31] = _createElementVNode("span", {
+                        class: "hint",
+                        style: {"margin-left":"8px"}
+                      }, [
+                        _createTextVNode("只保存修订版，"),
+                        _createElementVNode("b", null, "不改"),
+                        _createTextVNode("人工批阅")
+                      ], -1 /* CACHED */))
+                    ]))
+                  : _createCommentVNode("v-if", true),
+                _cache[35] || (_cache[35] = _createElementVNode("h4", { style: {"margin-top":"10px"} }, "人工批阅（可选）", -1 /* CACHED */)),
+                _createElementVNode("p", _hoisted_27, [
+                  _createElementVNode("label", _hoisted_28, [
+                    _cache[33] || (_cache[33] = _createTextVNode("模式 ", -1 /* CACHED */)),
                     _withDirectives(_createElementVNode("select", {
-                      "onUpdate:modelValue": _cache[8] || (_cache[8] = $event => (($setup.humanMode) = $event))
-                    }, [...(_cache[30] || (_cache[30] = [
+                      "onUpdate:modelValue": _cache[9] || (_cache[9] = $event => (($setup.humanMode) = $event))
+                    }, [...(_cache[32] || (_cache[32] = [
                       _createElementVNode("option", { value: "none" }, "仅 AI（默认）", -1 /* CACHED */),
                       _createElementVNode("option", { value: "replace" }, "人工替代 AI（报告=纯人工）", -1 /* CACHED */),
                       _createElementVNode("option", { value: "append" }, "追加到 AI 之后（报告=AI + 教师补充）", -1 /* CACHED */),
@@ -426,10 +480,10 @@ export function render(_ctx, _cache, $props, $setup, $data, $options) {
                       [_vModelSelect, $setup.humanMode]
                     ])
                   ]),
-                  _createElementVNode("label", _hoisted_26, [
-                    _cache[32] || (_cache[32] = _createTextVNode("分数 ", -1 /* CACHED */)),
+                  _createElementVNode("label", _hoisted_29, [
+                    _cache[34] || (_cache[34] = _createTextVNode("分数 ", -1 /* CACHED */)),
                     _withDirectives(_createElementVNode("input", {
-                      "onUpdate:modelValue": _cache[9] || (_cache[9] = $event => (($setup.score) = $event)),
+                      "onUpdate:modelValue": _cache[10] || (_cache[10] = $event => (($setup.score) = $event)),
                       type: "number",
                       min: "0",
                       max: "100",
@@ -440,37 +494,37 @@ export function render(_ctx, _cache, $props, $setup, $data, $options) {
                   ])
                 ]),
                 _withDirectives(_createElementVNode("textarea", {
-                  "onUpdate:modelValue": _cache[10] || (_cache[10] = $event => (($setup.comment) = $event)),
+                  "onUpdate:modelValue": _cache[11] || (_cache[11] = $event => (($setup.comment) = $event)),
                   rows: "4",
                   style: {"width":"100%","font-family":"inherit"},
                   placeholder: "人工批语（支持 LaTeX；模式=none/revise 时可留空）"
                 }, null, 512 /* NEED_PATCH */), [
                   [_vModelText, $setup.comment]
                 ]),
-                _createElementVNode("p", _hoisted_27, [
+                _createElementVNode("p", _hoisted_30, [
                   _createElementVNode("button", {
                     class: _normalizeClass(["btn small", { primary: $setup.humanMode === 'none' }]),
-                    onClick: _cache[11] || (_cache[11] = $event => ($setup.humanMode = 'none')),
+                    onClick: _cache[12] || (_cache[12] = $event => ($setup.humanMode = 'none')),
                     title: "报告只用 AI 批语（默认）"
                   }, "↩ 仅 AI", 2 /* CLASS */),
                   _createElementVNode("button", {
                     class: _normalizeClass(["btn small", { primary: $setup.humanMode === 'replace' }]),
-                    onClick: _cache[12] || (_cache[12] = $event => ($setup.humanMode = 'replace')),
+                    onClick: _cache[13] || (_cache[13] = $event => ($setup.humanMode = 'replace')),
                     title: "人工批语替代 AI 批语 → 报告为纯人工批阅报告"
                   }, "✏ 人工替代 AI", 2 /* CLASS */),
                   _createElementVNode("button", {
                     class: _normalizeClass(["btn small", { primary: $setup.humanMode === 'append' }]),
-                    onClick: _cache[13] || (_cache[13] = $event => ($setup.humanMode = 'append')),
+                    onClick: _cache[14] || (_cache[14] = $event => ($setup.humanMode = 'append')),
                     title: "AI 批语在前 + 人工批语在后"
                   }, "➕ 追加到 AI 之后", 2 /* CLASS */)
                 ]),
-                _createElementVNode("p", _hoisted_28, [
+                _createElementVNode("p", _hoisted_31, [
                   _createElementVNode("button", {
                     class: "btn primary",
                     onClick: $setup.save
                   }, "💾 保存到本地（不覆盖 AI 原文）"),
                   ($setup.msg)
-                    ? (_openBlock(), _createElementBlock("span", _hoisted_29, _toDisplayString($setup.msg), 1 /* TEXT */))
+                    ? (_openBlock(), _createElementBlock("span", _hoisted_32, _toDisplayString($setup.msg), 1 /* TEXT */))
                     : _createCommentVNode("v-if", true)
                 ])
               ], 64 /* STABLE_FRAGMENT */))

@@ -228,6 +228,41 @@ async function doTagPreview() {
   finally { busy.value = '' }
 }
 
+/** D171-T4：一步式写回 —— 未预览过就**自动先 dry-run**，展示将影响多少题后再确认。
+ *
+ *  此前「② 确认写回题库」要求先点「① 预览（dry-run）」，否则按钮是**灰的**，
+ *  教师不知道原因（反馈：按钮一直点不了）。
+ */
+async function doTagWriteback() {
+  if (busy.value !== '') return
+  busy.value = 'tag'
+  msg.value = ''
+  try {
+    if (!tagDry.value) {
+      // 先自动预览
+      const r = await tagKnowledge(settings.engineUrl, settings.engineToken, {
+        kb: [kind.value], chap: chap.value ? [chap.value] : [], force: tagForce.value,
+        dryRun: true,
+      })
+      if (!r?.ok) { msg.value = `❌ 预览失败：${r?.error || '未知错误'}`; return }
+      const ups = (r.updates || []) as any[]
+      if (!ups.length) {
+        msg.value = '没有需要标注的题目（可能都已有知识点；要覆盖请勾选「覆盖已有标注」）'
+        return
+      }
+      tagDry.value = { updates: ups.length, sample: ups.slice(0, 8) }
+      if (!window.confirm(
+        `将写回题库：更新 ${ups.length} 题的知识点（改前自动快照）。\n\n`
+        + ups.slice(0, 5).map((u: any) => `${u.qid} → ${u.related}`).join('\n')
+        + (ups.length > 5 ? `\n…等 ${ups.length} 题` : '')
+        + '\n\n确认写入？')) return
+    }
+    await doTagApply()
+  } finally {
+    if (busy.value === 'tag') busy.value = ''
+  }
+}
+
 async function doTagApply() {
   if (!window.confirm('将**写回题库**（知识点列），并自动快照。确认执行？')) return
   busy.value = 'tag'
@@ -444,8 +479,9 @@ function confOf(rep: ErrorRateReport | null) {
           <button class="btn" :disabled="busy !== ''" @click="doTagPreview">
             {{ busy === 'tag' ? '处理中…' : '① 预览（dry-run）' }}
           </button>
-          <button class="btn primary" :disabled="busy !== '' || !tagDry"
-                  @click="doTagApply">② 确认写回题库</button>
+          <button class="btn primary" :disabled="busy !== ''"
+                  title="未预览时会自动先跑一次 dry-run，展示将更新多少题后再确认"
+                  @click="doTagWriteback">② 写回题库</button>
         </p>
         <template v-if="tagDry">
           <p class="hint">将更新 {{ tagDry.updates }} 题，示例：</p>

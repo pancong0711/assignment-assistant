@@ -15,6 +15,10 @@ dependencies = [
     # D105：参考答案 md+html 渲染（Markdown → HTML）与白名单净化
     "markdown>=3.5",
     "bleach>=6.0",
+    # D171-T6：文档抽取的**纯 Python** 后端（此前只靠 officecli/soffice，
+    # 教师机器上通常两者都没有 → 抽取不可用）。体积小、无外部二进制。
+    "python-pptx>=0.6",
+    "python-docx>=1.0",
 ]
 
 # D63 T7：学习通只读提取的可选依赖（`uv pip install -e engine[playwright]`；不进主 deps）。

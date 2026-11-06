@@ -21,7 +21,7 @@ from assist.grading.prompts import KIND_OUTPUT_SCHEMA_HINT, kind_output_hint
 # ---------------- 工具 ----------------
 def _q(qid, *, kind=None, has_diagram=True, errors=(), reasoning="ok",
        key_points=None, copied=None, covered=None, answer_chars=None, relevance=None,
-       question_text="", answer_text=""):
+       question_text="", answer_text="", topic_match=None):
     q = {"id": qid, "reasoning": {"status": reasoning, "note": "",
                                   "question_text": question_text},
          "correct_points": [], "errors": list(errors), "confidence": "high",
@@ -33,6 +33,8 @@ def _q(qid, *, kind=None, has_diagram=True, errors=(), reasoning="ok",
         q["key_points"] = key_points
     if copied is not None:
         q["copied"] = copied
+    if topic_match is not None:
+        q["topic_match"] = topic_match
     if covered is not None:
         q["covered"] = covered
     if answer_chars is not None:
@@ -233,9 +235,14 @@ def test_checklist_mode_deduct(ws: Path):
 
 
 def test_copy_topic_match_no_checklist_deduct(ws: Path):
-    """**D170-T9 核心**：抄写题不再因"没抄全三项"扣分。"""
+    """**D170-T9 核心**：抄写题不再因"没抄全三项"扣分。
+
+    D171-T3：抄写题改判「主题 + 字数」，所以这里要给出正常的主题与字数，
+    才能验证"不因抄全与否扣分"这件事。
+    """
     a = _analysis([_q(1, kind="copy", copied={"题目": True, "解题过程": False,
-                                             "示意图": False})])
+                                             "示意图": False},
+                      topic_match="match", answer_chars=200)])
     r = score_from_analysis(a, ws=ws)
     assert r["total_score"] == 100, f"抄写题不应按 checklist 扣分：{r['deductions']}"
 

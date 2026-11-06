@@ -179,14 +179,19 @@ def test_extract_reports_unsupported_file(ws: Path):
 
 
 def test_office_failure_message_is_readable(ws: Path, monkeypatch):
-    """验收 7：officecli 缺失时给**可读提示**，不是异常栈。"""
+    """验收 7：全部后端都不可用时给**可读提示**，不是异常栈。
+
+    D171-T6：降级链变成 python-pptx → officecli → soffice，
+    所以要**同时**屏蔽 python 后端才测得到"全失败"这条路径。
+    """
     d = M.ensure_chap(ws, "chap07")
     _make_pptx(d / "_source" / "x.pptx", [("T", ["a"])])
-    monkeypatch.setattr(M, "which", lambda cmd: None)   # 两个工具都没有
+    monkeypatch.setattr(M, "which", lambda cmd: None)          # 无外部工具
+    monkeypatch.setattr(M, "_extract_pptx_python", lambda p: None)  # 无 python 后端
     rep = M.extract_chap(ws, "chap07")
     assert rep["ok"] is False
     err = rep["errors"][0]["error"]
-    assert "officecli" in err and "PDF" in err
+    assert "python-pptx" in err or "PDF" in err
 
 
 def test_extract_empty_source_reports_zero(ws: Path):
@@ -519,3 +524,25 @@ def test_vision_suggest_feeds_summary_prompt_end_to_end(ws: Path):
     p = build_user_prompt(items, "学生作答", ws=ws)
     assert "【本堂课应掌握的知识点（教师确认的课堂资料清单）】" in p
     assert "完全弹性碰撞" in p
+
+
+def test_pptx_extracted_by_python_backend(ws: Path, monkeypatch):
+    """D171-T6：**没有** officecli/soffice 时，pptx 仍能被 python-pptx 抽取。
+
+    教师反馈：「点击抽取键，提示没有安装 officecli」→ 抽取不可用。
+    """
+    pytest.importorskip("pptx")
+    from pptx import Presentation
+    d = M.ensure_chap(ws, "chap09")
+    prs = Presentation()
+    slide = prs.slides.add_slide(prs.slide_layouts[5])
+    slide.shapes.title.text = "静电场"
+    prs.save(str(d / "_source" / "y.pptx"))
+    monkeypatch.setattr(M, "which", lambda cmd: None)   # 外部工具全无
+    rep = M.extract_chap(ws, "chap09")
+    assert rep["ok"], rep.get("errors")
+    assert rep["chars"] > 0
+    # `sources` 是数量；明细在索引文件里（rep["index"]）
+    import json as _json
+    idx = _json.loads(Path(rep["index"]).read_text(encoding="utf-8"))
+    assert idx["sources"][0]["extract"]["engine"] == "python-pptx", idx["sources"][0]

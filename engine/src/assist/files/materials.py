@@ -339,8 +339,79 @@ def _officecli_release(p: Path) -> None:
         pass
 
 
+def _extract_pptx_python(p: Path) -> "dict | None":
+    """D171-T6：纯 Python 抽 pptx（python-pptx）。失败返回 None。"""
+    try:
+        from pptx import Presentation
+    except ImportError:
+        return None
+    try:
+        prs = Presentation(str(p))
+        parts: list[str] = []
+        for i, slide in enumerate(prs.slides, start=1):
+            texts: list[str] = []
+            for shape in slide.shapes:
+                if not getattr(shape, "has_text_frame", False):
+                    continue
+                t = str(shape.text_frame.text or "").strip()
+                if t:
+                    texts.append(t)
+            if texts:
+                parts.append(f"--- slide {i} ---\n" + "\n".join(texts))
+        text = "\n\n".join(parts).strip()
+        return {"engine": "python-pptx", "slides": len(prs.slides),
+                "chars": len(text), "text": text}
+    except Exception as exc:  # noqa: BLE001
+        logger.warning(f"[资料] python-pptx 抽取失败：{str(exc)[:120]}")
+        return None
+
+
+def _extract_docx_python(p: Path) -> "dict | None":
+    """D171-T6：纯 Python 抽 docx（python-docx，含表格）。失败返回 None。"""
+    try:
+        import docx
+    except ImportError:
+        return None
+    try:
+        d = docx.Document(str(p))
+        parts: list[str] = [str(x.text or "").strip()
+                            for x in d.paragraphs if str(x.text or "").strip()]
+        for tb in d.tables:
+            for row in tb.rows:
+                cells = [str(c.text or "").strip() for c in row.cells]
+                if any(cells):
+                    parts.append("\t".join(cells))
+        text = "\n".join(parts).strip()
+        return {"engine": "python-docx", "slides": None,
+                "chars": len(text), "text": text}
+    except Exception as exc:  # noqa: BLE001
+        logger.warning(f"[资料] python-docx 抽取失败：{str(exc)[:120]}")
+        return None
+
+
 def extract_office(p: Path, out_txt: Path) -> dict:
-    """pptx/docx/xlsx → 纯文本。首选 officecli，回退 soffice→pdf→pdftoppm/pdftotext。"""
+    """pptx/docx/xlsx → 纯文本。
+
+    D171-T6：降级链改为 **纯 Python 优先**——
+        ① python-pptx / python-docx / openpyxl（无需任何外部二进制）
+        ② officecli（若已安装，质量通常更好）
+        ③ soffice 转 PDF 再抽文本
+        ④ 全部失败 → 可读错误
+
+    为什么改：教师机器上通常**没有** officecli 与 LibreOffice，
+    原来直接报「没有安装 officecli」→ 抽取功能不可用。
+    """
+    ext = p.suffix.lower()
+    py_rep = None
+    if ext == ".pptx":
+        py_rep = _extract_pptx_python(p)
+    elif ext == ".docx":
+        py_rep = _extract_docx_python(p)
+    if py_rep and py_rep.get("chars"):
+        out_txt.parent.mkdir(parents=True, exist_ok=True)
+        out_txt.write_text(py_rep["text"], encoding="utf-8")
+        return {"engine": py_rep["engine"], "slides": py_rep.get("slides"),
+                "chars": py_rep["chars"], "text_file": str(out_txt)}
     if which("officecli"):
         # 先释放可能存在的驻留缓存，确保读到**当前**文件内容（见 _officecli_release）
         _officecli_release(p)
@@ -387,8 +458,9 @@ def extract_office(p: Path, out_txt: Path) -> dict:
                         "chars": len(text), "text_file": str(out_txt)}
         logger.warning(f"[资料] soffice 回退失败：{err[:200]}")
     raise MaterialsError(
-        f"无法抽取 {p.name}：officecli 与 LibreOffice 均不可用或失败。"
-        f"请安装 officecli（推荐），或先把该文件另存为 PDF 再放入 _source/。")
+        f"无法抽取 {p.name}：Python 库（python-pptx/python-docx）、officecli、"
+        f"LibreOffice 均不可用或失败。"
+        f"请把该文件另存为 PDF 再放入 _source/，或重跑 start 脚本补齐依赖。")
 
 
 # ---------------- 抽取：pdf ----------------

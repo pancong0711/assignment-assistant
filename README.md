@@ -77,6 +77,7 @@
 - `docs/113-D169-roadmap-and-architecture.md` — **D169 实现路线 + 架构决策（atopia 权限/工具治理/可视化）**
 - `docs/114-versioning.md` — **版本号规则**（engine / app / launcher 三段，何时升、发布链路）
 - `docs/115-D170-usage-fixes.md` — **D170 实际使用缺陷修复**（间隔号姓名/重载卡死/发布误判/抄写题规则等）
+- `docs/116-D171-grading-workflow-and-extract.md` — **D171 批阅三键/结果落草稿/抄写题计分/抽取改纯 Python**
 
 > **当前活动需求单 = `docs/112-D168`（口径/快照）+ `docs/113-D169`（路线/架构）**；
 > 历史条目保留供追溯，与最新口径冲突时以这两份为准。

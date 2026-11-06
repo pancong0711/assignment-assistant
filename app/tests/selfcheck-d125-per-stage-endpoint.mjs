@@ -53,15 +53,24 @@ const stripComments = (s) => s.replace(/\/\*[\s\S]*?\*\//g, '')
     '转录部分失败应默认中止')
 }
 
-/* 4) PWA：分步按钮 + 测试配置（D127：③ 改为「完整批阅」，语义重叠的「转录+评阅」已移除） */
+/* 4) PWA：分步按钮 + 测试配置
+ *
+ * D171-T1 变更：三个按钮语义定版为 **转写 / 批阅 / 转写+批阅**
+ * （原「③ 完整批阅」名不副实：它不传 force，评阅会被后端跳过，实际只转写）。
+ * 并新增「☑ 强制重做」勾选 → 覆盖已有产物。
+ */
 {
   const comp = read('src/components/AiGradingPanel.vue')
   assert.ok(/🔍 测试配置/.test(comp), '应有「测试配置」按钮')
-  assert.ok(/① 仅转录/.test(comp) && /② 仅评阅/.test(comp) && /③ 完整批阅/.test(comp),
-    '应有分步按钮（①仅转录 ②仅评阅 ③完整批阅）')
+  assert.ok(/① 仅转录/.test(comp) && /② 批阅/.test(comp) && /③ 转写\+批阅/.test(comp),
+    '应有三个按钮（①仅转录 ②批阅 ③转写+批阅）')
+  assert.ok(!/完整批阅/.test(comp), 'D171：「完整批阅」应改名为「转写+批阅」（名不副实）')
   assert.ok(/startAi\(\['transcribe'\]\)/.test(comp), '仅转录应传 steps=[transcribe]')
-  assert.ok(/startAi\(\['evaluate'\]\)/.test(comp), '仅评阅应传 steps=[evaluate]')
-  assert.ok(!/转录\+评阅/.test(comp), 'D127：语义重叠的「转录+评阅」按钮应移除')
+  assert.ok(/startAi\(\['evaluate'\]\)/.test(comp), '批阅应传 steps=[evaluate]')
+  assert.ok(/startAi\(\['transcribe', 'evaluate'\]\)/.test(comp),
+    '转写+批阅应传 steps=[transcribe, evaluate]')
+  assert.ok(/forceRedo/.test(comp), 'D171：应有「强制重做」勾选')
+  assert.ok(/force: true/.test(comp), 'D171：强制重做必须把 force 传给后端（否则评阅被跳过）')
   assert.ok(/testLlmStages/.test(comp), '应调用 testLlmStages')
   const ec = stripComments(read('src/lib/engineClient.ts'))
   assert.ok(/export async function testLlmStages/.test(ec), 'engineClient 应有 testLlmStages')
