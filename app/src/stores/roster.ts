@@ -685,6 +685,15 @@ function scheduleAutoPersistToDisk(): void {
 let lastPersistMsg = ''
 export function lastRosterPersistMessage(): string { return lastPersistMsg }
 
+/** D172：当前关联的作业包 id（无则空串，引擎会存成 `noPack`）。 */
+async function currentPackIdForRoster(): Promise<{ packId?: string }> {
+  try {
+    const { usePackStore } = await import('./packs')
+    const id = String(usePackStore().currentId || '').trim()
+    return id ? { packId: id } : {}
+  } catch { return {} }
+}
+
 async function doPersistToDisk(classDirHint?: string): Promise<string> {
   try {
     const { useSettingsStore } = await import('./settings')
@@ -704,6 +713,9 @@ async function doPersistToDisk(classDirHint?: string): Promise<string> {
       students: roster.students.map((s) => ({
         name: s.name, number: s.number, class: s.class, tag: s.tag,
       })),
+      // D172：带上当前关联的作业包 id —— 引擎把 roster 历史副本命名为
+      // `roster/history/roster__<packId>__<ts>.xlsx`（tag 随包重新点选，需可回溯）
+      ...(await currentPackIdForRoster()),
     })
     if (rep?.ok) {
       lastPersistMsg = `已写盘 ${rep.path}（${rep.count} 人）`

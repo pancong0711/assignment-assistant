@@ -1066,7 +1066,45 @@ class Handler(BaseHTTPRequestHandler):
                                          str(payload.get("classDir") or ""),
                                          payload.get("students") or [],
                                          class_name=str(payload.get("className") or ""),
-                                         class_id=str(payload.get("classId") or ""))
+                                         class_id=str(payload.get("classId") or ""),
+                                         # D172：带关联作业包名存 roster 历史副本
+                                         pack_id=str(payload.get("packId") or ""))
+            self._json(rep, 200 if rep.get("ok") else 400)
+            return
+        if u.path in ("/grade/audit-tags/run", "/grade/audit-tags/apply",
+                      "/grade/audit-tags/undo"):
+            # D172：tag 审计（run 为纯 Python，**不调模型**）
+            payload: dict = {}
+            try:
+                length = int(self.headers.get("Content-Length") or 0)
+                if length:
+                    payload = json.loads(self.rfile.read(length).decode("utf-8")) or {}
+            except Exception as exc:  # noqa: BLE001
+                self._json({"ok": False, "error": f"bad json: {exc}"}, 400)
+                return
+            from .grading import tag_audit as _ta
+            ws_ = Path(self.ws).resolve()
+            class_dir = str(payload.get("classDir") or "")
+            pack_id = str(payload.get("packId") or "").strip()
+            try:
+                if u.path.endswith("/run"):
+                    pads = payload.get("pads") or []
+                    cfg = payload.get("cfg") or None
+                    students = payload.get("students") or None
+                    rep = _ta.run_audit(ws_, class_dir=class_dir, pack_id=pack_id,
+                                        pads=pads, students=students, cfg=cfg)
+                elif u.path.endswith("/apply"):
+                    rep = _ta.apply_audit_tags(
+                        ws_, class_dir=class_dir, pack_id=pack_id,
+                        changes=payload.get("changes") or [],
+                        reason=str(payload.get("reason") or "audit-apply"))
+                else:
+                    rep = _ta.undo_last(ws_, class_dir=class_dir, pack_id=pack_id,
+                                        file=str(payload.get("file") or ""))
+            except Exception as exc:  # noqa: BLE001
+                logger.warning(f"[tag-audit] {u.path} 失败：{exc}")
+                self._json({"ok": False, "error": str(exc)[:300]}, 400)
+                return
             self._json(rep, 200 if rep.get("ok") else 400)
             return
         if u.path == "/taskpad/save":
@@ -3640,6 +3678,23 @@ class Handler(BaseHTTPRequestHandler):
                 self._json({"ok": True, "submissions": sub, "stats": stats})
             except _sn.SnapshotError as exc:
                 self._json({"ok": False, "error": str(exc)}, 400)
+            return
+        elif u.path == "/grade/audit-tags":
+            # D172：读 tag 审计结果（GET 必须登记在 **do_GET**——D171 已因
+            # "只读接口写在 do_POST → 前端 GET 302 到 Pages" 踩过两次）
+            from .grading import tag_audit as _ta
+            q = urllib.parse.parse_qs(u.query)
+            ws_ = Path(self.ws).resolve()
+            class_dir = str((q.get("classDir") or [""])[0])
+            pack_id = str((q.get("packId") or [""])[0]).strip()
+            if (q.get("history") or [""])[0] in ("1", "true"):
+                self._json({"ok": True, "history": _ta.list_history(
+                    ws_, class_dir=class_dir, pack_id=pack_id)})
+                return
+            try:
+                self._json(_ta.read_audit(ws_, class_dir=class_dir, pack_id=pack_id))
+            except Exception as exc:  # noqa: BLE001
+                self._json({"ok": False, "error": str(exc)[:300]}, 400)
             return
         elif u.path == "/roster/read":
             from .files import roster_io

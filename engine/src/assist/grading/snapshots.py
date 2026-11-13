@@ -36,6 +36,8 @@ SUBMISSIONS_FILE = "submissions.json"
 SOURCE_RECOMPUTE = "recompute-tags"    # 「重算并打 tag」选了作业包 → 立即写
 SOURCE_AUTO_GRADE = "auto-at-grade"    # 批阅时无快照 → 自动补写
 SOURCE_MANUAL = "manual-refresh"       # 教师显式刷新
+SOURCE_AUDIT_APPLY = "audit-apply"     # D172：教师确认审计 tag 后打补丁
+HISTORY_DIR = "_history"               # D172：快照历史副本（撤销用）
 
 
 class SnapshotError(RuntimeError):
@@ -95,6 +97,42 @@ def _norm_rows(students) -> list[dict]:
     return out
 
 
+def history_dir(ws, class_dir: str) -> Path:
+    """快照历史副本目录：`roster-tags/_history/`。"""
+    return _class_root(ws, class_dir) / TAGS_DIR / HISTORY_DIR
+
+
+def backup_tags_snapshot(ws, class_dir: str, pack_id: str, reason: str) -> "Path | None":
+    """D172（教师 N1）：覆盖快照**之前**先存一份历史副本。
+
+    命名：`_history/<packId>__<YYYYmmdd-HHMMSS>.json`（同一秒多次 → 加 `-N` 防覆盖）。
+    教师要求「roster 保存也要注意命名（可加时间戳，同时增加关联作业包名）」——
+    这里的 `packId` 就是“关联作业包名”。
+    """
+    src = tags_snapshot_path(ws, class_dir, pack_id)
+    if not src.is_file():
+        return None
+    d = history_dir(ws, class_dir)
+    d.mkdir(parents=True, exist_ok=True)
+    ts = time.strftime("%Y%m%d-%H%M%S")
+    dst = d / f"{_safe_pack_id(pack_id)}__{ts}.json"
+    n = 1
+    while dst.exists():
+        dst = d / f"{_safe_pack_id(pack_id)}__{ts}-{n}.json"
+        n += 1
+    try:
+        data = json.loads(src.read_text(encoding="utf-8"))
+        if isinstance(data, dict):
+            data["historyReason"] = str(reason or "")
+            data["historyAt"] = time.strftime("%Y-%m-%d %H:%M:%S")
+        _atomic_json(dst, data if isinstance(data, dict) else {})
+        logger.info(f"[快照] 已存历史副本 {dst.name}（reason={reason}）")
+        return dst
+    except Exception as exc:  # noqa: BLE001
+        logger.warning(f"[快照] 历史副本写入失败：{str(exc)[:120]}")
+        return None
+
+
 def write_tags_snapshot(ws, class_dir: str, pack_id: str, students,
                         *, source: str = SOURCE_RECOMPUTE,
                         force: bool = False) -> dict:
@@ -102,6 +140,9 @@ def write_tags_snapshot(ws, class_dir: str, pack_id: str, students,
 
     `force=False` 时**不覆盖已存在**的快照（防止批阅中途把历史依据改掉）；
     返回 {"ok", "path", "count", "created": bool, "skipped": 原因?}。
+
+    D172：`force=True` 覆盖前**必存历史副本**（此前直接覆盖，历史只剩一次
+    `previousTag`，教师无法撤销“改错了 tag”）。
     """
     p = tags_snapshot_path(ws, class_dir, pack_id)
     rows = _norm_rows(students)
@@ -110,6 +151,7 @@ def write_tags_snapshot(ws, class_dir: str, pack_id: str, students,
     if p.is_file() and not force:
         return {"ok": True, "path": str(p), "count": _count_of(p), "created": False,
                 "skipped": "快照已存在（force=true 才覆盖）"}
+    hist = backup_tags_snapshot(ws, class_dir, pack_id, source) if p.is_file() else None
     p.parent.mkdir(parents=True, exist_ok=True)
     payload = {
         "classDir": str(class_dir).strip().strip("/"),
@@ -120,7 +162,8 @@ def write_tags_snapshot(ws, class_dir: str, pack_id: str, students,
     }
     _atomic_json(p, payload)
     logger.info(f"[快照] 已写 roster-tags/{pack_id}.json（{len(rows)} 人，source={source}）")
-    return {"ok": True, "path": str(p), "count": len(rows), "created": True}
+    return {"ok": True, "path": str(p), "count": len(rows), "created": True,
+            **({"historyPath": str(hist)} if hist else {})}
 
 
 def read_tags_snapshot(ws, class_dir: str, pack_id: str) -> dict:

@@ -147,6 +147,16 @@ DEFAULT_RULES: dict = {
             },
         },
     },
+    # D172：tag 审计（纯 Python 匹配器）的可调参数——**阈值不许写死在代码里**。
+    # 说明：审计只比对题干；minScore/marginMin 越高 → 越保守（更多 unknown，更少误报）。
+    "tagAudit": {
+        "minScore": 0.75,       # 高置信下限（作业纸得分 ≥ 此值）
+        "marginMin": 0.15,      # Top1 与 Top2 的最小差（高置信要求）
+        "mediumScore": 0.45,    # 低于此 → low（一律 unknown）
+        "bigramWeight": 0.65,   # 字面 n-gram（2/3-gram Dice）权重
+        "numberWeight": 0.35,   # 数值常量重合权重（同章不同参数主要靠它区分）
+        "minChars": 12,         # 题干去噪后短于此 → 视为「没抄题」（标 ?）
+    },
 }
 
 # 数值字段的合法范围（T9 规则卡校验 + CLI 共用）；"gt"/"ge"/"le" 语义同字面
@@ -168,6 +178,12 @@ _NUM_RANGES: dict[str, tuple[float, float]] = {
     # D170-T9：抄写题（topicMatch）—— 字数下限与主题不符扣分
     "minChars": (0, 5000),
     "topicMismatchDeduct": (0, 100),
+    # D172：tag 审计
+    "minScore": (0, 1),
+    "marginMin": (0, 1),
+    "mediumScore": (0, 1),
+    "bigramWeight": (0, 1),
+    "numberWeight": (0, 1),
 }
 
 
@@ -198,6 +214,15 @@ def read_rules(ws) -> dict:
     return _apply_extensions(p, _fill_defaults(raw))
 
 
+def tag_audit_cfg(ws) -> dict:
+    """D172：读 tag 审计参数（规则卡 `tagAudit` 段）；异常时回落默认。"""
+    try:
+        got = read_rules(ws).get("tagAudit")
+        return dict(got) if isinstance(got, dict) else dict(DEFAULT_RULES["tagAudit"])
+    except Exception:  # noqa: BLE001 —— 规则坏了也不能让审计崩
+        return dict(DEFAULT_RULES["tagAudit"])
+
+
 def _apply_extensions(path: Path, data: dict) -> dict:
     """D132-T18：叠加 `<ws>/extensions/rules/grading-rules.json` 覆盖。
 
@@ -224,6 +249,11 @@ def _fill_defaults(raw: dict) -> dict:
                     out[section][k].update(v)
                 elif k in out[section]:
                     out[section][k] = v
+    # D172：顶层独立段（不属于 global/types 的题型结构）
+    if isinstance(raw.get("tagAudit"), dict):
+        for k, v in raw["tagAudit"].items():
+            if k in out.get("tagAudit", {}):
+                out["tagAudit"][k] = v
     for k in ("version",):
         if k in raw:
             out[k] = raw[k]
@@ -272,6 +302,31 @@ def validate_rules(rules: dict) -> list[str]:
                 errs.append(f"global.{key} 必须是数值")
             elif not (lo <= float(v) <= hi):
                 errs.append(f"global.{key}={v} 超出范围 [{lo}, {hi}]")
+    # D172：tag 审计参数（顶层独立段）
+    ta = rules.get("tagAudit")
+    if ta is not None:
+        if not isinstance(ta, dict):
+            errs.append("tagAudit 必须是对象")
+        else:
+            for key in ("minScore", "marginMin", "mediumScore", "bigramWeight",
+                        "numberWeight", "minChars"):
+                if key not in ta:
+                    continue
+                v = ta[key]
+                if not isinstance(v, (int, float)) or isinstance(v, bool):
+                    errs.append(f"tagAudit.{key} 必须是数值")
+                    continue
+                lo, hi = _NUM_RANGES[key]
+                if not (lo <= float(v) <= hi):
+                    errs.append(f"tagAudit.{key}={v} 超出范围 [{lo}, {hi}]")
+            if isinstance(ta.get("bigramWeight"), (int, float)) \
+                    and isinstance(ta.get("numberWeight"), (int, float)) \
+                    and float(ta["bigramWeight"]) + float(ta["numberWeight"]) <= 0:
+                errs.append("tagAudit.bigramWeight + numberWeight 必须 > 0")
+            for key in ta:
+                if key not in ("minScore", "marginMin", "mediumScore", "bigramWeight",
+                               "numberWeight", "minChars"):
+                    errs.append(f"tagAudit.{key} 未知字段")
     types = rules.get("types") or {}
     for kind, cfg in types.items():
         if kind not in SUPPORTED_KINDS:

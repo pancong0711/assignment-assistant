@@ -3057,6 +3057,143 @@ def grade_plan_collect(task_list_path, results_dir, kind):
     raise SystemExit(0 if rep.get("failed") == 0 else 1)
 
 
+@grading_grp.command("audit-tags")
+@click.option("--class-dir", "class_dir", required=True, help="班级目录，如 classes/化工251")
+@click.option("--pack-id", "pack_id", required=True, help="作业包 id（只看这个包内的作业纸）")
+@click.option("--pads", "pads_json", default="",
+              help="作业纸 JSON（[{padId,tag,questions:[{no,content}]}] 或 [taskpad JSON 列表]）；"
+                   "缺省=读 <ws>/tasks/ 下该包引用的作业纸")
+@click.option("--students", "students", default="", help="只审计这些学生（逗号分隔姓名）")
+@click.option("--min-score", "min_score", default=None, type=float, help="高置信下限（默认 0.75）")
+@click.option("--margin", "margin_min", default=None, type=float, help="Top1-Top2 最小差（默认 0.15）")
+@click.option("--workspace", "-w", default=None)
+@click.option("--verbose", "-v", is_flag=True)
+@click.pass_obj
+def grading_audit_tags(obj, class_dir, pack_id, pads_json, students, min_score, margin_min,
+                       workspace, verbose):
+    """D172：tag 审计（**纯 Python，不调用模型**）——转写题目 ↔ 本包作业纸题目。
+
+    产出 classes/<班>/grading/<packId>/audit/tags-audit.json（证据侧）；
+    改 tag 必须教师确认后用 `grading apply-audit-tags`（权威侧补丁 + 历史副本）。
+
+    \b
+    Examples:
+      assist grading audit-tags --class-dir classes/化工251 --pack-id hw3
+      assist grading audit-tags --class-dir classes/化工251 --pack-id hw3 --students 张三,李四
+    """
+    from .grading import tag_audit as TA
+    ws = _setup(verbose or obj.get("verbose"), workspace)
+    pads = _load_audit_pads(ws, pack_id, pads_json)
+    cfg = {k: v for k, v in (("minScore", min_score), ("marginMin", margin_min))
+           if v is not None}
+    rep = TA.run_audit(ws, class_dir=class_dir, pack_id=pack_id, pads=pads,
+                       students=[x.strip() for x in str(students or "").split(",") if x.strip()],
+                       cfg=cfg or None)
+    click.echo(json.dumps(rep, ensure_ascii=False, indent=1))
+    raise SystemExit(0 if rep.get("ok") else 1)
+
+
+def _load_audit_pads(ws, pack_id: str, pads_json: str) -> list[dict]:
+    """候选集：显式 --pads > 作业包引用 > <ws>/tasks/ 全量（同 tag 只取一张）。"""
+    from .grading.tag_audit import papers_of
+    if pads_json:
+        raw = json.loads(Path(pads_json).expanduser().read_text(encoding="utf-8")) \
+            if Path(pads_json).expanduser().is_file() else json.loads(pads_json)
+        out = []
+        for p in (raw if isinstance(raw, list) else [raw]):
+            if not isinstance(p, dict):
+                continue
+            if "questions" in p:
+                out.append(p)
+            elif isinstance(p.get("items"), list):     # taskpad 原样
+                qs = []
+                for it in p["items"]:
+                    if isinstance(it, dict):
+                        qs.append({"no": str(it.get("no") or ""),
+                                   "content": str(it.get("content") or "")})
+                out.append({"padId": str(p.get("id") or ""),
+                            "tag": str(p.get("target_tag") or ""), "questions": qs})
+        return papers_of(out)
+    # 从 <ws>/tasks 按包引用装配
+    from .files.taskpads import list_taskpads, read_taskpad
+    pads_dir = Path(ws) / "tasks"
+    out = []
+    for meta in list_taskpads(ws) if pads_dir.is_dir() else []:
+        pid = str(meta.get("id") or "")
+        pad = read_taskpad(ws, pid) if pid else None
+        if not isinstance(pad, dict):
+            continue
+        out.append({"padId": pid, "tag": str(pad.get("target_tag") or ""),
+                    "questions": [{"no": str(it.get("no") or ""),
+                                   "content": str(it.get("content") or "")}
+                                  for it in (pad.get("items") or []) if isinstance(it, dict)]})
+    return papers_of(out)
+
+
+@grading_grp.command("apply-audit-tags")
+@click.option("--class-dir", "class_dir", required=True)
+@click.option("--pack-id", "pack_id", required=True)
+@click.option("--changes", "changes_json", required=True,
+              help='JSON：[{"name":"张三","tag":"提高"}]，或 @file.json')
+@click.option("--apply", "apply_", is_flag=True, help="真正写盘（缺省只演练）")
+@click.option("--workspace", "-w", default=None)
+@click.option("--verbose", "-v", is_flag=True)
+@click.pass_obj
+def grading_apply_audit_tags(obj, class_dir, pack_id, changes_json, apply_, workspace, verbose):
+    """D172：教师确认后应用审计 tag（**补丁式**写 roster-tags + 自动存历史副本）。
+
+    \b
+    Examples:
+      assist grading apply-audit-tags --class-dir classes/化工251 --pack-id hw3 \
+        --changes '[{"name":"张三","tag":"提高"}]' --apply
+    """
+    from .grading import tag_audit as TA
+    ws = _setup(verbose or obj.get("verbose"), workspace)
+    txt = changes_json[1:] if changes_json.startswith("@") else changes_json
+    p = Path(txt).expanduser()
+    data = json.loads(p.read_text(encoding="utf-8")) if (changes_json.startswith("@") and p.is_file()) \
+        else json.loads(changes_json)
+    changes = data if isinstance(data, list) else (data.get("changes") or [])
+    if not apply_:
+        click.echo(json.dumps({"ok": True, "dryRun": True,
+                               "changes": changes,
+                               "note": "演练：未写盘。确认后加 --apply"},
+                              ensure_ascii=False, indent=1))
+        return
+    rep = TA.apply_audit_tags(ws, class_dir=class_dir, pack_id=pack_id, changes=changes)
+    click.echo(json.dumps(rep, ensure_ascii=False, indent=1))
+    raise SystemExit(0 if rep.get("ok") else 1)
+
+
+@grading_grp.command("undo-audit-tags")
+@click.option("--class-dir", "class_dir", required=True)
+@click.option("--pack-id", "pack_id", required=True)
+@click.option("--file", "file", default="", help="指定历史副本文件名（缺省=最近一次 audit-apply）")
+@click.option("--list", "list_", is_flag=True, help="只列出历史副本")
+@click.option("--workspace", "-w", default=None)
+@click.option("--verbose", "-v", is_flag=True)
+@click.pass_obj
+def grading_undo_audit_tags(obj, class_dir, pack_id, file, list_, workspace, verbose):
+    """D172：撤销审计 tag 修改（从 _history/ 副本恢复快照）。
+
+    \b
+    Examples:
+      assist grading undo-audit-tags --class-dir classes/化工251 --pack-id hw3 --list
+      assist grading undo-audit-tags --class-dir classes/化工251 --pack-id hw3
+    """
+    from .grading import tag_audit as TA
+    ws = _setup(verbose or obj.get("verbose"), workspace)
+    if list_:
+        click.echo(json.dumps({"ok": True,
+                               "history": TA.list_history(ws, class_dir=class_dir,
+                                                          pack_id=pack_id)},
+                              ensure_ascii=False, indent=1))
+        return
+    rep = TA.undo_last(ws, class_dir=class_dir, pack_id=pack_id, file=file)
+    click.echo(json.dumps(rep, ensure_ascii=False, indent=1))
+    raise SystemExit(0 if rep.get("ok") else 1)
+
+
 @cli.group(help="学习通对接（D63 T1；登录/体检为可选依赖 playwright）")
 def xxt():
     """学习通会话与只读提取。"""

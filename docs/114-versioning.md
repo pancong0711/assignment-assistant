@@ -12,6 +12,7 @@
 | 位置 | 之前 | 问题 |
 |---|---|---|
 | `engine/pyproject.toml` | `0.4.0` | 自 `882e32a`（D78）后未动，中间累计 **80+ 个提交** |
+| `engine/src/assist/__init__.py` | `0.4.0` | **D172 发现：与 pyproject 不同步**（D171 升 0.5.0 时漏改）——两处必须一起改 |
 | `app/package.json` | `0.1.0` | 从未升级过 |
 | `docs/12-backlog.md` | 提到 v10.3 等 | 那是**另一个项目**（launcher/start 脚本）的版本，与 engine/app 无关 |
 

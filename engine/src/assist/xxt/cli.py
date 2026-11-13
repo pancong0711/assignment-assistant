@@ -248,6 +248,22 @@ def register(group: click.Group) -> None:
                                "error": rep.get("error")}, ensure_ascii=False, indent=1))
         raise SystemExit(0 if rep.get("ok") else 2)
 
+    @group.command("verify-names")
+    @click.option("--class", "class_id", required=True)
+    @click.option("--work", "work_id", required=True)
+    def xxt_verify_names(class_id, work_id):
+        """D172-T10：交叉校验「提交名单」——students.json vs 作答图片文件名（只读）。
+
+        \b
+        Examples:
+          assist xxt verify-names --class 12345 --work 67890
+        """
+        from ..grading.inputs import verify_review_names
+        rep = verify_review_names(class_id, work_id)
+        click.echo(json.dumps(rep, ensure_ascii=False, indent=1))
+        bad = bool(rep.get("onlyInFilenames") or rep.get("unparsable"))
+        raise SystemExit(1 if bad else 0)
+
     @group.command("review-download")
     @click.option("--course", "course_id", required=True)
     @click.option("--class", "class_id", required=True)

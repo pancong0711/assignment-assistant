@@ -9,7 +9,7 @@ from pathlib import Path
 ASSIST_ROOT = Path(__file__).resolve().parents[2]
 ASSETS_DIR = ASSIST_ROOT / "assets"
 
-__version__ = "0.4.0"
+__version__ = "0.6.0"
 
 _COMMIT_CACHE: str | None = None
 

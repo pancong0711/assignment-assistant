@@ -76,12 +76,17 @@ def _normalize_students(students) -> list[dict]:
 
 
 def write_roster(ws: Path, class_dir: str, students, *, class_name: str = "",
-                 class_id: str = "") -> dict:
+                 class_id: str = "", pack_id: str = "") -> dict:
     """把名单写到 `<ws>/<class_dir>/roster/roster.xlsx` + `.json`。
 
     - 路径由本函数决定（引擎权威）；
     - 写前若已存在，备份为 `roster.xlsx.old-<ts>`（不覆盖即丢）；
     - 返回 {ok, path, count, backup?}。
+
+    D172（教师 N1）：同一份 roster 会随每个作业包重打 tag（如 translation 组按比例
+    重新点选），所以**旧备份名里没有“关联哪个作业包”**就无法回溯。现按教师要求：
+    额外存 `roster/history/roster__<packId>__<ts>.xlsx`（未知包名 → `noPack`）。
+    旧式 `roster.xlsx.old-<ts>` **保留**（兼容旧脚本），但不作为审计依据。
     """
     paths = roster_paths(ws, class_dir)
     if paths is None:
@@ -95,6 +100,7 @@ def write_roster(ws: Path, class_dir: str, students, *, class_name: str = "",
     # 不加锁时 8 个并发写只会留下 1 个备份且互相覆盖（实测）。
     from ..filelock import locked
     backup = None
+    hist_backup = None
     with locked(xlsx):
         if xlsx.is_file():
             backup = xlsx.with_name(f"roster.xlsx.old-{time.strftime('%Y%m%d-%H%M%S')}")
@@ -106,6 +112,21 @@ def write_roster(ws: Path, class_dir: str, students, *, class_name: str = "",
                 backup.write_bytes(xlsx.read_bytes())
             except OSError:
                 backup = None
+            # D172：带「时间戳 + 关联作业包名」的历史副本（教师要求）
+            try:
+                hdir = xlsx.parent / "history"
+                hdir.mkdir(parents=True, exist_ok=True)
+                safe_pack = re.sub(r'[\\/:*?"<>|]', "_", str(pack_id or "").strip()) or "noPack"
+                hts = time.strftime("%Y%m%d-%H%M%S")
+                hdst = hdir / f"roster__{safe_pack}__{hts}.xlsx"
+                k = 1
+                while hdst.exists():
+                    hdst = hdir / f"roster__{safe_pack}__{hts}-{k}.xlsx"
+                    k += 1
+                hdst.write_bytes(xlsx.read_bytes())
+                hist_backup = hdst
+            except OSError:
+                hist_backup = None
         try:
             from openpyxl import Workbook
             wb = Workbook()
@@ -136,7 +157,8 @@ def write_roster(ws: Path, class_dir: str, students, *, class_name: str = "",
             return {"ok": False, "error": str(exc)[:200]}
     logger.info(f"[roster] 已写入 {xlsx}（{len(rows)} 人）")
     return {"ok": True, "path": str(xlsx), "json": str(js), "count": len(rows),
-            **({"backup": str(backup)} if backup else {})}
+            **({"backup": str(backup)} if backup else {}),
+            **({"historyBackup": str(hist_backup)} if hist_backup else {})}
 
 
 def read_roster_file(ws: Path, class_dir: str) -> dict:

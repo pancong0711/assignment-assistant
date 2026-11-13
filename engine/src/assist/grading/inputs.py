@@ -258,3 +258,65 @@ def plan_summary(plan: dict) -> dict:
             "mode": plan.get("mode"), "tags": plan.get("tags") or [],
             "students": len(students), "withImages": len(students) - len(no_img),
             "noImages": no_img, "noQuestions": no_q}
+
+
+# ---------------- D172-T10：提交名单的姓名交叉校验 ----------------
+
+def _parse_filename_student(fn: str) -> "dict | None":
+    """从作答图片文件名反解学生名/班级/作业/页码。
+
+    文件名由 `xxt.review.image_filename()` **确定性生成**：
+        `{学生名}_{班级}+{作业}_p{页码}.{ext}`
+    所以这是**可逆**的——但只作为**交叉校验**证据，权威来源仍是 `students.json`。
+    """
+    import re as _re
+    m = _re.match(r"^(?P<name>.+?)_(?P<cls>[^_]*)\+(?P<work>[^_]*)_p(?P<page>\d+)\.[A-Za-z0-9]+$",
+                  str(fn or ""))
+    if not m:
+        return None
+    return {"name": m.group("name"), "className": m.group("cls"),
+            "workName": m.group("work"), "page": int(m.group("page"))}
+
+
+def verify_review_names(class_id: str, work_id: str) -> dict:
+    """交叉校验：`students.json` 的姓名集合 vs 文件名反解出的姓名集合。
+
+    教师疑问（docs/117-D172 §7.2）：“图片是本代码生成的，解析应是逆过程，名单应该能确定”。
+    **结论**：名单权威来源是 `students.json`（页面提取），文件名只作**一致性校验**。
+    本函数只在两者不一致时报告，**不改任何东西**。
+
+    返回：
+        {"ok", "dir", "students": n, "images": n,
+         "onlyInManifest": [姓名...],   # students.json 有、但没有任何图片归属他
+         "onlyInFilenames": [姓名...],  # 文件名里有、但名单里没有
+         "unparsable": [文件名...],     # 不符合命名规则（老数据/人工改动）
+         "missingImages": [姓名...]}    # 名单里但目录中找不到图
+    """
+    d, students = read_review_students(class_id, work_id)
+    names = {str(s.get("name")) for s in students}
+    from_fns: set[str] = set()
+    unparsable: list[str] = []
+    img_files: list[str] = []
+    if d.is_dir():
+        from ..xxt.review import IMAGE_EXTS, comment_image_filename  # noqa: F401
+        for f in sorted(d.iterdir()):
+            if not f.is_file() or f.suffix.lower() not in IMAGE_EXTS:
+                continue
+            if f.name.startswith("comment_") or "_comment" in f.name:
+                continue        # 批语图不是学生作答图
+            img_files.append(f.name)
+            got = _parse_filename_student(f.name)
+            if got is None:
+                unparsable.append(f.name)
+            else:
+                from_fns.add(got["name"])
+    return {
+        "ok": True,
+        "dir": str(d),
+        "students": len(names),
+        "images": len(img_files),
+        "onlyInManifest": sorted(names - from_fns),
+        "onlyInFilenames": sorted(from_fns - names),
+        "unparsable": unparsable,
+        "missingImages": sorted(s["name"] for s in students if not s.get("images")),
+    }

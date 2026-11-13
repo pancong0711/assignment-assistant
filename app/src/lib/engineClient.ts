@@ -830,6 +830,108 @@ export async function fetchXxtGradeDrafts(
   return (await getJson2(engineUrlWithToken(base, path, token))) as XxtGradeDrafts
 }
 
+// ---------------- D172：tag 审计（纯 Python，不调模型） ----------------
+
+export interface AuditPair { block: number; no: string; paperNo: string; score: number }
+export interface AuditStudentRow {
+  name: string
+  rosterTag: string | null
+  currentRosterTag?: string | null
+  rosterTagSource?: string
+  linkMissing?: number[]
+  auditTag: string | null
+  auditPadId?: string | null
+  confidence: 'high' | 'medium' | 'low' | 'unknown'
+  score: number
+  margin: number
+  verdict: 'match' | 'mismatch' | 'unknown'
+  pairs?: AuditPair[]
+  alternatives?: Array<{ padId: string; tag: string; score: number }>
+  reason?: string
+  resolution?: { at: string; action: string; from: string; to: string; by: string } | null
+}
+export interface TagAuditReport {
+  ok?: boolean
+  missing?: boolean
+  error?: string
+  packId?: string
+  engine?: string
+  generatedAt?: string
+  rosterTagSource?: string
+  papers?: Array<{ padId: string; tag: string; questionCount: number }>
+  students?: AuditStudentRow[]
+  skippedNotTranscribed?: Array<{ name: string; reason: string }>
+  summary?: { match: number; mismatch: number; unknown: number }
+  byRosterTag?: Record<string, { ok: number; bad: number; unknown: number }>
+  history?: Array<Record<string, unknown>>
+  path?: string
+}
+
+/** GET /grade/audit-tags：读某包的审计结果（不存在 → `missing:true`）。 */
+export async function fetchTagAudit(
+  engineAddr: string, token: string | undefined,
+  scope: { classDir: string; packId: string },
+): Promise<TagAuditReport> {
+  const base = normalizeEngineAddr(engineAddr)
+  const qs = new URLSearchParams({ classDir: scope.classDir, packId: scope.packId })
+  return (await getJson2(engineUrlWithToken(base, `/grade/audit-tags?${qs}`, token))) as TagAuditReport
+}
+
+/** POST /grade/audit-tags/run：跑一次审计（**不调模型**）。 */
+export async function runTagAudit(
+  engineAddr: string, token: string | undefined,
+  payload: { classDir: string; packId: string
+    pads: Array<{ padId: string; tag: string; questions: Array<{ no: string; content: string }> }>
+    students?: string[]; cfg?: Record<string, number> },
+): Promise<TagAuditReport> {
+  const base = normalizeEngineAddr(engineAddr)
+  const res = await fetch(engineUrlWithToken(base, '/grade/audit-tags/run', token), {
+    method: 'POST', headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(payload),
+  })
+  return (await res.json().catch(() => ({ ok: false, error: '引擎返回非 JSON' }))) as TagAuditReport
+}
+
+/** POST /grade/audit-tags/apply：教师确认后**补丁式**改 tag（自动存历史副本）。 */
+export async function applyTagAudit(
+  engineAddr: string, token: string | undefined,
+  payload: { classDir: string; packId: string; changes: Array<{ name: string; tag: string }> },
+): Promise<{ ok?: boolean; error?: string; applied?: Array<{ name: string; from: string; to: string }>
+  unchanged?: string[]; missing?: string[]; historyPath?: string; written?: boolean }> {
+  const base = normalizeEngineAddr(engineAddr)
+  const res = await fetch(engineUrlWithToken(base, '/grade/audit-tags/apply', token), {
+    method: 'POST', headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(payload),
+  })
+  return (await res.json().catch(() => ({ ok: false, error: '引擎返回非 JSON' })))
+}
+
+/** GET /grade/audit-tags?history=1：列出可撤销的快照历史副本。 */
+export async function fetchTagAuditHistory(
+  engineAddr: string, token: string | undefined,
+  scope: { classDir: string; packId: string },
+): Promise<{ ok?: boolean; history?: Array<{ file: string; at: string; reason: string
+  snapshotSource?: string; count: number }>; error?: string }> {
+  const base = normalizeEngineAddr(engineAddr)
+  const qs = new URLSearchParams({ classDir: scope.classDir, packId: scope.packId, history: '1' })
+  return (await getJson2(engineUrlWithToken(base, `/grade/audit-tags?${qs}`, token))) as
+    { ok?: boolean; history?: Array<{ file: string; at: string; reason: string
+      snapshotSource?: string; count: number }>; error?: string }
+}
+
+/** POST /grade/audit-tags/undo：撤销（从历史副本恢复快照）。 */
+export async function undoTagAudit(
+  engineAddr: string, token: string | undefined,
+  payload: { classDir: string; packId: string; file?: string },
+): Promise<{ ok?: boolean; error?: string; restoredFrom?: string; count?: number }> {
+  const base = normalizeEngineAddr(engineAddr)
+  const res = await fetch(engineUrlWithToken(base, '/grade/audit-tags/undo', token), {
+    method: 'POST', headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(payload),
+  })
+  return (await res.json().catch(() => ({ ok: false, error: '引擎返回非 JSON' })))
+}
+
 /** POST /xxt/grade/draft：保存单个学生的人工批阅草稿（本地文件，非平台写操作）。 */
 export async function saveXxtGradeDraft(
   engineAddr: string, token: string | undefined,
@@ -1497,7 +1599,10 @@ export async function saveRosterToEngine(
   payload: { classDir: string; students: Array<{ name: string; number?: string
     class?: string; tag?: string }>
     /** D124：班级名（RosterClass.name）与班级 id，供引擎体检比对目录名 */
-    className?: string; classId?: string },
+    className?: string; classId?: string
+    /** D172：当前关联的作业包 id —— 引擎据此把 roster 历史副本命名为
+     *  `roster/history/roster__<packId>__<ts>.xlsx`（tag 随包变动，需可回溯） */
+    packId?: string },
 ): Promise<{ ok?: boolean; path?: string; count?: number; error?: string }> {
   const base = normalizeEngineAddr(engineAddr)
   const res = await fetch(engineUrlWithToken(base, '/roster/write', token), {

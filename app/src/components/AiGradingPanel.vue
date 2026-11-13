@@ -11,6 +11,7 @@ import {
   extractJobError, fetchLlmConfig, fetchXxtClassMap, fetchXxtGradeDrafts, fetchXxtLoginJob,
   fetchXxtReviewIndex, fetchXxtReviewStudents, postLlmProvider, postXxtClassMap,
   startXxtGradeAi, startXxtGradeUpload, renderReportsFromDrafts, testLlmStages,
+  applyTagAudit, fetchTagAudit, fetchTagAuditHistory, runTagAudit, undoTagAudit,
 } from '../lib/engineClient'
 
 import { usePackStore } from '../stores/packs'
@@ -260,6 +261,175 @@ const drafts = ref<Record<string, any>>({})
 /** D171-T8: name -> tag, from roster/snapshot; used to tell "new" from "unassigned". */
 const rosterTagByName = ref<Record<string, string> | null>(null)
 
+/* ---------------- D172：tag 审计（纯 Python，不调模型） ----------------
+ * 「审计 tag」= 从**学生转写里的题干**反推他实际做的是包内哪张作业纸 → 实际 tag；
+ * 与 roster 关联的 tag 比对，不一致的行**高亮**，教师确认后可逐人/批量应用。
+ * 审计是**独立工序**：不阻断批阅、不自动重批、不改任何东西（除教师点「应用」）。 */
+const auditBusy = ref(false)
+const auditMsg = ref('')
+const auditRow = ref<Record<string, any>>({})   // name -> audit row
+const auditDetail = ref<any>(null)               // 当前打开明细的学生
+const auditOnlyBad = ref(false)                  // 只看不一致
+const auditChecked = ref<Record<string, boolean>>({})  // 批量应用勾选
+const auditMeta = ref<{ generatedAt?: string; engine?: string; rosterTagSource?: string
+  skipped?: Array<{ name: string; reason: string }> } | null>(null)
+
+/** 审计候选集 = **当前作业包内**的作业纸（教师 D2：不跨包）。 */
+function auditPads() {
+  const list = packId.value ? packPads.value : pads.value.filter((p) => p.id === padId.value)
+  const out: Array<{ padId: string; tag: string; questions: Array<{ no: string; content: string }> }> = []
+  for (const p of list) {
+    let tp: any = null
+    try { tp = JSON.parse((p as any).json || '') } catch { tp = null }
+    if (!tp) continue
+    out.push({
+      padId: String((p as any).id || tp.id || ''),
+      tag: String(tp.target_tag || (p as any).tag || ''),
+      questions: (tp.items || []).map((it: any) => ({
+        no: String(it.no ?? ''), content: String(it.content ?? ''),
+      })),
+    })
+  }
+  return out
+}
+
+async function loadAudit() {
+  const w = curWork.value
+  const pid = packId.value || padId.value
+  if (!w || !pid || !curWorkDir.value) { auditRow.value = {}; return }
+  try {
+    const r = await fetchTagAudit(props.engineAddr, props.token,
+                                  { classDir: curWorkDir.value, packId: pid })
+    if (r?.missing || !r?.ok) { auditRow.value = {}; auditMeta.value = null; return }
+    const m: Record<string, any> = {}
+    for (const s of r.students || []) m[s.name] = s
+    auditRow.value = m
+    auditMeta.value = { generatedAt: r.generatedAt, engine: r.engine,
+                        rosterTagSource: r.rosterTagSource,
+                        skipped: r.skippedNotTranscribed }
+  } catch { auditRow.value = {} }
+}
+
+async function runAuditNow() {
+  const w = curWork.value
+  const pid = packId.value || padId.value
+  if (!w) { auditMsg.value = '⚠ 请先在 ③ 区选择作业（作业包/作业纸）'; return }
+  if (!curWorkDir.value) { auditMsg.value = '⚠ 请先关联本地班级目录'; return }
+  const pads2 = auditPads()
+  if (!pads2.length) { auditMsg.value = '⚠ 当前作业包没有可用作业纸题目（无法比对）'; return }
+  if (!confirm(`将审计「${pid}」内的作答与作业纸题目比对（纯本地计算，**不调用模型**）。\n\n只比对当前作业包内的 ${pads2.length} 张作业纸；未转写的学生会被跳过。继续？`)) return
+  auditBusy.value = true; auditMsg.value = '⏳ 审计中…'
+  try {
+    const r = await runTagAudit(props.engineAddr, props.token,
+                                { classDir: curWorkDir.value, packId: pid, pads: pads2 })
+    if (r?.ok === false) { auditMsg.value = `❌ 审计失败：${r.error || '未知错误'}`; return }
+    await loadAudit()
+    const sum = r.summary || { match: 0, mismatch: 0, unknown: 0 }
+    const skip = (r.skippedNotTranscribed || []).length
+    auditMsg.value = `✅ 审计完成：一致 ${sum.match} · 不一致 ${sum.mismatch} · 无法判定 ${sum.unknown}`
+      + (skip ? ` · 未转写跳过 ${skip}` : '')
+  } catch (e) {
+    auditMsg.value = `❌ 审计失败：${String((e as Error).message || e)}`
+  } finally { auditBusy.value = false }
+}
+
+function auditOf(s: { name?: string }): any { return auditRow.value[String(s.name || '')] || null }
+
+/** 审计单元格展示（与 tag 列并列的「检查」列）。 */
+function auditCell(s: { name?: string }): { text: string; color: string; cls: string; why: string } {
+  const a = auditOf(s)
+  if (!a) {
+    const sk = auditMeta.value?.skipped?.find((x) => x.name === s.name)
+    if (sk) return { text: '未转写', color: '#9ca3af', cls: 'aud-notrans', why: sk.reason }
+    return { text: '—', color: '#9ca3af', cls: '', why: '尚未审计：点列头「运行审计」' }
+  }
+  if (a.linkMissing?.length && a.verdict === 'unknown') {
+    return { text: '?', color: '#6b7280', cls: 'aud-unknown', why: a.reason || '题干缺失' }
+  }
+  if (a.verdict === 'mismatch') {
+    return { text: `${a.auditTag ?? '?'} ⚠️`, color: '#b91c1c', cls: 'aud-bad', why: a.reason || '' }
+  }
+  if (a.verdict === 'match') {
+    return { text: `✓ ${a.auditTag ?? ''}`, color: '#15803d', cls: 'aud-ok', why: a.reason || '' }
+  }
+  return { text: `? ${a.auditTag || ''}`.trim(), color: '#6b7280', cls: 'aud-unknown', why: a.reason || '' }
+}
+
+/** 不一致行整行高亮（教师要求：方便检查）。 */
+function auditRowClass(s: { name?: string }): string {
+  const a = auditOf(s)
+  if (!a) return ''
+  return a.verdict === 'mismatch' ? 'row-audit-bad' : ''
+}
+
+const auditRows = computed(() => {
+  if (!auditOnlyBad.value) return students.value
+  return students.value.filter((s) => auditOf(s)?.verdict === 'mismatch')
+})
+
+/** 可批量勾选：只有 mismatch 且 high 置信默认允许。 */
+function auditSelectable(s: { name?: string }): boolean {
+  const a = auditOf(s)
+  return !!a && a.verdict === 'mismatch' && a.confidence === 'high'
+}
+
+async function applyAuditOne(s: { name?: string }) {
+  const a = auditOf(s)
+  if (!a || !a.auditTag) return
+  await applyAuditChanges([{ name: String(s.name || ''), tag: String(a.auditTag) }])
+}
+
+async function applyAuditChecked() {
+  const changes = students.value
+    .filter((s) => auditChecked.value[String(s.name || '')])
+    .map((s) => ({ name: String(s.name || ''), tag: String(auditOf(s)?.auditTag || '') }))
+    .filter((c) => c.tag)
+  if (!changes.length) { auditMsg.value = '⚠ 没有勾选可应用的行'; return }
+  await applyAuditChanges(changes)
+}
+
+async function applyAuditChanges(changes: Array<{ name: string; tag: string }>) {
+  const w = curWork.value
+  const pid = packId.value || padId.value
+  if (!w || !pid) return
+  const desc = changes.map((c) => `${c.name}：${auditOf({ name: c.name })?.rosterTag || '?'} → ${c.tag}`).join('\n')
+  if (!confirm(`将修改 ${changes.length} 名学生的 tag（**这是改历史**，会自动保存可撤销的历史副本）：\n\n${desc}\n\n`
+    + `· 已批阅结果**不会**自动重算；\n· 需要重批请在行内点「转写+批阅」。继续？`)) return
+  auditBusy.value = true; auditMsg.value = '⏳ 正在应用…'
+  try {
+    const r = await applyTagAudit(props.engineAddr, props.token,
+                                  { classDir: curWorkDir.value, packId: pid, changes })
+    if (r?.ok === false) { auditMsg.value = `❌ 应用失败：${r.error || '未知错误'}`; return }
+    const n = (r.applied || []).length
+    auditMsg.value = n
+      ? `✅ 已改 ${n} 人；历史副本已存（可撤销）。建议对这些学生重新「转写+批阅」。`
+      : `ℹ️ 没有变化（${r.written ? '' : '值与现状相同，未写盘'}）`
+    await loadStudents(); await loadAudit()
+  } catch (e) {
+    auditMsg.value = `❌ 应用失败：${String((e as Error).message || e)}`
+  } finally { auditBusy.value = false }
+}
+
+async function undoAudit() {
+  const pid = packId.value || padId.value
+  if (!curWork.value || !pid || !curWorkDir.value) return
+  try {
+    const h = await fetchTagAuditHistory(props.engineAddr, props.token,
+                                         { classDir: curWorkDir.value, packId: pid })
+    const list = h.history || []
+    if (!list.length) { auditMsg.value = 'ℹ️ 没有可撤销的历史副本'; return }
+    const pick = list[0]!
+    const label = `${pick.at}（${pick.snapshotSource || pick.reason}）`
+    if (!confirm(`撤销到最近一次修改**之前**的状态？\n\n副本：${label}\n\n`
+      + `撤销前会自动保存当前状态，所以撤销本身也可再撤销。继续？`)) return
+    const r = await undoTagAudit(props.engineAddr, props.token,
+                                 { classDir: curWorkDir.value, packId: pid, file: pick.file })
+    if (r?.ok === false) { auditMsg.value = `❌ 撤销失败：${r.error}`; return }
+    auditMsg.value = `✅ 已撤销（从 ${pick.file} 恢复，共 ${r.count ?? '?'} 人）`
+    await loadStudents(); await loadAudit()
+  } catch (e) { auditMsg.value = `❌ 撤销失败：${String((e as Error).message || e)}` }
+}
+
 // D89：优先按"作业包"选择（一次分层作业的全部作业纸）；包内每张按 tag 自动匹配学生
 const packPads = computed(() => {
   const cur = packStore.packs.find((p) => p.id === packId.value)
@@ -357,6 +527,8 @@ async function loadStudents() {
     // 由下面的 watch(tagOptions) 负责"首次就绪时默认全选"。
   } catch (e) { msg.value = `读取学生/草稿失败：${String(e)}` }
   finally { studentsLoading.value = false }
+  // D172：随学生清单一起刷新审计结果（没有审计文件时静默为空）
+  await loadAudit()
 }
 function classDirFor(w: { courseId: string; classId: string }): string {
   return classMap.value[`${w.courseId}:${w.classId}`] || classDir.value[`${w.courseId}:${w.classId}`] || ''
@@ -1032,18 +1204,50 @@ onMounted(async () => {
     </div>
 
     <div v-if="students.length" class="review-list-scroll">
+      <div class="audit-bar">
+        <button class="btn small" :disabled="auditBusy || !curWork || !curWorkDir"
+                :title="'用转写里的题干反推实际 tag（纯本地计算，不调模型）'"
+                @click="runAuditNow()">🛡 {{ auditBusy ? '审计中…' : '运行 tag 审计' }}</button>
+        <button v-if="auditMeta?.generatedAt" class="btn small" :disabled="auditBusy"
+                title="从历史副本恢复（撤销前会自动保存当前状态）"
+                @click="undoAudit()">↩ 撤销上次审计修改</button>
+        <button v-if="auditMeta?.generatedAt" class="btn small" :disabled="auditBusy"
+                @click="applyAuditChecked()">应用勾选的审计 tag</button>
+        <label v-if="auditMeta?.generatedAt" class="hint" style="margin:0">
+          <input v-model="auditOnlyBad" type="checkbox" /> 只看不一致
+        </label>
+        <span class="hint" style="margin:0" :title="auditMeta?.engine || ''">
+          <template v-if="auditMsg">{{ auditMsg }}</template>
+          <template v-else-if="auditMeta?.generatedAt">
+            审计于 {{ auditMeta.generatedAt }}（tag 依据：{{ auditMeta.rosterTagSource === 'snapshot' ? '包快照（已冻结）' : '当前 roster' }}）
+          </template>
+          <template v-else>未审计 · 审计只比对当前作业包内的作业纸题目</template>
+        </span>
+      </div>
       <table class="review-list-table">
         <thead>
           <tr>
-            <th style="text-align:left">学生</th><th>tag</th><th>AI 状态</th>
+            <th style="text-align:left">学生</th><th>tag</th>
+            <th title="用转写题目反推的实际 tag（与左列不一致会整行高亮）">🛡 审计 tag</th>
+            <th>AI 状态</th>
             <th>AI 分</th><th>人工</th><th>报告模式</th><th>操作</th>
           </tr>
         </thead>
         <tbody>
-          <tr v-for="(s, i) in students" :key="s.key">
-            <td>{{ s.name }}</td>
+          <tr v-for="(s, i) in auditRows" :key="s.key" :class="auditRowClass(s)">
+            <td>
+              <input v-if="auditSelectable(s)" type="checkbox"
+                     :checked="!!auditChecked[String(s.name || '')]"
+                     :title="'勾选后可批量应用审计 tag'"
+                     @change="auditChecked[String(s.name || '')] = ($event.target as HTMLInputElement).checked" />
+              {{ s.name }}
+            </td>
             <td class="c" :title="tagMark(s).why">
               <span :style="{ color: tagMark(s).color }">{{ tagMark(s).text || '—' }}</span>
+            </td>
+            <td class="c" :class="auditCell(s).cls" :title="auditCell(s).why">
+              <span :style="{ color: auditCell(s).color, cursor: auditOf(s) ? 'pointer' : 'default' }"
+                    @click="auditDetail = auditOf(s)">{{ auditCell(s).text }}</span>
             </td>
             <td class="c">
               <b :style="{ color: aiState(s).color }">{{ aiState(s).label }}</b>
@@ -1134,6 +1338,63 @@ onMounted(async () => {
       @notify="(m) => { progress = String(m) }"
     />
 
+    <!-- D172：审计明细（逐题对照 + 应用审计 tag） -->
+    <div v-if="auditDetail" class="mask" @click.self="auditDetail = null">
+      <div class="dlg audit-dlg">
+        <h4 style="margin:0 0 8px">🛡 tag 审计明细 —— {{ auditDetail.name }}</h4>
+        <table class="audit-three">
+          <tr><th>roster tag</th><th>当前 roster</th><th>实际（审计）tag</th></tr>
+          <tr>
+            <td>{{ auditDetail.rosterTag ?? '—' }}
+              <span class="hint" style="display:block;font-size:11px">
+                {{ auditDetail.rosterTagSource === 'snapshot' ? '来自包快照（冻结）' : '来自当前 roster' }}
+              </span>
+            </td>
+            <td>{{ auditDetail.currentRosterTag ?? '—' }}</td>
+            <td :style="{ color: auditDetail.verdict === 'mismatch' ? '#b91c1c' : '#15803d',
+                          fontWeight: 600 }">
+              {{ auditDetail.auditTag ?? '?' }}
+              <span class="hint" style="display:block;font-size:11px">
+                得分 {{ auditDetail.score }} · 领先 {{ auditDetail.margin }} · 置信 {{ auditDetail.confidence }}
+              </span>
+            </td>
+          </tr>
+        </table>
+        <p class="hint" style="margin:8px 0">{{ auditDetail.reason }}</p>
+        <div v-if="auditDetail.linkMissing?.length" class="hint" style="color:#b45309">
+          第 {{ auditDetail.linkMissing.join('、') }} 题没找到题干（未抄题/OCR 丢失），未计入比对。
+        </div>
+        <table v-if="auditDetail.pairs?.length" class="audit-pairs">
+          <thead><tr><th>学生题号</th><th>作业纸题号</th><th>相似度</th></tr></thead>
+          <tbody>
+            <tr v-for="(p2, k) in auditDetail.pairs" :key="k">
+              <td>{{ p2.no }}</td><td>{{ p2.paperNo }}</td>
+              <td :style="{ color: p2.score >= 0.75 ? '#15803d' : p2.score >= 0.45 ? '#a16207' : '#b91c1c' }">
+                {{ (p2.score * 100).toFixed(1) }}%
+              </td>
+            </tr>
+          </tbody>
+        </table>
+        <div v-if="auditDetail.alternatives?.length" class="hint" style="margin-top:8px">
+          次可能：<span v-for="(a2, k) in auditDetail.alternatives" :key="k">
+            {{ a2.tag }}（{{ (a2.score * 100).toFixed(1) }}%）<span v-if="k < auditDetail.alternatives.length - 1"> · </span>
+          </span>
+        </div>
+        <div v-if="auditDetail.resolution" class="hint" style="margin-top:8px;color:#15803d">
+          已由教师应用：{{ auditDetail.resolution.from }} → {{ auditDetail.resolution.to }}
+          （{{ auditDetail.resolution.at }}）
+        </div>
+        <div class="audit-actions">
+          <button v-if="auditDetail.auditTag && auditDetail.verdict === 'mismatch'"
+                  class="btn small primary" :disabled="auditBusy"
+                  @click="applyAuditOne({ name: auditDetail.name }); auditDetail = null">
+            应用审计 tag（{{ auditDetail.auditTag }}）
+          </button>
+          <button class="btn small" @click="auditDetail = null">关闭</button>
+        </div>
+      </div>
+    </div>
+
     <PlaygroundPanel :engine-addr="props.engineAddr" :token="props.token" />
 
 </template>
@@ -1174,4 +1435,22 @@ onMounted(async () => {
 }
 .review-list-table tbody tr:hover { background: var(--c-bg-soft, #f8fafc); }
 .review-list-table td.c { text-align: center; }
+
+/* D172：tag 审计 */
+.audit-bar { display: flex; gap: 8px; align-items: center; flex-wrap: wrap;
+             margin: 6px 0; padding: 6px 8px; background: #f8fafc;
+             border: 1px dashed var(--c-border); border-radius: 8px; }
+/* 不一致行整行高亮（教师要求：方便检查） */
+.review-list-table tbody tr.row-audit-bad { background: #fef2f2; }
+.review-list-table tbody tr.row-audit-bad:hover { background: #fee2e2; }
+.review-list-table tbody tr.row-audit-bad td:first-child {
+  box-shadow: inset 3px 0 0 #dc2626;
+}
+.audit-dlg { width: min(720px, 94vw); max-height: 86vh; overflow: auto; }
+.audit-three, .audit-pairs { width: 100%; border-collapse: collapse; margin-top: 6px; }
+.audit-three th, .audit-three td, .audit-pairs th, .audit-pairs td {
+  border: 1px solid var(--c-border); padding: 5px 8px; font-size: 13px; text-align: center; }
+.audit-three th { background: #eef2ff; }
+.audit-pairs th { background: #f1f5f9; }
+.audit-actions { display: flex; gap: 8px; justify-content: flex-end; margin-top: 12px; }
 </style>
