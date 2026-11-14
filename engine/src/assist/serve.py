@@ -1088,11 +1088,14 @@ class Handler(BaseHTTPRequestHandler):
             pack_id = str(payload.get("packId") or "").strip()
             try:
                 if u.path.endswith("/run"):
-                    pads = payload.get("pads") or []
+                    # taskpads=原样（推荐，题干由引擎解析）；pads=已含题干（兼容）
+                    taskpads = payload.get("taskpads") or None
+                    pads = payload.get("pads") or None
                     cfg = payload.get("cfg") or None
                     students = payload.get("students") or None
                     rep = _ta.run_audit(ws_, class_dir=class_dir, pack_id=pack_id,
-                                        pads=pads, students=students, cfg=cfg)
+                                        pads=pads, taskpads=taskpads,
+                                        students=students, cfg=cfg)
                 elif u.path.endswith("/apply"):
                     rep = _ta.apply_audit_tags(
                         ws_, class_dir=class_dir, pack_id=pack_id,

@@ -637,3 +637,66 @@ def test_verify_review_names_clean(tmp_path, monkeypatch):
     monkeypatch.setattr(inputs, "review_dir_for", lambda c, w: d)
     rep = inputs.verify_review_names("c", "w")
     assert not rep["onlyInFilenames"] and not rep["unparsable"] and not rep["onlyInManifest"]
+
+
+# ---------------- 真实形状回归（教师实测 bug：全班 unknown） ----------------
+# 根因：taskpad.items[] **只存 {kb,chap,ids,tag}，没有题干**；
+# 此前前端/CLI 把 taskpad 当 questions 传 → 每张纸题目为空 → 全班 unknown。
+# 下面用**真实 xlsx 题库 + 真实 taskpad** 走一遍，防止再犯。
+
+def _real_ws(tmp_path: Path) -> Path:
+    from assist.files.kb_io import write_xlsx
+    (tmp_path / "kb").mkdir(parents=True, exist_ok=True)
+    write_xlsx(tmp_path / "kb" / "problems.xlsx", {
+        "chap10basic": [{"id": i, "content": c, "solution": "略"} for i, c in BASE_QS],
+        "chap10mid": [{"id": i, "content": c, "solution": "略"} for i, c in MID_QS],
+    })
+    d = tmp_path / CLASS / "grading" / PACK / "transcripts"
+    d.mkdir(parents=True, exist_ok=True)
+    (d / "张三.json").write_text(json.dumps(_transcript(MID_QS), ensure_ascii=False),
+                                encoding="utf-8")
+    from assist.grading import snapshots as S
+    S.write_tags_snapshot(tmp_path, CLASS, PACK,
+                          [{"name": "张三", "number": "1", "tag": "基础"}])
+    return tmp_path
+
+
+REAL_TASKPADS = [
+    {"id": "pd-base", "target_tag": "基础", "numbering": "auto",
+     # 注：write_xlsx 会给题号补章节前缀 → 题库里实际是 `chap10basic-1` 等
+     "items": [{"kb": "problems", "chap": "chap10basic", "tag": "基础",
+                "ids": ["chap10basic-1", "chap10basic-2", "chap10basic-3"]}]},
+    {"id": "pd-mid", "target_tag": "提高", "numbering": "auto",
+     "items": [{"kb": "problems", "chap": "chap10mid", "tag": "提高",
+                "ids": ["chap10mid-1", "chap10mid-2", "chap10mid-3"]}]},
+]
+
+
+def test_taskpads_resolve_stems_from_kb(tmp_path):
+    """taskpad 原样 → 能从题库解析出题干（这是修复的核心）。"""
+    ws = _real_ws(tmp_path)
+    papers = T.papers_from_taskpads(ws, REAL_TASKPADS)
+    assert len(papers) == 2
+    assert all(len(p["questions"]) == 3 for p in papers)
+    assert "1.52" in papers[0]["questions"][0]["stem"]
+    assert "2.03" in papers[1]["questions"][0]["stem"]
+
+
+def test_run_audit_with_taskpads_is_not_unknown(tmp_path):
+    """教师实测 bug 的回归：传 taskpad 必须能判出 mismatch，而不是全班 unknown。"""
+    ws = _real_ws(tmp_path)
+    rep = T.run_audit(ws, class_dir=CLASS, pack_id=PACK, taskpads=REAL_TASKPADS)
+    row = rep["students"][0]
+    assert row["auditTag"] == "提高"
+    assert row["verdict"] == "mismatch"
+    assert row["confidence"] == "high"
+    assert rep["papersWithoutQuestions"] == []
+
+
+def test_run_audit_diagnoses_empty_papers(tmp_path):
+    """旧错误路径（把 taskpad 当 questions）必须给出**可读原因**，不能只留一片灰。"""
+    ws = _real_ws(tmp_path)
+    rep = T.run_audit(ws, class_dir=CLASS, pack_id=PACK, pads=REAL_TASKPADS, write=False)
+    assert rep["summary"]["unknown"] == 1
+    assert rep["papersWithoutQuestions"] == ["pd-base", "pd-mid"]
+    assert "题干" in rep["hint"]

@@ -50,6 +50,8 @@ for (const fn of ['fetchTagAudit', 'runTagAudit', 'applyTagAudit',
   if (!new RegExp(fn).test(panel)) errors.push(`面板未调用 ${fn}`)
 }
 
+const tagAudit = readFileSync(join(repoRoot, 'engine/src/assist/grading/tag_audit.py'), 'utf8')
+
 // 6) 引擎路由位置：GET 必须在 do_GET 内，POST 在 do_POST 内
 const getStart = serve.indexOf('def do_GET(self)')
 const getEnd = serve.length
@@ -68,8 +70,19 @@ if (/elif u\.path == "\/grade\/audit-tags":/.test(postBody)) {
   errors.push('/grade/audit-tags（只读）不应出现在 do_POST')
 }
 
+// 6b) 关键回归（教师实测 bug）：前端**不得**把 taskpad 拼成 questions 传给引擎
+if (/function auditPads/.test(panel)) errors.push('auditPads() 已废弃：taskpad 没有题干，必须传 taskpads')
+if (!/function auditTaskpads/.test(panel)) errors.push('缺少 auditTaskpads()（传 taskpad 原样给引擎）')
+if (!/taskpads: tps/.test(panel)) errors.push('runTagAudit 必须传 taskpads（题干由引擎从题库解析）')
+// 引擎侧必须真有解析入口
+if (!/def papers_from_taskpads/.test(tagAudit)) {
+  errors.push('引擎缺少 papers_from_taskpads（taskpad → 题库题干）')
+}
+if (/qs\.push\(\{[^}]*content: String\(it\.content/.test(panel)) {
+  errors.push('前端仍在从 taskpad.items 读 content（taskpad 没有该字段）')
+}
+
 // 7) 审计不调模型
-const tagAudit = readFileSync(join(repoRoot, 'engine/src/assist/grading/tag_audit.py'), 'utf8')
 if (/LLMClient|import.*\bllm\b\s*$/.test(tagAudit.replace(/from \. import.*/g, ''))) {
   errors.push('tag_audit.py 不得引入 LLM（教师 D2b：纯编程）')
 }

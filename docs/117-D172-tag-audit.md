@@ -575,3 +575,69 @@ POST /grade/audit-tags/apply  { classDir, packId, students:[{name, tag}] }
 ### 13.4 版本
 
 `engine` / `app` → **0.6.0**（按 `docs/114-versioning.md`）。
+
+
+---
+
+## 14. 🔴 教师实测反馈修复（2026-11-06 晚）
+
+### 14.1 现象
+
+> 运行审计 tag 之后，返回**全部均为无法判定**，怎么回事？
+
+### 14.2 根因（我的实现错误，非算法问题）
+
+`taskpad.items[]` **只存 `{kb, chap, ids, tag, labels}`，不存题干**：
+
+```ts
+// app/src/lib/taskpad.ts
+export interface TaskpadItem { kb: string; chap: string; ids: string[]; tag: string }
+```
+
+题干只存在于**题库**（`kb/*.xlsx` 的 content 列），要经
+`paper.task.resolve_items_with_ids(kb_data, items, ...)` 展开才拿得到。
+
+而我上一轮的实现里，前端 `auditPads()` 直接遍历 `tp.items` 读 `it.content` ——
+**该字段永远不存在** → 每张作业纸的 `questions` 都是空数组 →
+`audit_student()` 里 `if not papers` 分支在**单张纸层面**不触发（因为 papers 非空），
+而是走到 `best_assignment()` 对空题集打分 = 0 → 全部 `low` → 全部 `unknown`。
+
+> 为什么单测没抓到：测试里的 `PADS` 是我手造的
+> `{padId, tag, questions:[{no, content}]}`，**恰好带了题干**。
+> 真实 taskpad 里没有这个字段。**这是我测试构造失真导致的漏测。**
+
+### 14.3 修复
+
+| 层 | 改动 |
+|---|---|
+| 引擎 | 新增 `papers_from_taskpads(ws, taskpads)`：读 `kb/` → `resolve_items_with_ids` → 带 `no/qid/stem` 的题目；`run_audit(..., taskpads=)` 新入口 |
+| 前端 | `auditPads()` 删除，改为 `auditTaskpads()`：**taskpad 原样**传给引擎（不再自己拼题目） |
+| 接口 | `POST /grade/audit-tags/run` 接受 `taskpads`（推荐）与 `pads`（兼容已含题干） |
+| CLI | `--pads` 自动识别：含 `items[]` → taskpads；含 `questions[]` → pads；缺省读 `<ws>/tasks/` |
+| 诊断 | `audit.json` 新增 `papersWithoutQuestions`；全班 unknown 时返回可读 `hint` |
+
+### 14.4 修复后实测
+
+**真实 xlsx 题库 + 真实 taskpad 形状 + 含 OCR 噪声的转写**：
+
+| 路径 | summary | 结论 |
+|---|---|---|
+| `taskpads`（修复后） | `mismatch=1` | 张三：roster=基础 / audit=提高 / **high** / 0.9865 ✅ |
+| `pads=taskpad`（旧错误路径） | `unknown=1` | 不再静默：`hint`="作业纸都没有题目：taskpad 只存题号、题干在题库里…" ✅ |
+
+### 14.5 新增回归测试（3 项）
+
+| 测试 | 防的是什么 |
+|---|---|
+| `test_taskpads_resolve_stems_from_kb` | taskpad 能解析出题干（且断言题库 id 带章节前缀口径） |
+| `test_run_audit_with_taskpads_is_not_unknown` | **教师实测 bug 的直接回归**：不得全班 unknown |
+| `test_run_audit_diagnoses_empty_papers` | 空题纸必须给可读原因，不能一片灰 |
+
+另加 selfcheck 断言：前端**不得**出现 `auditPads()` / 从 `taskpad.items` 读 `content`。
+
+> 顺带固定一个易错口径：`write_xlsx` 会给题号补**章节前缀**（`10-1` → `chap10basic-1`），
+> taskpad 里的 `ids` 必须用带前缀的写法，否则解析出 0 题（已写入日志与 hint 提示）。
+
+### 14.6 门禁
+
+pytest **1558**（+3）· build 0 error · selfcheck **40/40** · 脱敏/bat 通过

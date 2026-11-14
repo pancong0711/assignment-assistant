@@ -881,7 +881,10 @@ export async function fetchTagAudit(
 export async function runTagAudit(
   engineAddr: string, token: string | undefined,
   payload: { classDir: string; packId: string
-    pads: Array<{ padId: string; tag: string; questions: Array<{ no: string; content: string }> }>
+    /** taskpad 原样（题干由**引擎**从题库解析；前端不拼题目） */
+    taskpads?: any[]
+    /** 已含题干的作业纸（CLI/测试用） */
+    pads?: Array<{ padId: string; tag: string; questions: Array<{ no: string; content: string }> }>
     students?: string[]; cfg?: Record<string, number> },
 ): Promise<TagAuditReport> {
   const base = normalizeEngineAddr(engineAddr)

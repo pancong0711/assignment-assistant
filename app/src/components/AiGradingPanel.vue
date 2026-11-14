@@ -274,21 +274,20 @@ const auditChecked = ref<Record<string, boolean>>({})  // 批量应用勾选
 const auditMeta = ref<{ generatedAt?: string; engine?: string; rosterTagSource?: string
   skipped?: Array<{ name: string; reason: string }> } | null>(null)
 
-/** 审计候选集 = **当前作业包内**的作业纸（教师 D2：不跨包）。 */
-function auditPads() {
+/** 审计候选集 = **当前作业包内**的作业纸（教师 D2：不跨包）。
+ *
+ * ⚠️ D172 修复：**必须传 taskpad 原样**，不能自己拼 `questions`。
+ * `taskpad.items[]` 只有 `{kb, chap, ids, tag}`，**没有题干**——题干在题库里，
+ * 由引擎用 `paper.task.resolve_items_with_ids` 从 `kb/` 解析（此前前端误把
+ * taskpad 当题目传，导致全班审计结果恒为 unknown）。 */
+function auditTaskpads() {
   const list = packId.value ? packPads.value : pads.value.filter((p) => p.id === padId.value)
-  const out: Array<{ padId: string; tag: string; questions: Array<{ no: string; content: string }> }> = []
+  const out: any[] = []
   for (const p of list) {
     let tp: any = null
     try { tp = JSON.parse((p as any).json || '') } catch { tp = null }
-    if (!tp) continue
-    out.push({
-      padId: String((p as any).id || tp.id || ''),
-      tag: String(tp.target_tag || (p as any).tag || ''),
-      questions: (tp.items || []).map((it: any) => ({
-        no: String(it.no ?? ''), content: String(it.content ?? ''),
-      })),
-    })
+    if (!tp || !Array.isArray(tp.items) || !tp.items.length) continue
+    out.push({ ...tp, id: String((p as any).id || tp.id || '') })
   }
   return out
 }
@@ -315,19 +314,20 @@ async function runAuditNow() {
   const pid = packId.value || padId.value
   if (!w) { auditMsg.value = '⚠ 请先在 ③ 区选择作业（作业包/作业纸）'; return }
   if (!curWorkDir.value) { auditMsg.value = '⚠ 请先关联本地班级目录'; return }
-  const pads2 = auditPads()
-  if (!pads2.length) { auditMsg.value = '⚠ 当前作业包没有可用作业纸题目（无法比对）'; return }
-  if (!confirm(`将审计「${pid}」内的作答与作业纸题目比对（纯本地计算，**不调用模型**）。\n\n只比对当前作业包内的 ${pads2.length} 张作业纸；未转写的学生会被跳过。继续？`)) return
+  const tps = auditTaskpads()
+  if (!tps.length) { auditMsg.value = '⚠ 当前作业包没有可用作业纸（无法比对）'; return }
+  if (!confirm(`将审计「${pid}」内的作答与作业纸题目比对（纯本地计算，**不调用模型**）。\n\n只比对当前作业包内的 ${tps.length} 张作业纸；未转写的学生会被跳过。继续？`)) return
   auditBusy.value = true; auditMsg.value = '⏳ 审计中…'
   try {
     const r = await runTagAudit(props.engineAddr, props.token,
-                                { classDir: curWorkDir.value, packId: pid, pads: pads2 })
+                                { classDir: curWorkDir.value, packId: pid, taskpads: tps })
     if (r?.ok === false) { auditMsg.value = `❌ 审计失败：${r.error || '未知错误'}`; return }
     await loadAudit()
     const sum = r.summary || { match: 0, mismatch: 0, unknown: 0 }
     const skip = (r.skippedNotTranscribed || []).length
     auditMsg.value = `✅ 审计完成：一致 ${sum.match} · 不一致 ${sum.mismatch} · 无法判定 ${sum.unknown}`
       + (skip ? ` · 未转写跳过 ${skip}` : '')
+      + ((r as any).hint ? ` —— ${(r as any).hint}` : '')
   } catch (e) {
     auditMsg.value = `❌ 审计失败：${String((e as Error).message || e)}`
   } finally { auditBusy.value = false }

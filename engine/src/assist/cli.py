@@ -3083,51 +3083,50 @@ def grading_audit_tags(obj, class_dir, pack_id, pads_json, students, min_score, 
     """
     from .grading import tag_audit as TA
     ws = _setup(verbose or obj.get("verbose"), workspace)
-    pads = _load_audit_pads(ws, pack_id, pads_json)
+    taskpads, pads = _load_audit_pads(ws, pack_id, pads_json)
+    if not taskpads and not pads:
+        click.echo(json.dumps({"ok": False,
+                               "error": "当前作业包没有可用作业纸：请用 --pads 指定，"
+                                        "或确认 <ws>/tasks/ 下存在该包的 taskpad"},
+                              ensure_ascii=False, indent=1))
+        raise SystemExit(1)
     cfg = {k: v for k, v in (("minScore", min_score), ("marginMin", margin_min))
            if v is not None}
-    rep = TA.run_audit(ws, class_dir=class_dir, pack_id=pack_id, pads=pads,
+    rep = TA.run_audit(ws, class_dir=class_dir, pack_id=pack_id,
+                       pads=pads or None, taskpads=taskpads or None,
                        students=[x.strip() for x in str(students or "").split(",") if x.strip()],
                        cfg=cfg or None)
     click.echo(json.dumps(rep, ensure_ascii=False, indent=1))
     raise SystemExit(0 if rep.get("ok") else 1)
 
 
-def _load_audit_pads(ws, pack_id: str, pads_json: str) -> list[dict]:
-    """候选集：显式 --pads > 作业包引用 > <ws>/tasks/ 全量（同 tag 只取一张）。"""
-    from .grading.tag_audit import papers_of
+def _load_audit_pads(ws, pack_id: str, pads_json: str):
+    """候选集 → (taskpads, pads)。
+
+    - `--pads` 给的是 taskpad（含 `items[]`）→ 返回 taskpads，题干由引擎从题库解析；
+    - `--pads` 给的是已含 `questions[].content` 的作业纸 → 直接返回 pads；
+    - 缺省 → 读 `<ws>/tasks/*.taskpad.json`。
+    """
     if pads_json:
-        raw = json.loads(Path(pads_json).expanduser().read_text(encoding="utf-8")) \
-            if Path(pads_json).expanduser().is_file() else json.loads(pads_json)
-        out = []
-        for p in (raw if isinstance(raw, list) else [raw]):
-            if not isinstance(p, dict):
+        p = Path(pads_json).expanduser()
+        raw = json.loads(p.read_text(encoding="utf-8")) if p.is_file() else json.loads(pads_json)
+        taskpads, pads = [], []
+        for x in (raw if isinstance(raw, list) else [raw]):
+            if not isinstance(x, dict):
                 continue
-            if "questions" in p:
-                out.append(p)
-            elif isinstance(p.get("items"), list):     # taskpad 原样
-                qs = []
-                for it in p["items"]:
-                    if isinstance(it, dict):
-                        qs.append({"no": str(it.get("no") or ""),
-                                   "content": str(it.get("content") or "")})
-                out.append({"padId": str(p.get("id") or ""),
-                            "tag": str(p.get("target_tag") or ""), "questions": qs})
-        return papers_of(out)
-    # 从 <ws>/tasks 按包引用装配
+            if isinstance(x.get("items"), list):
+                taskpads.append(x)
+            elif isinstance(x.get("questions"), list):
+                pads.append(x)
+        return taskpads, pads
     from .files.taskpads import list_taskpads, read_taskpad
-    pads_dir = Path(ws) / "tasks"
-    out = []
-    for meta in list_taskpads(ws) if pads_dir.is_dir() else []:
+    taskpads = []
+    for meta in (list_taskpads(ws) if (Path(ws) / "tasks").is_dir() else []):
         pid = str(meta.get("id") or "")
         pad = read_taskpad(ws, pid) if pid else None
-        if not isinstance(pad, dict):
-            continue
-        out.append({"padId": pid, "tag": str(pad.get("target_tag") or ""),
-                    "questions": [{"no": str(it.get("no") or ""),
-                                   "content": str(it.get("content") or "")}
-                                  for it in (pad.get("items") or []) if isinstance(it, dict)]})
-    return papers_of(out)
+        if isinstance(pad, dict):
+            taskpads.append({**pad, "id": pid})
+    return taskpads, []
 
 
 @grading_grp.command("apply-audit-tags")

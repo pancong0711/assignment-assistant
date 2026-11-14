@@ -269,12 +269,56 @@ def best_assignment(student_stems: list[str], paper_stems: list[str],
 
 # ---------------- 面向流程的入口 ----------------
 
+def papers_from_taskpads(ws, taskpads: list[dict]) -> list[dict]:
+    """**taskpad 原样 → 作业纸题目**（从题库 `kb/` 解析题干）。
+
+    为什么必须这么做（D172 实测 bug）：`taskpad.items[]` 只存
+    `{kb, chap, ids, tag, labels}`，**不含题干**！此前 PWA/CLI 把 taskpad 直接当
+    「questions」传进来，读 `content` 永远拿不到 → 每张纸都是空题 → 审计全班
+    `unknown`。题干只在题库里，必须经 `paper.task.resolve_items_with_ids` 展开。
+
+    返回 [{padId, tag, questions:[{no, qid, stem}]}]
+    """
+    from ..files.kb_io import read_kb
+    from ..paper.task import resolve_items_with_ids
+    kb_dir = Path(ws) / "kb"
+    try:
+        kb_data = read_kb(kb_dir)
+    except Exception as exc:  # noqa: BLE001
+        logger.warning(f"[tag-audit] 读题库失败：{str(exc)[:120]}")
+        return []
+    out: list[dict] = []
+    for pad in taskpads or []:
+        if not isinstance(pad, dict):
+            continue
+        items = pad.get("items")
+        if not isinstance(items, list):
+            continue
+        tag = str(pad.get("target_tag") or "")
+        try:
+            rows = resolve_items_with_ids(kb_data, items, kb_dir,
+                                          numbering=str(pad.get("numbering") or "auto"),
+                                          seed=pad.get("seed"),
+                                          target_tag=tag)
+        except Exception as exc:  # noqa: BLE001 —— 单张失败不影响其余
+            logger.warning(f"[tag-audit] 解析作业纸 {pad.get('id')!r} 失败：{str(exc)[:120]}")
+            rows = []
+        qs = []
+        for (content, _img, _tag, no, qid) in rows:
+            qs.append({"no": str(no or ""), "qid": str(qid or ""),
+                       "stem": str(content or "")})
+        out.append({"padId": str(pad.get("id") or ""), "tag": tag, "questions": qs})
+    return out
+
+
 def papers_of(pads: list[dict]) -> list[dict]:
     """作业纸 → [{padId, tag, questions:[{no, stem}]}]（保持包内顺序）。
 
-    **幂等**：既接受 taskpad 形状（`questions[].content`），也接受本函数已归一过的
-    形状（`questions[].stem`）——CLI 与 PWA 两条路径都往这里传，重复归一不能把题干弄丢
-    （2026-11-06 实测：二次归一导致分数全 0）。
+    **幂等**：接受两种形状——`questions[].content`（引擎/CLI 归一后）与
+    `questions[].stem`（已归一）——重复归一不能把题干弄丢。
+
+    ⚠️ **不要**把 taskpad 原样传进来（它没有题干）：taskpad 请先过
+    `papers_from_taskpads(ws, taskpads)`。
     """
     out: list[dict] = []
     for p in pads or []:
@@ -285,6 +329,7 @@ def papers_of(pads: list[dict]) -> list[dict]:
             if not isinstance(q, dict):
                 continue
             qs.append({"no": str(q.get("no") or i),
+                       "qid": str(q.get("qid") or ""),
                        "stem": str(q.get("stem") or q.get("content") or "")})
         out.append({"padId": str(p.get("padId") or p.get("id") or ""),
                     "tag": str(p.get("tag") or ""),
@@ -436,7 +481,8 @@ def _read_json(p: Path) -> "dict | None":
         return None
 
 
-def run_audit(ws, *, class_dir: str, pack_id: str, pads: list[dict],
+def run_audit(ws, *, class_dir: str, pack_id: str, pads: "list[dict] | None" = None,
+              taskpads: "list[dict] | None" = None,
               students: "list[str] | None" = None,
               cfg: "dict | None" = None, write: bool = True) -> dict:
     """跑一次全班审计。
@@ -458,7 +504,9 @@ def run_audit(ws, *, class_dir: str, pack_id: str, pads: list[dict],
 
     class_root = S._class_root(ws, class_dir)
     pack_id = S._safe_pack_id(pack_id)
-    papers = papers_of(pads)
+    # 优先：taskpad 原样 → 从题库解析题干（唯一正确路径）
+    papers = papers_from_taskpads(ws, taskpads) if taskpads else papers_of(pads or [])
+    empty_papers = [p["padId"] for p in papers if not p["questions"]]
     # roster tag：快照（冻结）优先，其次今天的 roster
     snap = S.read_tags_snapshot(ws, class_dir, pack_id)
     snap_by_name = {str(s.get("name")): str(s.get("tag") or "")
@@ -507,8 +555,21 @@ def run_audit(ws, *, class_dir: str, pack_id: str, pads: list[dict],
             b["bad"] += 1
         else:
             b["unknown"] += 1
+    # 全班都无法判定时，把**最可能的原因**直接说出来（否则教师只看到一片灰）
+    if rows and summary.get("unknown") == len(rows) and all(
+            not (r.get("pairs") or []) for r in rows):
+        if not papers:
+            rep_hint = "当前作业包没有解析出任何作业纸（pads 未传入或题目为空）"
+        elif len(empty_papers) == len(papers):
+            rep_hint = ("作业纸都没有题目：taskpad 只存题号、题干在题库里，"
+                        "引擎未能从 kb/ 解析出题干（多为 kb/chap/ids 与题库不一致，"
+                        "题库 id 形如 `<章>-<号>`）")
+        else:
+            rep_hint = "转写里有题干、作业纸也有题目，但相似度全部偏低（可调低 minScore 查看）"
+    else:
+        rep_hint = ""
     rep = {
-        "ok": True, "packId": pack_id, "classDir": str(class_dir).strip().strip("/"),
+        "ok": True, "packId": pack_id, "hint": rep_hint, "classDir": str(class_dir).strip().strip("/"),
         "generatedAt": time.strftime("%Y-%m-%d %H:%M:%S"),
         "engine": ENGINE_VER,
         "submittedSource": "students.json",
@@ -516,6 +577,8 @@ def run_audit(ws, *, class_dir: str, pack_id: str, pads: list[dict],
         "snapshotMissing": bool(snap.get("missing")),
         "papers": [{"padId": p["padId"], "tag": p["tag"],
                     "questionCount": len(p["questions"])} for p in papers],
+        # 诊断：这些作业纸解析不出题目（题库缺 manifest / items 为空 / 合成题未生成）
+        "papersWithoutQuestions": empty_papers,
         "students": rows,
         "skippedNotTranscribed": skipped,
         "summary": summary, "byRosterTag": by_roster,
@@ -531,7 +594,9 @@ def run_audit(ws, *, class_dir: str, pack_id: str, pads: list[dict],
         from ..filelock import atomic_write_text
         atomic_write_text(p, json.dumps(rep, ensure_ascii=False, indent=1))
         rep["path"] = str(p)
-        logger.info(f"[tag-audit] {pack_id}: match={summary['match']} "
+        logger.info(f"[tag-audit] {pack_id}: papers={len(papers)}"
+                    + (f"（{len(empty_papers)} 张无题目！）" if empty_papers else "")
+                    + f" match={summary['match']} "
                     f"mismatch={summary['mismatch']} unknown={summary['unknown']} "
                     f"skipped={len(skipped)}")
     return rep
