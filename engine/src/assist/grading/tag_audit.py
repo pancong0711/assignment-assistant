@@ -223,6 +223,21 @@ def score_pair(student_stem: str, paper_stem: str, cfg: "dict | None" = None) ->
 
 # ---------------- 阶段 C：背靠背最优分配 ----------------
 
+def score_detail(student_stem: str, paper_stem: str,
+                 cfg: "dict | None" = None) -> dict:
+    """D173：把 S 拆成可解释的分量（教师要看「为什么判 98%」）。"""
+    c = cfg or DEFAULTS
+    a = normalize_text(student_stem, student=True)
+    b = normalize_text(paper_stem, student=False)
+    g2 = dice(grams(a, 2), grams(b, 2))
+    g3 = dice(grams(a, 3), grams(b, 3))
+    na, nb = numbers_of(a), numbers_of(b)
+    return {"literal": round(max(g2, g3), 4), "bigram": round(g2, 4),
+            "trigram": round(g3, 4), "number": round(number_overlap(na, nb), 4),
+            "numbersStudent": sorted(na)[:12], "numbersPaper": sorted(nb)[:12],
+            "numbersShared": sorted(na & nb)[:12]}
+
+
 def best_assignment(student_stems: list[str], paper_stems: list[str],
                     cfg: "dict | None" = None) -> tuple[float, list[tuple[int, int, float]]]:
     """题块 → 候选题的**背靠背**最优分配（DFS 分支定界；题数很小）。
@@ -373,7 +388,11 @@ def audit_student(transcript: dict, papers: list[dict], *, roster_tag: "str | No
             "rosterTagSource": src, "linkMissing": link_missing,
             "auditTag": None, "auditPadId": None, "confidence": "unknown",
             "score": 0.0, "margin": 0.0, "verdict": "unknown",
-            "pairs": [], "alternatives": [],
+            "pairs": [], "alternatives": [], "why": {},
+            "tagDiffers": False,
+            # D173：旧格式（只有 markdown、无 items[]）→ 题干只能靠正则切，
+            # 可靠性低，界面要明确提示「建议重新转写」。
+            "legacyFormat": bool(blocks) and not blocks[0].get("used_items"),
             "reason": "", "resolution": None}
 
     if not blocks:
@@ -396,21 +415,68 @@ def audit_student(transcript: dict, papers: list[dict], *, roster_tag: "str | No
         n_p = max(1, len(p["questions"]))
         cover = (min(1.0, n_u / n_p) + min(1.0, n_p / n_u)) / 2.0
         ranked.append({"paper": p, "score": sc, "pairs": pairs, "coverage": cover,
-                       "final": sc * (0.6 + 0.4 * cover)})
+                       "final": sc * (0.6 + 0.4 * cover),
+                       "paper_stems": [q["stem"] for q in p["questions"]]})
     ranked.sort(key=lambda x: -x["final"])
     top = ranked[0]
     margin = top["final"] - (ranked[1]["final"] if len(ranked) > 1 else 0.0)
     conf = _verdict(top["final"], margin, c)
+    # ---- D173：逐题对照（**一题一行**，不再混在一起） ----
+    # 每个题块：学生题干 + 每张作业纸里最像的那一题（含题干与相似度分解）
+    usable_blocks = [(i, b) for i, b in enumerate(blocks) if (i + 1) not in link_missing]
+    pairs_out = []
+    for k, (bi, blk) in enumerate(usable_blocks):
+        st = blk["stem"]
+        per_paper = []
+        for r in ranked:
+            p_stems = r["paper_stems"]
+            best_j, best_s = -1, 0.0
+            for j, ps in enumerate(p_stems):
+                s_val = score_pair(st, ps, c)
+                if s_val > best_s:
+                    best_j, best_s = j, s_val
+            if best_j < 0:
+                continue
+            per_paper.append({
+                "padId": r["paper"]["padId"], "tag": r["paper"]["tag"],
+                "paperNo": r["paper"]["questions"][best_j]["no"],
+                "paperStem": _clip(r["paper"]["questions"][best_j]["stem"]),
+                "score": round(best_s, 4),
+                "detail": score_detail(st, r["paper"]["questions"][best_j]["stem"], c),
+            })
+        per_paper.sort(key=lambda x: -x["score"])
+        bestp = per_paper[0] if per_paper else {}
+        pairs_out.append({
+            "block": bi + 1, "no": str(blk["no"]),
+            "studentStem": _clip(st),
+            "best": ({k2: bestp.get(k2) for k2 in ("padId", "tag", "paperNo", "score")}
+                     if bestp else {}),
+            "perPaper": per_paper,
+        })
+
     base.update({
         "auditTag": top["paper"]["tag"], "auditPadId": top["paper"]["padId"],
         "confidence": conf, "score": round(top["final"], 4), "margin": round(margin, 4),
-        "pairs": [{"block": b + 1, "no": _no_of(blocks, link_missing, b),
-                   "paperNo": (top["paper"]["questions"][j]["no"]
-                               if j < len(top["paper"]["questions"]) else ""),
-                   "score": round(s, 4)}
-                  for (b, j, s) in top["pairs"]],
+        "pairs": pairs_out,
         "alternatives": [{"padId": r["paper"]["padId"], "tag": r["paper"]["tag"],
                           "score": round(r["final"], 4)} for r in ranked[1:3]],
+        # D173：判据 —— 让教师能自己判断结论可不可信
+        "why": {
+            "method": ENGINE_VER,
+            "bigramWeight": c["bigramWeight"], "numberWeight": c["numberWeight"],
+            "minScore": c["minScore"], "marginMin": c["marginMin"],
+            "mediumScore": c["mediumScore"],
+            "onlyPrintedQuestion": True,
+            "perPaperTotals": [{"padId": r["paper"]["padId"], "tag": r["paper"]["tag"],
+                                "score": round(r["final"], 4),
+                                "rawScore": round(r["score"], 4),
+                                "coverage": round(r["coverage"], 4),
+                                "questionCount": len(r["paper"]["questions"])}
+                               for r in ranked],
+        },
+        # D173：**tag 是否不同**是「事实」，与 verdict（引擎把握）解耦——
+        # 「只看不一致」必须按这个字段过滤，否则 unknown 的学生会被漏掉。
+        "tagDiffers": _tag_differs(top["paper"]["tag"], rt),
     })
 
     # verdict：match / mismatch / unknown
@@ -443,6 +509,25 @@ def audit_student(transcript: dict, papers: list[dict], *, roster_tag: "str | No
         base["reason"] = (f"匹配分数过低（{top['final']:.2f}），无法判定；"
                           f"最可能是「{top['paper']['tag']}」")
     return base
+
+
+def _clip(text: str, n: int = 400) -> str:
+    """题干截断（详情页要显示原文，但整包 JSON 不能无限大）。"""
+    t = str(text or "").strip()
+    return t if len(t) <= n else t[:n] + "…"
+
+
+def _tag_differs(audit_tag, roster_tag) -> bool:
+    """审计 tag 与 roster tag **是否不同**（任一侧为空 → False，因为无从比较）。
+
+    与 `verdict` 解耦：`unknown` 也可能 `tagDiffers=True`（引擎不敢拍板但明显不同），
+    这类学生恰恰是教师最需要看的。
+    """
+    a = str(audit_tag or "").strip()
+    b = str(roster_tag or "").strip()
+    if not a or not b:
+        return False
+    return not _same_tag(a, b)
 
 
 def _no_of(blocks: list[dict], link_missing: list[int], usable_index: int) -> str:
@@ -543,10 +628,12 @@ def run_audit(ws, *, class_dir: str, pack_id: str, pads: "list[dict] | None" = N
             continue
         skipped.append({"name": nm, "reason": "未转写，无法审核"})
 
-    summary = {"match": 0, "mismatch": 0, "unknown": 0}
+    summary = {"match": 0, "mismatch": 0, "unknown": 0, "tagDiffers": 0}
     by_roster: dict[str, dict] = {}
     for r in rows:
         summary[r["verdict"]] = summary.get(r["verdict"], 0) + 1
+        if r.get("tagDiffers"):
+            summary["tagDiffers"] += 1
         rt = str(r.get("rosterTag") or "(无tag)")
         b = by_roster.setdefault(rt, {"ok": 0, "bad": 0, "unknown": 0})
         if r["verdict"] == "match":
@@ -556,8 +643,12 @@ def run_audit(ws, *, class_dir: str, pack_id: str, pads: "list[dict] | None" = N
         else:
             b["unknown"] += 1
     # 全班都无法判定时，把**最可能的原因**直接说出来（否则教师只看到一片灰）
-    if rows and summary.get("unknown") == len(rows) and all(
-            not (r.get("pairs") or []) for r in rows):
+    # 注意：D173 起 pairs 里每题都有条目（可能 best 为空），所以判据是
+    # "**没有一题** 真的配上了任何作业纸题目"，而不是 pairs 列表为空。
+    def _no_real_match(r: dict) -> bool:
+        return not any((p or {}).get("best") for p in (r.get("pairs") or []))
+
+    if rows and summary.get("unknown") == len(rows) and all(_no_real_match(r) for r in rows):
         if not papers:
             rep_hint = "当前作业包没有解析出任何作业纸（pads 未传入或题目为空）"
         elif len(empty_papers) == len(papers):
@@ -648,11 +739,20 @@ def apply_audit_tags(ws, *, class_dir: str, pack_id: str, changes: list[dict],
         if str(r.get("tag") or "") == new:
             unchanged.append(nm)
             continue
-        applied.append({"name": nm, "from": str(r.get("tag") or ""), "to": new})
-        r["previousTag"] = str(r.get("tag") or "")
+        old_tag = str(r.get("tag") or "")
+        at = time.strftime("%Y-%m-%d %H:%M:%S")
+        applied.append({"name": nm, "from": old_tag, "to": new})
+        r["previousTag"] = old_tag
         r["tag"] = new
-        r["tagUpdatedAt"] = time.strftime("%Y-%m-%d %H:%M:%S")
+        r["tagUpdatedAt"] = at
         r["tagUpdateReason"] = reason
+        # D173：**按人累积**变更历史（教师要求「全部操作都记录历史」）。
+        # 只追加、不删除——撤销也是一条新记录（审计留痕不可篡改）。
+        hist = list(r.get("tagHistory") or [])
+        hist.append({"at": at, "from": old_tag, "to": new, "by": "teacher",
+                     "reason": str(reason or ""),
+                     **({"note": str(ch.get("note"))} if ch.get("note") else {})})
+        r["tagHistory"] = hist[-50:]
     if not applied:
         return {"ok": True, "applied": [], "unchanged": unchanged, "missing": missing,
                 "historyPath": None, "written": False,
@@ -699,6 +799,68 @@ def apply_audit_tags(ws, *, class_dir: str, pack_id: str, changes: list[dict],
     logger.info(f"[tag-audit] 已应用 {len(applied)} 人 tag 变更（{pack_id}），历史副本 {hp.name}")
     return {"ok": True, "applied": applied, "unchanged": unchanged, "missing": missing,
             "historyPath": str(hp), "written": True}
+
+
+def undo_student_tag(ws, *, class_dir: str, pack_id: str, name: str,
+                     note: str = "") -> dict:
+    """D173：**按学生**撤销他最近一次 tag 变更（从 `tagHistory` 取上一条 `from`）。
+
+    与整包撤销（`undo_last`，回滚整个快照）不同：这里只回退**一个学生**，
+    并且**追加一条新记录**而不是删除旧记录 —— 历史不可篡改。
+    """
+    from . import snapshots as S
+    from ..filelock import atomic_write_text
+
+    class_root = S._class_root(ws, class_dir)
+    pack_id = S._safe_pack_id(pack_id)
+    snap = S.read_tags_snapshot(ws, class_dir, pack_id)
+    if not snap.get("ok"):
+        return {"ok": False, "error": "该作业包没有 roster-tags 快照"}
+    rows = [dict(s) for s in (snap.get("students") or [])]
+    target = next((r for r in rows if str(r.get("name")) == str(name)), None)
+    if target is None:
+        return {"ok": False, "error": f"快照里没有学生 {name!r}"}
+    hist = list(target.get("tagHistory") or [])
+    if not hist:
+        return {"ok": False, "error": f"{name} 没有任何 tag 变更记录，无法撤销"}
+    last = hist[-1]
+    cur = str(target.get("tag") or "")
+    back_to = str(last.get("from") or "")
+    if cur == back_to:
+        return {"ok": True, "written": False, "note": "当前值已等于上一条记录的 from（无变化）"}
+
+    # 写前存整包历史副本（与 apply 同口径，保证整包也能回滚）
+    hist_dir = class_root / S.TAGS_DIR / "_history"
+    hist_dir.mkdir(parents=True, exist_ok=True)
+    ts2 = time.strftime("%Y%m%d-%H%M%S")
+    hp = hist_dir / f"{pack_id}__{ts2}.json"
+    k = 1
+    while hp.exists():
+        hp = hist_dir / f"{pack_id}__{ts2}-{k}.json"
+        k += 1
+    atomic_write_text(hp, json.dumps(
+        {**{kk: v for kk, v in snap.items() if kk not in ("ok", "path")},
+         "source": str(snap.get("source") or ""), "historyReason": "undo-student",
+         "snapshotSource": str(snap.get("source") or ""),
+         "historyAt": time.strftime("%Y-%m-%d %H:%M:%S")},
+        ensure_ascii=False, indent=1))
+
+    at = time.strftime("%Y-%m-%d %H:%M:%S")
+    target["previousTag"] = cur
+    target["tag"] = back_to
+    target["tagUpdatedAt"] = at
+    target["tagUpdateReason"] = "undo-student"
+    target["tagHistory"] = (hist + [{"at": at, "from": cur, "to": back_to,
+                                     "by": "teacher", "reason": "undo-student",
+                                     **({"note": note} if note else {})}])[-50:]
+    payload = {kk: v for kk, v in snap.items() if kk not in ("ok", "path")}
+    payload.update({"students": rows, "source": "undo-student",
+                    "generatedAt": time.strftime("%Y-%m-%d %H:%M:%S")})
+    atomic_write_text(S.tags_snapshot_path(ws, class_dir, pack_id),
+                      json.dumps(payload, ensure_ascii=False, indent=1))
+    logger.info(f"[tag-audit] 撤销学生 {name} 的 tag：{cur} → {back_to}")
+    return {"ok": True, "written": True, "name": name, "from": cur, "to": back_to,
+            "historyPath": str(hp)}
 
 
 def list_history(ws, *, class_dir: str, pack_id: str) -> list[dict]:

@@ -12,6 +12,7 @@ import {
   fetchXxtReviewIndex, fetchXxtReviewStudents, postLlmProvider, postXxtClassMap,
   startXxtGradeAi, startXxtGradeUpload, renderReportsFromDrafts, testLlmStages,
   applyTagAudit, fetchTagAudit, fetchTagAuditHistory, runTagAudit, undoTagAudit,
+  undoStudentTagApi,
 } from '../lib/engineClient'
 
 import { usePackStore } from '../stores/packs'
@@ -269,7 +270,6 @@ const auditBusy = ref(false)
 const auditMsg = ref('')
 const auditRow = ref<Record<string, any>>({})   // name -> audit row
 const auditDetail = ref<any>(null)               // 当前打开明细的学生
-const auditOnlyBad = ref(false)                  // 只看不一致
 const auditChecked = ref<Record<string, boolean>>({})  // 批量应用勾选
 const auditMeta = ref<{ generatedAt?: string; engine?: string; rosterTagSource?: string
   skipped?: Array<{ name: string; reason: string }> } | null>(null)
@@ -294,7 +294,9 @@ function auditTaskpads() {
 
 async function loadAudit() {
   const w = curWork.value
-  const pid = packId.value || padId.value
+  // D173：与 loadStudents 同口径——未选作业包时用引擎反查出的批阅目录，
+  // 否则刷新页面后（packId 为空）审计列会一直是空的。
+  const pid = packId.value || padId.value || resolvedScope.value
   if (!w || !pid || !curWorkDir.value) { auditRow.value = {}; return }
   try {
     const r = await fetchTagAudit(props.engineAddr, props.token,
@@ -362,52 +364,158 @@ function auditRowClass(s: { name?: string }): string {
   return a.verdict === 'mismatch' ? 'row-audit-bad' : ''
 }
 
-const auditRows = computed(() => {
-  if (!auditOnlyBad.value) return students.value
-  return students.value.filter((s) => auditOf(s)?.verdict === 'mismatch')
+/* ---------------- D173：过滤 / 批量 / 详情 ---------------- */
+
+/** 列头统计（每项可点做过滤）。 */
+const auditStats = computed(() => {
+  const st = { all: students.value.length, match: 0, differs: 0, unknown: 0, notrans: 0 }
+  for (const s of students.value) {
+    const a = auditOf(s)
+    if (!a) {
+      if (auditMeta.value?.skipped?.some((x) => x.name === s.name)) st.notrans += 1
+      continue
+    }
+    if (a.tagDiffers) st.differs += 1
+    else if (a.verdict === 'match') st.match += 1
+    else st.unknown += 1
+  }
+  return st
 })
 
-/** 可批量勾选：只有 mismatch 且 high 置信默认允许。 */
-function auditSelectable(s: { name?: string }): boolean {
-  const a = auditOf(s)
-  return !!a && a.verdict === 'mismatch' && a.confidence === 'high'
+/** 过滤：默认全部；**「只看 tag 不同的」按 `tagDiffers`**（不是 verdict）。
+ *  修复 D172 的 bug：置信不足时 verdict=unknown，但 tag 确实不同，
+ *  按 verdict 过滤会把这些学生全漏掉（教师实测：勾了之后列表空）。 */
+const auditFilter = ref<'all' | 'differs' | 'unknown' | 'match' | 'notrans'>('all')
+const auditRows = computed(() => {
+  if (auditFilter.value === 'all') return students.value
+  return students.value.filter((s) => {
+    const a = auditOf(s)
+    if (auditFilter.value === 'notrans') {
+      return !a && !!auditMeta.value?.skipped?.some((x) => x.name === s.name)
+    }
+    if (!a) return false
+    if (auditFilter.value === 'differs') return !!a.tagDiffers
+    if (auditFilter.value === 'match') return a.verdict === 'match' && !a.tagDiffers
+    return a.verdict === 'unknown' && !a.tagDiffers
+  })
+})
+
+/** 批量改 tag：下拉可选本包内全部 tag + 清空。 */
+const bulkTag = ref('')
+const auditTagOptions = computed<string[]>(() => {
+  const out: string[] = []
+  for (const p of (packId.value ? packPads.value : pads.value)) {
+    const t = String((p as any).tag || '').trim()
+    if (t && !out.includes(t)) out.push(t)
+  }
+  for (const a of Object.values(auditRow.value)) {
+    const t = String((a as any)?.auditTag || '').trim()
+    if (t && !out.includes(t)) out.push(t)
+  }
+  return out
+})
+const auditSelectedNames = computed(() => students.value
+  .filter((s) => auditChecked.value[String(s.name || '')])
+  .map((s) => String(s.name || '')))
+
+async function applyBulkTag() {
+  const names = auditSelectedNames.value
+  if (!names.length) { auditMsg.value = '⚠ 请先勾选学生'; return }
+  if (bulkTag.value === '') { auditMsg.value = '⚠ 请先选择要改成的 tag'; return }
+  await applyAuditChanges(names.map((n) => ({ name: n, tag: bulkTag.value })), 'manual-batch')
 }
 
-async function applyAuditOne(s: { name?: string }) {
-  const a = auditOf(s)
-  if (!a || !a.auditTag) return
-  await applyAuditChanges([{ name: String(s.name || ''), tag: String(a.auditTag) }])
-}
-
+/** 一键采纳「审计 tag」：勾选行 → 各自改成自己的审计 tag。 */
 async function applyAuditChecked() {
   const changes = students.value
     .filter((s) => auditChecked.value[String(s.name || '')])
     .map((s) => ({ name: String(s.name || ''), tag: String(auditOf(s)?.auditTag || '') }))
     .filter((c) => c.tag)
-  if (!changes.length) { auditMsg.value = '⚠ 没有勾选可应用的行'; return }
-  await applyAuditChanges(changes)
+  if (!changes.length) { auditMsg.value = '⚠ 没有勾选（或勾选的学生没有审计 tag）'; return }
+  await applyAuditChanges(changes, 'audit-apply')
 }
 
-async function applyAuditChanges(changes: Array<{ name: string; tag: string }>) {
+async function applyAuditOne(s: { name?: string }, tag?: string) {
+  const a = auditOf(s)
+  const to = String(tag || a?.auditTag || '')
+  if (!to) return
+  await applyAuditChanges([{ name: String(s.name || ''), tag: to }], 'manual-detail')
+}
+
+async function applyAuditChanges(changes: Array<{ name: string; tag: string }>,
+                                reason = 'manual-detail') {
   const w = curWork.value
   const pid = packId.value || padId.value
   if (!w || !pid) return
-  const desc = changes.map((c) => `${c.name}：${auditOf({ name: c.name })?.rosterTag || '?'} → ${c.tag}`).join('\n')
+  const desc = changes.map((c) => {
+    const cur = auditOf({ name: c.name })?.rosterTag
+      ?? students.value.find((s) => s.name === c.name)?.tag ?? '?'
+    return `${c.name}：${cur || '（空）'} → ${c.tag || '（清空）'}`
+  }).join('\n')
   if (!confirm(`将修改 ${changes.length} 名学生的 tag（**这是改历史**，会自动保存可撤销的历史副本）：\n\n${desc}\n\n`
     + `· 已批阅结果**不会**自动重算；\n· 需要重批请在行内点「转写+批阅」。继续？`)) return
   auditBusy.value = true; auditMsg.value = '⏳ 正在应用…'
   try {
     const r = await applyTagAudit(props.engineAddr, props.token,
-                                  { classDir: curWorkDir.value, packId: pid, changes })
+                                  { classDir: curWorkDir.value, packId: pid, changes, reason })
     if (r?.ok === false) { auditMsg.value = `❌ 应用失败：${r.error || '未知错误'}`; return }
     const n = (r.applied || []).length
     auditMsg.value = n
-      ? `✅ 已改 ${n} 人；历史副本已存（可撤销）。建议对这些学生重新「转写+批阅」。`
-      : `ℹ️ 没有变化（${r.written ? '' : '值与现状相同，未写盘'}）`
+      ? `✅ 已改 ${n} 人；已记录 tag 变更历史（可撤销）。建议对这些学生重新「转写+批阅」。`
+      : 'ℹ️ 没有变化（值与现状相同，未写盘）'
     await loadStudents(); await loadAudit()
+    // 详情页同步刷新（若开着）
+    if (auditDetail.value) {
+      auditDetail.value = auditOf({ name: auditDetail.value.name }) || auditDetail.value
+    }
   } catch (e) {
     auditMsg.value = `❌ 应用失败：${String((e as Error).message || e)}`
   } finally { auditBusy.value = false }
+}
+
+/** D173：按学生撤销他最近一次 tag 变更（追加记录，不删历史）。 */
+async function undoStudentTag(name: string) {
+  const pid = packId.value || padId.value
+  if (!pid || !curWorkDir.value) return
+  if (!confirm(`撤销「${name}」最近一次 tag 变更？\n\n（会追加一条新记录，不删除已有历史）`)) return
+  auditBusy.value = true
+  try {
+    const r = await undoStudentTagApi(props.engineAddr, props.token,
+                                      { classDir: curWorkDir.value, packId: pid, name })
+    if (r?.ok === false) { auditMsg.value = `❌ 撤销失败：${r.error}`; return }
+    auditMsg.value = r.written
+      ? `✅ 已撤销「${name}」：${r.from} → ${r.to}`
+      : `ℹ️ ${r.note || '无需撤销'}`
+    await loadStudents(); await loadAudit()
+    if (auditDetail.value) {
+      auditDetail.value = auditOf({ name }) || auditDetail.value
+    }
+  } catch (e) { auditMsg.value = `❌ 撤销失败：${String((e as Error).message || e)}` }
+  finally { auditBusy.value = false }
+}
+
+/** 详情页里当前编辑的 tag（打开详情时自动同步为 roster tag）。 */
+const auditEditTag = ref('')
+watch(auditDetail, (v) => {
+  auditEditTag.value = String((v as any)?.rosterTag || '')
+}, { immediate: true })
+
+async function saveManualTag() {
+  const d = auditDetail.value
+  if (!d) return
+  await applyAuditChanges([{ name: String(d.name), tag: String(auditEditTag.value || '') }],
+                          'manual-detail')
+}
+
+/** 详情页：上一位 / 下一位（教师逐个核对时不用关窗重点）。 */
+const auditDetailIdx = computed(() =>
+  students.value.findIndex((s) => String(s.name) === String(auditDetail.value?.name || '')))
+function auditDetailStep(delta: number) {
+  const n = students.value.length
+  if (!n) return
+  const i = auditDetailIdx.value
+  const j = (i + delta + n) % n
+  auditDetail.value = auditOf(students.value[j]!) || { name: students.value[j]!.name, pending: true }
 }
 
 async function undoAudit() {
@@ -1209,13 +1317,8 @@ onMounted(async () => {
                 :title="'用转写里的题干反推实际 tag（纯本地计算，不调模型）'"
                 @click="runAuditNow()">🛡 {{ auditBusy ? '审计中…' : '运行 tag 审计' }}</button>
         <button v-if="auditMeta?.generatedAt" class="btn small" :disabled="auditBusy"
-                title="从历史副本恢复（撤销前会自动保存当前状态）"
-                @click="undoAudit()">↩ 撤销上次审计修改</button>
-        <button v-if="auditMeta?.generatedAt" class="btn small" :disabled="auditBusy"
-                @click="applyAuditChecked()">应用勾选的审计 tag</button>
-        <label v-if="auditMeta?.generatedAt" class="hint" style="margin:0">
-          <input v-model="auditOnlyBad" type="checkbox" /> 只看不一致
-        </label>
+                title="把整包快照恢复到上次修改之前（改前会自动再存一份当前状态）"
+                @click="undoAudit()">↩ 整包撤销</button>
         <span class="hint" style="margin:0" :title="auditMeta?.engine || ''">
           <template v-if="auditMsg">{{ auditMsg }}</template>
           <template v-else-if="auditMeta?.generatedAt">
@@ -1224,6 +1327,41 @@ onMounted(async () => {
           <template v-else>未审计 · 审计只比对当前作业包内的作业纸题目</template>
         </span>
       </div>
+
+      <!-- D173：列头统计，**每项可点做过滤**（替代原来单一的「只看不一致」） -->
+      <div v-if="auditMeta?.generatedAt" class="audit-filters">
+        <button class="audit-chip" :class="{ on: auditFilter === 'all' }"
+                @click="auditFilter = 'all'">全部 {{ auditStats.all }}</button>
+        <button class="audit-chip bad" :class="{ on: auditFilter === 'differs' }"
+                :title="'审计 tag 与 roster tag 不同（含引擎不敢拍板的待确认）'"
+                @click="auditFilter = 'differs'">⚠ tag 不同 {{ auditStats.differs }}</button>
+        <button class="audit-chip warn" :class="{ on: auditFilter === 'unknown' }"
+                :title="'引擎无法判定，且 tag 相同'"
+                @click="auditFilter = 'unknown'">? 待确认 {{ auditStats.unknown }}</button>
+        <button class="audit-chip ok" :class="{ on: auditFilter === 'match' }"
+                @click="auditFilter = 'match'">✓ 一致 {{ auditStats.match }}</button>
+        <button class="audit-chip" :class="{ on: auditFilter === 'notrans' }"
+                :title="'未转写 → 不可审核'"
+                @click="auditFilter = 'notrans'">未转写 {{ auditStats.notrans }}</button>
+      </div>
+
+      <!-- D173：批量操作（**任何行都可勾**） -->
+      <div v-if="auditSelectedNames.length" class="audit-bulk">
+        <b>已勾选 {{ auditSelectedNames.length }} 人</b>
+        <span>批量改 tag 为</span>
+        <input v-model="bulkTag" list="audit-tag-options" placeholder="选择或输入 tag"
+               style="width:150px" />
+        <datalist id="audit-tag-options">
+          <option v-for="t in auditTagOptions" :key="t" :value="t" />
+        </datalist>
+        <button class="btn small primary" :disabled="auditBusy || !bulkTag"
+                @click="applyBulkTag()">应用手动 tag</button>
+        <button class="btn small" :disabled="auditBusy" @click="applyAuditChecked()"
+                title="把勾选学生各自改成他自己的「审计 tag」">采纳审计 tag</button>
+        <button class="btn small" :disabled="auditBusy"
+                @click="auditChecked = {}">清空勾选</button>
+      </div>
+
       <table class="review-list-table">
         <thead>
           <tr>
@@ -1236,18 +1374,23 @@ onMounted(async () => {
         <tbody>
           <tr v-for="(s, i) in auditRows" :key="s.key" :class="auditRowClass(s)">
             <td>
-              <input v-if="auditSelectable(s)" type="checkbox"
+              <input type="checkbox"
                      :checked="!!auditChecked[String(s.name || '')]"
-                     :title="'勾选后可批量应用审计 tag'"
+                     :title="'勾选后可批量改 tag'"
                      @change="auditChecked[String(s.name || '')] = ($event.target as HTMLInputElement).checked" />
-              {{ s.name }}
+              <span style="cursor:pointer" @click="auditDetail = auditOf(s) || { name: s.name, pending: true }">
+                {{ s.name }}
+              </span>
             </td>
             <td class="c" :title="tagMark(s).why">
               <span :style="{ color: tagMark(s).color }">{{ tagMark(s).text || '—' }}</span>
             </td>
             <td class="c" :class="auditCell(s).cls" :title="auditCell(s).why">
-              <span :style="{ color: auditCell(s).color, cursor: auditOf(s) ? 'pointer' : 'default' }"
-                    @click="auditDetail = auditOf(s)">{{ auditCell(s).text }}</span>
+              <span style="cursor:pointer; text-decoration:underline dotted"
+                    @click="auditDetail = auditOf(s) || { name: s.name, pending: true }">
+                <span :style="{ color: auditCell(s).color }">{{ auditCell(s).text }}</span>
+                <span class="hint" style="font-size:11px"> 详情</span>
+              </span>
             </td>
             <td class="c">
               <b :style="{ color: aiState(s).color }">{{ aiState(s).label }}</b>
@@ -1338,58 +1481,165 @@ onMounted(async () => {
       @notify="(m) => { progress = String(m) }"
     />
 
-    <!-- D172：审计明细（逐题对照 + 应用审计 tag） -->
+    <!-- D173：tag 判定详情（逐题对照 + 判据 + 人工确认 + 历史） -->
     <div v-if="auditDetail" class="mask" @click.self="auditDetail = null">
       <div class="dlg audit-dlg">
-        <h4 style="margin:0 0 8px">🛡 tag 审计明细 —— {{ auditDetail.name }}</h4>
-        <table class="audit-three">
-          <tr><th>roster tag</th><th>当前 roster</th><th>实际（审计）tag</th></tr>
-          <tr>
-            <td>{{ auditDetail.rosterTag ?? '—' }}
-              <span class="hint" style="display:block;font-size:11px">
-                {{ auditDetail.rosterTagSource === 'snapshot' ? '来自包快照（冻结）' : '来自当前 roster' }}
-              </span>
-            </td>
-            <td>{{ auditDetail.currentRosterTag ?? '—' }}</td>
-            <td :style="{ color: auditDetail.verdict === 'mismatch' ? '#b91c1c' : '#15803d',
-                          fontWeight: 600 }">
-              {{ auditDetail.auditTag ?? '?' }}
-              <span class="hint" style="display:block;font-size:11px">
-                得分 {{ auditDetail.score }} · 领先 {{ auditDetail.margin }} · 置信 {{ auditDetail.confidence }}
-              </span>
-            </td>
-          </tr>
-        </table>
-        <p class="hint" style="margin:8px 0">{{ auditDetail.reason }}</p>
-        <div v-if="auditDetail.linkMissing?.length" class="hint" style="color:#b45309">
-          第 {{ auditDetail.linkMissing.join('、') }} 题没找到题干（未抄题/OCR 丢失），未计入比对。
+        <div class="audit-dlg-head">
+          <h4 style="margin:0">🛡 {{ auditDetail.name }} —— tag 判定详情</h4>
+          <div class="audit-nav">
+            <button class="btn small" :disabled="auditBusy" @click="auditDetailStep(-1)">⟨ 上一位</button>
+            <button class="btn small" :disabled="auditBusy" @click="auditDetailStep(1)">下一位 ⟩</button>
+            <button class="btn small" @click="auditDetail = null">✕</button>
+          </div>
         </div>
-        <table v-if="auditDetail.pairs?.length" class="audit-pairs">
-          <thead><tr><th>学生题号</th><th>作业纸题号</th><th>相似度</th></tr></thead>
-          <tbody>
-            <tr v-for="(p2, k) in auditDetail.pairs" :key="k">
-              <td>{{ p2.no }}</td><td>{{ p2.paperNo }}</td>
-              <td :style="{ color: p2.score >= 0.75 ? '#15803d' : p2.score >= 0.45 ? '#a16207' : '#b91c1c' }">
-                {{ (p2.score * 100).toFixed(1) }}%
+
+        <!-- 未审计 -->
+        <p v-if="auditDetail.pending" class="hint">
+          该学生还没有审计结果。请先点「🛡 运行 tag 审计」。
+        </p>
+
+        <template v-else>
+          <!-- ① 结论 -->
+          <table class="audit-three">
+            <tr><th>roster tag</th><th>当前 roster</th><th>🛡 实际（审计）tag</th><th>判定</th></tr>
+            <tr>
+              <td>{{ auditDetail.rosterTag ?? '—' }}
+                <span class="hint" style="display:block;font-size:11px">
+                  {{ auditDetail.rosterTagSource === 'snapshot' ? '包快照（冻结）' : '当前 roster' }}
+                </span>
+              </td>
+              <td>{{ auditDetail.currentRosterTag ?? '—' }}</td>
+              <td :style="{ fontWeight: 600,
+                            color: auditDetail.tagDiffers ? '#b91c1c' : '#15803d' }">
+                {{ auditDetail.auditTag ?? '?' }}
+                <span class="hint" style="display:block;font-size:11px">
+                  得分 {{ auditDetail.score }} · 领先 {{ auditDetail.margin }} · 置信 {{ auditDetail.confidence }}
+                </span>
+              </td>
+              <td>
+                <b v-if="auditDetail.tagDiffers" style="color:#b91c1c">tag 不同</b>
+                <b v-else-if="auditDetail.verdict === 'match'" style="color:#15803d">一致</b>
+                <b v-else style="color:#6b7280">无法判定</b>
               </td>
             </tr>
-          </tbody>
-        </table>
-        <div v-if="auditDetail.alternatives?.length" class="hint" style="margin-top:8px">
-          次可能：<span v-for="(a2, k) in auditDetail.alternatives" :key="k">
-            {{ a2.tag }}（{{ (a2.score * 100).toFixed(1) }}%）<span v-if="k < auditDetail.alternatives.length - 1"> · </span>
-          </span>
-        </div>
-        <div v-if="auditDetail.resolution" class="hint" style="margin-top:8px;color:#15803d">
-          已由教师应用：{{ auditDetail.resolution.from }} → {{ auditDetail.resolution.to }}
-          （{{ auditDetail.resolution.at }}）
-        </div>
+          </table>
+          <p class="hint" style="margin:8px 0">{{ auditDetail.reason }}</p>
+          <p v-if="auditDetail.legacyFormat" class="audit-warn">
+            ⚠ 这份转写是**旧格式**（只有 markdown、没有结构化 items），题干是靠正则切的，可靠性低。
+            建议对该生重新「转写」后再审计。
+          </p>
+          <p v-if="auditDetail.linkMissing?.length" class="audit-warn">
+            第 {{ auditDetail.linkMissing.join('、') }} 题没找到印刷题干（学生未抄题 / OCR 丢失），
+            这几题**未计入**比对。
+          </p>
+
+          <!-- ② 怎么判的（判据） -->
+          <details class="audit-why" open>
+            <summary><b>怎么判的（判据）</b></summary>
+            <ul class="audit-why-list">
+              <li>方法：<code>{{ auditDetail.why?.method || 'ngram-v1' }}</code></li>
+              <li>**只比对题干**（转写的 <code>printed_question</code>），不看作答对错</li>
+              <li>逐题与每张作业纸的每一题做**最优配对**，再取平均</li>
+              <li>相似度 = {{ auditDetail.why?.bigramWeight }} × 字面(2/3-gram Dice)
+                  + {{ auditDetail.why?.numberWeight }} × 数值常量重合</li>
+              <li>高置信需：得分 ≥ {{ auditDetail.why?.minScore }} 且领先次优 ≥ {{ auditDetail.why?.marginMin }}</li>
+              <li>低于 minScore 或领先不足 → 一律「无法判定」（**宁可标问号，也不误标红**）</li>
+            </ul>
+            <table v-if="auditDetail.why?.perPaperTotals?.length" class="audit-pairs">
+              <thead><tr><th>作业纸</th><th>tag</th><th>合计得分</th><th>题数</th></tr></thead>
+              <tbody>
+                <tr v-for="(t, k) in auditDetail.why.perPaperTotals" :key="k">
+                  <td><code>{{ t.padId }}</code></td><td>{{ t.tag }}</td>
+                  <td :style="{ color: t.tag === auditDetail.auditTag ? '#15803d' : 'inherit',
+                                fontWeight: t.tag === auditDetail.auditTag ? 600 : 400 }">
+                    {{ (t.score * 100).toFixed(1) }}%
+                  </td>
+                  <td>{{ t.questionCount ?? '—' }}</td>
+                </tr>
+              </tbody>
+            </table>
+          </details>
+
+          <!-- ③ 逐题对照（一题一行） -->
+          <h5 style="margin:14px 0 6px">逐题对照（{{ auditDetail.pairs?.length || 0 }} 题）</h5>
+          <div v-if="!auditDetail.pairs?.length" class="hint">没有可对照的题目。</div>
+          <div v-for="(p, k) in auditDetail.pairs" :key="k" class="audit-q">
+            <div class="audit-q-head">
+              <b>学生第 {{ p.no }} 题</b>
+              <span v-if="p.best?.tag" class="hint" style="margin-left:8px">
+                最像：{{ p.best.tag }} 卷 第 {{ p.best.paperNo }} 题
+                （{{ ((p.best.score || 0) * 100).toFixed(1) }}%）
+              </span>
+            </div>
+            <div class="audit-stem">
+              <span class="audit-stem-label">转写的题干</span>
+              <span>{{ p.studentStem || '（未识别到印刷题干）' }}</span>
+            </div>
+            <table class="audit-pairs">
+              <thead>
+                <tr><th>作业纸</th><th>题号</th><th>相似度</th><th>拆解</th><th>该题题干</th></tr>
+              </thead>
+              <tbody>
+                <tr v-for="(pp, j) in p.perPaper || []" :key="j"
+                    :style="{ background: p.best?.tag === pp.tag ? '#f0fdf4' : 'transparent' }">
+                  <td>{{ pp.tag }}</td>
+                  <td>{{ pp.paperNo }}</td>
+                  <td :style="{ color: pp.score >= 0.75 ? '#15803d'
+                                : pp.score >= 0.45 ? '#a16207' : '#b91c1c', fontWeight: 600 }">
+                    {{ (pp.score * 100).toFixed(1) }}%
+                  </td>
+                  <td class="hint" style="font-size:11px; white-space:nowrap"
+                      :title="'共同数值：' + ((pp.detail?.numbersShared || []).join('、') || '无')">
+                    字面 {{ ((pp.detail?.literal || 0) * 100).toFixed(0) }}%
+                    · 数值 {{ ((pp.detail?.number || 0) * 100).toFixed(0) }}%
+                  </td>
+                  <td style="text-align:left; font-size:12px">{{ pp.paperStem }}</td>
+                </tr>
+              </tbody>
+            </table>
+          </div>
+
+          <!-- ④ 人工确认（手动改 tag） -->
+          <h5 style="margin:14px 0 6px">人工确认</h5>
+          <div class="audit-manual">
+            <span>改 tag 为</span>
+            <input v-model="auditEditTag" list="audit-tag-options" placeholder="选择或输入 tag"
+                   style="width:150px" />
+            <button class="btn small primary" :disabled="auditBusy || auditEditTag === (auditDetail.rosterTag ?? '')"
+                    @click="saveManualTag()">保存并应用</button>
+            <button v-if="auditDetail.auditTag && auditDetail.auditTag !== auditDetail.rosterTag"
+                    class="btn small" :disabled="auditBusy"
+                    @click="applyAuditOne({ name: auditDetail.name }, auditDetail.auditTag)">
+              采纳审计 tag（{{ auditDetail.auditTag }}）
+            </button>
+            <button v-if="(auditDetail.tagHistory?.length || 0) > 0" class="btn small"
+                    :disabled="auditBusy" @click="undoStudentTag(auditDetail.name)">
+              ↩ 撤销此人最近一次修改
+            </button>
+          </div>
+          <p class="hint" style="margin:4px 0 0">
+            改 tag 会**立即写盘并记录历史**；已批阅结果不会自动重算。
+          </p>
+
+          <!-- ⑤ 该生的 tag 变更历史 -->
+          <details v-if="(auditDetail.tagHistory?.length || 0) > 0" class="audit-why" open
+                   style="margin-top:10px">
+            <summary><b>tag 变更历史（{{ auditDetail.tagHistory.length }} 条）</b></summary>
+            <table class="audit-pairs">
+              <thead><tr><th>时间</th><th>从</th><th>到</th><th>来源</th><th>备注</th></tr></thead>
+              <tbody>
+                <tr v-for="(h, k) in [...auditDetail.tagHistory].reverse()" :key="k">
+                  <td>{{ h.at }}</td><td>{{ h.from || '（空）' }}</td><td>{{ h.to || '（空）' }}</td>
+                  <td>{{ h.reason === 'undo-student' ? '撤销' : (h.reason === 'audit-apply' ? '采纳审计'
+                        : (h.reason === 'manual-batch' ? '批量手动' : '手动')) }}</td>
+                  <td>{{ h.note || '—' }}</td>
+                </tr>
+              </tbody>
+            </table>
+          </details>
+        </template>
+
         <div class="audit-actions">
-          <button v-if="auditDetail.auditTag && auditDetail.verdict === 'mismatch'"
-                  class="btn small primary" :disabled="auditBusy"
-                  @click="applyAuditOne({ name: auditDetail.name }); auditDetail = null">
-            应用审计 tag（{{ auditDetail.auditTag }}）
-          </button>
           <button class="btn small" @click="auditDetail = null">关闭</button>
         </div>
       </div>
@@ -1453,4 +1703,33 @@ onMounted(async () => {
 .audit-three th { background: #eef2ff; }
 .audit-pairs th { background: #f1f5f9; }
 .audit-actions { display: flex; gap: 8px; justify-content: flex-end; margin-top: 12px; }
+
+/* D173：过滤 chip / 批量条 / 详情页 */
+.audit-filters { display: flex; gap: 6px; flex-wrap: wrap; margin: 4px 0 8px; }
+.audit-chip { border: 1px solid var(--c-border); background: #fff; border-radius: 999px;
+              padding: 3px 10px; font-size: 12px; cursor: pointer; }
+.audit-chip.on { border-color: #4f46e5; background: #eef2ff; font-weight: 600; }
+.audit-chip.bad.on { border-color: #dc2626; background: #fef2f2; color: #b91c1c; }
+.audit-chip.warn.on { border-color: #d97706; background: #fffbeb; color: #a16207; }
+.audit-chip.ok.on { border-color: #16a34a; background: #f0fdf4; color: #15803d; }
+.audit-bulk { display: flex; gap: 8px; align-items: center; flex-wrap: wrap;
+              padding: 6px 8px; margin-bottom: 6px; background: #eef2ff;
+              border: 1px solid #c7d2fe; border-radius: 8px; font-size: 13px; }
+.audit-dlg-head { display: flex; justify-content: space-between; align-items: center;
+                  gap: 8px; margin-bottom: 8px; }
+.audit-nav { display: flex; gap: 6px; }
+.audit-warn { background: #fffbeb; border: 1px solid #fde68a; border-radius: 6px;
+              padding: 6px 8px; font-size: 12px; color: #92400e; margin: 6px 0; }
+.audit-why { margin-top: 10px; border: 1px solid var(--c-border); border-radius: 8px;
+             padding: 8px 10px; background: #fafafa; }
+.audit-why summary { cursor: pointer; font-size: 13px; }
+.audit-why-list { margin: 6px 0; padding-left: 20px; font-size: 12px; line-height: 1.7; }
+.audit-q { border: 1px solid var(--c-border); border-radius: 8px; padding: 8px;
+           margin-bottom: 8px; }
+.audit-q-head { font-size: 13px; margin-bottom: 6px; }
+.audit-stem { font-size: 12px; background: #f8fafc; border-radius: 6px;
+              padding: 6px 8px; margin-bottom: 6px; line-height: 1.6; }
+.audit-stem-label { display: inline-block; min-width: 84px; color: #6b7280; }
+.audit-manual { display: flex; gap: 8px; align-items: center; flex-wrap: wrap;
+                font-size: 13px; }
 </style>

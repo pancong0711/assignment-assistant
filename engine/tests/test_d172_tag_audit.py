@@ -700,3 +700,138 @@ def test_run_audit_diagnoses_empty_papers(tmp_path):
     assert rep["summary"]["unknown"] == 1
     assert rep["papersWithoutQuestions"] == ["pd-base", "pd-mid"]
     assert "题干" in rep["hint"]
+
+
+# ================= D173：可解释性 / 逐题对照 / tagDiffers / 人工历史 =================
+
+def test_tag_differs_is_independent_of_verdict():
+    """tag 不同是「事实」，与 verdict（引擎把握）解耦。
+
+    教师实测 bug：「只看不一致」勾上后空列表——因为过滤按 verdict，
+    而 unknown（置信不足）的学生被漏掉了，可他们的 tag 明明不同。
+    """
+    papers = T.papers_of(PADS)
+    # 构造：tag 不同，但置信只到 medium（near-identical layers）
+    a, b, _ = _near_layers()
+    ps = T.papers_of([
+        {"padId": "a", "tag": "甲", "questions": [{"no": n, "content": q} for n, q in a]},
+        {"padId": "b", "tag": "乙", "questions": [{"no": n, "content": q} for n, q in b]}])
+    row = T.audit_student({"items": [{"no": n, "printed_question": q, "answer": ""}
+                                     for n, q in b]}, ps, roster_tag="甲")
+    assert row["verdict"] == "unknown"
+    assert row["confidence"] == "medium"
+    assert row["tagDiffers"] is True, "verdict=unknown 也必须标出「tag 不同」"
+
+
+def test_tag_differs_false_when_same_or_missing():
+    papers = T.papers_of(PADS)
+    same = T.audit_student(_transcript(BASE_QS), papers, roster_tag="基础")
+    assert same["tagDiffers"] is False
+    no_tag = T.audit_student(_transcript(BASE_QS), papers, roster_tag=None)
+    assert no_tag["tagDiffers"] is False, "没有 roster tag 时无从比较，不能算「不同」"
+
+
+def test_audit_summary_counts_tag_differs():
+    papers = T.papers_of(PADS)
+    rows = [
+        T.audit_student(_transcript(TOP_QS), papers, roster_tag="基础"),   # 不同
+        T.audit_student(_transcript(BASE_QS), papers, roster_tag="基础"),  # 同
+    ]
+    assert sum(1 for r in rows if r["tagDiffers"]) == 1
+
+
+def test_pairs_are_per_question_with_both_stems():
+    """逐题对照：每题一行，含**学生题干** + **每张作业纸的题干**（教师四问之 1、2、4）。"""
+    papers = T.papers_of(PADS)
+    row = T.audit_student(_transcript(MID_QS), papers, roster_tag="提高")
+    assert len(row["pairs"]) == len(MID_QS)
+    p0 = row["pairs"][0]
+    assert p0["no"] == "1"
+    assert "2.03" in p0["studentStem"]                       # 转写题干
+    tags = {x["tag"] for x in p0["perPaper"]}
+    assert tags == {"基础", "提高", "拓展"}                   # 每张纸都列
+    for x in p0["perPaper"]:
+        assert x["paperStem"], "每张作业纸都要能显示题干"
+        assert 0.0 <= x["score"] <= 1.0
+    # 最优必须是「提高」
+    assert p0["best"]["tag"] == "提高"
+    assert p0["perPaper"][0]["tag"] == "提高"
+
+
+def test_pair_detail_explains_score():
+    """判据可解释（教师四问之 3）：每对要能给出字面/数值分解与共同数字。"""
+    papers = T.papers_of(PADS)
+    row = T.audit_student(_transcript(MID_QS), papers, roster_tag="提高")
+    d = row["pairs"][0]["perPaper"][0]["detail"]
+    assert 0.0 <= d["literal"] <= 1.0
+    assert 0.0 <= d["number"] <= 1.0
+    assert "2.03" in d["numbersStudent"]
+    assert d["numbersShared"], "共同数值要列出来（教师据此判断为什么判高分）"
+
+
+def test_why_block_exposes_method_and_weights():
+    papers = T.papers_of(PADS)
+    row = T.audit_student(_transcript(MID_QS), papers, roster_tag="提高")
+    w = row["why"]
+    assert w["method"] == T.ENGINE_VER
+    assert w["onlyPrintedQuestion"] is True
+    assert w["bigramWeight"] + w["numberWeight"] == pytest.approx(1.0)
+    assert {x["tag"] for x in w["perPaperTotals"]} == {"基础", "提高", "拓展"}
+
+
+def test_explicitly_only_printed_question_used():
+    """**只判题干**：把 answer 改成完全无关，结论不能变。"""
+    papers = T.papers_of(PADS)
+    a = _transcript(MID_QS)
+    b = _transcript(MID_QS)
+    for it in b["items"]:
+        it["answer"] = "完全无关的乱写内容 xyz 123"
+    r1 = T.audit_student(a, papers, roster_tag="提高")
+    r2 = T.audit_student(b, papers, roster_tag="提高")
+    assert (r1["auditTag"], r1["score"]) == (r2["auditTag"], r2["score"])
+
+
+def test_old_format_transcript_is_flagged():
+    """旧格式（只有 markdown、无 items）→ 明确标出「建议重新转写」。"""
+    papers = T.papers_of(PADS)
+    md = "\n".join(f"{i}. {q}\n解：略" for i, (_n, q) in enumerate(BASE_QS, 1))
+    row = T.audit_student({"markdown": md}, papers, roster_tag="基础")
+    assert row["legacyFormat"] is True
+
+
+def test_apply_accumulates_per_student_tag_history(ws):
+    _snap(ws)
+    T.apply_audit_tags(ws, class_dir=CLASS, pack_id=PACK,
+                       changes=[{"name": "张三", "tag": "提高"}], reason="manual-detail")
+    T.apply_audit_tags(ws, class_dir=CLASS, pack_id=PACK,
+                       changes=[{"name": "张三", "tag": "拓展", "note": "看题干后确认"}],
+                       reason="manual-detail")
+    from assist.grading import snapshots as S
+    zs = next(s for s in S.read_tags_snapshot(ws, CLASS, PACK)["students"]
+              if s["name"] == "张三")
+    hist = zs["tagHistory"]
+    assert len(hist) == 2, "两次修改都要留记录"
+    assert hist[0]["from"] == "基础" and hist[0]["to"] == "提高"
+    assert hist[1]["from"] == "提高" and hist[1]["to"] == "拓展"
+    assert hist[1]["note"] == "看题干后确认"
+    assert hist[1]["by"] == "teacher"
+
+
+def test_undo_student_tag_restores_previous_and_keeps_history(ws):
+    _snap(ws)
+    T.apply_audit_tags(ws, class_dir=CLASS, pack_id=PACK,
+                       changes=[{"name": "张三", "tag": "提高"}])
+    rep = T.undo_student_tag(ws, class_dir=CLASS, pack_id=PACK, name="张三")
+    assert rep["ok"] and rep["to"] == "基础"
+    from assist.grading import snapshots as S
+    zs = next(s for s in S.read_tags_snapshot(ws, CLASS, PACK)["students"]
+              if s["name"] == "张三")
+    assert zs["tag"] == "基础"
+    assert len(zs["tagHistory"]) == 2, "撤销是**追加**记录，不删历史"
+    assert zs["tagHistory"][-1]["reason"] == "undo-student"
+
+
+def test_undo_student_without_history_errors(ws):
+    _snap(ws)
+    rep = T.undo_student_tag(ws, class_dir=CLASS, pack_id=PACK, name="张三")
+    assert rep["ok"] is False and "没有任何 tag 变更记录" in rep["error"]

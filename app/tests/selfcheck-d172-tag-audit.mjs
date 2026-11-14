@@ -35,8 +35,32 @@ if (!/\.row-audit-bad\s*\{[^}]*background/.test(panel)) {
 }
 
 // 3) 逐人 + 批量 + 撤销
-for (const fn of ['applyAuditOne', 'applyAuditChecked', 'undoAudit', 'runAuditNow']) {
+for (const fn of ['applyAuditOne', 'applyAuditChecked', 'undoAudit', 'runAuditNow',
+                  'applyBulkTag', 'undoStudentTag', 'saveManualTag', 'auditDetailStep']) {
   if (!new RegExp(`function ${fn}`).test(panel)) errors.push(`缺少 ${fn}()`)
+}
+
+// 3b) D173：过滤必须按 tagDiffers（不是 verdict）——否则 unknown 的学生会被漏掉
+if (!/auditFilter\.value === 'differs'\) return !!a\.tagDiffers/.test(panel)) {
+  errors.push('「只看 tag 不同」必须按 tagDiffers 过滤（D172 用 verdict 导致列表空）')
+}
+if (/auditOnlyBad/.test(panel)) errors.push('auditOnlyBad 已废弃（改用 auditFilter）')
+
+// 3c) D173：复选框必须常驻（此前限 mismatch&&high → 教师一个框都看不见）
+if (!/type="checkbox"/.test(panel)) errors.push('缺少行复选框')
+if (/v-if="auditSelectable/.test(panel)) errors.push('复选框不应再按置信度隐藏')
+
+// 3d) D173：详情页必须包含「逐题对照 + 判据 + 人工确认 + 历史」
+for (const [re, msg] of [
+  [/逐题对照/, '详情页缺少「逐题对照」'],
+  [/学生第 \{\{ p\.no \}\} 题/, '详情页缺少逐题学生题干'],
+  [/p\.perPaper/, '详情页缺少每张作业纸的对照'],
+  [/怎么判的（判据）/, '详情页缺少「判据」'],
+  [/printed_question/, '判据里要说明「只比对题干」'],
+  [/人工确认/, '详情页缺少「人工确认」'],
+  [/tag 变更历史/, '详情页缺少「tag 变更历史」'],
+]) {
+  if (!re.test(panel)) errors.push(msg)
 }
 if (!/改动|改历史/.test(panel)) errors.push('应用 tag 前必须提示「这是改历史」')
 

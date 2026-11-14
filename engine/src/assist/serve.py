@@ -1072,7 +1072,7 @@ class Handler(BaseHTTPRequestHandler):
             self._json(rep, 200 if rep.get("ok") else 400)
             return
         if u.path in ("/grade/audit-tags/run", "/grade/audit-tags/apply",
-                      "/grade/audit-tags/undo"):
+                      "/grade/audit-tags/undo", "/grade/audit-tags/undo-student"):
             # D172：tag 审计（run 为纯 Python，**不调模型**）
             payload: dict = {}
             try:
@@ -1101,6 +1101,11 @@ class Handler(BaseHTTPRequestHandler):
                         ws_, class_dir=class_dir, pack_id=pack_id,
                         changes=payload.get("changes") or [],
                         reason=str(payload.get("reason") or "audit-apply"))
+                elif u.path.endswith("/undo-student"):
+                    rep = _ta.undo_student_tag(
+                        ws_, class_dir=class_dir, pack_id=pack_id,
+                        name=str(payload.get("name") or ""),
+                        note=str(payload.get("note") or ""))
                 else:
                     rep = _ta.undo_last(ws_, class_dir=class_dir, pack_id=pack_id,
                                         file=str(payload.get("file") or ""))

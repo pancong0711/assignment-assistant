@@ -832,7 +832,16 @@ export async function fetchXxtGradeDrafts(
 
 // ---------------- D172：tag 审计（纯 Python，不调模型） ----------------
 
-export interface AuditPair { block: number; no: string; paperNo: string; score: number }
+export interface AuditPairPaper {
+  padId: string; tag: string; paperNo: string; paperStem: string; score: number
+  detail?: { literal: number; number: number; numbersStudent: string[]
+    numbersPaper: string[]; numbersShared: string[] }
+}
+export interface AuditPair {
+  block: number; no: string; studentStem: string
+  best?: { padId?: string; tag?: string; paperNo?: string; score?: number }
+  perPaper?: AuditPairPaper[]
+}
 export interface AuditStudentRow {
   name: string
   rosterTag: string | null
@@ -849,6 +858,17 @@ export interface AuditStudentRow {
   alternatives?: Array<{ padId: string; tag: string; score: number }>
   reason?: string
   resolution?: { at: string; action: string; from: string; to: string; by: string } | null
+  /** D173：tag 是否不同（**事实**，与 verdict 解耦） */
+  tagDiffers?: boolean
+  /** D173：旧格式转写（无 items[]）→ 建议重新转写 */
+  legacyFormat?: boolean
+  /** D173：判据（方法/权重/每张纸合计） */
+  why?: { method?: string; bigramWeight?: number; numberWeight?: number
+    minScore?: number; marginMin?: number; onlyPrintedQuestion?: boolean
+    perPaperTotals?: Array<{ padId: string; tag: string; score: number
+      rawScore?: number; coverage?: number; questionCount?: number }> }
+  tagHistory?: Array<{ at: string; from: string; to: string; by?: string
+    reason?: string; note?: string }>
 }
 export interface TagAuditReport {
   ok?: boolean
@@ -898,7 +918,9 @@ export async function runTagAudit(
 /** POST /grade/audit-tags/apply：教师确认后**补丁式**改 tag（自动存历史副本）。 */
 export async function applyTagAudit(
   engineAddr: string, token: string | undefined,
-  payload: { classDir: string; packId: string; changes: Array<{ name: string; tag: string }> },
+  payload: { classDir: string; packId: string
+    changes: Array<{ name: string; tag: string; note?: string }>
+    reason?: string },
 ): Promise<{ ok?: boolean; error?: string; applied?: Array<{ name: string; from: string; to: string }>
   unchanged?: string[]; missing?: string[]; historyPath?: string; written?: boolean }> {
   const base = normalizeEngineAddr(engineAddr)
@@ -920,6 +942,20 @@ export async function fetchTagAuditHistory(
   return (await getJson2(engineUrlWithToken(base, `/grade/audit-tags?${qs}`, token))) as
     { ok?: boolean; history?: Array<{ file: string; at: string; reason: string
       snapshotSource?: string; count: number }>; error?: string }
+}
+
+/** POST /grade/audit-tags/undo-student：按学生撤销最近一次 tag 变更（追加记录）。 */
+export async function undoStudentTagApi(
+  engineAddr: string, token: string | undefined,
+  payload: { classDir: string; packId: string; name: string; note?: string },
+): Promise<{ ok?: boolean; error?: string; written?: boolean; name?: string
+  from?: string; to?: string; note?: string }> {
+  const base = normalizeEngineAddr(engineAddr)
+  const res = await fetch(engineUrlWithToken(base, '/grade/audit-tags/undo-student', token), {
+    method: 'POST', headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(payload),
+  })
+  return (await res.json().catch(() => ({ ok: false, error: '引擎返回非 JSON' })))
 }
 
 /** POST /grade/audit-tags/undo：撤销（从历史副本恢复快照）。 */
