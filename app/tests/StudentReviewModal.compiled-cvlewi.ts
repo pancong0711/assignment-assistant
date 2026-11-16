@@ -254,11 +254,30 @@ function useAiOriginal() {
   previewMd.value = ''
 }
 
+/** D175c：分数统一按**字符串**处理再解析。
+ *  此前直接 `finalScore.value.trim()` —— 一旦教师手动改过分数（v-model 变成 number）
+ *  就抛 `TypeError: finalScore.value.trim is not a function`，保存键"点了没反应"。 */
+function rawScore(): string {
+  return String(finalScore.value ?? '').trim()
+}
+/** 解析最终分数：空 → null（不改分）；非法 → NaN。 */
+function parseScore(): number | null {
+  const s = rawScore()
+  if (!s) return null
+  const n = Number(s)
+  return Number.isFinite(n) ? n : NaN
+}
+function onScoreInput(v: string) {
+  finalScore.value = v            // 始终保持字符串
+  dirty.value = true
+  previewMd.value = ''
+}
+
 /** 组装保存/预览用的请求体（两者**同一份**，保证"看到的就是会发出的"）。 */
 function buildPayload() {
   const c = cur.value
   if (!c) return null
-  const n = finalScore.value.trim() === '' ? null : Number(finalScore.value)
+  const n = parseScore()
   const scoreOk = n !== null && Number.isFinite(n) ? n : null
   const payload: Record<string, unknown> = {
     classId: props.classId, workId: props.workId, key: c.key, student: c.name,
@@ -297,6 +316,8 @@ async function doPreview() {
       showPreview.value = true
       msg.value = `预览生成（${r.kind || 'ai'}）——下发前请确认分数与批语`
     } else msg.value = r?.error || '预览失败'
+  } catch (e) {
+    msg.value = `预览失败：${String((e as Error).message || e)}`
   } finally { previewBusy.value = false }
 }
 
@@ -304,14 +325,14 @@ async function doPreview() {
 async function save() {
   const c = cur.value
   if (!c) return
-  const payload = buildPayload()
-  if (!payload) return
-  const n = Number(finalScore.value)
-  if (finalScore.value.trim() !== '' && (!Number.isFinite(n) || n < 0 || n > 100)) {
+  const n = parseScore()
+  if (n !== null && (!Number.isFinite(n) || n < 0 || n > 100)) {
     msg.value = '分数必须是 0~100 的数字'; return
   }
   saving.value = true
   try {
+    const payload = buildPayload()
+    if (!payload) { msg.value = '无法组装保存内容（缺少学生）'; return }
     const r = await saveXxtGradeDraft(props.engineAddr, props.token, payload as any)
     if (r?.ok) {
       dirty.value = false
@@ -324,6 +345,9 @@ async function save() {
       emit('saved')
       showPreview.value = false
     } else msg.value = r?.error || '保存失败'
+  } catch (e) {
+    // 此前异常直接冒泡 → 按钮"点了没反应"，且仍显示"有未保存改动"
+    msg.value = `保存失败：${String((e as Error).message || e)}`
   } finally { saving.value = false }
 }
 
@@ -350,7 +374,7 @@ async function saveRevisionOnly() {
   } finally { savingRev.value = false }
 }
 
-const __returned__ = { props, emit, idx, rotate, showTranscript, pane, reportNonce, reportUrl, hasReport, openReport, showReportTab, layout, msg, cur, draft, aiSet, revisionText, answerImages, transcriptText, transcriptHtml, transcriptEl, aiCommentEl, renderFormulas, finalComment, finalScore, comment, commentMode, replacing, appending, editingComment, revDraft, dirty, saving, previewMd, previewKind, previewBusy, showPreview, aiOriginal, savedRevision, finalCommentHtml, commentChanged, finalCommentNow, aiScoreNow, humanUsed, scoreHint, commentHint, fillFromDraft, prev, next, imgUrl, startEditComment, cancelEditComment, applyEditComment, setCommentMode, useAiOriginal, buildPayload, doPreview, save, savingRev, saveRevisionOnly }
+const __returned__ = { props, emit, idx, rotate, showTranscript, pane, reportNonce, reportUrl, hasReport, openReport, showReportTab, layout, msg, cur, draft, aiSet, revisionText, answerImages, transcriptText, transcriptHtml, transcriptEl, aiCommentEl, renderFormulas, finalComment, finalScore, comment, commentMode, replacing, appending, editingComment, revDraft, dirty, saving, previewMd, previewKind, previewBusy, showPreview, aiOriginal, savedRevision, finalCommentHtml, commentChanged, finalCommentNow, aiScoreNow, humanUsed, scoreHint, commentHint, fillFromDraft, prev, next, imgUrl, startEditComment, cancelEditComment, applyEditComment, setCommentMode, useAiOriginal, rawScore, parseScore, onScoreInput, buildPayload, doPreview, save, savingRev, saveRevisionOnly }
 Object.defineProperty(__returned__, '__isScriptSetup', { enumerable: false, value: true })
 return __returned__
 }
@@ -418,45 +442,46 @@ const _hoisted_25 = { style: {"margin":"4px 0","display":"flex","gap":"8px","ali
 const _hoisted_26 = ["disabled"]
 const _hoisted_27 = { style: {"display":"flex","gap":"10px","align-items":"center","flex-wrap":"wrap","margin":"0 0 6px"} }
 const _hoisted_28 = { class: "field" }
-const _hoisted_29 = { class: "hint" }
-const _hoisted_30 = { style: {"margin":"4px 0","display":"flex","gap":"6px","flex-wrap":"wrap"} }
-const _hoisted_31 = ["placeholder"]
-const _hoisted_32 = {
+const _hoisted_29 = ["value"]
+const _hoisted_30 = { class: "hint" }
+const _hoisted_31 = { style: {"margin":"4px 0","display":"flex","gap":"6px","flex-wrap":"wrap"} }
+const _hoisted_32 = ["placeholder"]
+const _hoisted_33 = {
   key: 6,
   class: "hint",
   style: {"margin":"2px 0 0"}
 }
-const _hoisted_33 = { style: {"margin":"10px 0 0","display":"flex","gap":"8px","align-items":"center","flex-wrap":"wrap"} }
-const _hoisted_34 = ["disabled"]
+const _hoisted_34 = { style: {"margin":"10px 0 0","display":"flex","gap":"8px","align-items":"center","flex-wrap":"wrap"} }
 const _hoisted_35 = ["disabled"]
-const _hoisted_36 = {
+const _hoisted_36 = ["disabled"]
+const _hoisted_37 = {
   key: 0,
   class: "hint",
   style: {"color":"#b45309"}
 }
-const _hoisted_37 = {
+const _hoisted_38 = {
   key: 1,
   class: "hint"
 }
-const _hoisted_38 = {
+const _hoisted_39 = {
   key: 7,
   class: "hint",
   style: {"margin":"2px 0","color":"#b45309"}
 }
-const _hoisted_39 = {
+const _hoisted_40 = {
   key: 8,
   style: {"margin-top":"8px","border":"1px solid #0369a1","border-radius":"8px","padding":"8px","max-height":"38vh","overflow":"auto","background":"#fff"}
 }
-const _hoisted_40 = {
+const _hoisted_41 = {
   class: "hint",
   style: {"margin":"0 0 6px"}
 }
-const _hoisted_41 = { style: {"white-space":"pre-wrap","font-family":"inherit","margin":"0"} }
+const _hoisted_42 = { style: {"white-space":"pre-wrap","font-family":"inherit","margin":"0"} }
 
 export function render(_ctx, _cache, $props, $setup, $data, $options) {
   return (_openBlock(), _createElementBlock("div", {
     class: "backdrop",
-    onClick: _cache[15] || (_cache[15] = _withModifiers($event => ($setup.emit('close')), ["self"]))
+    onClick: _cache[14] || (_cache[14] = _withModifiers($event => ($setup.emit('close')), ["self"]))
   }, [
     _createElementVNode("div", _hoisted_1, [
       _createElementVNode("div", _hoisted_2, [
@@ -464,7 +489,7 @@ export function render(_ctx, _cache, $props, $setup, $data, $options) {
           _createTextVNode("逐生审核：" + _toDisplayString($setup.cur?.name || '—') + " ", 1 /* TEXT */),
           _createElementVNode("span", _hoisted_4, "（第 " + _toDisplayString($setup.idx + 1) + " / " + _toDisplayString($props.students.length) + " 位 · tag " + _toDisplayString($setup.cur?.tag || '—') + "）", 1 /* TEXT */)
         ]),
-        _cache[16] || (_cache[16] = _createElementVNode("span", { style: {"flex":"1"} }, null, -1 /* CACHED */)),
+        _cache[15] || (_cache[15] = _createElementVNode("span", { style: {"flex":"1"} }, null, -1 /* CACHED */)),
         _createElementVNode("button", {
           class: "btn",
           disabled: $setup.idx <= 0,
@@ -499,7 +524,7 @@ export function render(_ctx, _cache, $props, $setup, $data, $options) {
         _createElementVNode("div", {
           style: _normalizeStyle({ flex: $setup.layout === 'rows' ? 'none' : '1', minWidth: '280px', width: $setup.layout === 'rows' ? '100%' : 'auto' })
         }, [
-          _cache[17] || (_cache[17] = _createElementVNode("h4", null, "学生作答", -1 /* CACHED */)),
+          _cache[16] || (_cache[16] = _createElementVNode("h4", null, "学生作答", -1 /* CACHED */)),
           _createElementVNode("div", _hoisted_7, [
             (_openBlock(true), _createElementBlock(_Fragment, null, _renderList($setup.answerImages, (f) => {
               return (_openBlock(), _createElementBlock("img", {
@@ -539,7 +564,7 @@ export function render(_ctx, _cache, $props, $setup, $data, $options) {
                       class: "report-frame",
                       title: "批阅报告预览"
                     }, null, 8 /* PROPS */, _hoisted_12)),
-                _cache[18] || (_cache[18] = _createElementVNode("p", {
+                _cache[17] || (_cache[17] = _createElementVNode("p", {
                   class: "hint",
                   style: {"margin-top":"4px"}
                 }, " 这里预览的就是要发给学生/上传平台的报告（含转写原文、评分与扣分依据）。 若显示\"尚未生成报告\"，先点下方「📄 一键生成批阅报告」。 ", -1 /* CACHED */))
@@ -547,8 +572,8 @@ export function render(_ctx, _cache, $props, $setup, $data, $options) {
             : (_openBlock(), _createElementBlock(_Fragment, { key: 1 }, [
                 _createCommentVNode(" D126：AI 转写（便于对照原图，确认 AI 识别是否准确） "),
                 _createElementVNode("h4", _hoisted_13, [
-                  _cache[19] || (_cache[19] = _createTextVNode(" AI 转写 ", -1 /* CACHED */)),
-                  _cache[20] || (_cache[20] = _createElementVNode("span", {
+                  _cache[18] || (_cache[18] = _createTextVNode(" AI 转写 ", -1 /* CACHED */)),
+                  _cache[19] || (_cache[19] = _createElementVNode("span", {
                     class: "hint",
                     style: {"font-weight":"400"}
                   }, " （AI 从作答图识别出的文字；与左侧原图对照可发现识别偏差） ", -1 /* CACHED */)),
@@ -574,9 +599,9 @@ export function render(_ctx, _cache, $props, $setup, $data, $options) {
                     : _createCommentVNode("v-if", true),
                 _createCommentVNode(" ===== D175：一份批语 + 一个分数 = 你要发给学生的东西 =====\n               保存一定会同时写批语与分数；\"另存修订版\"与\"人工分数\"不再各走各的。 "),
                 _createElementVNode("h4", _hoisted_16, [
-                  _cache[21] || (_cache[21] = _createTextVNode(" ✍ 最终批语 ", -1 /* CACHED */)),
+                  _cache[20] || (_cache[20] = _createTextVNode(" ✍ 最终批语 ", -1 /* CACHED */)),
                   _createElementVNode("span", _hoisted_17, _toDisplayString($setup.commentHint), 1 /* TEXT */),
-                  _cache[22] || (_cache[22] = _createElementVNode("span", { style: {"flex":"1"} }, null, -1 /* CACHED */)),
+                  _cache[21] || (_cache[21] = _createElementVNode("span", { style: {"flex":"1"} }, null, -1 /* CACHED */)),
                   (!$setup.editingComment)
                     ? (_openBlock(), _createElementBlock("button", {
                         key: 0,
@@ -638,7 +663,7 @@ export function render(_ctx, _cache, $props, $setup, $data, $options) {
                           onClick: $setup.saveRevisionOnly,
                           title: "只把修订版写进草稿，不动分数（高级用法）"
                         }, _toDisplayString($setup.savingRev ? '保存中…' : '仅存修订版'), 9 /* TEXT, PROPS */, _hoisted_26),
-                        _cache[23] || (_cache[23] = _createElementVNode("span", { class: "hint" }, [
+                        _cache[22] || (_cache[22] = _createElementVNode("span", { class: "hint" }, [
                           _createTextVNode("「应用到批语」后还需点下面 "),
                           _createElementVNode("b", null, "💾 保存"),
                           _createTextVNode(" 才写入草稿")
@@ -647,58 +672,57 @@ export function render(_ctx, _cache, $props, $setup, $data, $options) {
                     ]))
                   : _createCommentVNode("v-if", true),
                 _createCommentVNode(" ===== 分数 ===== "),
-                _cache[27] || (_cache[27] = _createElementVNode("h4", { style: {"margin-top":"12px"} }, "分数", -1 /* CACHED */)),
+                _cache[26] || (_cache[26] = _createElementVNode("h4", { style: {"margin-top":"12px"} }, "分数", -1 /* CACHED */)),
                 _createElementVNode("p", _hoisted_27, [
                   _createElementVNode("label", _hoisted_28, [
-                    _cache[24] || (_cache[24] = _createTextVNode("最终分数 ", -1 /* CACHED */)),
-                    _withDirectives(_createElementVNode("input", {
-                      "onUpdate:modelValue": _cache[8] || (_cache[8] = $event => (($setup.finalScore) = $event)),
+                    _cache[23] || (_cache[23] = _createTextVNode("最终分数 ", -1 /* CACHED */)),
+                    _createCommentVNode(" D175c：**不要**用 v-model（Vue3 对 type=number 会自动转成 number，\n                   而下面按字符串做 trim/校验 → 手动改分后保存抛 TypeError、静默无反应）。\n                   这里显式保存原始字符串，解析统一交给 parseScore()。 "),
+                    _createElementVNode("input", {
+                      value: $setup.finalScore,
                       type: "number",
                       min: "0",
                       max: "100",
                       style: {"width":"88px"},
-                      onInput: _cache[9] || (_cache[9] = $event => {$setup.dirty = true; $setup.previewMd = ''})
-                    }, null, 544 /* NEED_HYDRATION, NEED_PATCH */), [
-                      [_vModelText, $setup.finalScore]
-                    ])
+                      onInput: _cache[8] || (_cache[8] = $event => ($setup.onScoreInput(($event.target as HTMLInputElement).value)))
+                    }, null, 40 /* PROPS, NEED_HYDRATION */, _hoisted_29)
                   ]),
-                  _createElementVNode("span", _hoisted_29, _toDisplayString($setup.scoreHint), 1 /* TEXT */)
+                  _createElementVNode("span", _hoisted_30, _toDisplayString($setup.scoreHint), 1 /* TEXT */)
                 ]),
                 _createCommentVNode(" ===== 与 AI 的关系（三选一） ===== "),
-                _cache[28] || (_cache[28] = _createElementVNode("h4", { style: {"margin-top":"12px"} }, "批语与 AI 的关系", -1 /* CACHED */)),
-                _createElementVNode("p", _hoisted_30, [
+                _cache[27] || (_cache[27] = _createElementVNode("h4", { style: {"margin-top":"12px"} }, "批语与 AI 的关系", -1 /* CACHED */)),
+                _createElementVNode("p", _hoisted_31, [
                   _createElementVNode("button", {
                     class: _normalizeClass(["btn small", { primary: $setup.commentMode === 'keep' }]),
-                    onClick: _cache[10] || (_cache[10] = $event => ($setup.setCommentMode('keep'))),
+                    onClick: _cache[9] || (_cache[9] = $event => ($setup.setCommentMode('keep'))),
                     title: "保留 AI 原文，你的改动按行标红（默认）"
                   }, "✏ 修订 AI（标红改动）", 2 /* CLASS */),
                   _createElementVNode("button", {
                     class: _normalizeClass(["btn small", { primary: $setup.commentMode === 'append' }]),
-                    onClick: _cache[11] || (_cache[11] = $event => ($setup.setCommentMode('append'))),
+                    onClick: _cache[10] || (_cache[10] = $event => ($setup.setCommentMode('append'))),
                     title: "AI 原文在前 + 你的补充批语在后"
                   }, "➕ 追加到 AI 之后", 2 /* CLASS */),
                   _createElementVNode("button", {
                     class: _normalizeClass(["btn small", { primary: $setup.commentMode === 'replace' }]),
-                    onClick: _cache[12] || (_cache[12] = $event => ($setup.setCommentMode('replace'))),
+                    onClick: _cache[11] || (_cache[11] = $event => ($setup.setCommentMode('replace'))),
                     title: "纯人工批语，报告里不出现 AI 原文"
                   }, "↩ 完全替代 AI", 2 /* CLASS */)
                 ]),
                 ($setup.commentMode !== 'keep')
                   ? _withDirectives((_openBlock(), _createElementBlock("textarea", {
                       key: 5,
-                      "onUpdate:modelValue": _cache[13] || (_cache[13] = $event => (($setup.comment) = $event)),
+                      "onUpdate:modelValue": _cache[12] || (_cache[12] = $event => (($setup.comment) = $event)),
                       rows: "5",
                       style: {"width":"100%","font-family":"inherit","margin-top":"6px"},
                       placeholder: $setup.commentMode === 'append'
                       ? '教师补充批语（追加在 AI 原文之后，支持 LaTeX）'
                       : '纯人工批语（替代 AI 原文，支持 LaTeX）',
-                      onInput: _cache[14] || (_cache[14] = $event => {$setup.dirty = true; $setup.previewMd = ''})
-                    }, null, 40 /* PROPS, NEED_HYDRATION */, _hoisted_31)), [
+                      onInput: _cache[13] || (_cache[13] = $event => {$setup.dirty = true; $setup.previewMd = ''})
+                    }, null, 40 /* PROPS, NEED_HYDRATION */, _hoisted_32)), [
                       [_vModelText, $setup.comment]
                     ])
                   : _createCommentVNode("v-if", true),
                 ($setup.commentMode !== 'keep')
-                  ? (_openBlock(), _createElementBlock("p", _hoisted_32, [
+                  ? (_openBlock(), _createElementBlock("p", _hoisted_33, [
                       _createTextVNode(_toDisplayString($setup.commentMode === 'append'
               ? '报告 = AI 原文 + 【教师补充批语】+ 你的分数'
               : '报告 = 纯人工批语 + 你的分数（不出现 AI 原文）') + " 　", 1 /* TEXT */),
@@ -709,34 +733,34 @@ export function render(_ctx, _cache, $props, $setup, $data, $options) {
                     ]))
                   : _createCommentVNode("v-if", true),
                 _createCommentVNode(" ===== 保存 / 预览 ===== "),
-                _createElementVNode("p", _hoisted_33, [
+                _createElementVNode("p", _hoisted_34, [
                   _createElementVNode("button", {
                     class: "btn primary",
                     disabled: $setup.saving,
                     onClick: $setup.save
-                  }, _toDisplayString($setup.saving ? '保存中…' : '💾 保存（批语 + 分数一起）'), 9 /* TEXT, PROPS */, _hoisted_34),
+                  }, _toDisplayString($setup.saving ? '保存中…' : '💾 保存（批语 + 分数一起）'), 9 /* TEXT, PROPS */, _hoisted_35),
                   _createElementVNode("button", {
                     class: "btn small",
                     disabled: $setup.previewBusy,
                     onClick: $setup.doPreview
-                  }, _toDisplayString($setup.previewBusy ? '生成中…' : '👁 预览将发出的报告'), 9 /* TEXT, PROPS */, _hoisted_35),
+                  }, _toDisplayString($setup.previewBusy ? '生成中…' : '👁 预览将发出的报告'), 9 /* TEXT, PROPS */, _hoisted_36),
                   ($setup.dirty)
-                    ? (_openBlock(), _createElementBlock("span", _hoisted_36, "● 有未保存改动"))
+                    ? (_openBlock(), _createElementBlock("span", _hoisted_37, "● 有未保存改动"))
                     : ($setup.msg)
-                      ? (_openBlock(), _createElementBlock("span", _hoisted_37, _toDisplayString($setup.msg), 1 /* TEXT */))
+                      ? (_openBlock(), _createElementBlock("span", _hoisted_38, _toDisplayString($setup.msg), 1 /* TEXT */))
                       : _createCommentVNode("v-if", true)
                 ]),
                 ($setup.dirty && $setup.msg)
-                  ? (_openBlock(), _createElementBlock("p", _hoisted_38, _toDisplayString($setup.msg), 1 /* TEXT */))
+                  ? (_openBlock(), _createElementBlock("p", _hoisted_39, _toDisplayString($setup.msg), 1 /* TEXT */))
                   : _createCommentVNode("v-if", true),
                 ($setup.showPreview)
-                  ? (_openBlock(), _createElementBlock("div", _hoisted_39, [
-                      _createElementVNode("p", _hoisted_40, [
-                        _cache[25] || (_cache[25] = _createTextVNode(" 这是", -1 /* CACHED */)),
-                        _cache[26] || (_cache[26] = _createElementVNode("b", null, "保存后要发出去的报告", -1 /* CACHED */)),
+                  ? (_openBlock(), _createElementBlock("div", _hoisted_40, [
+                      _createElementVNode("p", _hoisted_41, [
+                        _cache[24] || (_cache[24] = _createTextVNode(" 这是", -1 /* CACHED */)),
+                        _cache[25] || (_cache[25] = _createElementVNode("b", null, "保存后要发出去的报告", -1 /* CACHED */)),
                         _createTextVNode("（" + _toDisplayString($setup.previewKind) + "）。确认无误再点「💾 保存」。 ", 1 /* TEXT */)
                       ]),
-                      _createElementVNode("pre", _hoisted_41, _toDisplayString($setup.previewMd), 1 /* TEXT */)
+                      _createElementVNode("pre", _hoisted_42, _toDisplayString($setup.previewMd), 1 /* TEXT */)
                     ]))
                   : _createCommentVNode("v-if", true)
               ], 64 /* STABLE_FRAGMENT */))

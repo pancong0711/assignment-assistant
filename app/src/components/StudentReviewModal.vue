@@ -247,11 +247,30 @@ function useAiOriginal() {
   previewMd.value = ''
 }
 
+/** D175c：分数统一按**字符串**处理再解析。
+ *  此前直接 `finalScore.value.trim()` —— 一旦教师手动改过分数（v-model 变成 number）
+ *  就抛 `TypeError: finalScore.value.trim is not a function`，保存键"点了没反应"。 */
+function rawScore(): string {
+  return String(finalScore.value ?? '').trim()
+}
+/** 解析最终分数：空 → null（不改分）；非法 → NaN。 */
+function parseScore(): number | null {
+  const s = rawScore()
+  if (!s) return null
+  const n = Number(s)
+  return Number.isFinite(n) ? n : NaN
+}
+function onScoreInput(v: string) {
+  finalScore.value = v            // 始终保持字符串
+  dirty.value = true
+  previewMd.value = ''
+}
+
 /** 组装保存/预览用的请求体（两者**同一份**，保证"看到的就是会发出的"）。 */
 function buildPayload() {
   const c = cur.value
   if (!c) return null
-  const n = finalScore.value.trim() === '' ? null : Number(finalScore.value)
+  const n = parseScore()
   const scoreOk = n !== null && Number.isFinite(n) ? n : null
   const payload: Record<string, unknown> = {
     classId: props.classId, workId: props.workId, key: c.key, student: c.name,
@@ -290,6 +309,8 @@ async function doPreview() {
       showPreview.value = true
       msg.value = `预览生成（${r.kind || 'ai'}）——下发前请确认分数与批语`
     } else msg.value = r?.error || '预览失败'
+  } catch (e) {
+    msg.value = `预览失败：${String((e as Error).message || e)}`
   } finally { previewBusy.value = false }
 }
 
@@ -297,14 +318,14 @@ async function doPreview() {
 async function save() {
   const c = cur.value
   if (!c) return
-  const payload = buildPayload()
-  if (!payload) return
-  const n = Number(finalScore.value)
-  if (finalScore.value.trim() !== '' && (!Number.isFinite(n) || n < 0 || n > 100)) {
+  const n = parseScore()
+  if (n !== null && (!Number.isFinite(n) || n < 0 || n > 100)) {
     msg.value = '分数必须是 0~100 的数字'; return
   }
   saving.value = true
   try {
+    const payload = buildPayload()
+    if (!payload) { msg.value = '无法组装保存内容（缺少学生）'; return }
     const r = await saveXxtGradeDraft(props.engineAddr, props.token, payload as any)
     if (r?.ok) {
       dirty.value = false
@@ -317,6 +338,9 @@ async function save() {
       emit('saved')
       showPreview.value = false
     } else msg.value = r?.error || '保存失败'
+  } catch (e) {
+    // 此前异常直接冒泡 → 按钮"点了没反应"，且仍显示"有未保存改动"
+    msg.value = `保存失败：${String((e as Error).message || e)}`
   } finally { saving.value = false }
 }
 
@@ -469,8 +493,11 @@ async function saveRevisionOnly() {
           <h4 style="margin-top:12px">分数</h4>
           <p style="display:flex; gap:10px; align-items:center; flex-wrap:wrap; margin:0 0 6px">
             <label class="field">最终分数
-              <input v-model="finalScore" type="number" min="0" max="100" style="width:88px"
-                     @input="dirty = true; previewMd = ''" /></label>
+              <!-- D175c：**不要**用 v-model（Vue3 对 type=number 会自动转成 number，
+                   而下面按字符串做 trim/校验 → 手动改分后保存抛 TypeError、静默无反应）。
+                   这里显式保存原始字符串，解析统一交给 parseScore()。 -->
+              <input :value="finalScore" type="number" min="0" max="100" style="width:88px"
+                     @input="onScoreInput(($event.target as HTMLInputElement).value)" /></label>
             <span class="hint">{{ scoreHint }}</span>
           </p>
 

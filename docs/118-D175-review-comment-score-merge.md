@@ -141,3 +141,46 @@
 | 保存 + 父级刷新后仍显示新批语 | 浏览器实测 True |
 | 静态结构防回退 | `selfcheck-d175b-comment-edit.mjs` |
 | 四道门 | pytest 1591 · tsc 0 · build 0 · selfcheck **43/43** |
+
+
+---
+
+## 5. D175c 回归：改了分数后「保存」点了没反应（第 22 轮反馈）
+
+### 5.1 现象
+> 提示有未保存改动，但是点击保存（批语+分数一起）没效果。
+> 操作顺序：点了「恢复 AI 原文」→「继续修改」→ 改动部分内容 →「应用到批语」→
+> 再修改最终分数 → 点保存无效。
+
+### 5.2 定位（浏览器实测）
+只做一件事就复现——**改分数 → 点保存**：
+
+```
+请求数: 0
+页面错误: ['finalScore.value.trim is not a function']
+仍显示未保存提示? True
+```
+
+### 5.3 根因
+`<input type="number" v-model="finalScore">` — Vue 3 对 `type="number"` 会**自动**
+把输入转成 `number`；而 `save()` / `buildPayload()` 里写的是
+`finalScore.value.trim()` → 抛 `TypeError`，异常**冒泡未捕获** →
+请求根本没发出、`dirty` 仍为 true → 表现为"点了没反应"。
+
+> 为什么之前测试没发现：`fillFromDraft()` 用 `String(...)` 赋值时是字符串，
+> 不碰分数输入框就一路正常；**只要教师手动改过一次分数**就必现。
+
+### 5.4 修复
+- 分数输入改为 `:value` + `onScoreInput()`，**始终保存原始字符串**；
+- 新增 `rawScore()` / `parseScore()` 统一解析（空 → null，非法 → NaN）；
+- `save()` 先校验分数再组装 payload；`buildPayload()` 也用 `parseScore()`；
+- `save()` / `doPreview()` 都加 `catch`，把异常写进 `msg` ——
+  任何错误都必须给教师**可见反馈**，不允许再"静默无反应"。
+
+### 5.5 验收（浏览器实测）
+| 场景 | 结果 |
+|---|---|
+| 仅改分数 → 保存 | 请求 1 条，`human.score=72`，无报错 |
+| 恢复原文 → 继续修改 → 改内容 → 应用 → 改分数 → 保存 | 请求 1 条，`score=68` + `revision.text=新批语`，无报错 |
+| 静态防回归 | `selfcheck-d175c-score-input.mjs` |
+| 四道门 | pytest 1591 · tsc 0 · build 0 · selfcheck **44/44** |
