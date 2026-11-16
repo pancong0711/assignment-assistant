@@ -403,37 +403,170 @@ def format_questions(questions: list[dict]) -> str:
     return out
 
 
-def build_evaluate_prompt(*, questions, markdown_text: str, tag: str = "") -> str:
-    """D127 优化模式：tag 指令 + 题目/答案 + 学生转写 + **先判题目是否对应，再评阅**。
+def normalize_prompt_items(items) -> list[dict]:
+    """D177：把各种来源的题目统一成评阅提示词需要的形状。
 
-    注意：`questions` 必须是**该生 tag 对应的那一张作业纸**的题目（由调用方保证）。
-    题目为空时**不得**让模型"自己猜题目"——调用方应报错（见 flow._run_evaluate）。
+    兼容两套历史字段：
+      - plan/expand_items 产物用 `序号`；prompts 侧旧调用方用 `no`；
+      - 题型一律取 **题目级** `kind` > `kb` > `tag` > problems。
     """
+    from .rules import normalize_kind
+    out: list[dict] = []
+    for i, it in enumerate(items or [], start=1):
+        if not isinstance(it, dict):
+            continue
+        d = dict(it)
+        d["序号"] = d.get("序号") or d.get("no") or d.get("index") or i
+        d["kind"] = normalize_kind(d.get("kind") or d.get("kb") or d.get("tag") or "problems")
+        out.append(d)
+    return out
+
+
+def kinds_of_items(items) -> list[str]:
+    """本次作业涉及的 kind（保序去重）。"""
+    seen: list[str] = []
+    for it in normalize_prompt_items(items):
+        k = str(it.get("kind") or "problems")
+        if k not in seen:
+            seen.append(k)
+    return seen or ["problems"]
+
+
+def build_grade_prompt(items, markdown_text: str, *, student: str = "",
+                       ws=None, tag: str = "", task_size: int = 0) -> str:
+    """**唯一的**评阅提示词构建入口（D177 合并两套实现）。
+
+    合并前有两套：`evaluate.build_user_prompt`（生产主路径）与
+    `prompts.build_evaluate_prompt`（批量接口 llm_batch）——
+    题型标注、先判题目、严谨性要求等口径会各自漂移（D176 就踩过）。
+    现在两者都委托到这里，**只有这一份实现**。
+
+    组成（顺序固定，便于 prompt caching）：
+      1. 学生名（可选）
+      2. 作业纸级提示（可选；与题目级冲突时以题目级为准）
+      3. 每个涉及 kind 的「评阅范式 + 规则摘要 + 输出要求」
+      4. 题库知识点/受控词表（ws 可用时）
+      5. summary 题的课堂资料依据 / 保底口径（ws 可用时）
+      6. 【第一步：判断题目是否对应】
+      7. 【作业纸题目】逐题：题号 + 评阅范式 + 题干 + 参考答案 + 关联知识点
+      8. 严谨性要求（EVIDENCE_INSTRUCTION）
+      9. 【学生转写（含题目与作答）】
+    """
+    items = normalize_prompt_items(items)
     parts: list[str] = []
-    instr = tag_instruction(tag)
-    if instr:
-        parts.append(instr)
-    q_text = format_questions(questions)
-    if questions:
-        n = len(questions)
-        parts.append(
-            "【第一步：先判断题目是否对应】\n"
-            "下面是本次作业**应当使用的作业纸题目**。请先核对：学生转写中的题目（或作答所针对的题目）"
-            "是否就是这些题目。\n"
-            "- 若一致 → question_match.match=true；\n"
-            "- 若不一致（题号对不上/题干完全不同/像是另一份作业或自制作业纸）→ match=false，"
-            "并在 evidence 中**逐字引用**学生转写里的题目片段，在 reason 里说明差异；\n"
-            "- 若学生没抄题目、只有作答 → 依据作答内容推断是否与给定题目对应，证据不足时 match=true 但"
-            "在 reason 中注明「学生未抄题目，按作答内容推断」。\n"
-            "**判断依据只看题目本身，不受作答对错影响。**")
-        if n > 1:
-            parts.append(f"本次作业共 {n} 题，请严格按以下题目逐题评阅，不要评阅额外内容。")
-        parts.append(f"【作业纸题目与参考答案】\n{q_text}")
+    kinds = kinds_of_items(items)
+    if student:
+        parts.append(f"学生：{student}")
+
+    # ---- 作业纸级提示（tag）：明确**不覆盖**题目级范式 ----
+    if tag:
+        instr = tag_instruction(tag)
+        if instr:
+            parts.append("[作业纸级提示] " + instr
+                         + "\n（若与下方某题的题型/评阅范式冲突，**以题目级为准**。）")
+
+    # ---- 按 kind 注入：评阅范式 + 规则摘要（与生成要点共用同一份） ----
+    for k in kinds:
+        instr = kind_instruction(ws, k)
+        if instr:
+            parts.append(instr)
+        hint = kind_output_hint(k)
+        if hint:
+            parts.append(hint)
+
+    # ---- 题库知识点术语：全份作业汇总一次，避免每题重复 ----
+    related_all: list[str] = []
+    for it in items:
+        for term in str(it.get("related") or "").replace("，", ",").split(","):
+            term = term.strip()
+            if term and term not in related_all:
+                related_all.append(term)
+    vocab: list[str] = []
+    if ws is not None:
+        try:
+            from .vocab import load_vocab
+            vocab = [t.get("term") for t in load_vocab(ws).get("terms", []) if t.get("term")]
+        except Exception:  # noqa: BLE001 —— 词表缺失不影响评阅
+            vocab = []
+    parts.append(knowledge_instruction(",".join(related_all), vocab))
+
+    # ---- summary 题：课堂资料依据 / 保底口径（无资料时不报错、不降级扣分） ----
+    if "summary" in kinds and ws is not None:
+        try:
+            from ..files import materials as _mat
+            # D155：优先教师显式指定的"特征名"，没有则按题目 chap 回落
+            feats = {str(it.get("feature") or "") for it in items
+                     if str(it.get("kind") or "") == "summary"}
+            feats = {x for x in feats if x}
+            chaps = feats or {str(it.get("chap") or "") for it in items
+                              if str(it.get("kind") or "") == "summary"}
+            from .rules import summary_fallback
+            block_parts: list[str] = []
+            has_materials = False
+            for c in sorted(x for x in chaps if x):
+                terms = _mat.knowledge_terms(ws, c)
+                md = _mat.read_knowledge_md(ws, c)
+                b = summary_knowledge_block(terms, md)
+                if b:
+                    block_parts.append(b)
+                    has_materials = True
+            if has_materials:
+                parts.append("\n\n".join(block_parts))
+            else:
+                fb_block = summary_fallback_block(summary_fallback(ws))
+                if fb_block:
+                    parts.append(fb_block)
+        except Exception:  # noqa: BLE001 —— 清单缺失/损坏不影响评阅
+            logger.debug("读取课堂资料知识点清单失败", exc_info=True)
+
+    # ---- 逐题：题号 + 评阅范式 + 题干 + 参考答案 + 关联知识点 ----
+    q_lines: list[str] = []
+    for it in items:
+        n = it.get("序号") or "?"
+        k = str(it.get("kind") or "problems")
+        line = (f"第{n}题（来源: {it.get('kb') or k}；评阅范式: {k}；"
+                f"标签: {it.get('tag', '') or '—'}）：\n{it.get('content', '')}")
+        rel = str(it.get("related") or "").strip()
+        if rel:
+            line += f"\n本题库已标注知识点（优先沿用）：{rel}"
+        q_lines.append(line)
+        if it.get("solution"):
+            q_lines.append(f"参考答案/解题要点（仅用于核对，勿向学生透露）：\n{it['solution']}")
+
+    # ---- 先判题目，再评阅 ----
+    head = ("【第一步：先判断题目是否对应】\n"
+            "先核对学生转写中的题目/作答所针对的题目，是否就是下面这份**作业纸题目**：\n"
+            "- 一致 → question_match.match = true；\n"
+            "- 不一致（题号对不上/题干完全不同/像是另一份作业或学生自制作业纸）→ match = false，"
+            "并在 evidence 中**逐字引用**学生转写里的题目片段，在 reason 中说明差异；\n"
+            "- 学生没抄题目只有作答 → 按作答内容推断，证据不足时 match = true，"
+            "但 reason 注明「学生未抄题目，按作答内容推断」。\n"
+            "**判断只看题目本身，不受作答对错影响。**")
+    n_items = len(items)
+    if n_items > 1:
+        head += f"\n本次作业共 {n_items} 题，请严格按以下题目逐题评阅，不要评阅额外内容。"
+    parts.append(head)
+
+    if q_lines:
+        parts.append("【作业纸题目】\n\n" + "\n\n".join(q_lines))
     else:
         parts.append("【缺少作业纸题目】无法核对题目一致性，请在 question_match.reason 中注明"
                      "「未提供作业纸题目」，并仅基于作答本身评阅。")
+
+    parts.append(EVIDENCE_INSTRUCTION)
     parts.append(f"【学生转写（含题目与作答）】\n{markdown_text}")
     return "\n\n".join(parts)
+
+
+def build_evaluate_prompt(*, questions, markdown_text: str, tag: str = "") -> str:
+    """兼容包装：批量接口（llm_batch）使用。
+
+    D177：**委托给 `build_grade_prompt`** —— 与生产主路径共用同一份实现，
+    避免"题目题型标注/先判题目/严谨性要求"两处各写一套而漂移。
+    注意：`questions` 必须是该生 tag 对应作业纸的题目（由调用方保证）。
+    """
+    return build_grade_prompt(questions, markdown_text, tag=tag,
+                              task_size=len(questions or []))
 
 
 def build_bruteforce_prompt(*, questions, markdown_text: str = "",

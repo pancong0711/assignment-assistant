@@ -81,6 +81,7 @@
 - `docs/117-D174-three-keys-and-translation-lenient.md` — **D174 逐生三键语义确认 + 翻译题批阅放宽（5/5/10）**
 - `docs/118-D175-review-comment-score-merge.md` — **D175 逐生审核批语/分数一体化（一键保存 + 报告预览）**
 - `docs/119-D176-question-kind-pipeline.md` — **D176 题目类型(kind)贯通 + translation 不要求示意图**
+- `docs/120-D177-single-prompt-builder.md` — **D177 评阅提示词合并为唯一实现（消除双份漂移）**
 
 > **当前活动需求单 = `docs/112-D168`（口径/快照）+ `docs/113-D169`（路线/架构）**；
 > 历史条目保留供追溯，与最新口径冲突时以这两份为准。

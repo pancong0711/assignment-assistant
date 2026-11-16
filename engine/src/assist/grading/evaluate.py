@@ -141,124 +141,25 @@ def tag_instruction(tag: str) -> str:
 
 
 def _kinds_of(items: list[dict]) -> list[str]:
-    """本题作业涉及的 kind（保序去重）。"""
-    from .rules import normalize_kind
-    seen: list[str] = []
-    for it in items or []:
-        # D176：优先用**题目级** kind/kb；`tag` 是**作业纸级**标签，只在题目完全没有
-        # 类型信息时兜底（否则一张 qa 作业纸里的翻译题会被当成问答题）。
-        k = normalize_kind(it.get("kind") or it.get("kb") or it.get("tag") or "problems")
-        if k not in seen:
-            seen.append(k)
-    return seen or ["problems"]
+    """本题作业涉及的 kind（保序去重）。D177：委托 prompts.kinds_of_items（唯一口径）。"""
+    from .prompts import kinds_of_items
+    return kinds_of_items(items)
 
 
 def build_user_prompt(items: list[dict], markdown_text: str, student: str = "",
                       ws=None) -> str:
-    """构造绑定题目的评阅 prompt（D130：**按题目来源分型**）。
+    """构造绑定题目的评阅 prompt（生产主路径）。
 
-    items: 任务包展开的 [{序号, content, solution?, tag, kind?}]。
-    `ws`：workspace（用于读 `<ws>/grading-rules.json` 的规则摘要与受控词表）；
-    为 None 时用内置默认规则（测试/离线场景）。
+    D177：**实现已合并到 `prompts.build_grade_prompt`** —— 此前这里与
+    `prompts.build_evaluate_prompt`（llm_batch 用）是两份各自演进的实现，
+    题型标注/先判题目/严谨性要求容易漂移（D176 就因此出过问题）。
+    本函数只保留原签名做兼容，内部委托给唯一实现。
 
-    D130 变更（相对 D127）：
-    - 去重后的**每个 kind** 各给一段「评阅范式 + 规则摘要 + 输出要求」；
-    - 每题标注 `来源` 与知识点（T11：要求模型优先沿用题库术语）；
-    - 去掉旧版"整份只用第一个 tag 的指令"的写法（混合来源作业会串规则）。
+    items: [{序号, content, solution?, tag, kind?, kb?, related?, chap?, feature?}]
+    ws: workspace（读 grading-rules.json 的规则摘要与受控词表）；None=内置默认规则。
     """
-    from .prompts import (EVIDENCE_INSTRUCTION, kind_instruction, kind_output_hint,
-                          knowledge_instruction)
-    parts: list[str] = []
-    kinds = _kinds_of(items)
-    if student:
-        parts.append(f"学生：{student}")
-
-    # ---- 按 kind 注入：评阅范式 + 规则摘要（与生成要点共用同一份） ----
-    for k in kinds:
-        parts.append(kind_instruction(ws, k))
-        hint = kind_output_hint(k)
-        if hint:
-            parts.append(hint)
-
-    # ---- 题库知识点术语（T11）：全份作业汇总一次，避免每题重复 ----
-    related_all: list[str] = []
-    for it in items or []:
-        for term in str(it.get("related") or "").replace("，", ",").split(","):
-            term = term.strip()
-            if term and term not in related_all:
-                related_all.append(term)
-    vocab: list[str] = []
-    if ws is not None:
-        try:
-            from .vocab import load_vocab
-            vocab = [t.get("term") for t in load_vocab(ws).get("terms", []) if t.get("term")]
-        except Exception:  # noqa: BLE001 —— 词表缺失不影响评阅
-            vocab = []
-    parts.append(knowledge_instruction(",".join(related_all), vocab))
-
-    # D131-T21c：summary 题若本章有教师确认的课堂资料清单 → 作为批阅依据。
-    # 没有清单时完全不加（保持 D130 行为：不报错、不降级扣分）。
-    if "summary" in kinds and ws is not None:
-        try:
-            from ..files import materials as _mat
-            # D155：**优先用教师显式指定的"特征名"**（如 26C1），
-            # 没有则按题目 chap 回落（兼容旧的 materials/<chap>/ 结构）。
-            feats = {str(it.get("feature") or "") for it in (items or [])
-                     if str(it.get("kind") or "") == "summary"}
-            feats = {x for x in feats if x}
-            chaps = feats or {str(it.get("chap") or "") for it in (items or [])
-                              if str(it.get("kind") or "") == "summary"}
-            from .prompts import summary_fallback_block, summary_knowledge_block
-            from .rules import summary_fallback
-            block_parts: list[str] = []
-            has_materials = False
-            for c in sorted(x for x in chaps if x):
-                terms = _mat.knowledge_terms(ws, c)
-                md = _mat.read_knowledge_md(ws, c)
-                b = summary_knowledge_block(terms, md)
-                if b:
-                    block_parts.append(b)
-                    has_materials = True
-            if has_materials:
-                # D134-T4：**有资料时不叠加保底口径**（避免双重扣分/口径打架）
-                parts.append("\n\n".join(block_parts))
-            else:
-                # D134-T4：无任何本章资料 → 保底口径（四维判定 + 降级可见）
-                fb = summary_fallback(ws)
-                fb_block = summary_fallback_block(fb)
-                if fb_block:
-                    parts.append(fb_block)
-        except Exception:  # noqa: BLE001 —— 清单缺失/损坏不影响评阅
-            logger.debug("读取课堂资料知识点清单失败", exc_info=True)
-
-    q_lines = []
-    for it in items:
-        n = it.get("序号") or it.get("index") or "?"
-        from .rules import normalize_kind
-        k = normalize_kind(it.get("kind") or it.get("kb") or it.get("tag") or "problems")
-        line = (f"第{n}题（来源: {it.get('kb') or k}；评阅范式: {k}；"
-                f"标签: {it.get('tag', '') or '—'}）：\n{it.get('content', '')}")
-        rel = str(it.get("related") or "").strip()
-        if rel:
-            line += f"\n本题库已标注知识点（优先沿用）：{rel}"
-        q_lines.append(line)
-        if it.get("solution"):
-            q_lines.append(f"参考答案/解题要点（仅用于核对，勿向学生透露）：\n{it['solution']}")
-    # D127：先判题目，再评阅（两条指令都必须给到模型）
-    parts.append(
-        "【第一步：判断题目是否对应】\n"
-        "先核对学生转写中的题目/作答所针对的题目，是否就是下面这份**作业纸题目**：\n"
-        "- 一致 → question_match.match = true；\n"
-        "- 不一致（题号对不上/题干完全不同/像是另一份作业或学生自制作业纸）→ match = false，"
-        "并在 evidence 中**逐字引用**学生转写里的题目片段，在 reason 中说明差异；\n"
-        "- 学生没抄题目只有作答 → 按作答内容推断，证据不足时 match = true，"
-        "但 reason 注明「学生未抄题目，按作答内容推断」。\n"
-        "**判断只看题目本身，不受作答对错影响。**")
-    if q_lines:
-        parts.append("【作业纸题目】\n\n" + "\n\n".join(q_lines))
-    parts.append(EVIDENCE_INSTRUCTION)
-    parts.append(f"【学生转写（含题目与作答）】\n{markdown_text}")
-    return "\n\n".join(parts)
+    from .prompts import build_grade_prompt
+    return build_grade_prompt(items, markdown_text, student=student, ws=ws)
 
 
 def analyze(client: LLMClient, user_prompt: str, model: str | None = None,
