@@ -54,9 +54,15 @@ ANALYSIS_PROMPT = """这是大学物理作业评阅，内容完全学术。你�
   术语/修辞问题只写进 `guidance` 的启发式提问。
 - **总结题**：看是否归纳了知识点、是否有公式或推导、示意图是否画出、篇幅是否过短。
 
-【示意图】
-`has_diagram` 判断学生**是否画了图**；若画了，还需在 `errors` 中指出
-方向/坐标轴/标注与结论不符之处（这类问题往往比算错更关键）。
+【示意图（只在题目要求画图时才判定）】
+- 先看**该题题干是否要求画图**、以及**该题题型**是否需要示意图
+  （通常只有计算/推导题、问答题、总结题可能要求；**翻译题、抄写题、辨析题、
+  创新题通常不要求画图**）。
+- 题目没要求画图 → `has_diagram` 一律填 `true`（表示"不适用/不扣分"），
+  **不要**因为学生没画图而报错，也不要在 `errors` 里提"缺示意图"。
+- 题目要求画图且学生画了 → `has_diagram=true`，若方向/坐标轴/标注与结论不符，
+  才在 `errors` 中指出（这类问题往往比算错更关键）。
+- 题目要求画图但学生没画 → `has_diagram=false`。
 
 【完整性与签名的判定】
 - `reasoning.status`：`"ok"` 思路完整；`"brief"` 关键步骤缺失（如只写结果不写过程）。
@@ -139,6 +145,8 @@ def _kinds_of(items: list[dict]) -> list[str]:
     from .rules import normalize_kind
     seen: list[str] = []
     for it in items or []:
+        # D176：优先用**题目级** kind/kb；`tag` 是**作业纸级**标签，只在题目完全没有
+        # 类型信息时兜底（否则一张 qa 作业纸里的翻译题会被当成问答题）。
         k = normalize_kind(it.get("kind") or it.get("kb") or it.get("tag") or "problems")
         if k not in seen:
             seen.append(k)
@@ -718,7 +726,9 @@ def build_feedback_md(result: dict, student_name: str = "学生",
                 lines.append(f"  - **你的原文：**`{e['evidence']}`")
             if e.get("guidance"):
                 lines.append(f"  - **想一想：**{e['guidance']}")
-        if not q.get("has_diagram", True):
+        # D176：只有**该题型/题干**需要示意图时才提示；翻译/抄写等不要求画图，
+        # 即便模型把 has_diagram 判成 false 也不该给学生"缺图"提示。
+        if not q.get("has_diagram", True) and str(q.get("kind") or "") in ("qa", "summary", "problems"):
             lines.append("- 提示：缺少示意图，请补上。")
     _thin = result.get("thin_questions") or []
     if _thin:

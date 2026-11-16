@@ -370,8 +370,18 @@ def _plan_items_for(ctx: dict, student: str) -> "list[dict] | None":
             continue
         out = []
         for i, q in enumerate(stu.get("questions") or [], start=1):
+            # D176：**必须透传每题的 kind/kb**。
+            # 此前只传 序号/content/solution/tag → 评阅端拿不到题目类型：
+            #   ① 提示词只按**作业纸 tag** 注入题型指令（一张作业纸混多题型时全错）；
+            #   ② 算分只在 `q.kind`（模型自报，schema 不强制）里找，缺失则一律
+            #      `problems` → 翻译/抄写题被按"每错 −5"算（实测 -20）。
             out.append({"序号": q.get("no") or i, "content": q.get("content") or "",
-                        "solution": q.get("solution") or "", "tag": stu.get("tag") or ""})
+                        "solution": q.get("solution") or "",
+                        # tag 仍保留（用于"先判题目是否对应"），但**不再**当作题型
+                        "tag": str(q.get("tag") or stu.get("tag") or ""),
+                        "kind": str(q.get("kind") or ""),
+                        "kb": str(q.get("kb") or ""),
+                        "related": str(q.get("related") or "")})
         return out or None
     return None
 

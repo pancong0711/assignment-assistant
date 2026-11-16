@@ -231,7 +231,9 @@ KIND_OUTPUT_SCHEMA_HINT = {
     "copy": """【抄写题输出要求】每题除通用字段外，必须给：
 - `topic_match`: "match" | "partial" | "mismatch"
   学生抄写的内容，是否与**题目末尾括号里的主题**相符（不是逐字对照，只看主题）；
-- `answer_chars`: 学生本题抄写的字数（整数）。
+- `answer_chars`: 学生本题抄写的字数（整数）；
+- `has_diagram`: **一律填 true**。抄写题不要求画示意图（转录也不可靠），
+  不要因为学生没抄图而报错或扣分。
 
 **只判断这两件事**：主题是否相符、字数是否充足。
 **不要评价**：逻辑对错、推导是否完整、公式是否正确、是否抄全了题目/过程/图——
@@ -251,7 +253,9 @@ KIND_OUTPUT_SCHEMA_HINT = {
   （"irrelevant" 仅用于**翻译完全不对**：通篇乱译/译成完全无关的内容/根本没翻译）；
   译文有错但大致在翻本题 → 填 "relevant" 或 "partial"，**不要**因此判错；
 - `question_answered`: true/false（题目除了"翻译"之外还问了什么，学生有没有回答；
-  题目只要求翻译时一律填 true）。
+  题目只要求翻译时一律填 true）；
+- `has_diagram`: **一律填 true**。翻译题不要求画示意图，
+  不要因为学生没画图而报错或扣分。
 
 **不扣分的事**：译文用词是否精准、术语是否规范、修辞与文采、个别句子理解偏差。
 这类问题如果值得提醒，只写进 `errors[].guidance` 作为启发式提问（系统会把这条按
@@ -357,18 +361,46 @@ def knowledge_instruction(related: str = "", vocab: "list[str] | None" = None) -
     return "\n".join(lines)
 
 
+# D176：题型中文名（进提示词，让模型知道**每题**该套哪套评阅范式）
+KIND_LABEL_CN = {
+    "problems": "计算/推导题",
+    "qa": "问答题",
+    "copy": "抄写题",
+    "distinguish": "辨析题",
+    "innovation": "创新题",
+    "translation": "翻译题",
+    "summary": "总结题",
+}
+
+
 def format_questions(questions: list[dict]) -> str:
-    """题目 + 参考答案/评分点 → 提示词片段（优化模式；供 prompt caching 复用）。"""
+    """题目 + 参考答案/评分点 → 提示词片段（优化模式；供 prompt caching 复用）。
+
+    D176：**每题标注题型**。一张作业纸可能混多种题型（如 qa 作业纸里夹一道翻译题），
+    只按作业纸 tag 注入统一指令会让模型用错范式；这里逐题给出 `题型：`，
+    并明确"以本题标注为准"。
+    """
     parts: list[str] = []
+    kinds: set[str] = set()
     for i, q in enumerate(questions or [], start=1):
         no = str(q.get("no") or i)
         content = str(q.get("content") or "").strip()
         solution = str(q.get("solution") or "").strip()
-        block = f"第 {no} 题：{content}"
+        kind = str(q.get("kind") or "").strip().lower()
+        label = KIND_LABEL_CN.get(kind, "")
+        head = f"第 {no} 题"
+        if label:
+            head += f"【题型：{label}】"
+            kinds.add(label)
+        block = f"{head}：{content}"
         if solution:
             block += f"\n（参考答案/评分点：{solution}）"
         parts.append(block)
-    return "\n\n".join(parts)
+    out = "\n\n".join(parts)
+    if kinds:
+        out += ("\n\n（注意：**每题的题型以该题标注为准**。同一份作业可能混合多种题型，"
+                "请分别套用对应的评阅范式与扣分规则，不要把整份作业当成同一种题型。）")
+    return out
 
 
 def build_evaluate_prompt(*, questions, markdown_text: str, tag: str = "") -> str:
