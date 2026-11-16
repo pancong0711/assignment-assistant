@@ -1,21 +1,21 @@
 import { defineComponent as _defineComponent } from 'vue'
 import { computed, onMounted, ref, watch } from 'vue'
-import { useSettingsStore } from '/home/bot2603/Projects/2609-assignment-assistant/app/src/stores/settings'
-import KbAiSolvePanel from '/home/bot2603/Projects/2609-assignment-assistant/app/tests/KbAiSolvePanel.compiled-pi5ca0.ts'
+import { useSettingsStore } from './../src/stores/settings'
+import KbAiSolvePanel from './KbAiSolvePanel.compiled-pi5ca0.ts'
 import { tidyKbRelated, applyKbRelatedTidy, type RelatedTidyItem,
   fetchErrorRates, fetchCooccurrence, type ErrorRateReport,
   type CooccurrenceGraph, buildAnalysisChart, analysisChartSrc,
-  fetchExamplesSummary, fetchStandardCooccurrence, type ExamplesSummary } from '/home/bot2603/Projects/2609-assignment-assistant/app/src/lib/engineClient'
-import TeacherReportCard from '/home/bot2603/Projects/2609-assignment-assistant/app/tests/TeacherReportCard.compiled-gbyede.ts'
-import TrendCard from '/home/bot2603/Projects/2609-assignment-assistant/app/tests/TrendCard.compiled-dfiz13.ts'
-import { KB_KINDS, KB_KIND_LABELS, type KbKind } from '/home/bot2603/Projects/2609-assignment-assistant/app/src/lib/kb'
+  fetchExamplesSummary, fetchStandardCooccurrence, type ExamplesSummary } from './../src/lib/engineClient'
+import TeacherReportCard from './TeacherReportCard.compiled-gbyede.ts'
+import TrendCard from './TrendCard.compiled-dfiz13.ts'
+import { KB_KINDS, KB_KIND_LABELS, type KbKind } from './../src/lib/kb'
 import {
   PROMPT_CATEGORIES, PROMPT_CATEGORY_LABELS, fetchKbCatalog, fetchKnowledgeVocab,
   fetchPromptTemplatesByCategory, fetchTeacherReportMulti, fetchWorkspaceClasses,
   postPromptTemplateCategory,
   tagKnowledge, type KbCatalogKind, type KnowledgeTerm, type PromptCategory,
   type PromptTemplate,
-} from '/home/bot2603/Projects/2609-assignment-assistant/app/src/lib/engineClient'
+} from './../src/lib/engineClient'
 
 
 const __sfc_main = /*@__PURE__*/_defineComponent({

@@ -451,10 +451,18 @@ def _mode_report_md(*, student: str, ai: dict, human: dict, human_mode: str,
         ai_body = diff_mark(ai_comment, rev_text)     # 标红标记
     ai_kind = "ai-revised" if has_rev else "ai"
     ai_score = (ai or {}).get("score")
+    h_score = (human or {}).get("score")
+    # D175：教师"只改分数、不勾替代"时（humanMode=none + human.score），
+    # 报告必须显示**人工改后的分数**（此前永远打印 AI 分 → 与上传/表格不一致，
+    # 教师看到"改了分数报告没变化"）。批语仍是 AI 原文（可用修订版标红）。
+    use_human_score = h_score is not None and (
+        hm in ("replace", "human", "append", "revise") or bool((human or {}).get("used")))
 
     def _ai_section() -> "list[str]":
         head = ["# AI 批阅报告" + ("（人工修订）" if ai_kind == "ai-revised" else ""), ""]
-        if ai_score is not None:
+        if use_human_score:
+            head.append(f"**评分：** {h_score} / 100（人工改分；AI 原分 {ai_score if ai_score is not None else '—'}）")
+        elif ai_score is not None:
             head.append(f"**AI 评分：** {ai_score} / 100")
         head += ["", ai_body]
         return head

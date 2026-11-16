@@ -1,20 +1,20 @@
 import { defineComponent as _defineComponent } from 'vue'
 import { computed, nextTick, onMounted, ref, watch } from 'vue'
-import { useTaskpadStore } from '/home/bot2603/Projects/2609-assignment-assistant/app/src/stores/taskpad'
+import { useTaskpadStore } from './../src/stores/taskpad'
 import {
   extractJobError, fetchLlmConfig, fetchXxtClassMap, fetchXxtGradeDrafts, fetchXxtLoginJob,
   fetchXxtReviewIndex, fetchXxtReviewStudents, postLlmProvider, postXxtClassMap,
   startXxtGradeAi, startXxtGradeUpload, renderReportsFromDrafts, testLlmStages,
   applyTagAudit, fetchTagAudit, fetchTagAuditHistory, runTagAudit, undoTagAudit,
   undoStudentTagApi,
-} from '/home/bot2603/Projects/2609-assignment-assistant/app/src/lib/engineClient'
+} from './../src/lib/engineClient'
 
-import { usePackStore } from '/home/bot2603/Projects/2609-assignment-assistant/app/src/stores/packs'
-import { useRosterStore } from '/home/bot2603/Projects/2609-assignment-assistant/app/src/stores/roster'
+import { usePackStore } from './../src/stores/packs'
+import { useRosterStore } from './../src/stores/roster'
 
-import PlaygroundPanel from '/home/bot2603/Projects/2609-assignment-assistant/app/tests/PlaygroundPanel.compiled-eclg4l.ts'
-import StudentReviewModal from '/home/bot2603/Projects/2609-assignment-assistant/app/tests/StudentReviewModal.compiled-cvlewi.ts'
-import GradingRulesCard from '/home/bot2603/Projects/2609-assignment-assistant/app/tests/GradingRulesCard.compiled-8bm5fr.ts'
+import PlaygroundPanel from './PlaygroundPanel.compiled-eclg4l.ts'
+import StudentReviewModal from './StudentReviewModal.compiled-cvlewi.ts'
+import GradingRulesCard from './GradingRulesCard.compiled-8bm5fr.ts'
 const DEFAULT_UA = 'assignment-assistant/<版本>'   // 仅用于展示默认值文案
 
 const __sfc_main = /*@__PURE__*/_defineComponent({
@@ -182,7 +182,7 @@ const curWorkDir = computed<string>(() => {
 
 /* ④ 逐生审核 */
 
-/* D148：**逐生补批** —— 只对一名学生跑 转写 / 批阅 / 完整。
+/* D148：**逐生补批** —— 只对一名学生跑 转写 / 批阅 / 转写+批阅（D174 与上方三键统一语义）。
  *  背景：`--limit N` 只批前 N 名（现在=前 N 名**有作答**的），
  *  漏掉的学生此前只能整批重跑（已批过的要重转写/重评阅，浪费额度）。
  *  这里传 `students:[姓名]`，引擎只处理这一人。 */
@@ -198,7 +198,7 @@ async function runOne(s: any, mode: 'transcribe' | 'evaluate' | 'full') {
   }
   const steps = mode === 'full' ? ['transcribe', 'evaluate']
     : mode === 'transcribe' ? ['transcribe'] : ['evaluate']
-  // D171-T1：与上方三键同口径，去掉「完整」这个不准确的叫法
+  // D171-T1 / D174：与上方三键同口径 ——「批阅」= 出批语+打分，「③」= 转写+批阅。
   const label = mode === 'full' ? '转写+批阅' : mode === 'transcribe' ? '转写' : '批阅'
   rowBusy.value = s.name
   rowMsg.value = { ...rowMsg.value, [s.name]: `⏳ ${label}中…` }
@@ -937,6 +937,24 @@ function draftOf(s: { key?: string; name?: string; altKeys?: string[] }): Record
   }
   return {}
 }
+/** D175：**最终分**（= 上传/报告实际会用的分）。此前表格只显示 AI 分，
+ *  教师在审核里改了分数，回到列表仍是 AI 分 → "改了分数没有变化"。 */
+function finalScoreOf(s: { key?: string; name?: string; altKeys?: string[] }): string | number {
+  const d = draftOf(s)
+  const h = d.human || {}
+  const hm = String(d.humanMode || 'none')
+  if (["replace", "human", "append", "revise"].includes(hm) && h.score !== undefined && h.score !== null) return h.score
+  if (h.score !== undefined && h.score !== null) return h.score
+  const a = d.ai?.score
+  return a !== undefined && a !== null ? a : (d.score ?? '—')
+}
+/** 最终分是否被人工改过（非 AI 基线）。 */
+function scoreOverridden(s: { key?: string; name?: string; altKeys?: string[] }): boolean {
+  const d = draftOf(s)
+  const h = d.human || {}
+  const a = d.ai?.score
+  return h.score !== undefined && h.score !== null && (a === undefined || a === null || Number(h.score) !== Number(a))
+}
 /** D127：AI 状态 —— 让"跑过什么"在表上可见（此前只有 AI 分，跑完转写也看不出变化）。 */
 /** D171-T8：学生 tag 诊断标记。 */
 function tagMark(s: { key?: string; name?: string; tag?: string }): { text: string; color: string; why: string } {
@@ -1055,7 +1073,7 @@ onMounted(async () => {
   if (workKey.value) void loadStudents()
 })
 
-const __returned__ = { props, taskpadStore, packStore, rosterStore, msg, imageMode, svgRedraw, allowPartial, forceRedo, busy, progress, get pollTimer() { return pollTimer }, set pollTimer(v) { pollTimer = v }, llmConfig, pHdrText, pUserAgent, showAdv, pSessionHdr, pSessionHdrName, DEFAULT_UA, pendingProvider, parseHeaders, pName, pBase, pKey, pBatch, stProvider, stModel, stBatch, stCustom, modelsForStage, classMap, classDir, works, workKey, padId, packId, mode, tagsSel, limit, reviewOpen, reviewIndex, openReview, reviewModal, resolvedScope, autoReportPending, reportReloadKey, onReviewOpen, rosterTags, padTags, tagOptions, tagHint, rosterStudentsTagged, curWorkDir, rowBusy, rowMsg, runOne, pollJob, students, studentsLoading, drafts, rosterTagByName, auditBusy, auditMsg, auditRow, auditDetail, auditChecked, auditMeta, auditTaskpads, loadAudit, runAuditNow, auditOf, auditCell, auditRowClass, auditStats, auditFilter, auditRows, bulkTag, auditTagOptions, auditSelectedNames, applyBulkTag, applyAuditChecked, applyAuditOne, applyAuditChanges, undoStudentTag, auditEditTag, saveManualTag, auditDetailIdx, auditDetailStep, undoAudit, packPads, pads, curWork, ungraded, loadConfig, loadWorks, loadStudents, classDirFor, classDirOptions, suggestDir, saveDir, collectHeaders, saveProvider, doSaveProvider, resetProviderForm, usedByStage, confirmSaveProvider, editProvider, stageName, delProvider, saveStage, stopPoll, startAi, testLlm, draftOf, tagMark, aiState, reportMode, renderReports, uploadAll, get tagAutoSelectDone() { return tagAutoSelectDone }, set tagAutoSelectDone(v) { tagAutoSelectDone = v }, PlaygroundPanel, StudentReviewModal, GradingRulesCard }
+const __returned__ = { props, taskpadStore, packStore, rosterStore, msg, imageMode, svgRedraw, allowPartial, forceRedo, busy, progress, get pollTimer() { return pollTimer }, set pollTimer(v) { pollTimer = v }, llmConfig, pHdrText, pUserAgent, showAdv, pSessionHdr, pSessionHdrName, DEFAULT_UA, pendingProvider, parseHeaders, pName, pBase, pKey, pBatch, stProvider, stModel, stBatch, stCustom, modelsForStage, classMap, classDir, works, workKey, padId, packId, mode, tagsSel, limit, reviewOpen, reviewIndex, openReview, reviewModal, resolvedScope, autoReportPending, reportReloadKey, onReviewOpen, rosterTags, padTags, tagOptions, tagHint, rosterStudentsTagged, curWorkDir, rowBusy, rowMsg, runOne, pollJob, students, studentsLoading, drafts, rosterTagByName, auditBusy, auditMsg, auditRow, auditDetail, auditChecked, auditMeta, auditTaskpads, loadAudit, runAuditNow, auditOf, auditCell, auditRowClass, auditStats, auditFilter, auditRows, bulkTag, auditTagOptions, auditSelectedNames, applyBulkTag, applyAuditChecked, applyAuditOne, applyAuditChanges, undoStudentTag, auditEditTag, saveManualTag, auditDetailIdx, auditDetailStep, undoAudit, packPads, pads, curWork, ungraded, loadConfig, loadWorks, loadStudents, classDirFor, classDirOptions, suggestDir, saveDir, collectHeaders, saveProvider, doSaveProvider, resetProviderForm, usedByStage, confirmSaveProvider, editProvider, stageName, delProvider, saveStage, stopPoll, startAi, testLlm, draftOf, finalScoreOf, scoreOverridden, tagMark, aiState, reportMode, renderReports, uploadAll, get tagAutoSelectDone() { return tagAutoSelectDone }, set tagAutoSelectDone(v) { tagAutoSelectDone = v }, PlaygroundPanel, StudentReviewModal, GradingRulesCard }
 Object.defineProperty(__returned__, '__isScriptSetup', { enumerable: false, value: true })
 return __returned__
 }
@@ -1260,108 +1278,113 @@ const _hoisted_93 = {
   style: {"font-size":"11px"}
 }
 const _hoisted_94 = { class: "c" }
-const _hoisted_95 = { class: "c" }
+const _hoisted_95 = {
+  key: 0,
+  class: "hint",
+  style: {"font-size":"11px"}
+}
 const _hoisted_96 = { class: "c" }
-const _hoisted_97 = {
+const _hoisted_97 = { class: "c" }
+const _hoisted_98 = {
   class: "c",
   style: {"white-space":"nowrap"}
 }
-const _hoisted_98 = ["disabled", "title", "onClick"]
 const _hoisted_99 = ["disabled", "title", "onClick"]
 const _hoisted_100 = ["disabled", "title", "onClick"]
-const _hoisted_101 = ["onClick"]
-const _hoisted_102 = {
+const _hoisted_101 = ["disabled", "title", "onClick"]
+const _hoisted_102 = ["onClick"]
+const _hoisted_103 = {
   key: 0,
   class: "hint",
   style: {"margin-top":"2px","white-space":"normal"}
 }
-const _hoisted_103 = {
+const _hoisted_104 = {
   key: 7,
   class: "hint"
 }
-const _hoisted_104 = { style: {"display":"flex","gap":"8px","align-items":"center","flex-wrap":"wrap"} }
-const _hoisted_105 = ["disabled"]
+const _hoisted_105 = { style: {"display":"flex","gap":"8px","align-items":"center","flex-wrap":"wrap"} }
 const _hoisted_106 = ["disabled"]
 const _hoisted_107 = ["disabled"]
-const _hoisted_108 = { class: "dlg audit-dlg" }
-const _hoisted_109 = { class: "audit-dlg-head" }
-const _hoisted_110 = { style: {"margin":"0"} }
-const _hoisted_111 = { class: "audit-nav" }
-const _hoisted_112 = ["disabled"]
+const _hoisted_108 = ["disabled"]
+const _hoisted_109 = { class: "dlg audit-dlg" }
+const _hoisted_110 = { class: "audit-dlg-head" }
+const _hoisted_111 = { style: {"margin":"0"} }
+const _hoisted_112 = { class: "audit-nav" }
 const _hoisted_113 = ["disabled"]
-const _hoisted_114 = {
+const _hoisted_114 = ["disabled"]
+const _hoisted_115 = {
   key: 0,
   class: "hint"
 }
-const _hoisted_115 = { class: "audit-three" }
-const _hoisted_116 = {
-  class: "hint",
-  style: {"display":"block","font-size":"11px"}
-}
+const _hoisted_116 = { class: "audit-three" }
 const _hoisted_117 = {
   class: "hint",
   style: {"display":"block","font-size":"11px"}
 }
 const _hoisted_118 = {
+  class: "hint",
+  style: {"display":"block","font-size":"11px"}
+}
+const _hoisted_119 = {
   key: 0,
   style: {"color":"#b91c1c"}
 }
-const _hoisted_119 = {
+const _hoisted_120 = {
   key: 1,
   style: {"color":"#15803d"}
 }
-const _hoisted_120 = {
+const _hoisted_121 = {
   key: 2,
   style: {"color":"#6b7280"}
 }
-const _hoisted_121 = {
+const _hoisted_122 = {
   class: "hint",
   style: {"margin":"8px 0"}
 }
-const _hoisted_122 = {
-  key: 0,
-  class: "audit-warn"
-}
 const _hoisted_123 = {
-  key: 1,
+  key: 0,
   class: "audit-warn"
 }
 const _hoisted_124 = {
+  key: 1,
+  class: "audit-warn"
+}
+const _hoisted_125 = {
   class: "audit-why",
   open: ""
 }
-const _hoisted_125 = { class: "audit-why-list" }
-const _hoisted_126 = {
+const _hoisted_126 = { class: "audit-why-list" }
+const _hoisted_127 = {
   key: 0,
   class: "audit-pairs"
 }
-const _hoisted_127 = { style: {"margin":"14px 0 6px"} }
-const _hoisted_128 = {
+const _hoisted_128 = { style: {"margin":"14px 0 6px"} }
+const _hoisted_129 = {
   key: 2,
   class: "hint"
 }
-const _hoisted_129 = { class: "audit-q-head" }
-const _hoisted_130 = {
+const _hoisted_130 = { class: "audit-q-head" }
+const _hoisted_131 = {
   key: 0,
   class: "hint",
   style: {"margin-left":"8px"}
 }
-const _hoisted_131 = { class: "audit-stem" }
-const _hoisted_132 = { class: "audit-pairs" }
-const _hoisted_133 = ["title"]
-const _hoisted_134 = { style: {"text-align":"left","font-size":"12px"} }
-const _hoisted_135 = { class: "audit-manual" }
-const _hoisted_136 = ["disabled"]
+const _hoisted_132 = { class: "audit-stem" }
+const _hoisted_133 = { class: "audit-pairs" }
+const _hoisted_134 = ["title"]
+const _hoisted_135 = { style: {"text-align":"left","font-size":"12px"} }
+const _hoisted_136 = { class: "audit-manual" }
 const _hoisted_137 = ["disabled"]
 const _hoisted_138 = ["disabled"]
-const _hoisted_139 = {
+const _hoisted_139 = ["disabled"]
+const _hoisted_140 = {
   key: 3,
   class: "audit-why",
   open: "",
   style: {"margin-top":"10px"}
 }
-const _hoisted_140 = { class: "audit-pairs" }
-const _hoisted_141 = { class: "audit-actions" }
+const _hoisted_141 = { class: "audit-pairs" }
+const _hoisted_142 = { class: "audit-actions" }
 
 export function render(_ctx, _cache, $props, $setup, $data, $options) {
   return (_openBlock(), _createElementBlock(_Fragment, null, [
@@ -1890,13 +1913,13 @@ export function render(_ctx, _cache, $props, $setup, $data, $options) {
         _createElementVNode("button", {
           class: "btn small",
           disabled: $setup.busy,
-          title: "只跑评阅（要求已有转录产物）",
+          title: "只跑批阅：基于已有转写出批语 + 打分（写进逐生审核草稿；要求已有转写产物）",
           onClick: _cache[26] || (_cache[26] = $event => ($setup.startAi(['evaluate'])))
         }, "② 批阅", 8 /* PROPS */, _hoisted_65),
         _createElementVNode("button", {
           class: "btn",
           disabled: $setup.busy,
-          title: "转写 + 批阅：两件事一起做（不含报告；审核后再用下方「📄 一键生成批阅报告」）",
+          title: "转写 + 批阅：先转写再出批语+打分（= ① + ②；不含报告，审核后再用下方「📄 一键生成批阅报告」）",
           onClick: _cache[27] || (_cache[27] = $event => ($setup.startAi(['transcribe', 'evaluate'])))
         }, "▶ ③ 转写+批阅", 8 /* PROPS */, _hoisted_66),
         _createElementVNode("label", _hoisted_67, [
@@ -2132,35 +2155,42 @@ export function render(_ctx, _cache, $props, $setup, $data, $options) {
                         ? (_openBlock(), _createElementBlock("div", _hoisted_93, _toDisplayString($setup.draftOf(s).ai.at), 1 /* TEXT */))
                         : _createCommentVNode("v-if", true)
                     ]),
-                    _createElementVNode("td", _hoisted_94, _toDisplayString($setup.draftOf(s).ai?.score ?? $setup.draftOf(s).score ?? '—'), 1 /* TEXT */),
-                    _createElementVNode("td", _hoisted_95, _toDisplayString($setup.draftOf(s).human?.used ? ($setup.draftOf(s).human.score ?? '✓') : '—'), 1 /* TEXT */),
-                    _createElementVNode("td", _hoisted_96, _toDisplayString($setup.reportMode(s)), 1 /* TEXT */),
-                    _createElementVNode("td", _hoisted_97, [
+                    _createElementVNode("td", _hoisted_94, [
+                      _createElementVNode("b", {
+                        style: _normalizeStyle({ color: $setup.scoreOverridden(s) ? '#0369a1' : 'inherit' })
+                      }, _toDisplayString($setup.finalScoreOf(s)), 5 /* TEXT, STYLE */),
+                      ($setup.draftOf(s).ai?.score != null && $setup.scoreOverridden(s))
+                        ? (_openBlock(), _createElementBlock("div", _hoisted_95, " AI " + _toDisplayString($setup.draftOf(s).ai.score), 1 /* TEXT */))
+                        : _createCommentVNode("v-if", true)
+                    ]),
+                    _createElementVNode("td", _hoisted_96, _toDisplayString($setup.draftOf(s).human?.used ? ($setup.draftOf(s).human.score ?? '✓') : '—'), 1 /* TEXT */),
+                    _createElementVNode("td", _hoisted_97, _toDisplayString($setup.reportMode(s)), 1 /* TEXT */),
+                    _createElementVNode("td", _hoisted_98, [
                       _createElementVNode("button", {
                         class: "btn small",
                         disabled: $setup.rowBusy !== '' || !$setup.curWork,
-                        title: $setup.curWork ? '只转写这一名学生' : '请先在 ③ 区选择作业',
+                        title: $setup.curWork ? '只转写这一名学生（不批语、不打分）' : '请先在 ③ 区选择作业',
                         onClick: $event => ($setup.runOne(s, 'transcribe'))
-                      }, "转写", 8 /* PROPS */, _hoisted_98),
+                      }, "转写", 8 /* PROPS */, _hoisted_99),
                       _createElementVNode("button", {
                         class: "btn small",
                         disabled: $setup.rowBusy !== '' || !$setup.curWork,
-                        title: $setup.curWork ? '用已有转写评阅这一名学生' : '请先在 ③ 区选择作业',
+                        title: $setup.curWork ? '用已有转写批阅这一名学生：出批语 + 打分（不改转写）' : '请先在 ③ 区选择作业',
                         onClick: $event => ($setup.runOne(s, 'evaluate'))
-                      }, "批阅", 8 /* PROPS */, _hoisted_99),
+                      }, "批阅", 8 /* PROPS */, _hoisted_100),
                       _createElementVNode("button", {
                         class: "btn small",
                         disabled: $setup.rowBusy !== '' || !$setup.curWork,
-                        title: $setup.curWork ? '转写+评阅这一名学生' : '请先在 ③ 区选择作业',
+                        title: $setup.curWork ? '转写 + 批阅（出批语+打分）这一名学生' : '请先在 ③ 区选择作业',
                         onClick: $event => ($setup.runOne(s, 'full'))
-                      }, _toDisplayString($setup.rowBusy === s.name ? '…' : '完整'), 9 /* TEXT, PROPS */, _hoisted_100),
+                      }, _toDisplayString($setup.rowBusy === s.name ? '…' : '转写+批阅'), 9 /* TEXT, PROPS */, _hoisted_101),
                       _cache[108] || (_cache[108] = _createTextVNode(" ｜", -1 /* CACHED */)),
                       _createElementVNode("button", {
                         class: "btn small",
                         onClick: $event => ($setup.onReviewOpen(i))
-                      }, "审核", 8 /* PROPS */, _hoisted_101),
+                      }, "审核", 8 /* PROPS */, _hoisted_102),
                       ($setup.rowMsg[s.name])
-                        ? (_openBlock(), _createElementBlock("div", _hoisted_102, _toDisplayString($setup.rowMsg[s.name]), 1 /* TEXT */))
+                        ? (_openBlock(), _createElementBlock("div", _hoisted_103, _toDisplayString($setup.rowMsg[s.name]), 1 /* TEXT */))
                         : _createCommentVNode("v-if", true)
                     ])
                   ], 2 /* CLASS */))
@@ -2168,7 +2198,7 @@ export function render(_ctx, _cache, $props, $setup, $data, $options) {
               ])
             ])
           ]))
-        : (_openBlock(), _createElementBlock("p", _hoisted_103, [
+        : (_openBlock(), _createElementBlock("p", _hoisted_104, [
             (!$setup.curWork)
               ? (_openBlock(), _createElementBlock(_Fragment, { key: 0 }, [
                   _createTextVNode("未选择作业：先在 ③ 区选「作业」。")
@@ -2188,7 +2218,7 @@ export function render(_ctx, _cache, $props, $setup, $data, $options) {
                   ], 64 /* STABLE_FRAGMENT */))
           ])),
       _cache[119] || (_cache[119] = _createElementVNode("h3", { style: {"margin-top":"14px"} }, "⑤ 报告 / ⑥ 上传全部", -1 /* CACHED */)),
-      _createElementVNode("div", _hoisted_104, [
+      _createElementVNode("div", _hoisted_105, [
         _cache[111] || (_cache[111] = _createElementVNode("span", {
           class: "hint",
           style: {"margin":"0"}
@@ -2197,18 +2227,18 @@ export function render(_ctx, _cache, $props, $setup, $data, $options) {
           class: "btn",
           disabled: $setup.busy,
           onClick: $setup.renderReports
-        }, "📄 一键生成批阅报告", 8 /* PROPS */, _hoisted_105),
+        }, "📄 一键生成批阅报告", 8 /* PROPS */, _hoisted_106),
         _cache[112] || (_cache[112] = _createElementVNode("span", { style: {"flex":"1"} }, null, -1 /* CACHED */)),
         _createElementVNode("button", {
           class: "btn",
           disabled: $setup.busy,
           onClick: _cache[43] || (_cache[43] = $event => ($setup.uploadAll(false)))
-        }, "⬆⬆ 上传全部批阅（含打分）", 8 /* PROPS */, _hoisted_106),
+        }, "⬆⬆ 上传全部批阅（含打分）", 8 /* PROPS */, _hoisted_107),
         _createElementVNode("button", {
           class: "btn",
           disabled: $setup.busy,
           onClick: _cache[44] || (_cache[44] = $event => ($setup.uploadAll(true)))
-        }, "⬆⬆ 强制覆盖上传全部", 8 /* PROPS */, _hoisted_107)
+        }, "⬆⬆ 强制覆盖上传全部", 8 /* PROPS */, _hoisted_108)
       ]),
       _cache[120] || (_cache[120] = _createElementVNode("p", {
         class: "hint",
@@ -2273,20 +2303,20 @@ export function render(_ctx, _cache, $props, $setup, $data, $options) {
           class: "mask",
           onClick: _cache[56] || (_cache[56] = _withModifiers($event => ($setup.auditDetail = null), ["self"]))
         }, [
-          _createElementVNode("div", _hoisted_108, [
-            _createElementVNode("div", _hoisted_109, [
-              _createElementVNode("h4", _hoisted_110, "🛡 " + _toDisplayString($setup.auditDetail.name) + " —— tag 判定详情", 1 /* TEXT */),
-              _createElementVNode("div", _hoisted_111, [
+          _createElementVNode("div", _hoisted_109, [
+            _createElementVNode("div", _hoisted_110, [
+              _createElementVNode("h4", _hoisted_111, "🛡 " + _toDisplayString($setup.auditDetail.name) + " —— tag 判定详情", 1 /* TEXT */),
+              _createElementVNode("div", _hoisted_112, [
                 _createElementVNode("button", {
                   class: "btn small",
                   disabled: $setup.auditBusy,
                   onClick: _cache[48] || (_cache[48] = $event => ($setup.auditDetailStep(-1)))
-                }, "⟨ 上一位", 8 /* PROPS */, _hoisted_112),
+                }, "⟨ 上一位", 8 /* PROPS */, _hoisted_113),
                 _createElementVNode("button", {
                   class: "btn small",
                   disabled: $setup.auditBusy,
                   onClick: _cache[49] || (_cache[49] = $event => ($setup.auditDetailStep(1)))
-                }, "下一位 ⟩", 8 /* PROPS */, _hoisted_113),
+                }, "下一位 ⟩", 8 /* PROPS */, _hoisted_114),
                 _createElementVNode("button", {
                   class: "btn small",
                   onClick: _cache[50] || (_cache[50] = $event => ($setup.auditDetail = null))
@@ -2295,10 +2325,10 @@ export function render(_ctx, _cache, $props, $setup, $data, $options) {
             ]),
             _createCommentVNode(" 未审计 "),
             ($setup.auditDetail.pending)
-              ? (_openBlock(), _createElementBlock("p", _hoisted_114, " 该学生还没有审计结果。请先点「🛡 运行 tag 审计」。 "))
+              ? (_openBlock(), _createElementBlock("p", _hoisted_115, " 该学生还没有审计结果。请先点「🛡 运行 tag 审计」。 "))
               : (_openBlock(), _createElementBlock(_Fragment, { key: 1 }, [
                   _createCommentVNode(" ① 结论 "),
-                  _createElementVNode("table", _hoisted_115, [
+                  _createElementVNode("table", _hoisted_116, [
                     _cache[123] || (_cache[123] = _createElementVNode("tr", null, [
                       _createElementVNode("th", null, "roster tag"),
                       _createElementVNode("th", null, "当前 roster"),
@@ -2308,7 +2338,7 @@ export function render(_ctx, _cache, $props, $setup, $data, $options) {
                     _createElementVNode("tr", null, [
                       _createElementVNode("td", null, [
                         _createTextVNode(_toDisplayString($setup.auditDetail.rosterTag ?? '—') + " ", 1 /* TEXT */),
-                        _createElementVNode("span", _hoisted_116, _toDisplayString($setup.auditDetail.rosterTagSource === 'snapshot' ? '包快照（冻结）' : '当前 roster'), 1 /* TEXT */)
+                        _createElementVNode("span", _hoisted_117, _toDisplayString($setup.auditDetail.rosterTagSource === 'snapshot' ? '包快照（冻结）' : '当前 roster'), 1 /* TEXT */)
                       ]),
                       _createElementVNode("td", null, _toDisplayString($setup.auditDetail.currentRosterTag ?? '—'), 1 /* TEXT */),
                       _createElementVNode("td", {
@@ -2316,30 +2346,30 @@ export function render(_ctx, _cache, $props, $setup, $data, $options) {
                             color: $setup.auditDetail.tagDiffers ? '#b91c1c' : '#15803d' })
                       }, [
                         _createTextVNode(_toDisplayString($setup.auditDetail.auditTag ?? '?') + " ", 1 /* TEXT */),
-                        _createElementVNode("span", _hoisted_117, " 得分 " + _toDisplayString($setup.auditDetail.score) + " · 领先 " + _toDisplayString($setup.auditDetail.margin) + " · 置信 " + _toDisplayString($setup.auditDetail.confidence), 1 /* TEXT */)
+                        _createElementVNode("span", _hoisted_118, " 得分 " + _toDisplayString($setup.auditDetail.score) + " · 领先 " + _toDisplayString($setup.auditDetail.margin) + " · 置信 " + _toDisplayString($setup.auditDetail.confidence), 1 /* TEXT */)
                       ], 4 /* STYLE */),
                       _createElementVNode("td", null, [
                         ($setup.auditDetail.tagDiffers)
-                          ? (_openBlock(), _createElementBlock("b", _hoisted_118, "tag 不同"))
+                          ? (_openBlock(), _createElementBlock("b", _hoisted_119, "tag 不同"))
                           : ($setup.auditDetail.verdict === 'match')
-                            ? (_openBlock(), _createElementBlock("b", _hoisted_119, "一致"))
-                            : (_openBlock(), _createElementBlock("b", _hoisted_120, "无法判定"))
+                            ? (_openBlock(), _createElementBlock("b", _hoisted_120, "一致"))
+                            : (_openBlock(), _createElementBlock("b", _hoisted_121, "无法判定"))
                       ])
                     ])
                   ]),
-                  _createElementVNode("p", _hoisted_121, _toDisplayString($setup.auditDetail.reason), 1 /* TEXT */),
+                  _createElementVNode("p", _hoisted_122, _toDisplayString($setup.auditDetail.reason), 1 /* TEXT */),
                   ($setup.auditDetail.legacyFormat)
-                    ? (_openBlock(), _createElementBlock("p", _hoisted_122, " ⚠ 这份转写是**旧格式**（只有 markdown、没有结构化 items），题干是靠正则切的，可靠性低。 建议对该生重新「转写」后再审计。 "))
+                    ? (_openBlock(), _createElementBlock("p", _hoisted_123, " ⚠ 这份转写是**旧格式**（只有 markdown、没有结构化 items），题干是靠正则切的，可靠性低。 建议对该生重新「转写」后再审计。 "))
                     : _createCommentVNode("v-if", true),
                   ($setup.auditDetail.linkMissing?.length)
-                    ? (_openBlock(), _createElementBlock("p", _hoisted_123, " 第 " + _toDisplayString($setup.auditDetail.linkMissing.join('、')) + " 题没找到印刷题干（学生未抄题 / OCR 丢失）， 这几题**未计入**比对。 ", 1 /* TEXT */))
+                    ? (_openBlock(), _createElementBlock("p", _hoisted_124, " 第 " + _toDisplayString($setup.auditDetail.linkMissing.join('、')) + " 题没找到印刷题干（学生未抄题 / OCR 丢失）， 这几题**未计入**比对。 ", 1 /* TEXT */))
                     : _createCommentVNode("v-if", true),
                   _createCommentVNode(" ② 怎么判的（判据） "),
-                  _createElementVNode("details", _hoisted_124, [
+                  _createElementVNode("details", _hoisted_125, [
                     _cache[129] || (_cache[129] = _createElementVNode("summary", null, [
                       _createElementVNode("b", null, "怎么判的（判据）")
                     ], -1 /* CACHED */)),
-                    _createElementVNode("ul", _hoisted_125, [
+                    _createElementVNode("ul", _hoisted_126, [
                       _createElementVNode("li", null, [
                         _cache[124] || (_cache[124] = _createTextVNode("方法：", -1 /* CACHED */)),
                         _createElementVNode("code", null, _toDisplayString($setup.auditDetail.why?.method || 'ngram-v1'), 1 /* TEXT */)
@@ -2355,7 +2385,7 @@ export function render(_ctx, _cache, $props, $setup, $data, $options) {
                       _cache[127] || (_cache[127] = _createElementVNode("li", null, "低于 minScore 或领先不足 → 一律「无法判定」（**宁可标问号，也不误标红**）", -1 /* CACHED */))
                     ]),
                     ($setup.auditDetail.why?.perPaperTotals?.length)
-                      ? (_openBlock(), _createElementBlock("table", _hoisted_126, [
+                      ? (_openBlock(), _createElementBlock("table", _hoisted_127, [
                           _cache[128] || (_cache[128] = _createElementVNode("thead", null, [
                             _createElementVNode("tr", null, [
                               _createElementVNode("th", null, "作业纸"),
@@ -2383,26 +2413,26 @@ export function render(_ctx, _cache, $props, $setup, $data, $options) {
                       : _createCommentVNode("v-if", true)
                   ]),
                   _createCommentVNode(" ③ 逐题对照（一题一行） "),
-                  _createElementVNode("h5", _hoisted_127, "逐题对照（" + _toDisplayString($setup.auditDetail.pairs?.length || 0) + " 题）", 1 /* TEXT */),
+                  _createElementVNode("h5", _hoisted_128, "逐题对照（" + _toDisplayString($setup.auditDetail.pairs?.length || 0) + " 题）", 1 /* TEXT */),
                   (!$setup.auditDetail.pairs?.length)
-                    ? (_openBlock(), _createElementBlock("div", _hoisted_128, "没有可对照的题目。"))
+                    ? (_openBlock(), _createElementBlock("div", _hoisted_129, "没有可对照的题目。"))
                     : _createCommentVNode("v-if", true),
                   (_openBlock(true), _createElementBlock(_Fragment, null, _renderList($setup.auditDetail.pairs, (p, k) => {
                     return (_openBlock(), _createElementBlock("div", {
                       key: k,
                       class: "audit-q"
                     }, [
-                      _createElementVNode("div", _hoisted_129, [
+                      _createElementVNode("div", _hoisted_130, [
                         _createElementVNode("b", null, "学生第 " + _toDisplayString(p.no) + " 题", 1 /* TEXT */),
                         (p.best?.tag)
-                          ? (_openBlock(), _createElementBlock("span", _hoisted_130, " 最像：" + _toDisplayString(p.best.tag) + " 卷 第 " + _toDisplayString(p.best.paperNo) + " 题 （" + _toDisplayString(((p.best.score || 0) * 100).toFixed(1)) + "%） ", 1 /* TEXT */))
+                          ? (_openBlock(), _createElementBlock("span", _hoisted_131, " 最像：" + _toDisplayString(p.best.tag) + " 卷 第 " + _toDisplayString(p.best.paperNo) + " 题 （" + _toDisplayString(((p.best.score || 0) * 100).toFixed(1)) + "%） ", 1 /* TEXT */))
                           : _createCommentVNode("v-if", true)
                       ]),
-                      _createElementVNode("div", _hoisted_131, [
+                      _createElementVNode("div", _hoisted_132, [
                         _cache[130] || (_cache[130] = _createElementVNode("span", { class: "audit-stem-label" }, "转写的题干", -1 /* CACHED */)),
                         _createElementVNode("span", null, _toDisplayString(p.studentStem || '（未识别到印刷题干）'), 1 /* TEXT */)
                       ]),
-                      _createElementVNode("table", _hoisted_132, [
+                      _createElementVNode("table", _hoisted_133, [
                         _cache[131] || (_cache[131] = _createElementVNode("thead", null, [
                           _createElementVNode("tr", null, [
                             _createElementVNode("th", null, "作业纸"),
@@ -2428,8 +2458,8 @@ export function render(_ctx, _cache, $props, $setup, $data, $options) {
                                 class: "hint",
                                 style: {"font-size":"11px","white-space":"nowrap"},
                                 title: '共同数值：' + ((pp.detail?.numbersShared || []).join('、') || '无')
-                              }, " 字面 " + _toDisplayString(((pp.detail?.literal || 0) * 100).toFixed(0)) + "% · 数值 " + _toDisplayString(((pp.detail?.number || 0) * 100).toFixed(0)) + "% ", 9 /* TEXT, PROPS */, _hoisted_133),
-                              _createElementVNode("td", _hoisted_134, _toDisplayString(pp.paperStem), 1 /* TEXT */)
+                              }, " 字面 " + _toDisplayString(((pp.detail?.literal || 0) * 100).toFixed(0)) + "% · 数值 " + _toDisplayString(((pp.detail?.number || 0) * 100).toFixed(0)) + "% ", 9 /* TEXT, PROPS */, _hoisted_134),
+                              _createElementVNode("td", _hoisted_135, _toDisplayString(pp.paperStem), 1 /* TEXT */)
                             ], 4 /* STYLE */))
                           }), 128 /* KEYED_FRAGMENT */))
                         ])
@@ -2438,7 +2468,7 @@ export function render(_ctx, _cache, $props, $setup, $data, $options) {
                   }), 128 /* KEYED_FRAGMENT */)),
                   _createCommentVNode(" ④ 人工确认（手动改 tag） "),
                   _cache[134] || (_cache[134] = _createElementVNode("h5", { style: {"margin":"14px 0 6px"} }, "人工确认", -1 /* CACHED */)),
-                  _createElementVNode("div", _hoisted_135, [
+                  _createElementVNode("div", _hoisted_136, [
                     _cache[132] || (_cache[132] = _createElementVNode("span", null, "改 tag 为", -1 /* CACHED */)),
                     _withDirectives(_createElementVNode("input", {
                       "onUpdate:modelValue": _cache[51] || (_cache[51] = $event => (($setup.auditEditTag) = $event)),
@@ -2452,14 +2482,14 @@ export function render(_ctx, _cache, $props, $setup, $data, $options) {
                       class: "btn small primary",
                       disabled: $setup.auditBusy || $setup.auditEditTag === ($setup.auditDetail.rosterTag ?? ''),
                       onClick: _cache[52] || (_cache[52] = $event => ($setup.saveManualTag()))
-                    }, "保存并应用", 8 /* PROPS */, _hoisted_136),
+                    }, "保存并应用", 8 /* PROPS */, _hoisted_137),
                     ($setup.auditDetail.auditTag && $setup.auditDetail.auditTag !== $setup.auditDetail.rosterTag)
                       ? (_openBlock(), _createElementBlock("button", {
                           key: 0,
                           class: "btn small",
                           disabled: $setup.auditBusy,
                           onClick: _cache[53] || (_cache[53] = $event => ($setup.applyAuditOne({ name: $setup.auditDetail.name }, $setup.auditDetail.auditTag)))
-                        }, " 采纳审计 tag（" + _toDisplayString($setup.auditDetail.auditTag) + "） ", 9 /* TEXT, PROPS */, _hoisted_137))
+                        }, " 采纳审计 tag（" + _toDisplayString($setup.auditDetail.auditTag) + "） ", 9 /* TEXT, PROPS */, _hoisted_138))
                       : _createCommentVNode("v-if", true),
                     (($setup.auditDetail.tagHistory?.length || 0) > 0)
                       ? (_openBlock(), _createElementBlock("button", {
@@ -2467,7 +2497,7 @@ export function render(_ctx, _cache, $props, $setup, $data, $options) {
                           class: "btn small",
                           disabled: $setup.auditBusy,
                           onClick: _cache[54] || (_cache[54] = $event => ($setup.undoStudentTag($setup.auditDetail.name)))
-                        }, " ↩ 撤销此人最近一次修改 ", 8 /* PROPS */, _hoisted_138))
+                        }, " ↩ 撤销此人最近一次修改 ", 8 /* PROPS */, _hoisted_139))
                       : _createCommentVNode("v-if", true)
                   ]),
                   _cache[135] || (_cache[135] = _createElementVNode("p", {
@@ -2476,11 +2506,11 @@ export function render(_ctx, _cache, $props, $setup, $data, $options) {
                   }, " 改 tag 会**立即写盘并记录历史**；已批阅结果不会自动重算。 ", -1 /* CACHED */)),
                   _createCommentVNode(" ⑤ 该生的 tag 变更历史 "),
                   (($setup.auditDetail.tagHistory?.length || 0) > 0)
-                    ? (_openBlock(), _createElementBlock("details", _hoisted_139, [
+                    ? (_openBlock(), _createElementBlock("details", _hoisted_140, [
                         _createElementVNode("summary", null, [
                           _createElementVNode("b", null, "tag 变更历史（" + _toDisplayString($setup.auditDetail.tagHistory.length) + " 条）", 1 /* TEXT */)
                         ]),
-                        _createElementVNode("table", _hoisted_140, [
+                        _createElementVNode("table", _hoisted_141, [
                           _cache[133] || (_cache[133] = _createElementVNode("thead", null, [
                             _createElementVNode("tr", null, [
                               _createElementVNode("th", null, "时间"),
@@ -2506,7 +2536,7 @@ export function render(_ctx, _cache, $props, $setup, $data, $options) {
                       ]))
                     : _createCommentVNode("v-if", true)
                 ], 64 /* STABLE_FRAGMENT */)),
-            _createElementVNode("div", _hoisted_141, [
+            _createElementVNode("div", _hoisted_142, [
               _createElementVNode("button", {
                 class: "btn small",
                 onClick: _cache[55] || (_cache[55] = $event => ($setup.auditDetail = null))

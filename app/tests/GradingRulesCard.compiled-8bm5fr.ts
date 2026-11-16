@@ -3,7 +3,7 @@ import { computed, onMounted, ref } from 'vue'
 import {
   fetchGradingRules, resetGradingRules, saveGradingRules,
   type GradingRulesPayload,
-} from '/home/bot2603/Projects/2609-assignment-assistant/app/src/lib/engineClient'
+} from './../src/lib/engineClient'
 
 
 const __sfc_main = /*@__PURE__*/_defineComponent({

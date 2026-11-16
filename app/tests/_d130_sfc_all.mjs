@@ -1,7 +1,7 @@
 /** 递归把入口 SFC 及其 import 到的所有 .vue 都编译成 .ts（esbuild 可打包）。 */
 import { parse, compileScript, compileTemplate } from '@vue/compiler-sfc'
 import { existsSync, readFileSync, writeFileSync } from 'node:fs'
-import { basename, dirname, resolve } from 'node:path'
+import { basename, dirname, relative, resolve } from 'node:path'
 
 const seen = new Map()   // abs .vue path → 生成的 .ts path
 
@@ -31,15 +31,23 @@ function compileOne(vuePath) {
   code = code.replace(/export\s+default\s+/, 'const __sfc_main = ')
 
   const dir = dirname(vuePath)
+  const testsDir = resolve(process.cwd(), 'tests')
+  // D175 脱敏：所有改写后的导入都写成**相对产物（tests/）**的路径。
+  // 此前 .vue 分支直接写 compileOne() 返回的绝对路径 → 提交后泄露
+  // /home/<用户名>/...，且换机器不可用。
+  const relTo = (abs) => './' + relative(testsDir, abs).replace(/\\/g, '/')
   // 递归编译此 SFC 里 import 的其它 .vue
   code = code.replace(/(from\s+['"])(\.[^'"]+\.vue)(['"])/g, (_m, a, p, b) => {
     const abs = resolve(dir, p)
-    return `${a}${compileOne(abs)}${b}`
+    return `${a}${relTo(compileOne(abs))}${b}`
   })
-  // 相对 .ts/.js 也改成绝对路径
+  // 相对 .ts/.js 同样改为相对产物路径
   code = code.replace(/((?:from|import)\s*\(?\s*['"])(\.[^'"]+)(['"])/g, (m, a, p, b) => {
     if (p.endsWith('.vue')) return m
-    return `${a}${resolve(dir, p).replace(/\\/g, '/')}${b}`
+    const abs = resolve(dir, p)
+    // 不存在的相对导入（如虚拟模块）保持原样
+    if (!existsSync(abs) && !existsSync(`${abs}.ts`) && !existsSync(`${abs}.js`)) return m
+    return `${a}${relTo(abs)}${b}`
   })
   writeFileSync(outTs, `${code}\n${tpl.code}\n__sfc_main.render = render\nexport default __sfc_main\n`,
                 'utf-8')

@@ -1163,10 +1163,16 @@ async function loadGradeDrafts() {
 /** 打开弹窗/切学生时把该生草稿灌进表单（无草稿则分数默认 100）。 */
 function initGradeForm() {
   const key = gradeKeyOf(curStudent.value)
-  const d = gradeDraftFor(key)
-  gradeScore.value = d.score !== undefined && d.score !== null ? String(d.score) : '100'
-  gradeComment.value = String(d.comment || '')
-  gradeImages.value = (d.images || []).slice()
+  const d = gradeDraftFor(key) as any
+  // D175：草稿是**双套**结构 {ai, human, humanMode, revision}；此前只读顶层
+  // score/comment（那是 D92 之前的旧单套），双套草稿下永远显示默认 100/空。
+  const h = d.human || {}
+  const a = d.ai || {}
+  const savedRev = String((d.revision || {}).text || '')
+  gradeScore.value = h.score !== undefined && h.score !== null ? String(h.score)
+    : (a.score !== undefined && a.score !== null ? String(a.score) : '100')
+  gradeComment.value = String(h.comment || savedRev || '')
+  gradeImages.value = ((h.reportImages || d.images || []) as { name: string; data_b64: string }[]).slice()
   gradeMsg.value = key ? (d.updatedAt ? `本地草稿：${d.updatedAt}` : '（尚无本地草稿）') : ''
   gradeUnchanged.value = false
 }
@@ -1183,16 +1189,26 @@ async function saveGradeLocal(silent = false) {
   gradeSaving.value = true
   try {
     const scoreNum = gradeScore.value.trim() === '' ? null : Number(gradeScore.value)
+    // D175：写**人工套**（human + humanMode=replace），不再写顶层旧字段——
+    // 顶层字段会让上传路径（drafts_to_payloads）与逐生审核弹窗读不到 AI/人工区分，
+    // 也曾在同一份草稿里叠出 `{ai:{...}, score, comment}` 的混合结构。
+    // 不动 reportImages：那是「生成批阅报告」写入的，本页只改分数/批语/附件图。
+    const cur = gradeDraftFor(key) as any
     const rep = await saveXxtGradeDraft(engUrl.value, tok.value, {
       classId: it.classId, workId: it.workId, key,
-      score: Number.isFinite(scoreNum as number) ? (scoreNum as number) : null,
-      comment: gradeComment.value, images: gradeImages.value,
-    })
+      human_mode: 'replace',
+      human: { score: Number.isFinite(scoreNum as number) ? (scoreNum as number) : null,
+               comment: gradeComment.value, used: true,
+               images: gradeImages.value },
+      ...(cur?.student ? { student: String(cur.student) } : {}),
+    } as any)
     if (rep?.ok) {
       const t = new Date().toLocaleTimeString()
       gradeDrafts.value = { ...gradeDrafts.value,
-        [key]: { score: (scoreNum as number) ?? undefined, comment: gradeComment.value,
-                 images: gradeImages.value, updatedAt: t } }
+        [key]: { ...(cur || {}), human: { score: (scoreNum as number) ?? undefined,
+                                          comment: gradeComment.value, used: true,
+                                          images: gradeImages.value },
+                 humanMode: 'replace', updatedAt: t } }
       gradeMsg.value = `✅ 已保存到本地 ${t}`
       gradeUnchanged.value = false
       if (!silent) { /* 显式保存也走同一路径 */ }

@@ -48,7 +48,10 @@ ANALYSIS_PROMPT = """这是大学物理作业评阅，内容完全学术。你�
 - **问答题**：逐条核对参考答案中的要点是否答到（`key_points`），
   学生答到的要在 `evidence` 引用原句。
 - **抄写题**：只看是否抄全（题目/过程/示意图），**不评价对错**。
-- **辨析/创新/翻译题**：看概念区分/独立思考/术语准确，**逻辑瑕疵不扣分**但要给追问。
+- **辨析/创新题**：看概念区分/独立思考，**逻辑瑕疵不扣分**但要给追问。
+- **翻译题**：只看基本完成度（是否翻译了、是否回答了题目所问、字数是否达标）；
+  **不逐词比对译文准确性**（翻译无唯一标准答案，转录也会失真），
+  术语/修辞问题只写进 `guidance` 的启发式提问。
 - **总结题**：看是否归纳了知识点、是否有公式或推导、示意图是否画出、篇幅是否过短。
 
 【示意图】
@@ -114,7 +117,9 @@ _TAG_INSTRUCTIONS = {
         "注意：有些题目要求抄写的是课本原文（如公式、定理、表格等），请根据题干描述检查对应内容"
         "是否完整抄写，不要因为学生抄写的是原文而非例题而误判为不完整。"),
     ("summary",): "[本题为总结题] 请侧重评价归纳是否准确、概念理解是否正确，对计算细节适当放宽要求。",
-    ("translation",): "[本题为翻译题] 请检查翻译是否准确、术语使用是否正确。",
+    ("translation",): "[本题为翻译题] 只看基本完成度：是否真的翻译了、是否回答了题目所问、"
+                      "字数是否达到题目要求。**不要**逐词比对译文准确性，"
+                      "术语/修辞问题只在 guidance 给启发式提问，不扣分。",
     ("innovation",): "[本题为创新题] 请评价创意和独立思考，对格式适当放宽。",
     ("distinguish",): "[本题为辨析题] 请检查概念区分是否清晰、论证是否合理。",
 }
@@ -296,7 +301,8 @@ def analyze(client: LLMClient, user_prompt: str, model: str | None = None,
     raise RuntimeError("评阅JSON解析失败: 翻倍重试耗尽")
 
 
-# ---- 算分：D130 按题目来源分派（errorCount / missingPoints / checklist / lengthBased） ----
+# ---- 算分：D130 按题目来源分派（errorCount / missingPoints / checklist / lengthBased /
+#      topicMatch / translation） ----
 def _counted_errors(q: dict, g: dict) -> tuple[list[dict], int]:
     """过滤低置信度错误（默认不计分，D98-B5）；返回 (计入的错误, 低置信度条数)。"""
     errors = [e for e in (q.get("errors") or []) if isinstance(e, dict)]
@@ -436,6 +442,38 @@ def _q_deduction(q: dict, t: dict, g: dict) -> tuple[float, list[str], list[str]
                 d += sd
         pts += d
         rules.append("topicMatch")
+
+    elif mode == "translation":
+        # D174：翻译题**放宽**为「基本完成度」判据。教师原话：
+        #   「主要看学生有没有翻译和回答基本问题，如果翻译完全不对则扣 5 分，
+        #     如果没有回答问题则扣 5 分，如果字数少于题目描述，则扣 10 分。」
+        # 与抄写题同理：**不读 errors**——文学作品翻译没有唯一标准答案，
+        # 转录来自照片识别也会失真，逐词比对准确性会冤枉学生。
+        d = 0.0
+        rel = str(q.get("relevance") or "").strip().lower()
+        wrong = float(t.get("translationWrongDeduct") or 0)
+        if rel == "irrelevant" and wrong > 0:
+            d += wrong
+            steps.append(f"翻译完全不对 / 与题目无关 −{wrong:g}")
+        unanswered = float(t.get("questionAnsweredDeduct") or 0)
+        if q.get("question_answered") is False and unanswered > 0:
+            d += unanswered
+            steps.append(f"没有回答题目所问 −{unanswered:g}")
+        # 字数：**以转写原文重算**（不信模型自报），不足题目要求才扣
+        need = q.get("required_chars")
+        if not isinstance(need, int) or need <= 0:
+            need = int(t.get("minChars") or 0)
+        a_chars = q.get("answer_chars")
+        if not isinstance(a_chars, int):
+            a_chars = _text_len(str(q.get("answer_text") or ""))
+        short = float(t.get("shortAnswerDeduct") or 0)
+        if need > 0 and short > 0 and a_chars < need:
+            d += short
+            steps.append(f"作答 {a_chars} 字 / 题目要求 {need} 字 −{short:g}")
+        if t.get("logicErrorExempt", True) and (q.get("errors") or []):
+            steps.append("译文准确性问题不扣分，已转为启发式提问")
+        pts += d
+        rules.append("translation")
 
     elif mode == "lengthBased":
         # 基准 = 题目字数 × factor，下限保护 max(factor×题长, floor)（docs/78 §3.3）

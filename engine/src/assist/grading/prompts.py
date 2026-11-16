@@ -189,7 +189,11 @@ TAG_INSTRUCTIONS = {
             "注意：有些题目要求抄写课本原文（公式/定理/表格），按题干描述检查是否抄全，"
             "不要因为抄写的是原文而非例题而误判为不完整。",
     "summary": "[本题为总结题] 请侧重评价归纳是否准确、概念理解是否正确，对计算细节适当放宽要求。",
-    "translation": "[本题为翻译题] 请检查翻译是否准确、术语使用是否正确。",
+    # D174：翻译题放宽 —— 只看"有没有翻译、有没有答题、字数够不够"，
+    # 不逐词比对准确性（文学作品翻译无唯一标准答案，转录也会失真）。
+    "translation": "[本题为翻译题] 只看基本完成度：是否真的翻译了、是否回答了题目所问、"
+                   "字数是否达到题目要求。**不要**逐词比对译文准确性，"
+                   "术语/修辞问题只在 guidance 给启发式提问，不扣分。",
     "innovation": "[本题为创新题] 请评价创意和独立思考，对格式适当放宽。",
     "distinguish": "[本题为辨析题] 请检查概念区分是否清晰、论证是否合理。",
 }
@@ -241,10 +245,17 @@ KIND_OUTPUT_SCHEMA_HINT = {
 - `answer_chars`: 学生本题作答字数（整数）；
 - `relevance`: "relevant" | "partial" | "irrelevant"。
 **逻辑瑕疵不扣分**（超纲设想只要自洽即可），但必须给出启发式提问引导完善。""",
-    "translation": """【翻译题输出要求】每题除通用字段外，必须给：
-- `answer_chars`: 学生本题作答字数（整数）；
-- `relevance`: "relevant" | "partial" | "irrelevant"（是否在翻译本题，而非答非所问）。
-术语/准确性错误按"逻辑问题"处理：只给启发式提问，**不额外扣分**。""",
+    "translation": """【翻译题输出要求】本题**只看基本完成度**，每题除通用字段外，必须给：
+- `answer_chars`: 学生本题作答字数（整数，只数译文正文，不数抄写的原文）；
+- `relevance`: "relevant" | "partial" | "irrelevant"
+  （"irrelevant" 仅用于**翻译完全不对**：通篇乱译/译成完全无关的内容/根本没翻译）；
+  译文有错但大致在翻本题 → 填 "relevant" 或 "partial"，**不要**因此判错；
+- `question_answered`: true/false（题目除了"翻译"之外还问了什么，学生有没有回答；
+  题目只要求翻译时一律填 true）。
+
+**不扣分的事**：译文用词是否精准、术语是否规范、修辞与文采、个别句子理解偏差。
+这类问题如果值得提醒，只写进 `errors[].guidance` 作为启发式提问（系统会把这条按
+"已转为启发式提问"处理，不加扣分）。""",
     "summary": """【总结题输出要求】每题除通用字段外，必须给：
 - `covered`: {"知识点与概念": true/false, "重要公式及推导": true/false, "示意图": true/false}
   逐项判断是否讲到；题干没有要求画图时 `示意图` 填 true；
@@ -535,6 +546,8 @@ EVALUATION_SCHEMA = {
                                             "enum": ["match", "partial", "mismatch"]},
                             "relevance": {"type": "string",
                                           "enum": ["relevant", "partial", "irrelevant"]},
+                            # D174：翻译题 —— 题目除"翻译"外所问的问题是否回答
+                            "question_answered": {"type": "boolean"},
                             # D130-T0：本题实际来源（便于报告标注"本题来源"）
                             "kind": {"type": "string"},
                         },

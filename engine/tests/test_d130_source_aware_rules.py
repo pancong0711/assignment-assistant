@@ -254,7 +254,8 @@ def test_summary_covered_checklist(ws: Path):
     assert score_from_analysis(a, ws=ws)["total_score"] == 95
 
 
-@pytest.mark.parametrize("kind", ["distinguish", "innovation", "translation"])
+# D174：translation 已改为专用 mode（只看基本完成度），不再走 lengthBased
+@pytest.mark.parametrize("kind", ["distinguish", "innovation"])
 def test_length_based_tiers(ws: Path, kind):
     """<80% → −5；<50% → −10；完全无关 → −20；下限保护 60 字生效。"""
     # 题长 10 字 → 3×10=30 < 60 → 基准 60

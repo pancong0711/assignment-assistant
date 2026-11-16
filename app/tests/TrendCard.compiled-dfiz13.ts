@@ -1,6 +1,6 @@
 import { defineComponent as _defineComponent } from 'vue'
 import { computed, ref, watch } from 'vue'
-import { fetchKnowledgeTrend, type TrendRecurring, type TrendStat } from '/home/bot2603/Projects/2609-assignment-assistant/app/src/lib/engineClient'
+import { fetchKnowledgeTrend, type TrendRecurring, type TrendStat } from './../src/lib/engineClient'
 
 
 const __sfc_main = /*@__PURE__*/_defineComponent({

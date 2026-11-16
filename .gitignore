@@ -105,3 +105,8 @@ app/tests/.d168-atopia-*
 app/tests/_d168_atopia.*.html
 app/tests/.d168-atopia.bundle.js
 app/tests/_d168_atopia_entry.ts
+
+# D175：浏览器自检生成的临时包/HTML（脚本跑完删，但中断时会残留，绝不入库）
+app/tests/.d168.bundle.js
+app/tests/_d168.html
+app/tests/_d168_atopia.html

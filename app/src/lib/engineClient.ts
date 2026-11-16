@@ -992,6 +992,24 @@ export async function saveXxtGradeDraft(
   return o
 }
 
+/** POST /xxt/grade/draft/preview：**不写盘**预览"这份批阅将发出的报告"（D175）。
+ *
+ *  传入与保存完全相同的字段（可带上尚未保存的编辑值），引擎与已存 AI 基线合并后
+ *  返回 markdown + kind。用途：教师改完批语/分数，先看到最终成品再决定保存。 */
+export async function previewXxtGradeDraft(
+  engineAddr: string, token: string | undefined,
+  payload: Record<string, unknown>,
+): Promise<{ ok?: boolean; markdown?: string; kind?: string; revised?: boolean
+  error?: string; effective?: Record<string, unknown> }> {
+  const base = normalizeEngineAddr(engineAddr)
+  const res = await fetch(engineUrlWithToken(base, '/xxt/grade/draft/preview', token), {
+    method: 'POST', headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(payload),
+  })
+  return (await res.json().catch(() => ({ ok: false, error: '引擎返回非 JSON' }))) as
+    { ok?: boolean; markdown?: string; kind?: string; revised?: boolean; error?: string }
+}
+
 /** POST /xxt/grade/delete-draft：删除单个学生草稿。 */
 export async function deleteXxtGradeDraft(
   engineAddr: string, token: string | undefined,

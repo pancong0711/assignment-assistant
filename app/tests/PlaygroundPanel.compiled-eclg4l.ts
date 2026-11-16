@@ -3,7 +3,7 @@ import { computed, onMounted, ref, watch } from 'vue'
 import {
   fetchLlmConfig, fetchPlaygroundRecords, mutatePlaygroundFolder, mutatePlaygroundRecord,
   playgroundAsk, playgroundBatch, postLlmProvider, uploadPlaygroundAttachment, type PlaygroundRecord,
-} from '/home/bot2603/Projects/2609-assignment-assistant/app/src/lib/engineClient'
+} from './../src/lib/engineClient'
 
 const DRAFT_KEY = 'assignment-assistant.playground.draft.v1'
 

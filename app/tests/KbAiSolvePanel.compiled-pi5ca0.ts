@@ -1,10 +1,10 @@
 import { defineComponent as _defineComponent } from 'vue'
 import { computed, onMounted, ref, watch } from 'vue'
-import { useKbStore } from '/home/bot2603/Projects/2609-assignment-assistant/app/src/stores/kb'
+import { useKbStore } from './../src/stores/kb'
 import {
   fetchKbCatalog, fetchPromptTemplates, fetchXxtLoginJob, mutatePromptTemplate,
   startKbAiSolve,
-} from '/home/bot2603/Projects/2609-assignment-assistant/app/src/lib/engineClient'
+} from './../src/lib/engineClient'
 
 
 const __sfc_main = /*@__PURE__*/_defineComponent({

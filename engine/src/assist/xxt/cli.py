@@ -594,7 +594,9 @@ def register(group: click.Group) -> None:
             from . import grade_store
             from .session import xxt_home
             from .grade_upload import drafts_to_payloads
-            drafts = grade_store.read_drafts(xxt_home(), class_id, work_id)
+            # D175：**归一化**读取（双套草稿 ai/human/revision），否则只读到顶层
+            # score/comment（双套结构里没有）→ 上传的分数/批语恒为空。
+            drafts = grade_store.read_drafts_normalized(xxt_home(), class_id, work_id)
             payloads = drafts_to_payloads(drafts, only=student)
             if not payloads:
                 click.echo(json.dumps({"ok": False, "error": "本地无该作业的批阅草稿",

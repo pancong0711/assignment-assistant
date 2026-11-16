@@ -1,6 +1,6 @@
 import { defineComponent as _defineComponent } from 'vue'
 import { computed, ref, watch } from 'vue'
-import { fetchTeacherReport, type TeacherReportStat } from '/home/bot2603/Projects/2609-assignment-assistant/app/src/lib/engineClient'
+import { fetchTeacherReport, type TeacherReportStat } from './../src/lib/engineClient'
 
 const MATRIX_N = 8
 const BARS_W = 520

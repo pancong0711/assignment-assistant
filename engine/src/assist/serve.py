@@ -2809,6 +2809,52 @@ class Handler(BaseHTTPRequestHandler):
                     images=payload.get("images"), **scope)
             self._json(rep, 200 if rep.get("ok") else 400)
             return
+        if u.path == "/xxt/grade/draft/preview":
+            # D175：保存**之前**先看"将发出的报告长什么样"。
+            # 请求体 = 与 /xxt/grade/draft 相同的人工字段（human/human_mode/revision），
+            # 引擎把它们与已存的 AI 基线合并后生成 markdown，**不写盘**。
+            payload: dict = {}
+            try:
+                length = int(self.headers.get("Content-Length") or 0)
+                if length:
+                    payload = json.loads(self.rfile.read(length).decode("utf-8")) or {}
+            except Exception as exc:  # noqa: BLE001
+                self._json({"ok": False, "error": f"bad json: {exc}"}, 400)
+                return
+            from .xxt import grade_store
+            from .grading.drafts import build_draft_report
+            key = str(payload.get("key") or payload.get("workAnswerId") or "")
+            if not key:
+                self._json({"ok": False, "error": "缺少 key"}, 400)
+                return
+            ws_ = Path(self.ws).resolve()
+            class_dir = str(payload.get("classDir") or "")
+            task_id = str(payload.get("taskId") or "")
+            raw = grade_store.read_drafts(
+                _xxt_home(), str(payload.get("classId") or ""), str(payload.get("workId") or ""),
+                ws=ws_, class_dir=class_dir, task_id=task_id)
+            base = grade_store.normalize_draft(raw.get(key) or {})
+            # 用**请求里未保存的编辑值**覆盖（这样预览=正在改的那一版）
+            for field in ("ai", "human"):
+                if isinstance(payload.get(field), dict):
+                    base[field] = {**(base.get(field) or {}),
+                                   **{k: v for k, v in payload[field].items() if v is not None}}
+            if isinstance(payload.get("revision"), dict):
+                base["revision"] = {**(base.get("revision") or {}), **payload["revision"]}
+            if payload.get("human_mode") is not None:
+                base["humanMode"] = str(payload.get("human_mode") or "none")
+            base["student"] = str(payload.get("student") or base.get("student") or "")
+            base["revised"] = grade_store._is_revised(base)
+            md, kind = build_draft_report(base)
+            ai, human = base.get("ai") or {}, base.get("human") or {}
+            self._json({"ok": True, "markdown": md, "kind": kind, "revised": base["revised"],
+                        "effective": {
+                            "aiScore": ai.get("score"),
+                            "humanScore": human.get("score"),
+                            "humanMode": base.get("humanMode"),
+                            "revisionChars": len(str((base.get("revision") or {}).get("text") or "")),
+                        }})
+            return
         if u.path == "/xxt/grade/render-from-drafts":
             payload: dict = {}
             try:

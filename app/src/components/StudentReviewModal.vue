@@ -3,7 +3,7 @@
  *  右上=AI 批语（只读，可"另存修订版"）；右下=人工批阅 + 模式（不批阅/覆盖/人工在前+附件AI/修订AI）。
  *  左=学生作答图（可上/下一位、旋转）。保存写回双套草稿（不覆盖 AI 原文）。 */
 import { computed, nextTick, onMounted, ref, watch } from 'vue'
-import { saveXxtGradeDraft, xxtReviewFileUrl, xxtGradeReportUrl } from '../lib/engineClient'
+import { saveXxtGradeDraft, previewXxtGradeDraft, xxtReviewFileUrl, xxtGradeReportUrl } from '../lib/engineClient'
 import { renderRich } from '../lib/richdoc'
 import { renderMathIn, KATEX_DONE_ATTR } from '../lib/katexRender'
 
@@ -62,8 +62,6 @@ const draft = computed(() => {
 })
 const aiSet = computed(() => draft.value.ai || {})
 const revisionText = computed(() => String((draft.value.revision || {}).text || ''))
-/** D170-T10：修订版是否**已写入引擎草稿库**（区别于"正在编辑、还没保存"）。 */
-const revisionSavedInStore = computed(() => Boolean(revisionText.value))
 
 /** 作答原件文件名。
  *  D126：**优先用 students[].images**（来自 `<XXT_HOME>/pages/review/<classId>/<workId>/`
@@ -107,45 +105,208 @@ watch([transcriptHtml, aiCommentHtml, showTranscript], () => { void renderFormul
   { flush: 'post' })
 onMounted(() => { void renderFormulas() })
 
-/* 人工批阅编辑态 */
-const score = ref(''); const comment = ref(''); const humanMode = ref('none')
-const revising = ref(false); const revDraft = ref('')
-const savingRev = ref(false)
-
-/** D170-T4：保存后**不要**用旧草稿覆盖教师刚输入的值。
+/* ---------------- D175：人工批阅 / 修订 / 分数 的**一体化**编辑态 ----------------
  *
- *  此前：保存成功 → emit('saved') → 父组件重拉草稿 → props.drafts 变 →
- *  这个 watch 立刻把 `score` 回填成**旧的** human/ai 值 →
- *  教师看到"分数没变"，以为没生效而反复点（数据其实已保存）。
+ *  教师实际想要的是**一件事**：「把 AI 批语改一改，连分数一起作为最终批语保存」。
+ *  旧界面把它拆成了三个互不相认的入口（另存修订版 / 人工替代 AI / 人工批阅分数），
+ *  且「保存」键在 mode=none 时**不写分数**（以为没生效），报告又是另一个拼法 →
+ *  "改了批语又改分数，保存没变化"。
  *
- *  现在：保存成功后置 `justSaved=true`；下一次 watch 只更新**非编辑态**，
- *  并且在下一次切换学生（idx 变）时清除标记。
+ *  现在（心智模型：一份批语 + 一个分数 = 你要发给学生的东西）：
+ *   - `finalComment`：最终批语。默认=AI 原文（或已保存的修订版）；
+ *     点「✏ 在 AI 批语基础上修改」后进入编辑，保存时写 `revision.text`（报告按行标红）；
+ *   - `finalScore`：最终分数。默认=AI 分；
+ *   - `replaceWithHuman`：勾选 =「用我的批语完全替代 AI」（纯人工报告），
+ *     此时批语写 `human.comment` + `humanMode=replace`；
+ *   - **保存永远同时写批语与分数**（此前 mode=none 时分数被丢弃——"点了保存没变化"）。
  */
-let justSaved = false
-watch([idx, () => props.drafts], ([newIdx], [oldIdx]) => {
-  // 切换学生 → 一定要回填（这是正确行为）
-  if (newIdx !== oldIdx) justSaved = false
-  if (justSaved) return          // 刚保存过：保留教师的输入，不覆盖
-  const d = props.drafts[cur.value?.key || ''] || {}
-  score.value = d?.human?.score !== undefined && d?.human?.score !== null
-    ? String(d.human.score) : (d?.ai?.score !== undefined && d?.ai?.score !== null ? String(d.ai.score) : '100')
-  comment.value = String(d?.human?.comment || '')
-  humanMode.value = String(d?.humanMode || (d?.human?.used ? 'replace' : 'none'))
-  revDraft.value = String((d?.revision || {}).text || '')
-  revising.value = false
-}, { immediate: true })
+const finalComment = ref(''); const finalScore = ref('')
+/** 人工批语（= human.comment）：replace/append 模式下使用 */
+const comment = ref('')
+/** D175b：批语与 AI 的关系 —— keep(保留AI+修订标红) / replace(纯人工) / append(AI + 教师补充) */
+const commentMode = ref<'keep' | 'replace' | 'append'>('keep')
+const replacing = computed(() => commentMode.value === 'replace')
+const appending = computed(() => commentMode.value === 'append')
+const editingComment = ref(false)     // 是否展开最终批语编辑框
+const revDraft = ref('')              // 编辑中的最终批语
+const dirty = ref(false)              // 有未保存改动
+const saving = ref(false)
+const previewMd = ref(''); const previewKind = ref(''); const previewBusy = ref(false)
+const showPreview = ref(false)
+
+const aiOriginal = computed<string>(() => String(aiSet.value.comment || ''))
+const savedRevision = computed<string>(() => revisionText.value)
+/** 最终批语（当前应发出的内容）：人工替换 > 已存修订版 > AI 原文 */
+const finalCommentNow = computed<string>(() => {
+  if (replacing.value) return comment.value
+  if (appending.value) return comment.value
+  return savedRevision.value || aiOriginal.value
+})
+const aiScoreNow = computed<string>(() => (aiSet.value.score !== undefined && aiSet.value.score !== null
+  ? String(aiSet.value.score) : ''))
+const humanUsed = computed<boolean>(() => Boolean(draft.value.human?.used))
+/** 分数来源说明（让教师知道"这个分数现在是哪来的"） */
+const scoreHint = computed<string>(() => {
+  if (replacing.value) return '用人工分数（纯人工报告）'
+  if (appending.value) return '人工分数优先（AI 批语 + 教师补充）'
+  if (humanUsed.value && draft.value.human?.score !== undefined && draft.value.human?.score !== null) {
+    return '已保存人工分数（覆盖 AI 分）'
+  }
+  return aiScoreNow.value !== '' ? `AI 评分 ${aiScoreNow.value}` : '尚无 AI 评分'
+})
+const commentHint = computed<string>(() => {
+  if (replacing.value) return '纯人工批语（报告里不出现 AI 原文）'
+  if (appending.value) return 'AI 原文 + 教师补充批语（报告分两段）'
+  if (savedRevision.value) return '已保存修订版（报告按行标红改动）'
+  return aiOriginal.value ? 'AI 原文（未修改）' : '（还没有 AI 批语）'
+})
+
+/** D175：只有切换学生时才整表回填；保存后只更新「已保存基线」，保留教师这次输入。
+ *  旧实现用 `justSaved` 旗标+全量 return，一旦某处忘了置位就会用旧值覆盖输入。 */
+function fillFromDraft() {
+  const d = draft.value || {}
+  const h = d.human || {}
+  const a = d.ai || {}
+  const savedRev = String((d.revision || {}).text || '')
+  comment.value = String(h.comment || '')
+  finalScore.value = h.score !== undefined && h.score !== null ? String(h.score)
+    : (a.score !== undefined && a.score !== null ? String(a.score) : '100')
+  const hm = String(d.humanMode || 'none')
+  commentMode.value = (['replace', 'human'].includes(hm) && h.used) ? 'replace'
+    : (hm === 'append' && h.used) ? 'append' : 'keep'
+  revDraft.value = savedRev || String(a.comment || '')
+  editingComment.value = false
+  finalComment.value = savedRev || String(a.comment || '')
+  dirty.value = false
+  showPreview.value = false; previewMd.value = ''
+}
+watch(idx, () => { fillFromDraft() }, { immediate: true })
+// 父级重拉草稿（保存成功后）→ 只刷新"已保存基线"，不覆盖正在编辑的输入
+watch(() => props.drafts, () => {
+  if (dirty.value) return
+  fillFromDraft()
+})
 
 function prev() { if (idx.value > 0) idx.value-- }
 function next() { if (idx.value < props.students.length - 1) idx.value++ }
 function imgUrl(f: string) { return xxtReviewFileUrl(props.engineAddr, props.token, props.classId, props.workId, f) }
 
-function startRevise() { revising.value = true; revDraft.value = revisionText.value || String(aiSet.value.comment || '') }
+function startEditComment() {
+  editingComment.value = true
+  revDraft.value = finalCommentNow.value
+  dirty.value = true
+}
+function cancelEditComment() {
+  editingComment.value = false
+  revDraft.value = finalCommentNow.value
+}
+function applyEditComment() {
+  if (!revDraft.value.trim()) { msg.value = '批语不能为空'; return }
+  if (replacing.value || appending.value) comment.value = revDraft.value
+  else finalComment.value = revDraft.value
+  editingComment.value = false
+  dirty.value = true
+  previewMd.value = ''                     // 内容变了 → 旧预览作废
+}
+/** 切换"批语与 AI 的关系"；切到 replace/append 时把当前批语带进编辑框。 */
+function setCommentMode(m: 'keep' | 'replace' | 'append') {
+  const prev = commentMode.value
+  commentMode.value = m
+  dirty.value = true
+  previewMd.value = ''
+  if (m !== 'keep' && prev === 'keep' && !comment.value.trim()) {
+    comment.value = finalComment.value
+  }
+  if (m === 'keep' && prev !== 'keep') comment.value = ''
+}
+/** 「恢复 AI 原文」：清掉修订版与人工批语，回到纯 AI（保存后生效）。 */
+function useAiOriginal() {
+  if (!window.confirm('清除你的修改，恢复 AI 原文与 AI 分数？\n（点「保存」后才会真正写入本地草稿）')) return
+  editingComment.value = false
+  revDraft.value = aiOriginal.value
+  finalComment.value = aiOriginal.value
+  comment.value = ''
+  commentMode.value = 'keep'
+  finalScore.value = aiScoreNow.value || '100'
+  dirty.value = true
+  previewMd.value = ''
+}
 
-/** D171-T5：**只保存修订版**（不改人工批阅）。
- *
- *  此前修订框在上方，唯一的保存键在下方"人工批阅"区，且那个键同时写
- *  human + revision + humanMode → 教师分不清"我保存的是修订还是人工批阅"。
- */
+/** 组装保存/预览用的请求体（两者**同一份**，保证"看到的就是会发出的"）。 */
+function buildPayload() {
+  const c = cur.value
+  if (!c) return null
+  const n = finalScore.value.trim() === '' ? null : Number(finalScore.value)
+  const scoreOk = n !== null && Number.isFinite(n) ? n : null
+  const payload: Record<string, unknown> = {
+    classId: props.classId, workId: props.workId, key: c.key, student: c.name,
+    taskId: props.taskId, classDir: props.classDir,
+  }
+  if (replacing.value) {
+    // 纯人工：批语 + 分数都写人工套
+    payload.human_mode = 'replace'
+    payload.human = { score: scoreOk, comment: comment.value, used: true }
+  } else if (appending.value) {
+    // 追加：AI 批语在前 + 教师补充批语在后；人工分数优先
+    payload.human_mode = 'append'
+    payload.human = { score: scoreOk, comment: comment.value, used: true }
+  } else {
+    // 保留 AI 批语，只覆盖分数（human.score 优先），批语改动写修订版
+    payload.human_mode = 'none'
+    payload.human = { score: scoreOk, comment: '', used: true }
+    if (finalComment.value.trim() && finalComment.value !== aiOriginal.value) {
+      payload.revision = { text: finalComment.value }
+    }
+  }
+  return payload
+}
+
+/** D175：先预览最终报告（不写盘），确认后再保存。 */
+async function doPreview() {
+  const payload = buildPayload()
+  if (!payload) return
+  previewBusy.value = true
+  msg.value = ''
+  try {
+    const r = await previewXxtGradeDraft(props.engineAddr, props.token, payload)
+    if (r?.ok) {
+      previewMd.value = String(r.markdown || '')
+      previewKind.value = String(r.kind || '')
+      showPreview.value = true
+      msg.value = `预览生成（${r.kind || 'ai'}）——下发前请确认分数与批语`
+    } else msg.value = r?.error || '预览失败'
+  } finally { previewBusy.value = false }
+}
+
+/** D175：**保存** = 批语 + 分数一起写（此前 mode=none 时分数被丢弃）。 */
+async function save() {
+  const c = cur.value
+  if (!c) return
+  const payload = buildPayload()
+  if (!payload) return
+  const n = Number(finalScore.value)
+  if (finalScore.value.trim() !== '' && (!Number.isFinite(n) || n < 0 || n > 100)) {
+    msg.value = '分数必须是 0~100 的数字'; return
+  }
+  saving.value = true
+  try {
+    const r = await saveXxtGradeDraft(props.engineAddr, props.token, payload as any)
+    if (r?.ok) {
+      dirty.value = false
+      msg.value = replacing.value
+        ? '✅ 已保存：纯人工批语 + 分数'
+        : appending.value
+          ? '✅ 已保存：AI 批语 + 教师补充批语 + 分数'
+          : '✅ 已保存：批语（AI 原文为基线，改动按行标红）+ 分数'
+      emit('notify', `已保存 ${c.name} 的审核`)
+      emit('saved')
+      showPreview.value = false
+    } else msg.value = r?.error || '保存失败'
+  } finally { saving.value = false }
+}
+
+/** D171-T5 保留：只存修订版（快捷入口，避免重写整份人工批阅）。 */
+const savingRev = ref(false)
 async function saveRevisionOnly() {
   const c = cur.value
   if (!c) return
@@ -158,36 +319,13 @@ async function saveRevisionOnly() {
       revision: { text: revDraft.value },
     })
     if (r?.ok) {
-      justSaved = true
+      dirty.value = false
+      finalComment.value = revDraft.value
+      editingComment.value = false
       msg.value = '✅ 修订版已保存（AI 原文不受影响；导出报告时按行标红）'
-      revising.value = false
       emit('saved')
     } else msg.value = r?.error || '保存修订版失败'
   } finally { savingRev.value = false }
-}
-
-async function save() {
-  const c = cur.value
-  if (!c) return
-  const n = score.value.trim() === '' ? null : Number(score.value)
-  const payload: any = {
-    classId: props.classId, workId: props.workId, key: c.key, student: c.name,
-    human_mode: humanMode.value,
-    taskId: props.taskId, classDir: props.classDir,
-  }
-  if (humanMode.value !== 'none') {
-    payload.human = { score: Number.isFinite(n as number) ? n : null, comment: comment.value, used: true }
-  }
-  if (revising.value && revDraft.value.trim()) {
-    payload.revision = { text: revDraft.value }
-  }
-  const r = await saveXxtGradeDraft(props.engineAddr, props.token, payload)
-  if (r?.ok) {
-    justSaved = true             // D170-T4：阻止 watch 覆盖刚输入的值
-    msg.value = `✅ 已保存（模式 ${humanMode.value}${humanMode.value === 'none' ? '，仅用 AI 批语' : ''}）`
-    emit('notify', `已保存 ${c.name} 的审核（模式 ${humanMode.value}）`)
-    emit('saved')
-  } else msg.value = r?.error || '保存失败'
 }
 </script>
 
@@ -272,66 +410,99 @@ async function save() {
             grading 目录），请把该作业的 grading 目录名反馈给开发者。）
           </p>
 
-          <h4 style="margin-top:10px">AI 批语 <span class="hint" style="font-weight:400">（只读基线{{ aiSet.score != null ? ` · 评分 ${aiSet.score}` : '' }}）</span></h4>
-          <div style="border:1px solid var(--c-border); border-radius:8px; padding:8px; min-height:80px;
+          <!-- ===== D175：一份批语 + 一个分数 = 你要发给学生的东西 =====
+               保存一定会同时写批语与分数；"另存修订版"与"人工分数"不再各走各的。 -->
+          <h4 style="margin-top:12px; display:flex; align-items:center; gap:6px; flex-wrap:wrap">
+            ✍ 最终批语
+            <span class="hint" style="font-weight:400">{{ commentHint }}</span>
+            <span style="flex:1"></span>
+            <button class="btn small" v-if="!editingComment" @click="startEditComment">
+              {{ savedRevision ? '✏ 继续修改' : '✏ 在 AI 批语基础上修改' }}
+            </button>
+            <button class="btn small" v-if="finalComment !== aiOriginal || savedRevision"
+                    @click="useAiOriginal" title="丢弃你的修改，恢复 AI 原文">↩ 恢复 AI 原文</button>
+          </h4>
+
+          <!-- 只读：AI 原文基线（有修订版时优先显示修订版，原文折叠保留） -->
+          <div v-if="!editingComment" style="border:1px solid var(--c-border); border-radius:8px;
+                      padding:8px; min-height:80px; max-height:34vh; overflow:auto;
                       background:var(--c-bg-soft,#f8fafc)">
-            <span v-if="revisionText">（已另存修订版，见下）</span>
-            <div v-else-if="aiCommentHtml" ref="aiCommentEl" class="rich-box"
-                 v-html="aiCommentHtml"></div>
+            <div v-if="aiCommentHtml" ref="aiCommentEl" class="rich-box" v-html="aiCommentHtml"></div>
             <span v-else>（无 AI 批语：该生可能只有本地旧草稿分数，或尚未跑 AI 批阅）</span>
           </div>
-          <p style="margin:6px 0">
-            <button class="btn small" @click="startRevise">{{ revisionText ? '编辑修订版' : '另存修订版…' }}</button>
-            <span class="hint" style="margin-left:8px">
-              修订 = 在 AI 批语基础上改；报告将按行**标红**改动，AI 原文不被覆盖。
-            </span>
-          </p>
-          <!-- D170-T10：修订版存在哪、在哪能看到（教师反馈"保存后找不到"） -->
-          <p v-if="revisionText" class="hint" style="margin:0 0 6px; color:#0369a1">
-            修订版已保存在<b>引擎草稿库</b>（<code>grade-drafts</code>，不是本机文件）：
-            它会在<b>导出报告</b>时按行标红体现，也可返回本行重新「编辑修订版」。
-            想看全文：点上方「编辑修订版」即可展开当前修订内容。
-            <br />状态：已修订（{{ revisionText.length }} 字）
-            <template v-if="!revisionSavedInStore">· ⚠ 本页尚未保存，点下方「💾 保存到本地」才会写入引擎</template>
-          </p>
-          <textarea v-if="revising" v-model="revDraft" rows="5" style="width:100%; font-family:inherit"
-                    placeholder="AI 批语的人工修订版（支持 LaTeX $...$）"></textarea>
-          <p v-if="revising" style="margin:4px 0">
-            <button class="btn small primary" :disabled="savingRev" @click="saveRevisionOnly">
-              {{ savingRev ? '保存中…' : '💾 保存修订版' }}
-            </button>
-            <button class="btn small" :disabled="savingRev" @click="revising = false">取消</button>
-            <span class="hint" style="margin-left:8px">只保存修订版，<b>不改</b>人工批阅</span>
+          <details v-if="!editingComment && savedRevision" style="margin:4px 0 0">
+            <summary class="hint" style="cursor:pointer">当前最终版（你的修订，{{ savedRevision.length }} 字）</summary>
+            <div class="rich-box" style="border:1px dashed #0369a1; border-radius:8px; padding:8px;
+                        margin-top:4px; max-height:30vh; overflow:auto; white-space:pre-wrap">{{ savedRevision }}</div>
+          </details>
+
+          <!-- 编辑态：这就是"要发出去的批语" -->
+          <div v-if="editingComment">
+            <textarea v-model="revDraft" rows="8" style="width:100%; font-family:inherit"
+                      placeholder="在此修改批语（支持 LaTeX $...$）。保存后报告中你的改动会按行标红。"></textarea>
+            <p style="margin:4px 0; display:flex; gap:8px; align-items:center; flex-wrap:wrap">
+              <button class="btn small primary" @click="applyEditComment">✓ 应用到批语</button>
+              <button class="btn small" @click="cancelEditComment">取消</button>
+              <button class="btn small" :disabled="savingRev" @click="saveRevisionOnly"
+                      title="只把修订版写进草稿，不动分数（高级用法）">
+                {{ savingRev ? '保存中…' : '仅存修订版' }}</button>
+              <span class="hint">「应用到批语」后还需点下面 <b>💾 保存</b> 才写入草稿</span>
+            </p>
+          </div>
+
+          <!-- ===== 分数 ===== -->
+          <h4 style="margin-top:12px">分数</h4>
+          <p style="display:flex; gap:10px; align-items:center; flex-wrap:wrap; margin:0 0 6px">
+            <label class="field">最终分数
+              <input v-model="finalScore" type="number" min="0" max="100" style="width:88px"
+                     @input="dirty = true; previewMd = ''" /></label>
+            <span class="hint">{{ scoreHint }}</span>
           </p>
 
-          <h4 style="margin-top:10px">人工批阅（可选）</h4>
-          <p style="display:flex; gap:8px; align-items:center; flex-wrap:wrap; margin:0 0 6px">
-            <label class="field">模式
-              <select v-model="humanMode">
-                <option value="none">仅 AI（默认）</option>
-                <option value="replace">人工替代 AI（报告=纯人工）</option>
-                <option value="append">追加到 AI 之后（报告=AI + 教师补充）</option>
-                <option value="revise">修订 AI（报告=AI报告·人工修订·标红）</option>
-              </select>
-            </label>
-            <label class="field">分数 <input v-model="score" type="number" min="0" max="100" style="width:80px" /></label>
+          <!-- ===== 与 AI 的关系（三选一） ===== -->
+          <h4 style="margin-top:12px">批语与 AI 的关系</h4>
+          <p style="margin:4px 0; display:flex; gap:6px; flex-wrap:wrap">
+            <button class="btn small" :class="{ primary: commentMode === 'keep' }"
+                    @click="setCommentMode('keep')"
+                    title="保留 AI 原文，你的改动按行标红（默认）">✏ 修订 AI（标红改动）</button>
+            <button class="btn small" :class="{ primary: commentMode === 'append' }"
+                    @click="setCommentMode('append')"
+                    title="AI 原文在前 + 你的补充批语在后">➕ 追加到 AI 之后</button>
+            <button class="btn small" :class="{ primary: commentMode === 'replace' }"
+                    @click="setCommentMode('replace')"
+                    title="纯人工批语，报告里不出现 AI 原文">↩ 完全替代 AI</button>
           </p>
-          <textarea v-model="comment" rows="4" style="width:100%; font-family:inherit"
-                    placeholder="人工批语（支持 LaTeX；模式=none/revise 时可留空）"></textarea>
-          <p style="margin:8px 0 0; display:flex; gap:8px; align-items:center; flex-wrap:wrap">
-            <button class="btn small" :class="{ primary: humanMode === 'none' }"
-                    @click="humanMode = 'none'" title="报告只用 AI 批语（默认）">↩ 仅 AI</button>
-            <button class="btn small" :class="{ primary: humanMode === 'replace' }"
-                    @click="humanMode = 'replace'"
-                    title="人工批语替代 AI 批语 → 报告为纯人工批阅报告">✏ 人工替代 AI</button>
-            <button class="btn small" :class="{ primary: humanMode === 'append' }"
-                    @click="humanMode = 'append'"
-                    title="AI 批语在前 + 人工批语在后">➕ 追加到 AI 之后</button>
+          <textarea v-if="commentMode !== 'keep'" v-model="comment" rows="5"
+                    style="width:100%; font-family:inherit; margin-top:6px"
+                    :placeholder="commentMode === 'append'
+                      ? '教师补充批语（追加在 AI 原文之后，支持 LaTeX）'
+                      : '纯人工批语（替代 AI 原文，支持 LaTeX）'"
+                    @input="dirty = true; previewMd = ''"></textarea>
+          <p v-if="commentMode !== 'keep'" class="hint" style="margin:2px 0 0">
+            {{ commentMode === 'append'
+              ? '报告 = AI 原文 + 【教师补充批语】+ 你的分数'
+              : '报告 = 纯人工批语 + 你的分数（不出现 AI 原文）' }}
+            　<button class="btn small" @click="startEditComment">✏ 在编辑框里写这份批语</button>
           </p>
-          <p style="margin:8px 0 0; display:flex; gap:8px; align-items:center">
-            <button class="btn primary" @click="save">💾 保存到本地（不覆盖 AI 原文）</button>
-            <span class="hint" v-if="msg">{{ msg }}</span>
+
+          <!-- ===== 保存 / 预览 ===== -->
+          <p style="margin:10px 0 0; display:flex; gap:8px; align-items:center; flex-wrap:wrap">
+            <button class="btn primary" :disabled="saving" @click="save">
+              {{ saving ? '保存中…' : '💾 保存（批语 + 分数一起）' }}</button>
+            <button class="btn small" :disabled="previewBusy" @click="doPreview">
+              {{ previewBusy ? '生成中…' : '👁 预览将发出的报告' }}</button>
+            <span class="hint" v-if="dirty" style="color:#b45309">● 有未保存改动</span>
+            <span class="hint" v-else-if="msg">{{ msg }}</span>
           </p>
+          <p v-if="dirty && msg" class="hint" style="margin:2px 0; color:#b45309">{{ msg }}</p>
+
+          <div v-if="showPreview" style="margin-top:8px; border:1px solid #0369a1; border-radius:8px;
+                      padding:8px; max-height:38vh; overflow:auto; background:#fff">
+            <p class="hint" style="margin:0 0 6px">
+              这是<b>保存后要发出去的报告</b>（{{ previewKind }}）。确认无误再点「💾 保存」。
+            </p>
+            <pre style="white-space:pre-wrap; font-family:inherit; margin:0">{{ previewMd }}</pre>
+          </div>
           </template>
         </div>
       </div>

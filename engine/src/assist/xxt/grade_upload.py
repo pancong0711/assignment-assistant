@@ -341,18 +341,87 @@ def _is_num(v) -> bool:
         return False
 
 
+def resolve_draft_effective(d: dict) -> dict:
+    """D175：把双套草稿解析成**实际要上传**的 (score, comment)。
+
+    规则与报告生成（`report._mode_report_md`）保持同一口径：
+
+    | humanMode | 批语 | 分数 |
+    |---|---|---|
+    | none    | AI 批语（有修订版则用修订版） | AI 分；若老师只填了分数（human.score 非空）用人工分 |
+    | replace | 人工批语（空则回落 AI） | 人工分（空则 AI） |
+    | append  | AI 批语 + 教师补充批语 | 人工分优先（这是"我改了分数"的地方） |
+    | revise  | 修订版（没有则 AI 批语） | 人工分优先 |
+
+    此前只看草稿**顶层** `score/comment`（D92 双套结构里根本没有这两个键），
+    于是 `--from-drafts` 上传的分数/批语**恒为空** —— 教师在审核里改的分"没变化"。
+    """
+    d = d if isinstance(d, dict) else {}
+    ai = d.get("ai") or {}
+    human = d.get("human") or {}
+    rev = d.get("revision") or {}
+    hm = str(d.get("humanMode") or "none")
+    ai_comment = str(ai.get("comment") or "")
+    rev_text = str(rev.get("text") or "").strip()
+    h_comment = str(human.get("comment") or "")
+    h_used = bool(human.get("used"))
+    h_score = human.get("score")
+    a_score = ai.get("score")
+
+    if not h_used and hm in ("", "none") and not rev_text:
+        comment = ai_comment
+    elif hm in ("replace", "human"):
+        comment = h_comment or ai_comment
+    elif hm == "append":
+        comment = ai_comment
+        if h_comment.strip():
+            comment = (comment + "\n\n【教师补充批语】\n" + h_comment) if comment else h_comment
+    elif hm == "revise" or rev_text:
+        comment = rev_text or ai_comment
+    else:                                   # none，但老师写了人工批语 → 仍以人工为准
+        comment = h_comment or ai_comment
+
+    # 分数：与报告同一口径 —— 只要人工套被使用且填了分数，就以人工分为准
+    # （包括 humanMode=none、"只改分数不替代 AI"的情况：这才是教师"改了分数"的落点）
+    if h_used and h_score is not None:
+        score = h_score
+    elif hm in ("replace", "human", "append", "revise") and h_score is not None:
+        score = h_score
+    else:
+        score = a_score if a_score is not None else h_score
+    return {"score": score, "comment": comment,
+            "source": "human" if (h_used or hm in ("replace", "human", "append", "revise")) else "ai",
+            "humanMode": hm}
+
+
 def drafts_to_payloads(drafts: dict, only: str = "") -> list[dict]:
-    """本地草稿表 → 每生 payload（D85 §3）。only 给定时只取匹配 key/姓名的一项。"""
+    """本地草稿表 → 每生 payload（D85 §3）。only 给定时只取匹配 key/姓名的一项。
+
+    D175：草稿可能是**双套** `{ai, human, humanMode, revision}`（D92 起）。
+    此前只读顶层 `score/comment`（D92 之前的单套结构）→ 双套草稿上传时
+    分数/批语为空，教师"改了分数但没变化"。现在按 `resolve_draft_effective` 取值；
+    旧单套草稿仍按原样兼容（顶层没有 ai/human 时直接用顶层字段）。
+    """
+    from . import grade_store
     only = str(only or "").strip()
     out: list[dict] = []
-    for key, d in (drafts or {}).items():
-        if not isinstance(d, dict):
+    for key, raw in (drafts or {}).items():
+        if not isinstance(raw, dict):
             continue
-        if only and only not in (str(key), str(d.get("name") or "")):
+        if only and only not in (str(key), str(raw.get("name") or raw.get("student") or "")):
             continue
-        out.append({"key": str(key), "score": d.get("score"),
-                    "comment": str(d.get("comment") or ""),
-                    "images": [i for i in (d.get("images") or []) if isinstance(i, dict)]})
+        legacy = "ai" not in raw and "human" not in raw
+        d = grade_store.normalize_draft(raw)
+        eff = resolve_draft_effective(d)
+        if legacy and eff["score"] is None and not eff["comment"]:
+            eff = {"score": raw.get("score"), "comment": str(raw.get("comment") or ""),
+                   "source": str(raw.get("source") or "ai"),
+                   "humanMode": str(raw.get("humanMode") or "none")}
+        imgs = [i for i in ((d.get("human") or {}).get("reportImages")
+                            or d.get("images") or []) if isinstance(i, dict)]
+        out.append({"key": str(key), "score": eff["score"], "comment": eff["comment"],
+                    "images": imgs, "student": str(d.get("student") or ""),
+                    "source": eff["source"], "humanMode": eff["humanMode"]})
     return sorted(out, key=lambda x: x["key"])
 
 

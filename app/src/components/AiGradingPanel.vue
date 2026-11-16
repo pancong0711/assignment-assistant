@@ -172,7 +172,7 @@ const curWorkDir = computed<string>(() => {
 
 /* ④ 逐生审核 */
 
-/* D148：**逐生补批** —— 只对一名学生跑 转写 / 批阅 / 完整。
+/* D148：**逐生补批** —— 只对一名学生跑 转写 / 批阅 / 转写+批阅（D174 与上方三键统一语义）。
  *  背景：`--limit N` 只批前 N 名（现在=前 N 名**有作答**的），
  *  漏掉的学生此前只能整批重跑（已批过的要重转写/重评阅，浪费额度）。
  *  这里传 `students:[姓名]`，引擎只处理这一人。 */
@@ -188,7 +188,7 @@ async function runOne(s: any, mode: 'transcribe' | 'evaluate' | 'full') {
   }
   const steps = mode === 'full' ? ['transcribe', 'evaluate']
     : mode === 'transcribe' ? ['transcribe'] : ['evaluate']
-  // D171-T1：与上方三键同口径，去掉「完整」这个不准确的叫法
+  // D171-T1 / D174：与上方三键同口径 ——「批阅」= 出批语+打分，「③」= 转写+批阅。
   const label = mode === 'full' ? '转写+批阅' : mode === 'transcribe' ? '转写' : '批阅'
   rowBusy.value = s.name
   rowMsg.value = { ...rowMsg.value, [s.name]: `⏳ ${label}中…` }
@@ -927,6 +927,24 @@ function draftOf(s: { key?: string; name?: string; altKeys?: string[] }): Record
   }
   return {}
 }
+/** D175：**最终分**（= 上传/报告实际会用的分）。此前表格只显示 AI 分，
+ *  教师在审核里改了分数，回到列表仍是 AI 分 → "改了分数没有变化"。 */
+function finalScoreOf(s: { key?: string; name?: string; altKeys?: string[] }): string | number {
+  const d = draftOf(s)
+  const h = d.human || {}
+  const hm = String(d.humanMode || 'none')
+  if (["replace", "human", "append", "revise"].includes(hm) && h.score !== undefined && h.score !== null) return h.score
+  if (h.score !== undefined && h.score !== null) return h.score
+  const a = d.ai?.score
+  return a !== undefined && a !== null ? a : (d.score ?? '—')
+}
+/** 最终分是否被人工改过（非 AI 基线）。 */
+function scoreOverridden(s: { key?: string; name?: string; altKeys?: string[] }): boolean {
+  const d = draftOf(s)
+  const h = d.human || {}
+  const a = d.ai?.score
+  return h.score !== undefined && h.score !== null && (a === undefined || a === null || Number(h.score) !== Number(a))
+}
 /** D127：AI 状态 —— 让"跑过什么"在表上可见（此前只有 AI 分，跑完转写也看不出变化）。 */
 /** D171-T8：学生 tag 诊断标记。 */
 function tagMark(s: { key?: string; name?: string; tag?: string }): { text: string; color: string; why: string } {
@@ -1266,10 +1284,11 @@ onMounted(async () => {
               @click="testLlm">🔍 测试配置</button>
       <button class="btn small" :disabled="busy" title="只跑转录（发送作答图 → 得到文字转录）"
               @click="startAi(['transcribe'])">① 仅转录</button>
-      <button class="btn small" :disabled="busy" title="只跑评阅（要求已有转录产物）"
+      <button class="btn small" :disabled="busy"
+              title="只跑批阅：基于已有转写出批语 + 打分（写进逐生审核草稿；要求已有转写产物）"
               @click="startAi(['evaluate'])">② 批阅</button>
       <button class="btn" :disabled="busy"
-              title="转写 + 批阅：两件事一起做（不含报告；审核后再用下方「📄 一键生成批阅报告」）"
+              title="转写 + 批阅：先转写再出批语+打分（= ① + ②；不含报告，审核后再用下方「📄 一键生成批阅报告」）"
               @click="startAi(['transcribe', 'evaluate'])">▶ ③ 转写+批阅</button>
       <label class="hint" style="display:inline-flex; align-items:center; gap:4px; margin-left:8px"
              title="勾选后：三个键都会**重新调用大模型并覆盖**已有产物（会重新花额度）">
@@ -1398,20 +1417,25 @@ onMounted(async () => {
                 {{ draftOf(s).ai.at }}
               </div>
             </td>
-            <td class="c">{{ draftOf(s).ai?.score ?? draftOf(s).score ?? '—' }}</td>
+            <td class="c">
+              <b :style="{ color: scoreOverridden(s) ? '#0369a1' : 'inherit' }">{{ finalScoreOf(s) }}</b>
+              <div v-if="draftOf(s).ai?.score != null && scoreOverridden(s)" class="hint" style="font-size:11px">
+                AI {{ draftOf(s).ai.score }}
+              </div>
+            </td>
             <td class="c">{{ draftOf(s).human?.used ? (draftOf(s).human.score ?? '✓') : '—' }}</td>
             <td class="c">{{ reportMode(s) }}</td>
             <td class="c" style="white-space:nowrap">
               <button class="btn small" :disabled="rowBusy !== '' || !curWork"
-                      :title="curWork ? '只转写这一名学生' : '请先在 ③ 区选择作业'"
+                      :title="curWork ? '只转写这一名学生（不批语、不打分）' : '请先在 ③ 区选择作业'"
                       @click="runOne(s, 'transcribe')">转写</button>
               <button class="btn small" :disabled="rowBusy !== '' || !curWork"
-                      :title="curWork ? '用已有转写评阅这一名学生' : '请先在 ③ 区选择作业'"
+                      :title="curWork ? '用已有转写批阅这一名学生：出批语 + 打分（不改转写）' : '请先在 ③ 区选择作业'"
                       @click="runOne(s, 'evaluate')">批阅</button>
               <button class="btn small" :disabled="rowBusy !== '' || !curWork"
-                      :title="curWork ? '转写+评阅这一名学生' : '请先在 ③ 区选择作业'"
+                      :title="curWork ? '转写 + 批阅（出批语+打分）这一名学生' : '请先在 ③ 区选择作业'"
                       @click="runOne(s, 'full')">
-                {{ rowBusy === s.name ? '…' : '完整' }}
+                {{ rowBusy === s.name ? '…' : '转写+批阅' }}
               </button>
               ｜<button class="btn small" @click="onReviewOpen(i)">审核</button>
               <div v-if="rowMsg[s.name]" class="hint" style="margin-top:2px; white-space:normal">

@@ -38,7 +38,8 @@ SUPPORTED_KINDS = ("problems", "qa", "copy", "distinguish",
 # D170-T9：合法评阅模式**集中定义**。
 # 此前校验里硬编码了一个四元组，新增 mode 时必然漏改 →
 # write_rules 会静默失败（教师改了规则却存不进去）。新增模式只改这里一处。
-VALID_MODES = ("errorCount", "missingPoints", "checklist", "lengthBased", "topicMatch")
+VALID_MODES = ("errorCount", "missingPoints", "checklist", "lengthBased", "topicMatch",
+               "translation")
 # D168-B5：`example`（例题库）**刻意不在** SUPPORTED_KINDS 里——
 # 它只做分析、不批阅。normalize_kind 会把未知回落 problems，
 # 所以这里单独声明"分析专用"，供调用方判断（避免例题被当成待批阅题）。
@@ -121,13 +122,19 @@ DEFAULT_RULES: dict = {
             "logicErrorExempt": True,
             "requireDiagram": False,
         },
+        # D174：翻译题放宽为「基本完成度」判据（教师原话）：
+        #   「主要看学生有没有翻译和回答基本问题：翻译完全不对 → −5；
+        #     没有回答问题 → −5；字数少于题目描述 → −10。」
+        # 与抄写题同一思路：转录来自照片识别，译文细节不可靠；
+        # 文学作品翻译也**没有唯一标准答案**，逐词比对准确性会误伤学生。
+        # 因此 translation 不再走通用 lengthBased（8 折/5 折 + 无关 −20），
+        # 改走 mode="translation"（不读 errors，只判三件事）。
         "translation": {
-            "mode": "lengthBased",
-            "lengthFactor": 3,
-            "lengthFloorChars": 60,
-            "shortRatioDeduct": {"0.8": 5, "0.5": 10},
-            "irrelevantDeduct": 20,
-            "logicErrorExempt": True,
+            "mode": "translation",
+            "questionAnsweredDeduct": 5,      # 没有回答/完成题目所问
+            "translationWrongDeduct": 5,      # 翻译完全不对（答非所问/通篇乱译）
+            "shortAnswerDeduct": 10,          # 字数少于题目描述的要求
+            "logicErrorExempt": True,         # 译文准确性/术语不扣分，只给启发式提问
             "requireDiagram": False,
         },
         "summary": {
@@ -427,7 +434,8 @@ _KIND_FOCUS = {
     "distinguish": "辨析题：看概念区分是否清晰、依据是否成立；允许表述简略，"
                    "但要有明确判断与理由。",
     "innovation": "创新题：看思考过程与独立见解；超纲设想只要自洽即可，不因超纲扣分。",
-    "translation": "翻译题：看译文准确性与术语规范；不苛求文采。",
+    "translation": "翻译题：**只看基本完成度**——是否真的翻译了、是否回答了题目所问、"
+                   "字数是否达到题目要求；不逐词比对准确性，不苛求文采与术语。",
     "summary": "总结题：看知识点与概念是否准确、重要模型/公式（含推导）是否讲到、"
                "示意图（题干要求时）是否给出。",
 }
@@ -464,6 +472,14 @@ def rule_summary(ws, kind: str) -> str:
         if ignored:
             lines.append(f"- **不要评价**：{ignored}——转录来自照片识别，细节会失真，"
                          "据此判错会冤枉学生。")
+    elif mode == "translation":
+        lines.append(f"- **只判基本完成度**（D174 放宽）："
+                     f"翻译完全不对 → −{t.get('translationWrongDeduct', 5)}；"
+                     f"没有回答题目所问 → −{t.get('questionAnsweredDeduct', 5)}；"
+                     f"字数少于题目要求 → −{t.get('shortAnswerDeduct', 10)}。")
+        lines.append("- **不逐词比对译文准确性、不评价术语与文采**"
+                     "——文学作品翻译无唯一标准答案，转录也有失真；"
+                     "译文问题只在 `guidance` 里给出启发式提问。")
     elif mode == "lengthBased":
         ratio = t.get("shortRatioDeduct") or {}
         tiers = "；".join(f"不足 {float(r) * 100:.0f}% → −{v}"

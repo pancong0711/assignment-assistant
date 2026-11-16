@@ -1,28 +1,28 @@
 import { defineComponent as _defineComponent } from 'vue'
 import { computed, onMounted, ref, watch } from 'vue'
-import { STUDENT_TAGS, STUDENT_TAG_LABELS } from '/home/bot2603/Projects/2609-assignment-assistant/app/src/lib/kb'
+import { STUDENT_TAGS, STUDENT_TAG_LABELS } from './../src/lib/kb'
 import {
   SCORE_FAMILY_PRESETS, isIncluded, isFixedFamily, scoreFamilyDesc, scoreFamilyLabel,
   type ScoreFamily,
-} from '/home/bot2603/Projects/2609-assignment-assistant/app/src/lib/roster'
-import { columnScoreOf, scoreColumnsOf } from '/home/bot2603/Projects/2609-assignment-assistant/app/src/lib/rosterXlsx'
-import { computeScoresFiltered } from '/home/bot2603/Projects/2609-assignment-assistant/app/src/lib/roster'
-import type { PreviewTable } from '/home/bot2603/Projects/2609-assignment-assistant/app/src/lib/rosterXlsx'
-import { useRosterStore } from '/home/bot2603/Projects/2609-assignment-assistant/app/src/stores/roster'
-import { useTaskpadStore } from '/home/bot2603/Projects/2609-assignment-assistant/app/src/stores/taskpad'
-import { usePackStore } from '/home/bot2603/Projects/2609-assignment-assistant/app/src/stores/packs'
-import { getKbDirHandle } from '/home/bot2603/Projects/2609-assignment-assistant/app/src/stores/kb'
-import { buildBatchManifest, partitionStudentsByTag } from '/home/bot2603/Projects/2609-assignment-assistant/app/src/lib/classOverlay'
-import { parseTaskpad, padInferredTag } from '/home/bot2603/Projects/2609-assignment-assistant/app/src/lib/taskpad'
-import { downloadData, detectCapabilities, fsWriteHint, pickReadFileFsa } from '/home/bot2603/Projects/2609-assignment-assistant/app/src/lib/fsAccess'
-import { useKbStore } from '/home/bot2603/Projects/2609-assignment-assistant/app/src/stores/kb'
-import { useSettingsStore } from '/home/bot2603/Projects/2609-assignment-assistant/app/src/stores/settings'
-import { fetchGradingPacks, fetchGradingScores, saveTagsSnapshot } from '/home/bot2603/Projects/2609-assignment-assistant/app/src/lib/engineClient'
-import { buildSheetSidecar, sidecarFileName, type SheetSidecar } from '/home/bot2603/Projects/2609-assignment-assistant/app/src/lib/sheetSidecar'
+} from './../src/lib/roster'
+import { columnScoreOf, scoreColumnsOf } from './../src/lib/rosterXlsx'
+import { computeScoresFiltered } from './../src/lib/roster'
+import type { PreviewTable } from './../src/lib/rosterXlsx'
+import { useRosterStore } from './../src/stores/roster'
+import { useTaskpadStore } from './../src/stores/taskpad'
+import { usePackStore } from './../src/stores/packs'
+import { getKbDirHandle } from './../src/stores/kb'
+import { buildBatchManifest, partitionStudentsByTag } from './../src/lib/classOverlay'
+import { parseTaskpad, padInferredTag } from './../src/lib/taskpad'
+import { downloadData, detectCapabilities, fsWriteHint, pickReadFileFsa } from './../src/lib/fsAccess'
+import { useKbStore } from './../src/stores/kb'
+import { useSettingsStore } from './../src/stores/settings'
+import { fetchGradingPacks, fetchGradingScores, saveTagsSnapshot } from './../src/lib/engineClient'
+import { buildSheetSidecar, sidecarFileName, type SheetSidecar } from './../src/lib/sheetSidecar'
 import { stringifyClassHtml, printSheetHtml, expandPadItems,
-  type SheetHtmlPadInput, type SheetHtmlStudent } from '/home/bot2603/Projects/2609-assignment-assistant/app/src/lib/sheetHtml'
-import type { KbKind } from '/home/bot2603/Projects/2609-assignment-assistant/app/src/lib/kb'
-import PreviewTableCard from '/home/bot2603/Projects/2609-assignment-assistant/app/tests/PreviewTableCard.compiled-1ilsba.ts'
+  type SheetHtmlPadInput, type SheetHtmlStudent } from './../src/lib/sheetHtml'
+import type { KbKind } from './../src/lib/kb'
+import PreviewTableCard from './PreviewTableCard.compiled-1ilsba.ts'
 
 /** 班级与标签（M5 成绩管理，docs/05-D18；M-A S1 由"班级与成绩"更名，docs/05-D26）：
  *  名单/成绩导入 + 综合得分 + 自动打 tag + 导出。
@@ -647,7 +647,7 @@ async function downloadClassPreviewHtml() {
   if (!classPreviewHtml.value) return
   try {
     // D94-T2：下载同样按点名册顺序；自包含 KaTeX 内联（file:// 离线可开）
-    const { fetchSelfContainedKatex } = await import('/home/bot2603/Projects/2609-assignment-assistant/app/src/lib/sheetHtml')
+    const { fetchSelfContainedKatex } = await import('./../src/lib/sheetHtml')
     const raw = await fetchSelfContainedKatex()
     const { html } = stringifyClassHtml(roster.students as SheetHtmlStudent[], classOrderResolver(), {
       includeSolution: classIncludeAnswers.value,

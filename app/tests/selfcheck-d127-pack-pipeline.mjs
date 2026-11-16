@@ -68,8 +68,12 @@ const strip = (s) => s.replace(/\/\*[\s\S]*?\*\//g, '')
   assert.ok(/📄 一键生成批阅报告/.test(comp), '报告的独立入口应保留在逐生审核下方')
   assert.ok(/allowPartial/.test(comp), '部分失败仍继续的入口应保留')
   const modal = strip(read('src/components/StudentReviewModal.vue'))
-  assert.ok(/人工替代 AI/.test(modal) && /追加到 AI 之后/.test(modal) && /仅 AI/.test(modal),
-    '逐生审核应有 仅AI / 替代 / 追加 三键')
+  // D175：三个各自为政的键（仅AI / 替代 / 追加）合并为"一份批语 + 一个分数"：
+  // 默认保留 AI 原文（可改，改动标红），勾选「完全替代」= 纯人工；保存一次写全。
+  // 报告侧的三种构成仍必须可生成（见上面 report.py 断言），这里锁界面入口。
+  assert.ok(/完全替代/.test(modal) && /恢复 AI 原文/.test(modal),
+    '逐生审核应能选择"保留 AI / 完全替代 / 恢复原文"')
+  assert.ok(/保存（批语 \+ 分数一起）/.test(modal), '逐生审核应有一键保存批语+分数')
 }
 
 /* 7) 测试配置：失败也要能看到原因（不再是裸 HTTP 400） */

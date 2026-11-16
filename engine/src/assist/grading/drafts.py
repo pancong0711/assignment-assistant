@@ -114,6 +114,21 @@ def save_drafts_from_grading(ws, *, class_id: str, work_id: str, task_id: str,
                                                class_dir=resolved_class_dir,
                                                task_id=str(task_id), home=home) or "")}
 
+def build_draft_report(d: dict) -> "tuple[str, str]":
+    """D175：由**一份已归一草稿**生成 (markdown, kind)。
+
+    报告预览（保存前先看结果）与批量生成共用同一函数 —— 预览必须是"将来真正
+    发出去的那份"，不能另写一套拼接逻辑。
+    """
+    from .report import _mode_report_md
+    d = d if isinstance(d, dict) else {}
+    return _mode_report_md(student=str(d.get("student") or ""),
+                           ai=d.get("ai") or {}, human=d.get("human") or {},
+                           human_mode=d.get("humanMode") or "none",
+                           revision=d.get("revision") or {},
+                           revised=bool(d.get("revised")))
+
+
 def render_reports_from_drafts(ws, *, class_id: str, work_id: str, task_id: str = "",
                                class_dir: str = "", home=None, katex_dir=None,
                                with_report_png: bool = True) -> dict:
@@ -162,8 +177,14 @@ def render_reports_from_drafts(ws, *, class_id: str, work_id: str, task_id: str 
                 imgs.append({"name": f"{student}-report.png",
                              "data_b64": base64.b64encode(Path(png).read_bytes()).decode()})
         # 报告图回写人工套（供上传）；不动 ai 基线
+        # D175-FIX：必须写带 scope 的**同一份**草稿（此前漏传 ws/class_dir/task_id
+        # → 落到旧布局 `<xxt_home>/grade-drafts/<classId>/<workId>.json`，
+        # 与刚读的 `grading/<taskId>/drafts/` 不是同一份 → 报告预览永远"未生成"）。
         grade_store.save_draft_sets(home, class_id, work_id, key,
-                                    human={"reportImages": imgs} if imgs else None)
+                                    human={"reportImages": imgs} if imgs else None,
+                                    student=student,
+                                    ws=ws, class_dir=str(class_dir or f"classes/{class_id}"),
+                                    task_id=str(task_id))
         done.append({"key": key, "student": student, "kind": kind,
                      "revised": bool(d.get("revised")), "png": bool(imgs)})
     return {"ok": True, "count": len(done), "reports": done, "dir": str(out_root)}

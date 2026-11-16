@@ -1,13 +1,13 @@
 import { defineComponent as _defineComponent } from 'vue'
 import { computed, onMounted, ref } from 'vue'
-import { useSettingsStore } from '/home/bot2603/Projects/2609-assignment-assistant/app/src/stores/settings'
-import AtopiaPanel from '/home/bot2603/Projects/2609-assignment-assistant/app/tests/AtopiaPanel.compiled-1l2ros.ts'
+import { useSettingsStore } from './../src/stores/settings'
+import AtopiaPanel from './AtopiaPanel.compiled-1l2ros.ts'
 import {
   askAtopia, fetchAtopiaSessions, fetchAtopiaWork, fetchLlmConfig, uploadAtopiaWork,
   extractAtopiaWork, parseAtopiaWork, fetchPromptTemplatesByCategory, importExamples,
   type AtopiaAskResult, type AtopiaStep, type LlmProvider,
   type AtopiaExtractFile, type PromptTemplate,
-} from '/home/bot2603/Projects/2609-assignment-assistant/app/src/lib/engineClient'
+} from './../src/lib/engineClient'
 
 const MAX_TURNS_LIMIT = 20
 const LS_PROV = 'atopia.provider'
