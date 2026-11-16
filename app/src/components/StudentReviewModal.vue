@@ -82,10 +82,6 @@ const transcriptText = computed<string>(() => String(draft.value.ai?.transcript 
  *  D127-FIX：`renderRich` 只做 Markdown→HTML + 净化，**不含 KaTeX**；
  *  必须再对容器调 `renderMathIn()`，否则公式仍显示 `$...$` 源码。 */
 const transcriptHtml = computed<string>(() => (transcriptText.value ? renderRich(transcriptText.value) : ''))
-const aiCommentHtml = computed<string>(() => {
-  const t = String(aiSet.value.comment || '')
-  return t ? renderRich(t) : ''
-})
 
 const transcriptEl = ref<HTMLElement | null>(null)
 const aiCommentEl = ref<HTMLElement | null>(null)
@@ -100,10 +96,6 @@ async function renderFormulas() {
   }
 }
 
-// 内容或当前学生变化 → 重渲染公式（v-html 更新后 DOM 已替换，必须重新跑 KaTeX）
-watch([transcriptHtml, aiCommentHtml, showTranscript], () => { void renderFormulas() },
-  { flush: 'post' })
-onMounted(() => { void renderFormulas() })
 
 /* ---------------- D175：人工批阅 / 修订 / 分数 的**一体化**编辑态 ----------------
  *
@@ -136,11 +128,31 @@ const showPreview = ref(false)
 
 const aiOriginal = computed<string>(() => String(aiSet.value.comment || ''))
 const savedRevision = computed<string>(() => revisionText.value)
+/** D175-FIX：只读区必须渲染**当前最终批语**（含本地已应用、尚未保存的修改）。
+ *  此前绑的是 `aiCommentHtml`（永远 AI 原文）→「应用到批语」和「保存」都看着没效果。
+ *  注意：必须声明在 `finalComment`/`aiOriginal` 之后 —— `watch` 会立即读取 computed。 */
+const finalCommentHtml = computed<string>(() => {
+  const t = String(finalComment.value || '')
+  return t ? renderRich(t) : ''
+})
+/** 当前最终批语与 AI 原文不同 → 视为"已修改"（用于提示与按钮文案）。 */
+const commentChanged = computed<boolean>(() => {
+  const cur = String(finalComment.value || '').trim()
+  const org = String(aiOriginal.value || '').trim()
+  return Boolean(cur) && cur !== org
+})
+
+// 内容或当前学生变化 → 重渲染公式（v-html 更新后 DOM 已替换，必须重新跑 KaTeX）
+// 注意：必须放在 finalCommentHtml 声明**之后**（watch 创建时会立即读取依赖）。
+watch([transcriptHtml, finalCommentHtml, showTranscript], () => { void renderFormulas() },
+  { flush: 'post' })
+onMounted(() => { void renderFormulas() })
 /** 最终批语（当前应发出的内容）：人工替换 > 已存修订版 > AI 原文 */
 const finalCommentNow = computed<string>(() => {
   if (replacing.value) return comment.value
   if (appending.value) return comment.value
-  return savedRevision.value || aiOriginal.value
+  // 本地已应用的修改优先（此前漏了 finalComment → 再次"继续修改"会退回旧版本）
+  return finalComment.value || savedRevision.value || aiOriginal.value
 })
 const aiScoreNow = computed<string>(() => (aiSet.value.score !== undefined && aiSet.value.score !== null
   ? String(aiSet.value.score) : ''))
@@ -157,6 +169,9 @@ const scoreHint = computed<string>(() => {
 const commentHint = computed<string>(() => {
   if (replacing.value) return '纯人工批语（报告里不出现 AI 原文）'
   if (appending.value) return 'AI 原文 + 教师补充批语（报告分两段）'
+  if (commentChanged.value) {
+    return dirty.value ? '已修改（尚未保存）' : '已修改（报告按行标红改动）'
+  }
   if (savedRevision.value) return '已保存修订版（报告按行标红改动）'
   return aiOriginal.value ? 'AI 原文（未修改）' : '（还没有 AI 批语）'
 })
@@ -417,23 +432,23 @@ async function saveRevisionOnly() {
             <span class="hint" style="font-weight:400">{{ commentHint }}</span>
             <span style="flex:1"></span>
             <button class="btn small" v-if="!editingComment" @click="startEditComment">
-              {{ savedRevision ? '✏ 继续修改' : '✏ 在 AI 批语基础上修改' }}
+              {{ (savedRevision || commentChanged) ? '✏ 继续修改' : '✏ 在 AI 批语基础上修改' }}
             </button>
             <button class="btn small" v-if="finalComment !== aiOriginal || savedRevision"
                     @click="useAiOriginal" title="丢弃你的修改，恢复 AI 原文">↩ 恢复 AI 原文</button>
           </h4>
 
-          <!-- 只读：AI 原文基线（有修订版时优先显示修订版，原文折叠保留） -->
+          <!-- 只读：**当前最终批语**（含本地已应用的修改）；AI 原文另折叠对照 -->
           <div v-if="!editingComment" style="border:1px solid var(--c-border); border-radius:8px;
                       padding:8px; min-height:80px; max-height:34vh; overflow:auto;
                       background:var(--c-bg-soft,#f8fafc)">
-            <div v-if="aiCommentHtml" ref="aiCommentEl" class="rich-box" v-html="aiCommentHtml"></div>
-            <span v-else>（无 AI 批语：该生可能只有本地旧草稿分数，或尚未跑 AI 批阅）</span>
+            <div v-if="finalCommentHtml" ref="aiCommentEl" class="rich-box" v-html="finalCommentHtml"></div>
+            <span v-else>（无批语：该生可能只有本地旧草稿分数，或尚未跑 AI 批阅）</span>
           </div>
-          <details v-if="!editingComment && savedRevision" style="margin:4px 0 0">
-            <summary class="hint" style="cursor:pointer">当前最终版（你的修订，{{ savedRevision.length }} 字）</summary>
-            <div class="rich-box" style="border:1px dashed #0369a1; border-radius:8px; padding:8px;
-                        margin-top:4px; max-height:30vh; overflow:auto; white-space:pre-wrap">{{ savedRevision }}</div>
+          <details v-if="!editingComment && commentChanged" style="margin:4px 0 0">
+            <summary class="hint" style="cursor:pointer">对照 AI 原文（{{ aiOriginal.length }} 字，只读）</summary>
+            <div class="rich-box" style="border:1px dashed var(--c-border); border-radius:8px; padding:8px;
+                        margin-top:4px; max-height:30vh; overflow:auto; white-space:pre-wrap">{{ aiOriginal }}</div>
           </details>
 
           <!-- 编辑态：这就是"要发出去的批语" -->

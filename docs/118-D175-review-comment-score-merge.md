@@ -95,3 +95,49 @@
 | 7 | 列表显示生效分并标 AI 原分 | 同上 |
 | 8 | 真实 HTTP：预览/保存/读回/上传口径一致 | 手工联调（本机 8799 端口） |
 | 9 | 四道门 | pytest **1591** · build 0 error · selfcheck **42/42** |
+
+
+---
+
+## 4. D175b 回归：改批语「看不见 / 不能继续改」（第 21 轮反馈）
+
+### 4.1 现象
+> 点「保存（批语+分数一起）」没有效果；点「继续修改」删除/修改后「应用到批语」
+> 没有效果，又恢复之前的版本，似乎已修改的批语无法继续修改。
+
+### 4.2 定位方法
+真实 Chromium 挂载 `StudentReviewModal` + 抓包（不是靠读代码猜）：
+
+```
+应用后屏幕含新批语?  False     ← 但「恢复 AI 原文」按钮已出现，说明 finalComment 确实更新了
+「继续修改」键存在?  False     ← 按钮文案按 savedRevision 判断
+再次编辑框内容:      'AI 原文…' ← 回退旧版本
+保存请求:            /xxt/grade/draft {human_mode:none, human:{score}, revision:{text:新批语}}  ← 请求本身正确
+```
+
+### 4.3 三个根因（都是前端状态绑定，不是保存链路）
+| # | 根因 | 后果 |
+|---|---|---|
+| A | 只读区 `v-html="aiCommentHtml"`，该 computed 只读 `aiSet.comment` | 改了、存了都**看不见**新批语 |
+| B | `finalCommentNow` 只取 `savedRevision \|\| aiOriginal`，漏了本地 `finalComment` | 再点「继续修改」**回退旧版本** |
+| C | 「继续修改」文案只看 `savedRevision`（未保存的修改不算） | 键一直显示「在 AI 批语基础上修改」 |
+
+### 4.4 修复
+- 新增 `finalCommentHtml`（渲染**当前最终批语**），只读区改绑它；
+- 新增 `commentChanged`：与 AI 原文不同即视为"已修改"，提示「已修改（尚未保存）」；
+- AI 原文改为**折叠对照**（`对照 AI 原文（N 字，只读）`），不再抢占主显示；
+- `finalCommentNow` 优先 `finalComment`；「继续修改」文案认 `commentChanged`；
+- KaTeX 重新渲染跟随 `finalCommentHtml`。
+
+> 踩坑记录：`watch([... computed ...])` 在创建时**立即读取**依赖，
+> 因此新 computed 必须声明在 watch 之前，否则 `Cannot access … before initialization` 白屏。
+> 自检里已用 `watch 必须晚于 finalCommentHtml 声明` 断言锁死。
+
+### 4.5 验收
+| 标准 | 验证 |
+|---|---|
+| 应用后屏幕出现新批语 | 浏览器实测 True |
+| 「继续修改」存在且编辑框是新内容 | 浏览器实测 True |
+| 保存 + 父级刷新后仍显示新批语 | 浏览器实测 True |
+| 静态结构防回退 | `selfcheck-d175b-comment-edit.mjs` |
+| 四道门 | pytest 1591 · tsc 0 · build 0 · selfcheck **43/43** |

@@ -89,10 +89,6 @@ const transcriptText = computed<string>(() => String(draft.value.ai?.transcript 
  *  D127-FIX：`renderRich` 只做 Markdown→HTML + 净化，**不含 KaTeX**；
  *  必须再对容器调 `renderMathIn()`，否则公式仍显示 `$...$` 源码。 */
 const transcriptHtml = computed<string>(() => (transcriptText.value ? renderRich(transcriptText.value) : ''))
-const aiCommentHtml = computed<string>(() => {
-  const t = String(aiSet.value.comment || '')
-  return t ? renderRich(t) : ''
-})
 
 const transcriptEl = ref<HTMLElement | null>(null)
 const aiCommentEl = ref<HTMLElement | null>(null)
@@ -107,10 +103,6 @@ async function renderFormulas() {
   }
 }
 
-// 内容或当前学生变化 → 重渲染公式（v-html 更新后 DOM 已替换，必须重新跑 KaTeX）
-watch([transcriptHtml, aiCommentHtml, showTranscript], () => { void renderFormulas() },
-  { flush: 'post' })
-onMounted(() => { void renderFormulas() })
 
 /* ---------------- D175：人工批阅 / 修订 / 分数 的**一体化**编辑态 ----------------
  *
@@ -143,11 +135,31 @@ const showPreview = ref(false)
 
 const aiOriginal = computed<string>(() => String(aiSet.value.comment || ''))
 const savedRevision = computed<string>(() => revisionText.value)
+/** D175-FIX：只读区必须渲染**当前最终批语**（含本地已应用、尚未保存的修改）。
+ *  此前绑的是 `aiCommentHtml`（永远 AI 原文）→「应用到批语」和「保存」都看着没效果。
+ *  注意：必须声明在 `finalComment`/`aiOriginal` 之后 —— `watch` 会立即读取 computed。 */
+const finalCommentHtml = computed<string>(() => {
+  const t = String(finalComment.value || '')
+  return t ? renderRich(t) : ''
+})
+/** 当前最终批语与 AI 原文不同 → 视为"已修改"（用于提示与按钮文案）。 */
+const commentChanged = computed<boolean>(() => {
+  const cur = String(finalComment.value || '').trim()
+  const org = String(aiOriginal.value || '').trim()
+  return Boolean(cur) && cur !== org
+})
+
+// 内容或当前学生变化 → 重渲染公式（v-html 更新后 DOM 已替换，必须重新跑 KaTeX）
+// 注意：必须放在 finalCommentHtml 声明**之后**（watch 创建时会立即读取依赖）。
+watch([transcriptHtml, finalCommentHtml, showTranscript], () => { void renderFormulas() },
+  { flush: 'post' })
+onMounted(() => { void renderFormulas() })
 /** 最终批语（当前应发出的内容）：人工替换 > 已存修订版 > AI 原文 */
 const finalCommentNow = computed<string>(() => {
   if (replacing.value) return comment.value
   if (appending.value) return comment.value
-  return savedRevision.value || aiOriginal.value
+  // 本地已应用的修改优先（此前漏了 finalComment → 再次"继续修改"会退回旧版本）
+  return finalComment.value || savedRevision.value || aiOriginal.value
 })
 const aiScoreNow = computed<string>(() => (aiSet.value.score !== undefined && aiSet.value.score !== null
   ? String(aiSet.value.score) : ''))
@@ -164,6 +176,9 @@ const scoreHint = computed<string>(() => {
 const commentHint = computed<string>(() => {
   if (replacing.value) return '纯人工批语（报告里不出现 AI 原文）'
   if (appending.value) return 'AI 原文 + 教师补充批语（报告分两段）'
+  if (commentChanged.value) {
+    return dirty.value ? '已修改（尚未保存）' : '已修改（报告按行标红改动）'
+  }
   if (savedRevision.value) return '已保存修订版（报告按行标红改动）'
   return aiOriginal.value ? 'AI 原文（未修改）' : '（还没有 AI 批语）'
 })
@@ -335,7 +350,7 @@ async function saveRevisionOnly() {
   } finally { savingRev.value = false }
 }
 
-const __returned__ = { props, emit, idx, rotate, showTranscript, pane, reportNonce, reportUrl, hasReport, openReport, showReportTab, layout, msg, cur, draft, aiSet, revisionText, answerImages, transcriptText, transcriptHtml, aiCommentHtml, transcriptEl, aiCommentEl, renderFormulas, finalComment, finalScore, comment, commentMode, replacing, appending, editingComment, revDraft, dirty, saving, previewMd, previewKind, previewBusy, showPreview, aiOriginal, savedRevision, finalCommentNow, aiScoreNow, humanUsed, scoreHint, commentHint, fillFromDraft, prev, next, imgUrl, startEditComment, cancelEditComment, applyEditComment, setCommentMode, useAiOriginal, buildPayload, doPreview, save, savingRev, saveRevisionOnly }
+const __returned__ = { props, emit, idx, rotate, showTranscript, pane, reportNonce, reportUrl, hasReport, openReport, showReportTab, layout, msg, cur, draft, aiSet, revisionText, answerImages, transcriptText, transcriptHtml, transcriptEl, aiCommentEl, renderFormulas, finalComment, finalScore, comment, commentMode, replacing, appending, editingComment, revDraft, dirty, saving, previewMd, previewKind, previewBusy, showPreview, aiOriginal, savedRevision, finalCommentHtml, commentChanged, finalCommentNow, aiScoreNow, humanUsed, scoreHint, commentHint, fillFromDraft, prev, next, imgUrl, startEditComment, cancelEditComment, applyEditComment, setCommentMode, useAiOriginal, buildPayload, doPreview, save, savingRev, saveRevisionOnly }
 Object.defineProperty(__returned__, '__isScriptSetup', { enumerable: false, value: true })
 return __returned__
 }
@@ -396,7 +411,7 @@ const _hoisted_22 = {
 }
 const _hoisted_23 = {
   class: "rich-box",
-  style: {"border":"1px dashed #0369a1","border-radius":"8px","padding":"8px","margin-top":"4px","max-height":"30vh","overflow":"auto","white-space":"pre-wrap"}
+  style: {"border":"1px dashed var(--c-border)","border-radius":"8px","padding":"8px","margin-top":"4px","max-height":"30vh","overflow":"auto","white-space":"pre-wrap"}
 }
 const _hoisted_24 = { key: 4 }
 const _hoisted_25 = { style: {"margin":"4px 0","display":"flex","gap":"8px","align-items":"center","flex-wrap":"wrap"} }
@@ -567,7 +582,7 @@ export function render(_ctx, _cache, $props, $setup, $data, $options) {
                         key: 0,
                         class: "btn small",
                         onClick: $setup.startEditComment
-                      }, _toDisplayString($setup.savedRevision ? '✏ 继续修改' : '✏ 在 AI 批语基础上修改'), 1 /* TEXT */))
+                      }, _toDisplayString(($setup.savedRevision || $setup.commentChanged) ? '✏ 继续修改' : '✏ 在 AI 批语基础上修改'), 1 /* TEXT */))
                     : _createCommentVNode("v-if", true),
                   ($setup.finalComment !== $setup.aiOriginal || $setup.savedRevision)
                     ? (_openBlock(), _createElementBlock("button", {
@@ -578,23 +593,23 @@ export function render(_ctx, _cache, $props, $setup, $data, $options) {
                       }, "↩ 恢复 AI 原文"))
                     : _createCommentVNode("v-if", true)
                 ]),
-                _createCommentVNode(" 只读：AI 原文基线（有修订版时优先显示修订版，原文折叠保留） "),
+                _createCommentVNode(" 只读：**当前最终批语**（含本地已应用的修改）；AI 原文另折叠对照 "),
                 (!$setup.editingComment)
                   ? (_openBlock(), _createElementBlock("div", _hoisted_18, [
-                      ($setup.aiCommentHtml)
+                      ($setup.finalCommentHtml)
                         ? (_openBlock(), _createElementBlock("div", {
                             key: 0,
                             ref: "aiCommentEl",
                             class: "rich-box",
-                            innerHTML: $setup.aiCommentHtml
+                            innerHTML: $setup.finalCommentHtml
                           }, null, 8 /* PROPS */, _hoisted_19))
-                        : (_openBlock(), _createElementBlock("span", _hoisted_20, "（无 AI 批语：该生可能只有本地旧草稿分数，或尚未跑 AI 批阅）"))
+                        : (_openBlock(), _createElementBlock("span", _hoisted_20, "（无批语：该生可能只有本地旧草稿分数，或尚未跑 AI 批阅）"))
                     ]))
                   : _createCommentVNode("v-if", true),
-                (!$setup.editingComment && $setup.savedRevision)
+                (!$setup.editingComment && $setup.commentChanged)
                   ? (_openBlock(), _createElementBlock("details", _hoisted_21, [
-                      _createElementVNode("summary", _hoisted_22, "当前最终版（你的修订，" + _toDisplayString($setup.savedRevision.length) + " 字）", 1 /* TEXT */),
-                      _createElementVNode("div", _hoisted_23, _toDisplayString($setup.savedRevision), 1 /* TEXT */)
+                      _createElementVNode("summary", _hoisted_22, "对照 AI 原文（" + _toDisplayString($setup.aiOriginal.length) + " 字，只读）", 1 /* TEXT */),
+                      _createElementVNode("div", _hoisted_23, _toDisplayString($setup.aiOriginal), 1 /* TEXT */)
                     ]))
                   : _createCommentVNode("v-if", true),
                 _createCommentVNode(" 编辑态：这就是\"要发出去的批语\" "),
