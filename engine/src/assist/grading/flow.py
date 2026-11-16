@@ -396,6 +396,7 @@ def _run_evaluate(ctx: dict, client, evaluations_dir: Path) -> list[Path]:
     model = (ctx["task"].get("grade", {}).get("models", {}) or {}).get("evaluation")
     only = _only_students(ctx)
     outs = []
+    skipped: list[str] = []          # D178：跳过的学生及原因（供上层给教师可见反馈）
     for tf in sorted(ctx["transcripts_dir"].glob("[!_]*.json")):
         # D156：**只评阅指定学生**（此前进度只过滤了转写，评阅会扫描整个
         # transcripts 目录 → 出现"批张紫涵却报张松"的困惑）。
@@ -420,6 +421,7 @@ def _run_evaluate(ctx: dict, client, evaluations_dir: Path) -> list[Path]:
                 "ts": time.strftime("%Y-%m-%d %H:%M:%S"),
                 "run_id": ctx["run_id"], "step": "evaluate",
                 "student": tf.stem, "status": "fail", "error": msg[:300]})
+            skipped.append(msg)
             continue
         try:
             outs.append(evaluate_student(client, tf, items or tasks_items, evaluations_dir,
@@ -432,6 +434,14 @@ def _run_evaluate(ctx: dict, client, evaluations_dir: Path) -> list[Path]:
                 "ts": time.strftime("%Y-%m-%d %H:%M:%S"),
                 "run_id": ctx["run_id"], "step": "evaluate",
                 "student": tf.stem, "status": "fail", "error": str(e)[:300]})
+            skipped.append(f"学生「{tf.stem}」评阅失败：{e}")
+    # D178：**逐生补批**（只点名 1 人）却一人未产出 → 必须报可读错误。
+    # 此前只是 continue，任务仍以 done 结束，PWA 显示「✅ 完成」，
+    # 教师看到的是"点了批阅，却没有分数也没有批语"，完全不知道被跳过了。
+    if only and not outs and skipped:
+        raise GradingInputError("；".join(skipped[:3]))
+    if skipped:
+        ctx.setdefault("evaluate_skipped", []).extend(skipped)
     return outs
 
 
@@ -685,6 +695,8 @@ def run_task(task_path: Path, ws: Path, images_dir: Path | None = None,
     summary_rec = {"ts": time.strftime("%Y-%m-%d %H:%M:%S"), "run_id": run_id,
                    "step": "run", "steps_done": to_run, "status": "done",
                    "bucket": str(base), "usage": ctx.get("usage") or {}}
+    if ctx.get("evaluate_skipped"):
+        summary_rec["evaluate_skipped"] = list(ctx["evaluate_skipped"])
     journal_append(journal, summary_rec)
     return summary_rec
 

@@ -13,6 +13,24 @@ from pathlib import Path
 from loguru import logger
 
 
+# D178：**tag 级**等价别名。
+# `copyonly / copysp / copys / punish` 在评阅规则里都被归一到「抄写(copy)」，
+# 但 tag 匹配此前是**逐字精确**（只做大小写/全半角归一）→ 学生 tag=copyonly、
+# 作业纸 target_tag=copy 时匹配失败 → 该生 0 道题 → 评阅被跳过 →
+# PWA 里"点了批阅没有任何分数和批语"。
+# 这里只做**等价词**映射（不是把任意 tag 当 kind），精确匹配永远优先。
+_TAG_ALIASES = {
+    "copyonly": "copy",
+    "copysp": "copy",
+    "copys": "copy",
+    "punish": "copy",
+}
+
+
+def _alias_tag(nt: str) -> str:
+    return _TAG_ALIASES.get(nt, nt)
+
+
 def _norm_tag(t: str) -> str:
     """tag 归一：去空白、全角转半角、统一小写（防止 'QA ' / 'qa' / 'ｑａ' 互不匹配）。"""
     s = str(t or "").strip()
@@ -128,10 +146,18 @@ def pick_pad_for_tag(ctx: dict, tag: str, *, fallback_pad_id: str = "") -> "dict
     **绝不**回退到包外/全库的其他作业纸（D127 D3）。
     """
     nt = _norm_tag(tag)
+    by_tag = ctx.get("by_tag") or {}
     if nt:
-        hit = (ctx.get("by_tag") or {}).get(nt)
+        hit = by_tag.get(nt)
         if hit:
             return hit
+        # D178：等价 tag 兜底（copyonly≈copy 等）。仍**只在包内**找，
+        # 不违反 D127「绝不回退到包外作业纸」。
+        want = _alias_tag(nt)
+        for k, e in by_tag.items():
+            if _alias_tag(k) == want:
+                logger.info(f"[pack] tag「{tag}」无精确作业纸，按等价 tag 命中「{e.get('tag')}」")
+                return e
     fb = str(fallback_pad_id or "").strip()
     if fb:
         for e in (ctx.get("pads") or []):

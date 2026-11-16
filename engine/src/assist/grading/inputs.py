@@ -174,10 +174,21 @@ def build_plan(ws, *, task_id: str, class_dir: str, class_id: str = "", work_id:
         tag_pads_norm = {_norm_tag(k): v for k, v in tag_pads.items()}
 
     def _pad_for(tag: str):
-        """按 tag（归一）取 {padId, questions}；包模式支持显式兜底作业纸。"""
+        """按 tag（归一）取 {padId, questions}；包模式支持显式兜底作业纸。
+
+        D178：精确匹配失败后按**等价 tag**再试一次（copyonly≈copy 等）。
+        此前学生 tag=copyonly、作业纸 target_tag=copy 时直接判"无题目"→ 评阅被跳过，
+        教师看到的是"点了批阅，没有分数也没有批语"。
+        """
         hit = tag_pads_norm.get(_norm_tag(tag)) if tag else None
         if hit:
             return hit
+        if tag:
+            from ..paper.pack import _alias_tag
+            want = _alias_tag(_norm_tag(tag))
+            for k, v in tag_pads_norm.items():
+                if _alias_tag(k) == want:
+                    return v
         fb = str(fallback_pad_id or "").strip()
         if fb and pack_ctx is not None:
             from ..paper import pack as _pack
