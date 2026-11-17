@@ -919,7 +919,7 @@ export async function runTagAudit(
 export async function applyTagAudit(
   engineAddr: string, token: string | undefined,
   payload: { classDir: string; packId: string
-    changes: Array<{ name: string; tag: string; note?: string }>
+    changes: Array<{ name: string; tag: string; number?: string; note?: string }>
     reason?: string },
 ): Promise<{ ok?: boolean; error?: string; applied?: Array<{ name: string; from: string; to: string }>
   unchanged?: string[]; missing?: string[]; historyPath?: string; written?: boolean }> {

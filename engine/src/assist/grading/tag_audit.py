@@ -715,23 +715,45 @@ def apply_audit_tags(ws, *, class_dir: str, pack_id: str, changes: list[dict],
       - 写前**必存** `_history/<packId>__<ts>.json`（`reason` 标明来源），供「撤销」；
       - 只改被点名的学生，其余学生原样保留；每行留 `previousTag`；
       - 幂等：值与现值相同则不写（返回 `unchanged`）。
+
+    D181：快照缺失时，先从当前 roster 生成快照，再补丁式应用，保证
+    「无快照也能手动/采纳改 tag」与「后续 preview 读同一来源」。
     """
     from . import snapshots as S
     from ..filelock import atomic_write_text
+    from ..files.roster_io import read_roster_file
 
     class_root = S._class_root(ws, class_dir)
     pack_id = S._safe_pack_id(pack_id)
     snap = S.read_tags_snapshot(ws, class_dir, pack_id)
     if not snap.get("ok"):
-        return {"ok": False, "error": "该作业包没有 roster-tags 快照，无法应用（请先批阅一次生成快照）"}
+        # D181：无快照时从当前 roster 自动创建（不阻断教师改 tag）。
+        # 若 roster 也读不到，则返回可读错误，前端可见。
+        cur = read_roster_file(Path(ws).resolve(), class_dir)
+        if not cur.get("ok"):
+            return {"ok": False, "error": "该作业包没有 roster-tags 快照，且读当前 roster 失败："
+                                          f"{cur.get('error') or '未知错误'}"}
+        roster_rows = cur.get("students") or []
+        if not roster_rows:
+            return {"ok": False, "error": "该作业包没有 roster-tags 快照，且当前 roster 为空"}
+        create = S.write_tags_snapshot(
+            ws, class_dir, pack_id,
+            [{"name": s.get("name"), "number": s.get("number"), "tag": s.get("tag")}
+             for s in roster_rows],
+            source=S.SOURCE_AUDIT_APPLY)
+        if not create.get("ok"):
+            return {"ok": False, "error": f"无法从 roster 创建快照：{create.get('error') or '未知错误'}"}
+        snap = S.read_tags_snapshot(ws, class_dir, pack_id)
     rows = [dict(s) for s in (snap.get("students") or [])]
-    by_name = {str(r.get("name")): r for r in rows}
+    by_name = {str(r.get("name") or "").strip(): r for r in rows}
+    by_number = {str(r.get("number") or "").strip(): r for r in rows if str(r.get("number") or "").strip()}
     applied, missing, unchanged = [], [], []
     for ch in changes or []:
         nm = str(ch.get("name") or "").strip()
         if not nm:
             continue
-        r = by_name.get(nm)
+        # D181：按姓名优先；若姓名对不上，且变更里带学号，则按学号兜底匹配。
+        r = by_name.get(nm) or by_number.get(str(ch.get("number") or "").strip())
         if r is None:
             missing.append(nm)
             continue

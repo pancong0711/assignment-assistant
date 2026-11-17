@@ -442,11 +442,15 @@ async function applyAuditOne(s: { name?: string }, tag?: string) {
   await applyAuditChanges([{ name: String(s.name || ''), tag: to }], 'manual-detail')
 }
 
-async function applyAuditChanges(changes: Array<{ name: string; tag: string }>,
+async function applyAuditChanges(changes: Array<{ name: string; tag: string; number?: string }>,
                                 reason = 'manual-detail') {
   const w = curWork.value
-  const pid = packId.value || padId.value
-  if (!w || !pid) return
+  // D181：刷新后作业包/作业纸下拉可能为空，但引擎已从磁盘反查出批阅目录，
+  // 改 tag 必须用这个作用域，否则 silently no-op。
+  const pid = packId.value || padId.value || resolvedScope.value
+  if (!w) { auditMsg.value = '⚠ 请先选择作业'; return }
+  if (!pid) { auditMsg.value = '⚠ 请先选择作业包/作业纸（或先读取一次学生清单）'; return }
+  if (!curWorkDir.value) { auditMsg.value = '⚠ 请先关联本地班级目录'; return }
   const desc = changes.map((c) => {
     const cur = auditOf({ name: c.name })?.rosterTag
       ?? students.value.find((s) => s.name === c.name)?.tag ?? '?'

@@ -3929,10 +3929,19 @@ class Handler(BaseHTTPRequestHandler):
             # tag 是本校名单里的概念（roster），必须由引擎按姓名 join 回去。
             # D180：若请求带 classDir+taskId，优先用该作业包快照 roster-tags/<taskId>.json；
             # 按学号优先、姓名兜底；快照缺失/损坏/学生不在快照中时回落 roster.xlsx。
+            # D181：前端刷新后 packId/padId 可能为空，但磁盘上已存在批阅目录，
+            # 此时从磁盘反查作用域并用它读快照，保证「重进页面 tag 仍生效」。
+            _discovered_tag: list[str] = []
             try:
                 _q_tag = urllib.parse.parse_qs(u.query)
                 _cdir_tag = (_q_tag.get("classDir") or [""])[0]
                 _task_id_tag = (_q_tag.get("taskId") or [""])[0]
+                if not str(_task_id_tag).strip() and _cdir_tag:
+                    from .xxt import grade_store as _gs_tag
+                    _discovered_tag = _gs_tag.discover_draft_scopes(
+                        Path(self.ws).resolve(), _cdir_tag, m_prev.group(2)) or []
+                    if _discovered_tag:
+                        _task_id_tag = _discovered_tag[0]
                 _tags_by_num, _tags_by_name = _load_preview_tags(
                     Path(self.ws).resolve(), _cdir_tag, _task_id_tag)
                 for stu in rep.get("students") or []:
@@ -3946,7 +3955,7 @@ class Handler(BaseHTTPRequestHandler):
             try:
                 from .xxt import grade_store as _gs2
                 _q3 = urllib.parse.parse_qs(u.query)
-                rep["draftScopes"] = _gs2.discover_draft_scopes(
+                rep["draftScopes"] = _discovered_tag or _gs2.discover_draft_scopes(
                     Path(self.ws).resolve(),
                     (_q3.get("classDir") or [""])[0], m_prev.group(2))
             except Exception:  # noqa: BLE001
