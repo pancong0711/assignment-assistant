@@ -107,7 +107,227 @@ def _escape_bare_backslashes(text: str) -> str:
     return "".join(out)
 
 
-def parse_llm_json(raw: str) -> dict:
+# ---- D185：增强 JSON 修复（评阅/转写共用） ----
+
+_JSON_ONLY_SUFFIX = "\n\n【重要】请只返回合法 JSON，不要添加任何解释文字、代码围栏或 Markdown 格式。"
+
+
+def _strip_fences_and_preamble(text: str) -> tuple[str, list[str]]:
+    """剥离 ```json/``` 围栏与 JSON 对象前后的说明文字。
+
+    返回 (stripped_body, repair_labels)。
+    """
+    repairs: list[str] = []
+    t = text.strip()
+
+    # 去掉首尾围栏标记
+    if t.startswith("```json"):
+        t = t[len("```json"):].lstrip()
+        repairs.append("fence-strip")
+    elif t.startswith("```"):
+        t = t[len("```"):].lstrip()
+        repairs.append("fence-strip")
+    if t.endswith("```"):
+        t = t[:-len("```")].rstrip()
+        repairs.append("fence-strip")
+
+    # 若中间还有代码块，取第一个代码块内容
+    if "```" in t:
+        parts = t.split("```", 2)
+        if len(parts) >= 2:
+            t = parts[1].strip()
+            repairs.append("fence-strip")
+
+    # 截取第一个 [ 或 { 开始、到最后一个 ] 或 } 结束的内容
+    start = -1
+    for i, ch in enumerate(t):
+        if ch in "{[":
+            start = i
+            break
+    end = -1
+    for i in range(len(t) - 1, -1, -1):
+        if t[i] in "}]":
+            end = i
+            break
+    if start != -1 and end != -1 and end > start:
+        if start > 0 or end < len(t) - 1:
+            repairs.append("preamble-strip")
+        t = t[start:end + 1]
+
+    return t, repairs
+
+
+def _remove_trailing_commas(text: str) -> tuple[str, bool]:
+    """删除对象/数组元素末尾多余的逗号（JSON 不允许尾逗号）。"""
+    out: list[str] = []
+    i, n = 0, len(text)
+    changed = False
+    while i < n:
+        ch = text[i]
+        if ch == '"':
+            # 原样复制字符串，不修改其内容
+            out.append(ch)
+            i += 1
+            esc = False
+            while i < n:
+                c = text[i]
+                out.append(c)
+                if esc:
+                    esc = False
+                elif c == "\\":
+                    esc = True
+                elif c == '"':
+                    break
+                i += 1
+            i += 1
+            continue
+        if ch == ",":
+            j = i + 1
+            while j < n and text[j] in " \t\n\r":
+                j += 1
+            if j < n and text[j] in "}]":
+                # 尾逗号：跳过，让后面的 ]/} 被正常复制
+                changed = True
+                i = j
+                continue
+        out.append(ch)
+        i += 1
+    return "".join(out), changed
+
+
+def _balance_brackets(text: str) -> tuple[str, list[str]]:
+    """对简单截断补齐缺失的 }/]，只补到括号平衡，不杜撰内容。
+
+    若文本里存在未闭合的 {/[，在末尾补齐对应数量的 }/]。
+    """
+    stack: list[str] = []
+    in_str = False
+    esc = False
+    for ch in text:
+        if esc:
+            esc = False
+            continue
+        if ch == "\\":
+            esc = True
+            continue
+        if ch == '"':
+            in_str = not in_str
+            continue
+        if in_str:
+            continue
+        if ch in "{[":
+            stack.append(ch)
+        elif ch in "}]":
+            if stack:
+                opener = stack.pop()
+                if (opener == "{" and ch != "}") or (opener == "[" and ch != "]"):
+                    # 括号不匹配：把弹出的再压回去，避免过度修复
+                    stack.append(opener)
+    repairs: list[str] = []
+    if stack:
+        closing = "".join("}" if c == "{" else "]" for c in reversed(stack))
+        repairs.append("balance-brackets")
+        return text + closing, repairs
+    return text, repairs
+
+
+def _fix_unescaped_quotes_in_text(text: str) -> tuple[str, list[str]]:
+    """扫描文本，修复字符串内未转义的双引号。
+
+    判定：遇到可能结束字符串的双引号时，向后跳过空白，若下一个字符不是
+    JSON 结构字符（`, : } ]`），则该双引号属于字符串内容，应在其前加反斜杠。
+    这样可一次性修复同一字符串内的多个未转义双引号，且不会误伤结构引号。
+    """
+    out: list[str] = []
+    i, n = 0, len(text)
+    fixed_count = 0
+    while i < n:
+        ch = text[i]
+        if ch == '"':
+            # 字符串开始
+            out.append(ch)
+            i += 1
+            esc = False
+            while i < n:
+                c = text[i]
+                if esc:
+                    out.append(c)
+                    esc = False
+                    i += 1
+                    continue
+                if c == "\\":
+                    out.append(c)
+                    esc = True
+                    i += 1
+                    continue
+                if c == '"':
+                    # 潜在字符串结束位置：向后看是否为结构字符或文件结尾
+                    j = i + 1
+                    while j < n and text[j] in " \t\n\r":
+                        j += 1
+                    if j >= n or text[j] in ",:}]":
+                        # 合法字符串结束（到达文件尾或跟结构字符）
+                        out.append(c)
+                        i += 1
+                        break
+                    # 字符串内的未转义双引号，需要转义
+                    out.append("\\")
+                    out.append(c)
+                    fixed_count += 1
+                    i += 1
+                    continue
+                out.append(c)
+                i += 1
+            continue
+        out.append(ch)
+        i += 1
+    repairs: list[str] = []
+    if fixed_count == 1:
+        repairs.append("unescaped-quote")
+    elif fixed_count > 1:
+        repairs.append("unescaped-quotes")
+    return "".join(out), repairs
+
+
+def _repair_json_text(raw: str) -> tuple[str, list[str]]:
+    """增强修复：剥离围栏/说明、修复尾逗号、控制字符、裸反斜杠、LaTeX 转义。
+
+    返回 (repaired_text, repair_labels)。不抛异常；调用方负责再次解析。
+    """
+    repairs: list[str] = []
+    text, r = _strip_fences_and_preamble(raw)
+    repairs.extend(r)
+
+    # 尾逗号
+    no_trailing, changed = _remove_trailing_commas(text)
+    if changed:
+        repairs.append("trailing-comma")
+        text = no_trailing
+
+    # 裸控制字符（换行/制表/回车）
+    escaped_ctrl = _escape_control_chars(text)
+    if escaped_ctrl != text:
+        repairs.append("control-chars")
+        text = escaped_ctrl
+
+    # LaTeX 命令被 JSON 转义吃掉首字母（在裸反斜杠修复之前，
+    # 避免把合法单反斜杠 LaTeX 误判为裸反斜杠）
+    if _looks_like_eaten_latex(text):
+        fixed_latex = _fix_latex_in_json(text)
+        if fixed_latex != text:
+            repairs.append("latex-escape")
+            text = fixed_latex
+
+    # 裸反斜杠
+    escaped_bs = _escape_bare_backslashes(text)
+    if escaped_bs != text:
+        repairs.append("bare-backslash")
+        text = escaped_bs
+
+    return text, repairs
+
+
+def parse_llm_json(raw: str, *, repairs_out: "list[str] | None" = None) -> dict:
     """清洗 ```json 围栏并解析（迁移自 transcriber._cleaned 逻辑）。
 
     D148：模型常把 LaTeX 直接写进 JSON，导致两种坏情况：
@@ -117,34 +337,54 @@ def parse_llm_json(raw: str) -> dict:
     D166：**解析之后**统一过一遍 `_sanitize_latex`（把吃坏的命令还原）。
     这是最可靠的位置——此时双反斜杠已变单反斜杠，边界清晰，
     不会像在原始文本上猜那样误伤合法 `\\`（此前会让"守规矩的输出"更坏）。
+
+    D185：解析失败时先走增强本地修复；仍失败再尝试修复未转义双引号、
+    补齐截断括号。`repairs_out` 用于向调用方回传修复类型列表。
     """
-    cleaned = raw.strip()
-    for p in ("```json", "```"):
-        if cleaned.startswith(p):
-            cleaned = cleaned[len(p):]
-        if cleaned.endswith(p):
-            cleaned = cleaned[:-len(p)]
-    body = cleaned.strip()
+    # 先尝试原始文本直接解析（最快路径）
+    body = raw.strip()
     try:
         data = json.loads(body)
     except json.JSONDecodeError:
-        # D162：常见失败原因有两种，都要救：
-        # ① LaTeX 反斜杠未转义（`\frac`）；
-        # ② 字符串里出现**裸换行/制表符**（模型直接换行写进 JSON 字符串，非法）。
-        # 顺序：**先救 LaTeX 反斜杠**（`\frac` 是"反斜杠+已知命令名"，判定可靠），
-        # 再救**裸换行**（字符串里的真实换行）。
-        # 反过来会把 `\frac` 当成"换页符"处理，再也救不回来。
-        repaired = _fix_latex_in_json(body) if _looks_like_eaten_latex(body) else body
-        cands = [repaired,
-                 _escape_control_chars(repaired),
-                 _escape_bare_backslashes(repaired),
-                 _escape_control_chars(_escape_bare_backslashes(repaired))]
-        for cand in cands:
-            try:
-                return _sanitize_latex(json.loads(cand))
-            except json.JSONDecodeError:
-                continue
-        raise
+        # 增强修复路径
+        repaired, repairs = _repair_json_text(body)
+        try:
+            data = json.loads(repaired)
+        except json.JSONDecodeError as e:
+            # 尝试修复未转义双引号
+            fixed, more_repairs = _fix_unescaped_quotes_in_text(repaired)
+            if fixed != repaired:
+                try:
+                    data = json.loads(fixed)
+                    repairs.extend(more_repairs)
+                except json.JSONDecodeError:
+                    # 最后尝试补齐截断括号
+                    balanced, br = _balance_brackets(fixed)
+                    if balanced != fixed:
+                        try:
+                            data = json.loads(balanced)
+                            repairs.extend(br)
+                        except json.JSONDecodeError:
+                            raise e
+                    else:
+                        raise e
+            else:
+                # 尝试补齐截断括号
+                balanced, br = _balance_brackets(repaired)
+                if balanced != repaired:
+                    try:
+                        data = json.loads(balanced)
+                        repairs.extend(br)
+                    except json.JSONDecodeError:
+                        raise e
+                else:
+                    raise e
+        if repairs_out is not None:
+            repairs_out.extend(repairs)
+    else:
+        if repairs_out is not None:
+            repairs_out.clear()
+
     # 关键：`\f` 是**合法** JSON 转义，所以 json.loads 会"成功"，
     # 但内容已被改成换页符。原始文本里能看出来的，先修文本再解析；
     # 无论哪条路，最后都过 `_sanitize_latex`（D166：它是兜底，也是主力）。

@@ -20,7 +20,7 @@ from pathlib import Path
 from loguru import logger
 
 from .llm import LLMAPIError, LLMClient
-from .transcribe import parse_llm_json
+from .transcribe import _JSON_ONLY_SUFFIX, parse_llm_json
 
 # ---- D158：批阅 system prompt（专业评阅规范） ----
 # 此前是旧项目迁移的简化版（只有"逐题分析、输出 JSON"），导致评阅结果信息量很低：
@@ -340,6 +340,22 @@ def build_user_prompt(items: list[dict], markdown_text: str, student: str = "",
     return build_grade_prompt(items, markdown_text, student=student, ws=ws)
 
 
+def _format_json_parse_error(e: json.JSONDecodeError) -> str:
+    """生成可读、脱敏的 JSON 解析失败信息（不含学生原文）。"""
+    loc = (f"line {e.lineno} column {e.colno}"
+           if e.lineno is not None and e.colno is not None
+           else f"position {e.pos}")
+    return (f"评阅JSON解析失败（{e.msg}，{loc}）；"
+            f"本地修复与模型重试均已耗尽，请检查模型输出或重新触发评阅")
+
+
+def _append_json_only_instruction(user_prompt: str) -> str:
+    """在 user_prompt 末尾追加"只返回合法 JSON"指令（去重）。"""
+    if _JSON_ONLY_SUFFIX in user_prompt:
+        return user_prompt
+    return user_prompt + _JSON_ONLY_SUFFIX
+
+
 def analyze(client: LLMClient, user_prompt: str, model: str | None = None,
             # D158：批阅要求更详细（correct_points/why/evidence），
             # 8192 容易截断；提到 12288（截断时仍会翻倍重试）。
@@ -350,6 +366,9 @@ def analyze(client: LLMClient, user_prompt: str, model: str | None = None,
     D98-B5：优先用 `json_schema`（严格结构，含 evidence/confidence）；
     provider 不支持 schema 时**自动回退** `json_object`（并记 warning）。
     截断时 max_tokens 翻倍重试（迁移自 evaluator.evaluate_markdown）。
+
+    D185：非截断型 JSON 错误先走增强本地修复，仍失败则有限次要求模型重试，
+    最终失败时给出可读错误（不泄露学生原文）。
     """
     from .prompts import EVALUATION_SCHEMA
     # D151：批阅 system prompt 可用模板覆盖（不选模板 = 用内置 ANALYSIS_PROMPT）
@@ -362,13 +381,36 @@ def analyze(client: LLMClient, user_prompt: str, model: str | None = None,
             sys_prompt = ANALYSIS_PROMPT
     _mt = max_tokens
     use_schema = strict_schema
-    for _ in range(4):
+    json_retry_count = 0
+    MAX_JSON_RETRIES = 2
+    for attempt in range(6):
         rf = EVALUATION_SCHEMA if use_schema else {"type": "json_object"}
         try:
             raw = client.chat(system_prompt=sys_prompt, user_text=user_prompt,
                               model=model, temperature=0.2, response_format=rf,
                               max_tokens=_mt, step="evaluation")
-            return parse_llm_json(raw)
+            repairs: list[str] = []
+            try:
+                data = parse_llm_json(raw, repairs_out=repairs)
+            except json.JSONDecodeError as e:
+                # 截断类：沿用 max_tokens 翻倍逻辑
+                if "Unterminated string" in str(e) and _mt < 262144:
+                    _mt = min(_mt * 2, 262144)
+                    logger.warning(f"评阅JSON截断，max_tokens 翻倍至 {_mt} 重试")
+                    time.sleep(1)
+                    continue
+                # 非截断：有限次模型重试
+                if json_retry_count < MAX_JSON_RETRIES:
+                    json_retry_count += 1
+                    logger.warning(f"评阅JSON解析失败，第 {json_retry_count}/{MAX_JSON_RETRIES} 次要求模型重试")
+                    user_prompt = _append_json_only_instruction(user_prompt)
+                    time.sleep(1)
+                    continue
+                raise RuntimeError(_format_json_parse_error(e)) from e
+            if repairs:
+                logger.warning(f"评阅JSON已本地修复: {repairs}")
+                data["_parse_repairs"] = repairs
+            return data
         except LLMAPIError as e:
             # 部分 provider 不支持 json_schema（400/参数错误）→ 回退 json_object 再试一次
             msg = str(e)
@@ -378,13 +420,6 @@ def analyze(client: LLMClient, user_prompt: str, model: str | None = None,
                 use_schema = False
                 continue
             raise
-        except json.JSONDecodeError as e:
-            if "Unterminated string" in str(e) and _mt < 262144:
-                _mt = min(_mt * 2, 262144)
-                logger.warning(f"评阅JSON截断，max_tokens 翻倍至 {_mt} 重试")
-                time.sleep(1)
-                continue
-            raise RuntimeError(f"评阅JSON解析失败: {e}") from e
     raise RuntimeError("评阅JSON解析失败: 翻倍重试耗尽")
 
 
