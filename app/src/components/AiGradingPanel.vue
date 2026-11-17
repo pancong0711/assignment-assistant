@@ -255,7 +255,7 @@ async function pollJob(jobId: string, label: string, rowName = '') {
   else msg.value = to
 }
 
-const students = ref<Array<{ name: string; key: string; tag?: string; images?: string[] }>>([])
+const students = ref<Array<{ name: string; key: string; studentId?: string; tag?: string; images?: string[] }>>([])
 /** D117：学生清单加载中（供逐生审核空态提示） */
 const studentsLoading = ref(false)
 const drafts = ref<Record<string, any>>({})
@@ -422,24 +422,32 @@ async function applyBulkTag() {
   const names = auditSelectedNames.value
   if (!names.length) { auditMsg.value = '⚠ 请先勾选学生'; return }
   if (bulkTag.value === '') { auditMsg.value = '⚠ 请先选择要改成的 tag'; return }
-  await applyAuditChanges(names.map((n) => ({ name: n, tag: bulkTag.value })), 'manual-batch')
+  await applyAuditChanges(
+    students.value
+      .filter((s) => auditChecked.value[String(s.name || '')])
+      .map((s) => ({ name: String(s.name || ''), tag: bulkTag.value, number: String(s.studentId || '') })),
+    'manual-batch')
 }
 
 /** 一键采纳「审计 tag」：勾选行 → 各自改成自己的审计 tag。 */
 async function applyAuditChecked() {
   const changes = students.value
     .filter((s) => auditChecked.value[String(s.name || '')])
-    .map((s) => ({ name: String(s.name || ''), tag: String(auditOf(s)?.auditTag || '') }))
+    .map((s) => ({ name: String(s.name || ''), tag: String(auditOf(s)?.auditTag || ''), number: String(s.studentId || '') }))
     .filter((c) => c.tag)
   if (!changes.length) { auditMsg.value = '⚠ 没有勾选（或勾选的学生没有审计 tag）'; return }
   await applyAuditChanges(changes, 'audit-apply')
 }
 
-async function applyAuditOne(s: { name?: string }, tag?: string) {
+async function applyAuditOne(s: { name?: string; studentId?: string }, tag?: string) {
   const a = auditOf(s)
   const to = String(tag || a?.auditTag || '')
   if (!to) return
-  await applyAuditChanges([{ name: String(s.name || ''), tag: to }], 'manual-detail')
+  // D184：详情弹窗调用可能只传 name，这里从当前下载名单补 studentId。
+  const stu = students.value.find((x) => String(x.name) === String(s.name || ''))
+  await applyAuditChanges([{ name: String(s.name || ''), tag: to,
+                             number: String(s.studentId || stu?.studentId || '') }],
+                          'manual-detail')
 }
 
 async function applyAuditChanges(changes: Array<{ name: string; tag: string; number?: string }>,
@@ -463,10 +471,21 @@ async function applyAuditChanges(changes: Array<{ name: string; tag: string; num
     const r = await applyTagAudit(props.engineAddr, props.token,
                                   { classDir: curWorkDir.value, packId: pid, changes, reason })
     if (r?.ok === false) { auditMsg.value = `❌ 应用失败：${r.error || '未知错误'}`; return }
-    const n = (r.applied || []).length
-    auditMsg.value = n
-      ? `✅ 已改 ${n} 人；已记录 tag 变更历史（可撤销）。建议对这些学生重新「转写+批阅」。`
-      : 'ℹ️ 没有变化（值与现状相同，未写盘）'
+    const applied = r.applied || []
+    const missing = r.missing || []
+    const unchanged = r.unchanged || []
+    let msg = ''
+    if (applied.length) {
+      msg = `✅ 已改 ${applied.length} 人；已记录 tag 变更历史（可撤销）。建议对这些学生重新「转写+批阅」。`
+    }
+    if (missing.length) {
+      // D184：missing 必须红色错误提示，不能显示「没有变化」。
+      msg += (msg ? '\n' : '') + `❌ 以下学生未找到，未写入：${missing.join('、')}`
+    }
+    if (!applied.length && !missing.length && unchanged.length) {
+      msg = 'ℹ️ 没有变化（值与现状相同，未写盘）'
+    }
+    auditMsg.value = msg || 'ℹ️ 没有变化'
     await loadStudents(); await loadAudit()
     // 详情页同步刷新（若开着）
     if (auditDetail.value) {
@@ -507,7 +526,9 @@ watch(auditDetail, (v) => {
 async function saveManualTag() {
   const d = auditDetail.value
   if (!d) return
-  await applyAuditChanges([{ name: String(d.name), tag: String(auditEditTag.value || '') }],
+  const stu = students.value.find((s) => String(s.name) === String(d.name || ''))
+  await applyAuditChanges([{ name: String(d.name), tag: String(auditEditTag.value || ''),
+                             number: String(stu?.studentId || '') }],
                           'manual-detail')
 }
 
@@ -619,6 +640,8 @@ async function loadStudents() {
       // 旧引擎/离线回落 `workAnswerId || name`，与历史口径一致。
       name: String(s.name || ''),
       key: String(s.key || s.workAnswerId || s.name || ''),
+      // D184：保留下载名单里的学号/编号，apply 时作为 number 传给引擎 UPSERT。
+      studentId: String(s.studentId || ''),
       tag: String(s.tag || ''),
       /** 用于「同一学生两种键」兜底取值（见 draftOf） */
       altKeys: [String(s.workAnswerId || ''), String(s.name || '')].filter(Boolean),

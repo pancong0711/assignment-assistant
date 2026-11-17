@@ -228,8 +228,8 @@ def test_manual_edit_refresh_without_taskid_still_uses_snapshot(tmp_path: Path):
 # ---------------------------------------------------------------------------
 # 失败 / 缺失 / 损坏快照回落
 # ---------------------------------------------------------------------------
-def test_apply_unknown_student_reports_missing_not_changed(tmp_path: Path):
-    """变更里包含快照没有的学生，返回 missing；其余学生正常写入。"""
+def test_apply_partial_missing_reports_missing_not_changed(tmp_path: Path):
+    """无姓名/学号、无法定位的变更返回 missing；其余学生正常写入。"""
     ws = tmp_path
     _write_roster(ws, "innovation")
     _write_snapshot(ws, PACK, [
@@ -239,9 +239,9 @@ def test_apply_unknown_student_reports_missing_not_changed(tmp_path: Path):
 
     with _server(ws) as base:
         r = _apply(base, [{"name": "学生甲", "tag": "translation"},
-                          {"name": "学生丙", "tag": "translation"}])
+                          {"tag": "translation"}])
         assert r["ok"] is True
-        assert r["missing"] == ["学生丙"]
+        assert r["missing"] == ["(无名)"]
         tags = _tags_of(_preview(base, PACK))
         assert tags["学生甲"] == "translation"
 

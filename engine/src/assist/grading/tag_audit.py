@@ -707,14 +707,16 @@ def read_audit(ws, *, class_dir: str, pack_id: str) -> dict:
 
 def apply_audit_tags(ws, *, class_dir: str, pack_id: str, changes: list[dict],
                      reason: str = "audit-apply") -> dict:
-    """把教师确认的 tag 变更**补丁式**写进 `roster-tags/<packId>.json`。
+    """把教师确认的 tag 变更**UPSERT**写进 `roster-tags/<packId>.json`。
 
-    `changes`：[{name, tag}]（tag 为空串表示清空）。
+    `changes`：[{name, tag, number?, note?}]（tag 为空串表示清空）。
 
-    安全设计（教师 N1）：
+    安全设计（教师 N1 / D184）：
       - 写前**必存** `_history/<packId>__<ts>.json`（`reason` 标明来源），供「撤销」；
       - 只改被点名的学生，其余学生原样保留；每行留 `previousTag`；
-      - 幂等：值与现值相同则不写（返回 `unchanged`）。
+      - 幂等：值与现值相同则不写（返回 `unchanged`）；
+      - UPSERT：快照没有但 roster 有 → 从 roster 补入行；roster 也没有但 changes
+        带姓名 → 以 changes 中的姓名/学号补入行。找不到身份的学生才进 `missing`。
 
     D181：快照缺失时，先从当前 roster 生成快照，再补丁式应用，保证
     「无快照也能手动/采纳改 tag」与「后续 preview 读同一来源」。
@@ -744,26 +746,71 @@ def apply_audit_tags(ws, *, class_dir: str, pack_id: str, changes: list[dict],
         if not create.get("ok"):
             return {"ok": False, "error": f"无法从 roster 创建快照：{create.get('error') or '未知错误'}"}
         snap = S.read_tags_snapshot(ws, class_dir, pack_id)
+
     rows = [dict(s) for s in (snap.get("students") or [])]
     by_name = {str(r.get("name") or "").strip(): r for r in rows}
     by_number = {str(r.get("number") or "").strip(): r for r in rows if str(r.get("number") or "").strip()}
+
+    # D184：当前 roster 作为 UPSERT 的补全来源。
+    cur = read_roster_file(Path(ws).resolve(), class_dir)
+    cur_rows = cur.get("students") or [] if cur.get("ok") else []
+    roster_by_name = {str(s.get("name") or "").strip(): s for s in cur_rows}
+    roster_by_number = {str(s.get("number") or "").strip(): s for s in cur_rows if str(s.get("number") or "").strip()}
+
     applied, missing, unchanged = [], [], []
+    at = time.strftime("%Y-%m-%d %H:%M:%S")
     for ch in changes or []:
         nm = str(ch.get("name") or "").strip()
-        if not nm:
+        num = str(ch.get("number") or "").strip()
+        # D184：没有姓名时，学号也认；两者都没有，无法定位，进 missing。
+        if not nm and not num:
+            missing.append("(无名)")
             continue
+
+        display_name = nm or f"#{num}"
         # D181：按姓名优先；若姓名对不上，且变更里带学号，则按学号兜底匹配。
-        r = by_name.get(nm) or by_number.get(str(ch.get("number") or "").strip())
+        r = by_name.get(nm) or (by_number.get(num) if num else None)
+        inserted = False
+        upsert_source = None
         if r is None:
-            missing.append(nm)
-            continue
+            # D184：快照没有 → 按学号优先、姓名兜底去 roster 找。
+            roster_row = (roster_by_number.get(num) if num else None) or roster_by_name.get(nm)
+            if roster_row:
+                prev = str(roster_row.get("tag") or "")
+                r = {
+                    "number": str(roster_row.get("number") or "").strip(),
+                    "name": str(roster_row.get("name") or "").strip(),
+                    "tag": prev,
+                }
+                upsert_source = "roster"
+                inserted = True
+            elif nm:
+                # D184：roster 也没有，但 changes 自带姓名 → 仍插入，previousTag 为空。
+                r = {"number": num, "name": nm, "tag": ""}
+                upsert_source = "change"
+                inserted = True
+            else:
+                missing.append(display_name)
+                continue
+            rows.append(r)
+            by_name[r["name"]] = r
+            if r["number"]:
+                by_number[r["number"]] = r
+
         new = str(ch.get("tag") or "").strip()
         if str(r.get("tag") or "") == new:
-            unchanged.append(nm)
+            unchanged.append(display_name)
             continue
+
+        # D184：按 number 命中时，把姓名同步成当前 changes/roster 里的姓名。
+        if nm and str(r.get("name") or "") != nm:
+            old_name = str(r.get("name") or "")
+            by_name.pop(old_name, None)
+            r["name"] = nm
+            by_name[nm] = r
+
         old_tag = str(r.get("tag") or "")
-        at = time.strftime("%Y-%m-%d %H:%M:%S")
-        applied.append({"name": nm, "from": old_tag, "to": new})
+        applied.append({"name": display_name, "from": old_tag, "to": new})
         r["previousTag"] = old_tag
         r["tag"] = new
         r["tagUpdatedAt"] = at
@@ -771,9 +818,13 @@ def apply_audit_tags(ws, *, class_dir: str, pack_id: str, changes: list[dict],
         # D173：**按人累积**变更历史（教师要求「全部操作都记录历史」）。
         # 只追加、不删除——撤销也是一条新记录（审计留痕不可篡改）。
         hist = list(r.get("tagHistory") or [])
-        hist.append({"at": at, "from": old_tag, "to": new, "by": "teacher",
-                     "reason": str(reason or ""),
-                     **({"note": str(ch.get("note"))} if ch.get("note") else {})})
+        entry = {"at": at, "from": old_tag, "to": new, "by": "teacher",
+                 "reason": str(reason or "")}
+        if inserted:
+            entry["upsert"] = upsert_source
+        if ch.get("note"):
+            entry["note"] = str(ch.get("note"))
+        hist.append(entry)
         r["tagHistory"] = hist[-50:]
     if not applied:
         return {"ok": True, "applied": [], "unchanged": unchanged, "missing": missing,
@@ -805,18 +856,25 @@ def apply_audit_tags(ws, *, class_dir: str, pack_id: str, changes: list[dict],
                     "generatedAt": time.strftime("%Y-%m-%d %H:%M:%S")})
     atomic_write_text(S.tags_snapshot_path(ws, class_dir, pack_id),
                       json.dumps(payload, ensure_ascii=False, indent=1))
-    # 3) 回写 audit 的 resolution（证据侧留痕）
+    # 3) 回写 audit 的 resolution（证据侧留痕），D184 同时兼顾新增行。
     ap = audit_path(ws, class_dir, pack_id)
     aud = _read_json(ap)
     if isinstance(aud, dict):
-        at = time.strftime("%Y-%m-%d %H:%M:%S")
-        for st in (aud.get("students") or []):
-            for a in applied:
-                if str(st.get("name")) == a["name"]:
-                    st["resolution"] = {"at": at, "action": reason,
-                                        "from": a["from"], "to": a["to"], "by": "teacher"}
-                    st["rosterTag"] = a["to"]
-                    st["verdict"] = "match"
+        at2 = time.strftime("%Y-%m-%d %H:%M:%S")
+        aud_students = list(aud.get("students") or [])
+        aud_by_name = {str(s.get("name") or "").strip(): s for s in aud_students}
+        for a in applied:
+            nm = a["name"]
+            st = aud_by_name.get(nm)
+            if st is None:
+                st = {"name": nm}
+                aud_students.append(st)
+                aud_by_name[nm] = st
+            st["resolution"] = {"at": at2, "action": reason,
+                                "from": a["from"], "to": a["to"], "by": "teacher"}
+            st["rosterTag"] = a["to"]
+            st["verdict"] = "match"
+        aud["students"] = aud_students
         atomic_write_text(ap, json.dumps(aud, ensure_ascii=False, indent=1))
     logger.info(f"[tag-audit] 已应用 {len(applied)} 人 tag 变更（{pack_id}），历史副本 {hp.name}")
     return {"ok": True, "applied": applied, "unchanged": unchanged, "missing": missing,

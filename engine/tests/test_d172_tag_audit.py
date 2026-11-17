@@ -361,11 +361,27 @@ def test_apply_without_snapshot_errors(ws):
     assert rep["ok"] is False and "快照" in rep["error"]
 
 
-def test_apply_unknown_student_reported(ws):
+def test_apply_unknown_named_student_upserts_from_change(ws):
+    """D184：changes 带姓名但快照/roster 都没有 -> 按姓名插入，previousTag 为空。"""
     _snap(ws)
     rep = T.apply_audit_tags(ws, class_dir=CLASS, pack_id=PACK,
-                             changes=[{"name": "不存在", "tag": "拓展"}])
-    assert rep["missing"] == ["不存在"]
+                             changes=[{"name": "不存在", "number": "3", "tag": "拓展"}])
+    assert rep["ok"] and rep["written"]
+    assert [a["name"] for a in rep["applied"]] == ["不存在"]
+    from assist.grading import snapshots as S
+    row = next(s for s in S.read_tags_snapshot(ws, CLASS, PACK)["students"]
+               if s["name"] == "不存在")
+    assert row["tag"] == "拓展"
+    assert row.get("previousTag", "") == ""
+    assert row["number"] == "3"
+
+
+def test_apply_missing_identity_reported(ws):
+    """D184：没有姓名/学号的学生无法定位，才进 missing。"""
+    _snap(ws)
+    rep = T.apply_audit_tags(ws, class_dir=CLASS, pack_id=PACK,
+                             changes=[{"tag": "拓展"}])
+    assert rep["missing"] == ["(无名)"]
 
 
 def test_undo_restores_byte_identical_snapshot(ws):

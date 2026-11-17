@@ -88,6 +88,7 @@
 - `docs/124-D181-tag-edit-and-audit-apply-path.md` — **D181 AI 审计/手动改写 tag 不生效（无快照 + 作用域刷新断裂）**
 - `docs/125-D182-stale-update-pending-launcher.md` — **D182 陈旧 update.pending 导致 launcher 启动失败（自愈清理）**
 - `docs/126-D183-snapshot-plan-tag-selection.md` — **D183 批阅 plan 按作业包快照 tag 选题（修复审计后仍走旧 tag）**
+- `docs/127-D184-audit-tag-upsert.md` — **D184 审计采用 tag 支持快照 UPSERT（补齐实际提交学生）**
 
 > **当前活动需求单 = `docs/112-D168`（口径/快照）+ `docs/113-D169`（路线/架构）**；
 > 历史条目保留供追溯，与最新口径冲突时以这两份为准。
