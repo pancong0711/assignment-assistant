@@ -146,6 +146,184 @@ def _kinds_of(items: list[dict]) -> list[str]:
     return kinds_of_items(items)
 
 
+# ---- D179：模型输出字段类型归一化（防止数组/字典等漂移导致下游崩溃） ----
+
+def _as_text(value) -> str:
+    """把任意值转成可读字符串；列表保留全部元素，dict 用紧凑 JSON 兜底。"""
+    if value is None:
+        return ""
+    if isinstance(value, str):
+        return value
+    if isinstance(value, list):
+        parts = [_as_text(v) for v in value]
+        return "；".join(p for p in parts if p)
+    if isinstance(value, dict):
+        try:
+            return json.dumps(value, ensure_ascii=False, separators=(",", ":"))
+        except Exception:  # noqa: BLE001
+            return str(value)
+    return str(value)
+
+
+def _to_str(value, default: str = "", path: str = "") -> "tuple[str, str]":
+    """标量字段必须变成 str；返回 (值, fix_label)。
+
+    缺失字段（None）默认空字符串，但不记 fix（只记录真正的类型漂移）。
+    """
+    if isinstance(value, str):
+        return value, ""
+    if value is None:
+        return default, ""
+    return _as_text(value), f"{path}: {type(value).__name__}→str"
+
+
+def _to_str_list(value, path: str = "") -> "tuple[list[str], str]":
+    """列表字段必须变成 list[str]；返回 (列表, fix_label)。"""
+    if value is None:
+        return [], ""
+    if isinstance(value, str):
+        return ([value.strip()] if value.strip() else []), f"{path}: str→list[str]"
+    if isinstance(value, list):
+        out: list[str] = []
+        has_non_str = False
+        for item in value:
+            if isinstance(item, str):
+                if item.strip():
+                    out.append(item)
+            elif isinstance(item, dict):
+                has_non_str = True
+                out.append(json.dumps(item, ensure_ascii=False, separators=(",", ":")))
+            elif item is not None:
+                has_non_str = True
+                s = str(item).strip()
+                if s:
+                    out.append(s)
+        return out, (f"{path}: list[mixed]→list[str]" if has_non_str else "")
+    if isinstance(value, dict):
+        return ([json.dumps(value, ensure_ascii=False, separators=(",", ":"))],
+                f"{path}: dict→list[str]")
+    return [str(value).strip()], f"{path}: {type(value).__name__}→list[str]"
+
+
+def _normalize_error(e: dict, qidx: int, eidx: int, fixes: list[str]) -> dict:
+    """归一化 errors[] 元素内所有标量/列表字段。"""
+    out = dict(e)
+    for key in ("step", "description", "evidence", "why", "guidance"):
+        val, fix = _to_str(out.get(key), path=f"questions[{qidx}].errors[{eidx}].{key}")
+        if fix:
+            fixes.append(fix)
+        out[key] = val
+    out["knowledge"], fix = _to_str_list(
+        out.get("knowledge"), path=f"questions[{qidx}].errors[{eidx}].knowledge")
+    if fix:
+        fixes.append(fix)
+    return out
+
+
+def _normalize_question(q: dict, idx: int, fixes: list[str]) -> dict:
+    """归一化 questions[] 元素内所有字段。"""
+    out = dict(q)
+    # reasoning.note
+    reasoning = out.get("reasoning")
+    if isinstance(reasoning, dict):
+        new_rn = dict(reasoning)
+        new_rn["note"], fix = _to_str(
+            new_rn.get("note"), path=f"questions[{idx}].reasoning.note")
+        if fix:
+            fixes.append(fix)
+        out["reasoning"] = new_rn
+    elif reasoning is not None:
+        out["reasoning"] = {"note": _as_text(reasoning)}
+        fixes.append(f"questions[{idx}].reasoning: non-dict→dict")
+    # correct_points / knowledge_missing
+    for key in ("correct_points", "knowledge_missing"):
+        out[key], fix = _to_str_list(
+            out.get(key), path=f"questions[{idx}].{key}")
+        if fix:
+            fixes.append(fix)
+    # errors：过滤非 dict 元素并归一化
+    errors = out.get("errors")
+    if errors is None:
+        errors = []
+    elif not isinstance(errors, list):
+        errors = []
+        fixes.append(f"questions[{idx}].errors: non-list→list")
+    else:
+        cleaned: list[dict] = []
+        for eidx, e in enumerate(errors):
+            if not isinstance(e, dict):
+                fixes.append(f"questions[{idx}].errors[{eidx}]: non-dict filtered")
+                continue
+            cleaned.append(_normalize_error(e, idx, eidx, fixes))
+        errors = cleaned
+    out["errors"] = errors
+    return out
+
+
+def _normalize_analysis_shape(analysis: dict) -> "tuple[dict, list[str]]":
+    """D179：唯一结果类型归一化函数。
+
+    - 顶层非 dict 降级为空结果；
+    - 标量字段 → str，列表字段 → list[str]；
+    - questions / errors 过滤非 dict 元素；
+    - 数组转字符串不丢内容；dict 等复杂值用紧凑 JSON 兜底；
+    - 返回 (normalized, fixes)，fixes 只含字段路径和修正类型。
+    """
+    if not isinstance(analysis, dict):
+        return {"analysis_shape_fixes": ["root: non-dict→empty dict"]}, ["root: non-dict→empty dict"]
+
+    fixes: list[str] = []
+    out = dict(analysis)
+
+    # 顶层标量
+    for key in ("guidance", "summary"):
+        out[key], fix = _to_str(
+            out.get(key), default="", path=key)
+        if fix:
+            fixes.append(fix)
+
+    # question_match 标量
+    qm = out.get("question_match")
+    if isinstance(qm, dict):
+        new_qm = dict(qm)
+        for sub in ("note", "evidence", "reason"):
+            new_qm[sub], fix = _to_str(
+                new_qm.get(sub), path=f"question_match.{sub}")
+            if fix:
+                fixes.append(fix)
+        out["question_match"] = new_qm
+    elif qm is not None:
+        out["question_match"] = {"note": _as_text(qm), "status": True}
+        fixes.append("question_match: non-dict→dict")
+
+    # 顶层列表字段
+    for key in ("strengths", "weaknesses"):
+        out[key], fix = _to_str_list(out.get(key), path=key)
+        if fix:
+            fixes.append(fix)
+
+    # questions：过滤非 dict 元素并逐题归一化
+    questions = out.get("questions")
+    if questions is None:
+        questions = []
+    elif not isinstance(questions, list):
+        questions = []
+        fixes.append("questions: non-list→list")
+    else:
+        cleaned: list[dict] = []
+        for idx, q in enumerate(questions):
+            if not isinstance(q, dict):
+                fixes.append(f"questions[{idx}]: non-dict filtered")
+                continue
+            cleaned.append(_normalize_question(q, idx, fixes))
+        questions = cleaned
+    out["questions"] = questions
+
+    if fixes:
+        out["analysis_shape_fixes"] = fixes
+    return out, fixes
+
+
 def build_user_prompt(items: list[dict], markdown_text: str, student: str = "",
                       ws=None) -> str:
     """构造绑定题目的评阅 prompt（生产主路径）。
@@ -601,32 +779,37 @@ def build_feedback_md(result: dict, student_name: str = "学生",
     lines += [t, f"**学生：{student_name}**", "---", "## 评分",
               f"**总分：{result.get('total_score', '?')} / 100**"]
     for d in result.get("deductions", []):
-        lines.append(f"- {d}")
+        lines.append(f"- {_as_text(d)}")
     low_items: list[str] = []
     for q in (analysis or result.get("analysis", {})).get("questions", []):
+        if not isinstance(q, dict):
+            continue
         lines += ["", f"### 第 {q.get('id', '?')} 题"]
-        rn = q.get("reasoning", {}).get("note", "")
+        rn = (q.get("reasoning") or {}).get("note", "")
         if rn:
-            lines.append(f"**思路：**{rn}")
+            lines.append(f"**思路：**{_as_text(rn)}")
         # 做对之处
         for cp in q.get("correct_points") or []:
-            lines.append(f"- ✅ **做对：**{cp}")
+            lines.append(f"- ✅ **做对：**{_as_text(cp)}")
         errors = q.get("errors") or []
         for e in errors:
+            if not isinstance(e, dict):
+                continue
             conf = str(e.get("confidence") or "high").lower()
             if conf == "low":
                 # 低置信度：只在"不确定项"里提示，不计分
-                low_items.append(f"第 {q.get('id', '?')} 题：{e.get('description', '')}"
-                                 + (f"（依据：{e.get('evidence')}）" if e.get("evidence") else ""))
+                low_items.append(
+                    f"第 {q.get('id', '?')} 题：{_as_text(e.get('description', ''))}"
+                    + (f"（依据：{_as_text(e.get('evidence'))}）" if e.get("evidence") else ""))
                 continue
             desc = e.get("description", "")
-            lines.append(f"- ❌ **问题：**{desc}")
+            lines.append(f"- ❌ **问题：**{_as_text(desc)}")
             if e.get("why"):
-                lines.append(f"  - **为什么：**{e['why']}")
+                lines.append(f"  - **为什么：**{_as_text(e['why'])}")
             if e.get("evidence"):
-                lines.append(f"  - **你的原文：**`{e['evidence']}`")
+                lines.append(f"  - **你的原文：**`{_as_text(e['evidence'])}`")
             if e.get("guidance"):
-                lines.append(f"  - **想一想：**{e['guidance']}")
+                lines.append(f"  - **想一想：**{_as_text(e['guidance'])}")
         # D176：只有**该题型/题干**需要示意图时才提示；翻译/抄写等不要求画图，
         # 即便模型把 has_diagram 判成 false 也不该给学生"缺图"提示。
         if not q.get("has_diagram", True) and str(q.get("kind") or "") in ("qa", "summary", "problems"):
@@ -634,8 +817,8 @@ def build_feedback_md(result: dict, student_name: str = "学生",
     _thin = result.get("thin_questions") or []
     if _thin:
         lines += ["", "---", "## 关于本次批阅",
-                  f"第 {'、'.join(_thin)} 题的自动评阅**信息量偏少**（未给出具体做对/做错之处），"
-                  "建议教师复核后补充批语。"]
+                  f"第 {'、'.join(str(x) for x in _thin)} 题的自动评阅**信息量偏少**"
+                  "（未给出具体做对/做错之处），建议教师复核后补充批语。"]
     if str(result.get("summary_basis") or "") == "heuristic":
         lines += ["", "---", "## 关于总结题",
                   "本次总结题按**通用标准**评阅（未结合本堂课授课资料），"
@@ -644,9 +827,9 @@ def build_feedback_md(result: dict, student_name: str = "学生",
     # 整体引导
     g = (analysis or result.get("analysis", {})).get("guidance", result.get("guidance", ""))
     if g:
-        lines += ["", "---", "## 整体思考", g]
+        lines += ["", "---", "## 整体思考", _as_text(g)]
     for s in result.get("strengths", []):
-        lines.append(f"- 值得肯定：{s}")
+        lines.append(f"- 值得肯定：{_as_text(s)}")
     # D98-B5：低置信度"不确定项"单列（未计入扣分，供教师复核）
     if low_items:
         lines += ["", "---", "## 待教师确认（AI 低置信度，未计分）"]
@@ -712,6 +895,12 @@ def evaluate_student(client: LLMClient, transcript_file: Path, items: list[dict]
     analysis = analyze(client, build_user_prompt(items, markdown_text, student, ws=ws),
                        ws=ws,
                        model=model)
+    # D179：analyze 返回后立即归一化，确保顶层非 dict 等异常结构先降级，
+    # 再进入 _enrich_questions / score_from_analysis / build_feedback_md。
+    analysis, shape_fixes = _normalize_analysis_shape(analysis)
+    if shape_fixes:
+        logger.warning(f"[{student}] analysis shape 已归一化: {shape_fixes}")
+
     # D130：把**题面**与**学生作答原文**注入每题（长度档需要题长；qa 缺图判定也可能用到），
     # 模型自报的 answer_chars 只作参考，Python 以转写原文为准（防模型少报字数）。
     _enrich_questions(analysis, items, t_data)
@@ -787,6 +976,11 @@ def build_result_from_analysis(analysis: dict, *, student: str, quality: "dict |
 
     D130：`items`/`ws` 与 `evaluate_student` 同口径（按题目来源分派扣分）。
     """
+    # D179：批量回灌路径也要先归一化，避免在线正常、批量崩溃。
+    analysis, shape_fixes = _normalize_analysis_shape(analysis)
+    if shape_fixes:
+        logger.warning(f"[{student}] analysis shape 已归一化: {shape_fixes}")
+
     match = analysis.get("question_match", {}) if isinstance(analysis, dict) else {}
     # D127：与 evaluate_student 同口径 —— 只记 verdict 供教师侧提示，**不写进 deductions**
     # （写进去就会出现在学生报告正文里，等于给学生贴"顶替"标签）。

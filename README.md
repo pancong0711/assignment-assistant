@@ -83,6 +83,7 @@
 - `docs/119-D176-question-kind-pipeline.md` — **D176 题目类型(kind)贯通 + translation 不要求示意图**
 - `docs/120-D177-single-prompt-builder.md` — **D177 评阅提示词合并为唯一实现（消除双份漂移）**
 - `docs/121-D178-copyonly-tag-alias.md` — **D178 copyonly 学生批阅无分/无批语（tag 等价别名 + 跳过可见）**
+- `docs/122-D179-grading-analysis-shape-normalization.md` — **D179 评阅结果字段类型归一化（修复 sequence item 20）**
 
 > **当前活动需求单 = `docs/112-D168`（口径/快照）+ `docs/113-D169`（路线/架构）**；
 > 历史条目保留供追溯，与最新口径冲突时以这两份为准。
