@@ -64,7 +64,7 @@ def test_build_plan_uses_pack_only(tmp_path, monkeypatch):
     _mk_pad(ws, "pad-qa", "qa", items=[{"kb": "problems", "chap": "c1", "ids": ["1"], "tag": "qa"}])
     pk = _mk_pack(ws, "pack1", [{"padId": "pad-qa", "tag": "qa"}])
     monkeypatch.setattr(I, "students_with_tags",
-                        lambda ws, cd: [{"name": "张三", "number": "1", "tag": "qa"},
+                        lambda ws, cd, pack_id="": [{"name": "张三", "number": "1", "tag": "qa"},
                                         {"name": "李四", "number": "2", "tag": "未知tag"}])
     monkeypatch.setattr(I, "_questions_of", lambda task, ws=None: [{"no": "1", "content": "题1",
                                                                     "solution": "", "tag": "qa"}])

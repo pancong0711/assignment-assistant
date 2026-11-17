@@ -38,7 +38,13 @@ def roster_file(ws, class_dir: str) -> "Path | None":
     return None
 
 
-def students_with_tags(ws, class_dir: str) -> list[dict]:
+def students_with_tags(ws, class_dir: str, pack_id: str = "") -> list[dict]:
+    """读班级名单；传 pack_id 时优先用该作业包快照覆盖 tag。
+
+    D183：批阅 plan 的题目是按 tag 选的。审计采用/手动改 tag 只更新
+    `roster-tags/<packId>.json`（D172 的权威快照），不会改 `roster.xlsx`。
+    因此 plan 装配必须按 pack_id 读快照，否则仍会按旧 roster tag 选错作业纸。
+    """
     from ..files.roster import read_roster
     fn = roster_file(ws, class_dir)
     if fn is None:
@@ -47,7 +53,37 @@ def students_with_tags(ws, class_dir: str) -> list[dict]:
     for s in read_roster(fn):
         out.append({"name": str(s.get("name") or ""), "number": str(s.get("number") or ""),
                     "tag": str(s.get("tag") or "")})
-    return [s for s in out if s["name"]]
+    rows = [s for s in out if s["name"]]
+    pid = str(pack_id or "").strip()
+    if not pid or not rows:
+        return rows
+    try:
+        from . import snapshots as S
+        snap = S.read_tags_snapshot(ws, class_dir, pid)
+    except Exception:  # noqa: BLE001 —— 快照坏了不影响用 roster 起步
+        return rows
+    if not snap.get("ok"):
+        return rows
+    by_num: dict[str, str] = {}
+    by_name: dict[str, str] = {}
+    for s in (snap.get("students") or []):
+        if not isinstance(s, dict):
+            continue
+        name = str(s.get("name") or "").strip()
+        num = str(s.get("number") or "").strip()
+        tag = str(s.get("tag") or "")
+        if name:
+            by_name[name] = tag
+        if num:
+            by_num[num] = tag
+    for s in rows:
+        num = str(s.get("number") or "").strip()
+        name = str(s.get("name") or "").strip()
+        if num and num in by_num:
+            s["tag"] = by_num[num]
+        elif name in by_name:
+            s["tag"] = by_name[name]
+    return rows
 
 
 def _task_default_kb(task: dict) -> str:
@@ -196,7 +232,10 @@ def build_plan(ws, *, task_id: str, class_dir: str, class_id: str = "", work_id:
             if e:
                 return {"padId": e["padId"], "questions": _questions_of(e["pad"], ws)}
         return {}
-    roster = students_with_tags(ws, class_dir)
+    # D183：作业包模式下，学生 tag 以 roster-tags/<packId>.json 快照为权威；
+    # 审计采用/手动改 tag 后重批会按新 tag 选作业纸与题目。
+    snapshot_id = str((pack or {}).get("id") or task_id or "").strip()
+    roster = students_with_tags(ws, class_dir, pack_id=snapshot_id)
     _, rev = (Path(""), []) if review_students is not None else read_review_students(class_id, work_id)
     review = review_students if review_students is not None else rev
     by_name = {r["name"]: r for r in review}
