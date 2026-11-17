@@ -720,6 +720,45 @@ def _llm_test_summary(results: "list[dict]") -> str:
     return "；".join(parts)
 
 
+def _load_preview_tags(ws: Path, class_dir: str, task_id: str) -> "tuple[dict[str, str], dict[str, str]]":
+    """D180：为 /xxt/preview/students 补 tag 的权威来源选择。
+
+    - 同时带 classDir + taskId 时，优先读 roster-tags/<taskId>.json 快照；
+    - 按学号优先、姓名兜底匹配；
+    - 快照缺失、损坏或学生不在快照中时，回落到 roster/roster.xlsx；
+    - 无 taskId 时只读 roster.xlsx。
+
+    返回 (tags_by_number, tags_by_name)。"""
+    tags_by_number: dict[str, str] = {}
+    tags_by_name: dict[str, str] = {}
+    if class_dir and task_id:
+        try:
+            from .grading import snapshots as _sn
+            snap = _sn.read_tags_snapshot(ws, class_dir, task_id)
+            if snap.get("ok"):
+                for s in (snap.get("students") or []):
+                    if not isinstance(s, dict):
+                        continue
+                    name = str(s.get("name") or "").strip()
+                    number = str(s.get("number") or "").strip()
+                    tag = str(s.get("tag") or "")
+                    if name:
+                        tags_by_name[name] = tag
+                    if number:
+                        tags_by_number[number] = tag
+        except Exception:  # noqa: BLE001 —— 快照损坏/非法时静默回落 roster
+            pass
+    try:
+        from .grading import inputs as _gi
+        for x in _gi.students_with_tags(ws, class_dir):
+            name = str(x.get("name") or "").strip()
+            if name and name not in tags_by_name:
+                tags_by_name[name] = str(x.get("tag") or "")
+    except Exception:  # noqa: BLE001 —— 无名单/读取失败时留空即可
+        pass
+    return tags_by_number, tags_by_name
+
+
 class Handler(BaseHTTPRequestHandler):
     ws: Path = None  # type: ignore
     token: str = ""
@@ -3886,19 +3925,20 @@ class Handler(BaseHTTPRequestHandler):
                             stu.setdefault("workAnswerId", hit["workAnswerId"])
             except Exception:  # noqa: BLE001 —— 补齐失败不影响列表
                 logger.debug("补充作答图文件名失败", exc_info=True)
-            # D130-FIX2：**补 tag**。学习通列表页只有姓名/分数，没有分层 tag；
-            # tag 是本校名单里的概念（roster），必须由引擎按姓名 join 回去，
-            # 否则前端「tag」列永远空白（此前 preview_students 根本不返回 tag 字段）。
+            # D130-FIX2 + D180：**补 tag**。学习通列表页只有姓名/分数，没有分层 tag；
+            # tag 是本校名单里的概念（roster），必须由引擎按姓名 join 回去。
+            # D180：若请求带 classDir+taskId，优先用该作业包快照 roster-tags/<taskId>.json；
+            # 按学号优先、姓名兜底；快照缺失/损坏/学生不在快照中时回落 roster.xlsx。
             try:
-                from .grading import inputs as _gi2
                 _q_tag = urllib.parse.parse_qs(u.query)
                 _cdir_tag = (_q_tag.get("classDir") or [""])[0]
-                if _cdir_tag:
-                    _tags = {str(x.get("name")): str(x.get("tag") or "")
-                             for x in _gi2.students_with_tags(
-                                 Path(self.ws).resolve(), _cdir_tag)}
-                    for stu in rep.get("students") or []:
-                        stu["tag"] = _tags.get(str(stu.get("name") or ""), "")
+                _task_id_tag = (_q_tag.get("taskId") or [""])[0]
+                _tags_by_num, _tags_by_name = _load_preview_tags(
+                    Path(self.ws).resolve(), _cdir_tag, _task_id_tag)
+                for stu in rep.get("students") or []:
+                    name = str(stu.get("name") or "")
+                    number = str(stu.get("studentId") or "")
+                    stu["tag"] = _tags_by_num.get(number) or _tags_by_name.get(name, "")
             except Exception:  # noqa: BLE001 —— 无名单/读取失败时留空即可
                 logger.debug("补充 tag 失败", exc_info=True)
             # D130-FIX2：**服务端自己找批阅目录**（刷新后前端 packId/padId 为空）。
