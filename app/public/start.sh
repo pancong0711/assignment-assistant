@@ -73,7 +73,19 @@ fi
 apply_pending() {
   [ -f "$PENDING" ] || return 0
   if [ ! -f "$STAGE/engine/pyproject.toml" ]; then
-    echo "[update] staging missing: $STAGE/engine/pyproject.toml"
+    echo "[update] stale update marker detected: staged engine is missing"
+    echo "[update] clearing stale pending/staging and continuing with current engine"
+    echo "[update] stale pending cleared: $STAGE/engine/pyproject.toml" >>"$LOG"
+    rm -f "$PENDING"
+    rm -rf "$STAGE"
+    if [ -f "$ENGINE_DIR/pyproject.toml" ] \
+       && [ -f "$ENGINE_DIR/src/assist/serve.py" ] \
+       && [ -f "$ENGINE_DIR/src/assist/xxt/session.py" ]; then
+      echo "[update] current engine looks complete; skipped stale update."
+      return 0
+    fi
+    echo "[FAIL] staged update is missing and current engine is incomplete"
+    echo "       delete $WS/_engine then rerun start.sh"
     return 1
   fi
   echo "[update] applying staged engine before start..."

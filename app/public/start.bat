@@ -206,7 +206,18 @@ exit /b 1
 
 :APPLY_UPDATE
 if not exist "%STAGE%\engine\pyproject.toml" (
-  echo [update] staging missing: %STAGE%\engine\pyproject.toml
+  echo [update] stale update marker detected: staged engine is missing
+  echo [update] clearing stale pending/staging and continuing with current engine
+  echo [update] stale pending cleared: %STAGE%\engine\pyproject.toml>>"%LOG%"
+  if exist "%PENDING%" del /Q "%PENDING%" >nul 2>nul
+  if exist "%STAGE%" rmdir /S /Q "%STAGE%" >nul 2>nul
+  if exist "%ENGINE_DIR%\pyproject.toml" if exist "%ENGINE_DIR%\src\assist\serve.py" if exist "%ENGINE_DIR%\src\assist\xxt\session.py" (
+    echo [update] current engine looks complete; skipped stale update.
+    exit /b 0
+  )
+  echo [FAIL] staged update is missing and current engine is incomplete
+  echo        delete "%WORKSPACE%\_engine" then rerun start.bat
+  notepad "%LOG%"
   exit /b 1
 )
 set "ENGINE_BAK=%ENGINE_DIR%.bak"

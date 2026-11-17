@@ -192,3 +192,31 @@ def test_cli_engine_status_json(tmp_path):
     import json as _j
     d = _j.loads(r.output)
     assert "stage" in d and "local" in d
+
+
+def test_start_scripts_clear_stale_pending_without_staging():
+    """D182：pending 存在但 staging 缺失时应清理陈旧标记并继续当前引擎。
+
+    现场：上次更新中断/网盘同步导致 `_engine/staging/engine/pyproject.toml`
+    消失，但 `update.pending` 残留。旧 launcher 直接退出，正确行为是：
+    当前引擎完整则清标记继续；当前引擎也不完整才报错。
+    """
+    root = Path(__file__).resolve().parents[2]
+    for name in ("tools/start.bat", "app/public/start.bat"):
+        raw = (root / name).read_bytes()
+        assert b"stale update marker detected" in raw, name
+        assert b"clearing stale pending/staging" in raw, name
+        assert b'del /Q "%PENDING%"' in raw, name
+        assert b'rmdir /S /Q "%STAGE%"' in raw, name
+        assert b"current engine looks complete" in raw, name
+        assert b"staged update is missing and current engine is incomplete" in raw, name
+        assert b"src\\assist\\serve.py" in raw, name
+        assert b"src\\assist\\xxt\\session.py" in raw, name
+    for name in ("tools/start.sh", "app/public/start.sh"):
+        raw = (root / name).read_bytes()
+        assert b"stale update marker detected" in raw, name
+        assert b"clearing stale pending/staging" in raw, name
+        assert b'rm -f "$PENDING"' in raw, name
+        assert b'rm -rf "$STAGE"' in raw, name
+        assert b"current engine looks complete" in raw, name
+        assert b"staged update is missing and current engine is incomplete" in raw, name
