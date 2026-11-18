@@ -517,6 +517,68 @@ def _xxt_session_check_cached(max_age=60):
     return rep
 
 
+def _xxt_latest_run_json(home: Path) -> "Path | None":
+    """D188：只按 mtime 找最新 run，避免 /xxt/status 每次读取全部历史 run。"""
+    candidates: list[tuple[float, Path]] = []
+    for d in (xxt_layout.runs_dir(home), home):
+        if not d.is_dir():
+            continue
+        for f in d.glob("xxt-*.json"):
+            try:
+                candidates.append((f.stat().st_mtime, f))
+            except OSError:
+                continue
+    for _, f in sorted(candidates, key=lambda x: x[0], reverse=True):
+        try:
+            data = json.loads(f.read_text(encoding="utf-8"))
+        except Exception:  # noqa: BLE001
+            continue
+        if xxt_layout.is_run_shape(data):
+            return f
+    return None
+
+
+def _xxt_login_redirect(rep: "dict | None" = None) -> dict:
+    """D188：最近一次体检/发现/提取是否命中学习通登录页。
+
+    只返回布尔与 epoch 秒时间戳，绝不回显 URL/cookie/token。
+    发现/提取产物只取「最新的一份」（targets.json 或最新 run），
+    避免旧失败记录长期把状态钉死；成功发现/提取后下一次请求即恢复。
+    """
+    try:
+        from .xxt.session import is_login_redirect_url, steps_have_login_redirect
+        rep = rep if isinstance(rep, dict) else _xxt_session_check_cached()
+        if is_login_redirect_url(rep.get("final_url")):
+            return {"loginRedirect": True, "loginRedirectTs": int(time.time())}
+        home = _xxt_home()
+        candidates: list[Path] = []
+        targets = xxt_layout.targets_json(home)
+        if targets.is_file():
+            candidates.append(targets)
+        latest_run = _xxt_latest_run_json(home)
+        if latest_run is not None:
+            candidates.append(latest_run)
+        if not candidates:
+            return {"loginRedirect": False, "loginRedirectTs": 0}
+        newest = max(candidates, key=lambda p: p.stat().st_mtime)
+        data = json.loads(newest.read_text(encoding="utf-8"))
+        hit = steps_have_login_redirect(data.get("steps"))
+        if hit:
+            # 成功且有班级、无 failures 的产物只是路过登录页，不把状态钉成失效。
+            courses = data.get("courses")
+            failures = data.get("failures") or []
+            classes = 0
+            if isinstance(courses, list):
+                classes = sum(len(c.get("classes") or [])
+                              for c in courses if isinstance(c, dict))
+            if classes > 0 and not failures and data.get("ok", True) is not False:
+                hit = False
+        return {"loginRedirect": bool(hit),
+                "loginRedirectTs": int(newest.stat().st_mtime) if hit else 0}
+    except Exception:  # noqa: BLE001 —— 只读诊断，任何坏文件都不影响 /xxt/status
+        return {"loginRedirect": False, "loginRedirectTs": 0}
+
+
 def _xxt_avatar_cached(max_age=600):
     """头像 data-URL（engine 同会话中转，base64；TTL 缓存）。
 
@@ -3337,7 +3399,10 @@ class Handler(BaseHTTPRequestHandler):
                                 "hint": "关闭引擎窗口 → 删除 workspace/_engine → 重新双击 start.bat；见 docs/24 §14"}, 503)
                 return
         if u.path == "/xxt/status":
-            self._json({"ok": True, "xxt": _xxt_session_check_cached(),
+            rep = _xxt_session_check_cached()
+            view = dict(rep)
+            view.update(_xxt_login_redirect(rep))
+            self._json({"ok": True, "xxt": view,
                         "avatar": _xxt_avatar_cached()})
             return
         elif u.path == "/xxt/qr":

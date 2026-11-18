@@ -115,6 +115,27 @@ def evaluate_verdict(final_url: str, login_pwd_input: bool) -> tuple[str, list[s
     return ("dead" if reasons else "alive"), reasons
 
 
+def is_login_redirect_url(url: "str | None") -> bool:
+    """D188：URL 是否命中学习通登录页（passport / login）；纯函数，只判布尔。
+
+    只解析主机与路径，忽略 query（避免把票据/token 带进日志或界面）。
+    """
+    u = urlparse(str(url or ""))
+    host = (u.netloc or "").lower()
+    path = (u.path or "").lower()
+    return "passport" in host or "login" in host or "/login" in path
+
+
+def steps_have_login_redirect(steps) -> bool:
+    """D188：run/targets 的 steps[] 里是否出现登录页跳转（只看 url）。"""
+    if not isinstance(steps, list):
+        return False
+    for step in steps:
+        if isinstance(step, dict) and is_login_redirect_url(step.get("url")):
+            return True
+    return False
+
+
 def _launch_labeled(pw, headless: bool):
     """D65-P0.1 + D70：返回 (browser, 档位标签)，用于过程诊断。
 

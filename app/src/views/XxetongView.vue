@@ -36,14 +36,36 @@ const avatar = ref<string | null>(null)
 const qrcode = ref<string>('')
 const qrLoading = ref(false)
 const loginHint = ref('')
+const statusReasons = ref<string[]>([])
+const loginRedirect = ref(false)
+const webSessionSuspect = ref(false)
+const reloginAt = ref<number>(Number(localStorage.getItem('xxt-relogin-at') || 0) || 0)
 
 let loginTimer: number | undefined
 let loginSeq = 0
 let loginJobId = ''
+let loginStartedAlive = false
 let qrReady = false
 let qrStartedAt = 0
 let loginJobCheckedAt = 0
 let extractTimer: number | undefined
+
+/** D188：错误/原因里只脱敏展示，绝不把 cookie/token/ticket 值带到界面。 */
+function maskSensitive(text: string): string {
+  return String(text || '')
+    .replace(/((?:token|cookie|pwd|passwd|password|ticket|_uid|uid)\s*[=:]\s*)[^\s,;，；]+/gi, '$1***')
+    .replace(/[?&](?:token|cookie|pwd|passwd|password|ticket|_uid|uid)=[^&\s]+/gi, '')
+    .replace(/(https?:\/\/[^\s，。；)]+)\?[^\s，。；)]*/gi, '$1')
+}
+const safeReasons = computed(() => statusReasons.value.map(maskSensitive).filter(Boolean))
+const reasonsHitLogin = computed(() =>
+  statusReasons.value.some(r =>
+    /passport|login|redirect|session|cookie|登录|会话|失效|no_storage|password/i.test(String(r || ''))))
+const sessionInvalid = computed(() =>
+  verdict.value === 'dead' || reasonsHitLogin.value)
+/** D188：体检可能 alive（个人空间可开），但最近一次发现/提取已被跳回登录页。 */
+const redirectSuspect = computed(() =>
+  !sessionInvalid.value && (loginRedirect.value || webSessionSuspect.value))
 
 function stopLoginPolling() {
   if (loginTimer !== undefined) {
@@ -52,23 +74,42 @@ function stopLoginPolling() {
   }
 }
 
+function finishLoginSuccess(hint: string) {
+  qrcode.value = ''
+  qrReady = false
+  qrLoading.value = false
+  stopLoginPolling()
+  loginRedirect.value = false
+  webSessionSuspect.value = false
+  reloginAt.value = Math.floor(Date.now() / 1000)
+  try { localStorage.setItem('xxt-relogin-at', String(reloginAt.value)) } catch { /* noop */ }
+  loginHint.value = hint
+}
+
 async function refreshStatus() {
   try {
     const r = await fetchXxtStatus(engUrl.value, tok.value)
     verdict.value = r.verdict
     avatar.value = r.avatar_dataurl || null
+    statusReasons.value = r.info?.reasons || []
+    const redirectTs = Number(r.login_redirect_ts || 0)
+    // 本次重新扫码成功之后的旧跳转记录不再提示（跨页面刷新也保留判断）。
+    loginRedirect.value = r.login_redirect === true
+      && !(reloginAt.value > 0 && redirectTs <= reloginAt.value)
     if (r.verdict === 'alive') {
       loginHint.value = `已登录（体检 ${r.info?.checked_at || ''}；storage 已回写续期）`
     } else if (r.verdict === 'dead') {
-      loginHint.value = `会话失效${(r.info?.reasons || []).join('，')}——请扫码`
+      loginHint.value = `会话失效${safeReasons.value.join('，')}——请点「🔁 重新扫码登录」`
     } else {
-      const why = (r.info?.reasons || []).join('，')
+      const why = safeReasons.value.join('，')
       loginHint.value = why.includes('playwright')
         ? '引擎缺 playwright——请到「设置中心 → Playwright（学习通提取）」一键联网安装'
         : '引擎未记录会话（未扫码登录），可点上方「扫码登录」'
     }
   } catch {
     verdict.value = 'unknown'
+    statusReasons.value = []
+    loginRedirect.value = false
     loginHint.value = '引擎未在线（设置中心可改 engine 地址）'
   }
 }
@@ -99,7 +140,11 @@ async function startScan() {
   qrLoading.value = true
   qrStartedAt = Date.now()
   loginJobCheckedAt = 0
-  loginHint.value = '已发起扫码任务：正在生成二维码……'
+  loginJobId = ''
+  loginStartedAlive = verdict.value === 'alive'
+  loginHint.value = loginStartedAlive
+    ? '已发起重新扫码任务：正在生成新二维码（旧会话可能立即失效）……'
+    : '已发起扫码任务：正在生成二维码……'
   try {
     loginJobId = await startXxtLogin(engUrl.value, tok.value)
     void startQrPolling(run)
@@ -109,18 +154,33 @@ async function startScan() {
   }
 }
 
+/** D188：任何 verdict 都可主动重新扫码；先清旧 QR/job 前端状态再发起。 */
+async function relogin() {
+  if (!confirm('将重新生成登录二维码；旧会话可能立即失效。\n\n确定要重新扫码登录吗？')) return
+  loginSeq += 1
+  stopLoginPolling()
+  loginJobId = ''
+  loginJobCheckedAt = 0
+  loginStartedAlive = false
+  qrcode.value = ''
+  qrReady = false
+  qrLoading.value = false
+  webSessionSuspect.value = false
+  loginHint.value = '已清除旧二维码/任务状态，正在重新发起扫码登录……'
+  await startScan()
+}
+
 async function startQrPolling(run: number) {
   const tick = async () => {
     if (run !== loginSeq) return
     await refreshStatus()
     if (run !== loginSeq) return
-    if (verdict.value === 'alive') {
-      qrcode.value = ''
-      qrLoading.value = false
-      stopLoginPolling()
+    if (verdict.value === 'alive' && !loginStartedAlive) {
+      finishLoginSuccess('扫码登录成功，已刷新登录状态与头像')
       return
     }
     // D68：二维码已显示后，若 CLI 登录任务已失败（如超时/检测异常），也要收掉破图态并给出原因。
+    // D188：alive 下主动重新扫码时，旧 verdict 仍是 alive，必须盯任务完成态才能收尾。
     if (loginJobId && Date.now() - loginJobCheckedAt > 5000) {
       loginJobCheckedAt = Date.now()
       try {
@@ -132,6 +192,14 @@ async function startQrPolling(run: number) {
           qrLoading.value = false
           loginHint.value = `扫码登录失败：${line}`
           stopLoginPolling()
+          return
+        }
+        if (job.status === 'done' && (job.returncode ?? 0) === 0) {
+          await refreshStatus()
+          if (run !== loginSeq) return
+          finishLoginSuccess(loginStartedAlive
+            ? '重新扫码登录成功，已刷新登录状态与头像；如需最新课程/班级，请点「刷新发现」'
+            : '扫码登录成功，已刷新登录状态与头像')
           return
         }
       } catch { /* 任务状态查询失败时继续等 QR/体检 */ }
@@ -184,6 +252,69 @@ const extractSubmitting = ref(false)
 const curRun = ref<string | null>(null)
 const courses = ref<CourseRow[]>([])
 const loadSteps = ref<{ action: string; detail?: string; title?: string; url?: string; ts?: string; shot?: string }[]>([])
+const curRunFailures = ref<ExtractFailure[]>([])
+
+/* D188：提取失败详情（仅展示；不改变提取写流程/批次合并）。 */
+interface ExtractStep { action?: string; detail?: string; title?: string; url?: string; ts?: string }
+interface ExtractFailure { scope?: string; ref?: string; kind?: string; detail?: string; hint?: string }
+interface ExtractDetail {
+  reason: string
+  loginRedirect: boolean
+  lines: string[]
+  steps: ExtractStep[]
+  failures: ExtractFailure[]
+}
+const extractDetail = ref<ExtractDetail | null>(null)
+
+function normalizeExtractSteps(raw: unknown): ExtractStep[] {
+  if (!Array.isArray(raw)) return []
+  const out: ExtractStep[] = []
+  for (const item of raw) {
+    if (!item || typeof item !== 'object') continue
+    const o = item as Record<string, unknown>
+    out.push({
+      action: o['action'] !== undefined ? String(o['action']) : undefined,
+      detail: o['detail'] !== undefined ? String(o['detail']) : undefined,
+      title: o['title'] !== undefined ? String(o['title']) : undefined,
+      url: o['url'] !== undefined ? String(o['url']) : undefined,
+      ts: o['ts'] !== undefined ? String(o['ts']) : undefined,
+    })
+  }
+  return out.slice(-40)
+}
+function normalizeExtractFailures(raw: unknown): ExtractFailure[] {
+  if (!Array.isArray(raw)) return []
+  return raw.filter(x => x && typeof x === 'object').slice(0, 30).map((item) => {
+    const o = item as Record<string, unknown>
+    return {
+      scope: o['scope'] !== undefined ? String(o['scope']) : undefined,
+      ref: o['ref'] !== undefined ? String(o['ref']) : undefined,
+      kind: o['kind'] !== undefined ? String(o['kind']) : undefined,
+      detail: o['detail'] !== undefined ? String(o['detail']) : undefined,
+      hint: o['hint'] !== undefined ? String(o['hint']) : undefined,
+    }
+  })
+}
+function stepUrlIsLogin(url?: string): boolean {
+  return /passport|login/i.test(String(url || ''))
+}
+function setExtractDetail(reason: string, lines: string[],
+                          stepsRaw: unknown, failuresRaw: unknown) {
+  const steps = normalizeExtractSteps(stepsRaw)
+  const failures = normalizeExtractFailures(failuresRaw)
+  const hasLoginUrl = steps.some(s => stepUrlIsLogin(s.url))
+  if (hasLoginUrl) webSessionSuspect.value = true
+  extractDetail.value = {
+    reason,
+    loginRedirect: hasLoginUrl,
+    lines: (lines || []).map(String).slice(-10),
+    steps,
+    failures,
+  }
+}
+function safeStepUrl(url?: string): string {
+  return maskSensitive(String(url || '')).slice(0, 300)
+}
 const loadingRun = ref(false)
 const runMsg = ref('')
 const filterMode = ref<'all' | 'hasWorks' | 'empty' | 'fail'>('all')  // T8
@@ -333,6 +464,7 @@ async function loadRun(id: string) {
     xxtRun.setCurrentRun(curRun.value)
     courses.value = normalizeCourses(raw['courses'])
     loadSteps.value = ((raw['steps'] as unknown[]) || []) as typeof loadSteps.value
+    curRunFailures.value = normalizeExtractFailures(raw['failures'])
     runMsg.value = `run ${curRun.value} 已载入（${courses.value.reduce((a, c) => a + c.classes.length, 0)} 班）`
   } catch (e) {
     runMsg.value = `载入失败：${String(e)}`
@@ -346,15 +478,39 @@ function stopExtractPolling() {
   }
 }
 
+async function runRawForDiagnosis(lines: string[]): Promise<Record<string, unknown> | null> {
+  // 只认本 job 输出里出现的 run_id，避免失败时误展示上一条成功 run 的 steps。
+  let runId = ''
+  for (const m of lines.join('\n').matchAll(/"run_id"\s*:\s*"([^"]+)"/g)) runId = m[1]
+  if (!runId) return null
+  try {
+    const raw = await fetchXxtRun(engUrl.value, tok.value, runId)
+    return (raw && typeof raw === 'object') ? raw as Record<string, unknown> : null
+  } catch { return null }
+}
+function countRunClasses(raw: Record<string, unknown> | null): number | null {
+  const cs = raw?.['courses']
+  if (!Array.isArray(cs)) return null
+  let n = 0
+  for (const c of cs) {
+    if (!c || typeof c !== 'object') continue
+    const classes = (c as Record<string, unknown>)['classes']
+    if (Array.isArray(classes)) n += classes.length
+  }
+  return n
+}
+
 function pollExtractJob(jobId: string) {
   stopExtractPolling()
+  extractDetail.value = null
   const tick = async () => {
     // D73：job_id 可能已在别处结束/清理；旧的 tick 直接退出
     if (xxtJobs.extractJobId !== jobId) return
     try {
       const job = await fetchXxtLoginJob(engUrl.value, tok.value, jobId)
+      const lines = job.lines || []
       if (job.status === 'running') {
-        const line = (job.lines || []).slice(-1)[0]
+        const line = lines.slice(-1)[0]
         xxtJobs.setExtractMsg(line ? `提取中：${line.slice(-120)}` : '提取中……')
         runMsg.value = xxtJobs.extractMsg
         extractTimer = window.setTimeout(tick, 1500)
@@ -365,9 +521,25 @@ function pollExtractJob(jobId: string) {
         runMsg.value = '提取完成，正在刷新列表与预览索引……'
         await refreshRuns()
         await loadReviewIndex()
+        // D188：CLI 退出码 0 但 run 里 0 课程/0 班级，多半是被重定向到登录页；
+        // 不能显示“提取完成”，要当成失败并展示 steps/failures。
+        const raw = await runRawForDiagnosis(lines)
+        const rawClasses = countRunClasses(raw)
+        const latest = runs.value[0]
+        const zero = rawClasses !== null
+          ? rawClasses === 0
+          : (!latest || (latest.classes ?? 0) === 0)
+        if (zero) {
+          const reason = '提取失败：0 课程 / 0 班级 —— 会话可能已失效（提取被跳转到学习通登录页），请点「🔁 重新扫码登录」'
+          runMsg.value = reason
+          setExtractDetail(reason, lines,
+            raw?.['steps'] ?? loadSteps.value, raw?.['failures'] ?? curRunFailures.value)
+        }
       } else {
-        const line = (job.lines || []).slice(-1)[0] || `任务状态：${job.status}`
-        runMsg.value = `提取失败：${line}`
+        const reason = `提取失败：${extractJobError(lines.join('\n'))}`
+        runMsg.value = reason
+        const raw = await runRawForDiagnosis(lines)
+        setExtractDetail(reason, lines, raw?.['steps'], raw?.['failures'])
       }
     } catch (e) {
       xxtJobs.finishExtractJob()
@@ -380,6 +552,7 @@ function pollExtractJob(jobId: string) {
 async function startExtract() {
   if (extracting.value || extractSubmitting.value) return
   stopExtractPolling()
+  extractDetail.value = null
   extractSubmitting.value = true
   runMsg.value = '已提交提取任务：扫描账户课程/班级并提取作业、通知等信息……'
   try {
@@ -630,6 +803,7 @@ async function extractSelected() {
     }
   } catch { /* 引擎不可达时后续提交会报错 */ }
   stopExtractPolling()
+  extractDetail.value = null
   extractSubmitting.value = true
   targetMsg.value = `正在提取所选 ${n} 个班${selectedWorksCount() ? ` / ${selectedWorksCount()} 份作业` : ''}……`
   try {
@@ -650,6 +824,7 @@ async function extractAppend() {
   const n = sel.reduce((a, c) => a + c.classes.length, 0)
   if (!n) { targetMsg.value = '请先勾选至少一个班级/作业'; return }
   stopExtractPolling()
+  extractDetail.value = null
   extractSubmitting.value = true
   targetMsg.value = `正在追加到批次 ${curRun.value}……`
   try {
@@ -1399,7 +1574,7 @@ async function removeRun(id: string) {
   try {
     await deleteXxtRun(engUrl.value, tok.value, id)
     runMsg.value = `已删除 ${id}`
-    if (curRun.value === id) { curRun.value = null; courses.value = []; loadSteps.value = [] }
+    if (curRun.value === id) { curRun.value = null; courses.value = []; loadSteps.value = []; curRunFailures.value = []; extractDetail.value = null }
     await refreshRuns()
   } catch (e) {
     runMsg.value = `删除失败：${String(e)}`
@@ -1410,7 +1585,8 @@ async function clearAllRuns() {
   if (!confirm(`清空全部 ${runs.value.length} 条历史 run？将删除 JSON、run 级截图与 HTML 存档，不可恢复。`)) return
   try {
     const n = await clearXxtRuns(engUrl.value, tok.value)
-    curRun.value = null; courses.value = []; loadSteps.value = []
+    curRun.value = null; courses.value = []; loadSteps.value = []; curRunFailures.value = []
+    extractDetail.value = null
     runMsg.value = `已清空 ${n} 项历史工件`
     await refreshRuns()
   } catch (e) {
@@ -1459,22 +1635,37 @@ onUnmounted(() => { loginSeq += 1; stopLoginPolling(); stopExtractPolling(); sto
       <div style="display:flex; gap:24px; align-items:flex-start; flex-wrap:wrap">
         <div style="width:168px; text-align:center">
           <div style="border:1px solid var(--c-border); border-radius:12px; padding:6px; background:#fff; min-height:156px; display:flex; align-items:center; justify-content:center">
-            <img v-if="verdict==='alive' && avatar" :src="avatar" alt="登录头像"
+            <img v-if="qrcode" :src="qrcode" alt="登录二维码" style="width:150px" />
+            <img v-else-if="verdict==='alive' && avatar" :src="avatar" alt="登录头像"
                  style="width:140px; height:140px; border-radius:50%; object-fit:cover" />
             <div v-else-if="verdict==='alive'"
                  style="width:140px; height:140px; border-radius:50%; display:flex; align-items:center; justify-content:center; flex-direction:column; background:var(--c-bg,#f7f7f9)">
               <span style="font-size:44px">🎓</span><small>已登录</small>
             </div>
-            <img v-else-if="qrcode" :src="qrcode" alt="登录二维码" style="width:150px" />
             <span v-else-if="qrLoading" class="hint" style="color:var(--c-muted)">二维码生成中…</span>
             <span v-else class="hint" style="color:var(--c-muted)">待扫码</span>
           </div>
-          <div style="margin-top:6px">{{ verdict==='alive' ? `● 已登录${verdict?'':''}` : '○ 未登录/失效' }}</div>
+          <div style="margin-top:6px">
+            {{ qrcode ? '请用学习通 App 扫码' : (verdict==='alive' ? '● 已登录' : '○ 未登录/失效') }}
+          </div>
         </div>
         <div style="flex:1; min-width:260px">
           <p class="hint">{{ loginHint || '点击「扫码登录」开始（只扫码，无账密路径）' }}</p>
+          <p v-if="sessionInvalid" class="hint"
+             style="color:#b91c1c; font-weight:600; background:#fef2f2; border:1px solid #fecaca; border-radius:8px; padding:8px 10px">
+            ⚠ 会话已失效，请点「🔁 重新扫码登录」
+            <span v-if="safeReasons.length" style="font-weight:400">（原因：{{ safeReasons.join('，') }}）</span>
+          </p>
+          <p v-else-if="redirectSuspect" class="hint"
+             style="color:#b91c1c; background:#fff7ed; border:1px solid #fdba74; border-radius:8px; padding:8px 10px">
+            ⚠ 最近一次发现/提取被跳转到学习通登录页：体检可能仍显示已登录，但课程工作台会话已失效。
+            请点「🔁 重新扫码登录」后重试。
+          </p>
           <p>
             <button class="btn primary" :disabled="verdict==='alive'" @click="startScan">📷 扫码登录（QR）</button>
+            <button class="btn" style="margin-left:8px"
+                    :style="sessionInvalid || redirectSuspect ? 'border-color:#dc2626;color:#b91c1c;font-weight:600' : ''"
+                    @click="relogin">🔁 重新扫码登录</button>
             <button class="btn" style="margin-left:8px" @click="refreshStatus">🔄 刷新体检</button>
           </p>
           <p class="hint" style="color:var(--c-muted)">
@@ -1668,7 +1859,52 @@ onUnmounted(() => { loginSeq += 1; stopLoginPolling(); stopExtractPolling(); sto
           </select>
         </label>
       </p>
-      <p v-if="runMsg" class="hint">{{ runMsg }}</p>
+      <p v-if="runMsg" class="hint"
+         :style="extractDetail && extractDetail.loginRedirect ? 'color:#b91c1c;font-weight:600' : ''">{{ runMsg }}</p>
+      <!-- D188：提取失败/0 课程详情（可折叠；steps/failures 均脱敏展示，不含 cookie/token） -->
+      <div v-if="extractDetail"
+           style="border:1px solid #fecaca; background:#fef2f2; border-radius:8px; padding:8px; margin:6px 0">
+        <p v-if="extractDetail.loginRedirect"
+           style="margin:0 0 6px; color:#b91c1c; font-weight:600">
+          ⚠ 检测到学习通登录页跳转 → 会话已失效，请点「🔁 重新扫码登录」
+        </p>
+        <details>
+          <summary style="cursor:pointer; color:#b91c1c; font-weight:600">
+            提取失败详情（failures {{ extractDetail.failures.length }} 项 / steps {{ extractDetail.steps.length }} 条）
+          </summary>
+          <div style="margin-top:8px; font-size:12px; color:var(--c-text,#111)">
+            <div v-if="extractDetail.lines.length" style="margin-bottom:8px">
+              <b>最后任务输出（{{ extractDetail.lines.length }} 行）：</b>
+              <pre style="white-space:pre-wrap; word-break:break-all; background:#fff; border:1px solid var(--c-border); border-radius:6px; padding:6px; margin:4px 0">{{ extractDetail.lines.join('\n') }}</pre>
+            </div>
+            <div v-if="extractDetail.steps.length" style="margin-bottom:8px">
+              <b>run steps：</b>
+              <div v-for="(s, i) in extractDetail.steps" :key="'st' + i"
+                   style="border-top:1px dashed var(--c-border); padding:4px 0">
+                <code>{{ s.action || '—' }}</code>
+                <span v-if="s.ts" style="color:var(--c-muted)"> · {{ s.ts }}</span>
+                <span v-if="s.title"> · {{ s.title }}</span>
+                <div v-if="s.detail" style="color:var(--c-muted)">{{ s.detail }}</div>
+                <div v-if="s.url" style="word-break:break-all; color:var(--c-muted)">{{ safeStepUrl(s.url) }}</div>
+              </div>
+            </div>
+            <div v-if="extractDetail.failures.length">
+              <b>failures：</b>
+              <div v-for="(f, i) in extractDetail.failures" :key="'fl' + i"
+                   style="border-top:1px dashed var(--c-border); padding:4px 0">
+                <span>[{{ f.scope || 'run' }}] {{ f.kind || '—' }}</span>
+                <span v-if="f.ref" style="color:var(--c-muted)"> · ref {{ f.ref }}</span>
+                <span v-if="f.detail"> · {{ f.detail }}</span>
+                <div v-if="f.hint" style="color:var(--c-muted)">{{ f.hint }}</div>
+              </div>
+            </div>
+            <div v-if="!extractDetail.lines.length && !extractDetail.steps.length && !extractDetail.failures.length"
+                 style="color:var(--c-muted)">
+              任务没有返回可读输出；请重新扫码登录后再试。
+            </div>
+          </div>
+        </details>
+      </div>
       <p v-if="runs.length" class="hint" style="color:var(--c-muted)">
         历史 run：
         <select v-model="curRun" @change="loadRun(curRun || '')" style="max-width:240px">

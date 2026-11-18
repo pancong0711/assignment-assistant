@@ -371,6 +371,10 @@ export interface XxtSessionStatus {
   hint?: string
   storage_exists?: boolean
   storage_refreshed?: string
+  /** D188：最近一次发现/提取是否被跳转到学习通登录页（只读布尔）。 */
+  loginRedirect?: boolean
+  /** D188：上述跳转记录的时间戳（epoch 秒）；仅用于前端判断是否早于本次重新登录。 */
+  loginRedirectTs?: number
 }
 
 export interface XxtRunRow {
@@ -384,7 +388,8 @@ export interface XxtRunRow {
 
 /** GET /xxt/status：体检（engine 侧 TTL 缓存）+ 头像 data-URL（alive 时非空）。 */
 export async function fetchXxtStatus(engineAddr: string, token?: string)
-  : Promise<{ verdict: string; avatar_dataurl?: string | null; info?: XxtSessionStatus }> {
+  : Promise<{ verdict: string; avatar_dataurl?: string | null; info?: XxtSessionStatus
+              login_redirect?: boolean; login_redirect_ts?: number }> {
   const base = normalizeEngineAddr(engineAddr)
   const o = (await getJson2(engineUrlWithToken(base, '/xxt/status', token))) as
     { ok: boolean; xxt?: XxtSessionStatus; avatar?: { ok?: boolean; dataurl?: string } }
@@ -393,6 +398,8 @@ export async function fetchXxtStatus(engineAddr: string, token?: string)
     verdict: x.verdict || 'unknown',
     avatar_dataurl: (o.avatar && o.avatar.ok && o.avatar.dataurl) ? o.avatar.dataurl : null,
     info: x,
+    login_redirect: x.loginRedirect === true,
+    login_redirect_ts: Number(x.loginRedirectTs || 0) || 0,
   }
 }
 
