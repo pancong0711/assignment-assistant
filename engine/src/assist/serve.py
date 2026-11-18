@@ -152,7 +152,13 @@ def _xxt_python() -> str:
 
 
 def _xxt_env(home: "Path | str") -> dict:
-    """D73：CLI 子进程统一环境：workspace + XXT_HOME/STORAGE + engine src PYTHONPATH。"""
+    """D73：CLI 子进程统一环境：workspace + XXT_HOME/STORAGE + engine src PYTHONPATH。
+
+    D193：强制 UTF-8 输出。Windows 默认控制台编码是 GBK，CLI 打印批阅 JSON 时，
+    批语里的数学减号 `−`(U+2212)、不换行空格、emoji 等会触发
+    `UnicodeEncodeError: 'gbk' codec can't encode character '\u2212'`，
+    导致**批语已生成、报告也在，但上传任务直接崩掉**。
+    """
     home = Path(home)
     env = {
         **os.environ,
@@ -161,6 +167,9 @@ def _xxt_env(home: "Path | str") -> dict:
         "ASSIST_WORKSPACE": str(_ws()),
         # D74-9：serve 已记录 job 级 journal；子进程 CLI 不再重复记录
         "ASSIST_NO_JOURNAL": "1",
+        # D193：UTF-8 输出 + errors=replace 兜底，任何字符都不会让任务崩
+        "PYTHONIOENCODING": "utf-8:replace",
+        "PYTHONUTF8": "1",
     }
     src = _ENGINE_ROOT / "src"
     if src.is_dir():
@@ -1060,6 +1069,7 @@ class Handler(BaseHTTPRequestHandler):
                 proc = subprocess.Popen(
                     cmd, stdout=subprocess.PIPE, stderr=subprocess.STDOUT,
                     text=True, bufsize=1, env=env,
+                    encoding="utf-8", errors="replace",
                     cwd=cwd or str(_ENGINE_ROOT.parent))
                 with _JOBS_LOCK:
                     if job_id in _JOBS:

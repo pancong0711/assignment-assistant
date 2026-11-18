@@ -1516,8 +1516,10 @@ def atopia_run(obj, tool_name, args_json, confirmed_by, workspace, verbose):
     click.echo(json.dumps({**rep, "stdout": rep["stdout"], "stderr": rep["stderr"]},
                           ensure_ascii=False, indent=2))
     if not rep["ok"]:
-        raise click.ClickException(f"工具执行失败（{rep['status']}）：{
-            (rep['stderr'] or rep['stdout'])[:300]}")
+        # D193：改为单行拼接 —— 多行 f-string 只有 Python 3.12+ 允许，
+        # 而引擎声明 requires-python >=3.11，3.11 下会 SyntaxError 整个 CLI 起不来。
+        detail = (rep["stderr"] or rep["stdout"])[:300]
+        raise click.ClickException(f"工具执行失败（{rep['status']}）：{detail}")
 
 
 @atopia_grp.command("ask")
@@ -3242,9 +3244,30 @@ def _alias_assistopia_argv(argv: list[str]) -> list[str]:
     return out
 
 
+def _force_utf8_output() -> None:
+    """D193：把 stdout/stderr 切到 UTF-8（errors=replace），避免 Windows GBK 控制台崩。
+
+    现场：批语里出现数学减号 `−`(U+2212)、不换行空格、emoji 等字符时，
+    `click.echo(json.dumps(..., ensure_ascii=False))` 抛
+    `UnicodeEncodeError: 'gbk' codec can't encode character '\u2212'`，
+    表现为「报告已生成，但上传失败」——其实批语/分数都没提交。
+    `errors="replace"` 保证极端情况下也只是显示替换符，绝不让整个任务崩掉。
+    """
+    import sys
+    for name in ("stdout", "stderr"):
+        stream = getattr(sys, name, None)
+        reconfigure = getattr(stream, "reconfigure", None)
+        if callable(reconfigure):
+            try:
+                reconfigure(encoding="utf-8", errors="replace")
+            except Exception:  # noqa: BLE001 —— 被重定向/已关闭时忽略
+                pass
+
+
 def main():
     """CLI entry：包一层异常处理，支持 ASSIST_JSON_ERRORS 机读错误（便于 AI agent 调）。"""
     import sys
+    _force_utf8_output()
     json_mode = _json_errors_enabled()
     if sys.argv and len(sys.argv) > 1:
         sys.argv = [sys.argv[0], *_alias_assistopia_argv(sys.argv[1:])]
