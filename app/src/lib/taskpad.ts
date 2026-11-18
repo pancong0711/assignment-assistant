@@ -157,7 +157,7 @@ export function seedIndex(seed: number, n: number): number {
 
 /** D93：summary / copy / translation 合成题常量与模板（与引擎 paper/compose.py 同口径）。 */
 export const SUMMARY_ID = 'summary'
-export const SUMMARY_CONTENT = '请总结课堂内容。（提示：列出主要概念、定律，包括定义、公式、示意图，指出概念之间的关系，如xx是xxx的前提条件、xx经求导积分可得到xxx等。）'
+export const SUMMARY_CONTENT = '请总结课堂内容，并画出示意图。（提示：列出主要概念/定理/定律，包括定义/公式、示意图等，指出概念之间的关系，如xx求导/积分可得到xxx。）'
 export const TRANSLATION_ID = 'translation'
 export function copyContent(page: string, content: string, qid: string): string {
   return `请抄写：${page}页 ${content}，并画出示意图。（${qid}）`

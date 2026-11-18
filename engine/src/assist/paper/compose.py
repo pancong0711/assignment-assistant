@@ -10,8 +10,8 @@
 from __future__ import annotations
 
 SUMMARY_ID = "summary"
-SUMMARY_CONTENT = ("请总结课堂内容。（提示：列出主要概念、定律，包括定义、公式、示意图，"
-                   "指出概念之间的关系，如xx是xxx的前提条件、xx经求导积分可得到xxx等。）")
+SUMMARY_CONTENT = ("请总结课堂内容，并画出示意图。（提示：列出主要概念/定理/定律，"
+                   "包括定义/公式、示意图等，指出概念之间的关系，如xx求导/积分可得到xxx。）")
 TRANSLATION_ID = "translation"
 COPY_TEMPLATE = "请抄写：{page}页 {content}，并画出示意图。（{qid}）"
 
