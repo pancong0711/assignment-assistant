@@ -91,6 +91,7 @@
 - `docs/127-D184-audit-tag-upsert.md` — **D184 审计采用 tag 支持快照 UPSERT（补齐实际提交学生）**
 - `docs/128-D185-evaluation-json-parse-retry.md` — **D185 评阅 JSON 解析失败重试/增强修复（未转义引号、尾逗号、截断）**
 - `docs/129-D186-summary-prompt-lenient.md` — **D186 summary 题目提示与评阅口径适度放宽（定义/公式二选一、不要求列全）**
+- `docs/130-D187-report-scope-checkbox-and-append-merge.md` — **D187 报告生成 classDir / 强制重做复选框 / 追加批次 works 合并**
 
 > **当前活动需求单 = `docs/112-D168`（口径/快照）+ `docs/113-D169`（路线/架构）**；
 > 历史条目保留供追溯，与最新口径冲突时以这两份为准。

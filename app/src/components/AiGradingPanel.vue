@@ -1008,11 +1008,17 @@ function reportMode(s: { key: string; name?: string; altKeys?: string[] }): stri
 async function renderReports() {
   const w = curWork.value
   if (!w) { msg.value = '请选择作业'; return }
+  const taskId = packId.value || padId.value || resolvedScope.value
+  if (!taskId) { msg.value = '⚠ 请先选择作业包/作业纸，或先读取一次学生清单'; return }
+  if (!curWorkDir.value) { msg.value = '⚠ 请先关联本地班级目录'; return }
   busy.value = true
   progress.value = '正在按草稿逐生生成报告（人工在前 + 【附件】AI + 修订标红）……'
   try {
     const r = await renderReportsFromDrafts(props.engineAddr, props.token, {
-      classId: w.classId, workId: w.workId, taskId: packId.value || padId.value,
+      classId: w.classId, workId: w.workId, taskId,
+      // D187：必须带 classDir；否则后端会落到 classes/<学习通数字 classId>，
+      // 与真实 classes/<中文班级目录>/grading/<taskId>/drafts 不一致。
+      classDir: curWorkDir.value,
     })
     busy.value = false
     if (r?.ok) {
@@ -1320,7 +1326,7 @@ onMounted(async () => {
       <label class="hint" style="display:inline-flex; align-items:center; gap:4px; margin-left:8px"
              title="勾选后：三个键都会**重新调用大模型并覆盖**已有产物（会重新花额度）">
         <input type="checkbox" v-model="forceRedo" />
-        ☑ 强制重做（覆盖已有结果，会重新花额度）
+        强制重做（覆盖已有结果，会重新花额度）
       </label>
       <label class="hint" style="display:inline-flex; align-items:center; gap:4px; margin-left:8px">
         <input type="checkbox" v-model="allowPartial" />

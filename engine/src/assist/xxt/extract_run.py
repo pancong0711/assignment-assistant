@@ -243,6 +243,37 @@ def run_extract(targets: "list[dict] | None", storage: "Path | str",
         rep['pruned'] = None
     return rep
 
+def merge_work_records(old_works: "list[dict] | None",
+                       new_works: "list[dict] | None") -> list[dict]:
+    """D187：追加提取时按 workId 合并，保留本次未选中的旧作业记录。
+
+    旧实现 `classes[kid].update(nk)` 会让「只勾选部分作业」的追加把该班
+    原有的其它 works 整个替换掉——run JSON 元数据会丢作业，虽然不是成绩/
+    批阅文件，但 PWA 的批次下拉会缺项。这里按 workId 覆盖同名项、保留旧项。
+    """
+    old_list = [w for w in (old_works or []) if isinstance(w, dict)]
+    new_list = [w for w in (new_works or []) if isinstance(w, dict)]
+    new_by_id = {str(w.get("workId")): w for w in new_list if str(w.get("workId") or "")}
+    out: list[dict] = []
+    seen: set[str] = set()
+    for w in old_list:
+        wid = str(w.get("workId") or "")
+        if wid and wid in new_by_id:
+            out.append(new_by_id[wid])
+            seen.add(wid)
+        else:
+            out.append(w)
+            if wid:
+                seen.add(wid)
+    for w in new_list:
+        wid = str(w.get("workId") or "")
+        if not wid or wid not in seen:
+            out.append(w)
+            if wid:
+                seen.add(wid)
+    return out
+
+
 def append_extract(run_id: str, targets: "list[dict]", storage: "Path | str | None" = None,
                    out_dir: "Path | str | None" = None,
                    archive_dir: "Path | str | None" = None,
@@ -306,7 +337,12 @@ def append_extract(run_id: str, targets: "list[dict]", storage: "Path | str | No
             if not kid:
                 continue
             if kid in classes:
-                classes[kid].update(nk)
+                # D187：按 workId 合并 works；未在本轮追加中选中的旧作业不丢。
+                current = classes[kid]
+                merged_works = merge_work_records(current.get("works"), nk.get("works"))
+                patch = {k: v for k, v in nk.items() if k != "works"}
+                current.update(patch)
+                current["works"] = merged_works
             else:
                 oc.setdefault("classes", []).append(nk)
             appended.append({"scope": "class", "ref": f"{cid}:{kid}"})
