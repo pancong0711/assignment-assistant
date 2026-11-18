@@ -426,12 +426,20 @@ export interface XxtLoginState {
   updatedAt?: number
   qrExists?: boolean
 }
+/** GET /xxt/login/state —— 只读登录阶段（不含 cookie 值/token）。
+ *
+ * D190：传 `jobId` 时引擎只认该任务开始后写入的状态，避免把上一轮 `logged_in`
+ * 当成这一轮的成功。
+ */
 export async function fetchXxtLoginState(
-  engineAddr: string, token?: string,
+  engineAddr: string, token?: string, jobId?: string,
 ): Promise<XxtLoginState> {
   const base = normalizeEngineAddr(engineAddr)
+  const path = jobId
+    ? `/xxt/login/state?job_id=${encodeURIComponent(jobId)}`
+    : '/xxt/login/state'
   try {
-    return (await getJson2(engineUrlWithToken(base, '/xxt/login/state', token))) as XxtLoginState
+    return (await getJson2(engineUrlWithToken(base, path, token))) as XxtLoginState
   } catch {
     return { ok: false }
   }

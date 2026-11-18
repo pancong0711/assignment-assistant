@@ -94,6 +94,7 @@
 - `docs/130-D187-report-scope-checkbox-and-append-merge.md` — **D187 报告生成 classDir / 强制重做复选框 / 追加批次 works 合并**
 - `docs/131-D188-xxt-relogin-and-extract-error-detail.md` — **D188 学习通重新扫码登录按钮 + 会话失效提示 + 提取失败详情**
 - `docs/132-D189-xxt-relogin-success-detection.md` — **D189 重新扫码登录判定收紧（旧 _uid 不再误判成功）+ 登录状态可读化**
+- `docs/133-D190-xxt-qr-before-avatar.md` — **D190 重新扫码时先显示二维码、登录成功后才显示头像**
 
 > **当前活动需求单 = `docs/112-D168`（口径/快照）+ `docs/113-D169`（路线/架构）**；
 > 历史条目保留供追溯，与最新口径冲突时以这两份为准。

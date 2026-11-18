@@ -49,6 +49,13 @@ let loginStartedAlive = false
 let qrReady = false
 let qrStartedAt = 0
 let loginJobCheckedAt = 0
+/* D190：登录成功后头像本轮只取一次。
+ * - 旧问题：每次轮询 /xxt/status 都会触发引擎抓头像（新开浏览器 25s），
+ *   刷新极慢且可能被旧头像缓存顶住 → 扫码成功后仍显示头像/不刷新；
+ * - 现在：本轮登录首次拿到 alive 就停掉轮询（finishLoginSuccess），
+ *   头像另起一次独立刷新（refreshAvatarAfterLogin），不阻塞登录状态展示。 */
+let avatarRefreshedAt = 0
+const AVATAR_REFRESH_GAP_MS = 30000
 let extractTimer: number | undefined
 
 /** D188：错误/原因里只脱敏展示，绝不把 cookie/token/ticket 值带到界面。 */
@@ -64,6 +71,8 @@ const reasonsHitLogin = computed(() =>
     /passport|login|redirect|session|cookie|登录|会话|失效|no_storage|password/i.test(String(r || ''))))
 const sessionInvalid = computed(() =>
   verdict.value === 'dead' || reasonsHitLogin.value)
+/** D190：扫码流程进行中（含“二维码生成中”与“已出码等待扫码”）。 */
+const loginFlowActive = computed(() => qrLoading.value || qrcode.value !== '')
 /** D188：体检可能 alive（个人空间可开），但最近一次发现/提取已被跳回登录页。 */
 const redirectSuspect = computed(() =>
   !sessionInvalid.value && (loginRedirect.value || webSessionSuspect.value))
@@ -103,20 +112,47 @@ function finishLoginSuccess(hint: string) {
   reloginAt.value = Math.floor(Date.now() / 1000)
   try { localStorage.setItem('xxt-relogin-at', String(reloginAt.value)) } catch { /* noop */ }
   loginHint.value = hint
+  // D190：头像属于“登录成功之后”的装饰信息；旧头像（上一次会话）立即清掉，
+  // 避免扫码成功后仍显示旧头像让人误以为没生效。新头像异步取，不阻塞收尾。
+  avatar.value = null
+  void refreshAvatarAfterLogin()
+}
+
+/** D190：登录成功后单独刷一次头像（只读；失败不影响登录状态文案）。 */
+async function refreshAvatarAfterLogin() {
+  avatarRefreshedAt = Date.now()
+  try {
+    const r = await fetchXxtStatus(engUrl.value, tok.value)
+    if (r.verdict === 'alive' && r.avatar_dataurl) avatar.value = r.avatar_dataurl
+  } catch { /* 头像取不到只留 🎓 占位，不报错 */ }
+}
+
+/** D190：已登录且还没有头像时，最多每 30s 轻量补取一次（不重复抓 QR/轮询）。 */
+async function ensureAvatarLoaded() {
+  if (verdict.value !== 'alive' || avatar.value || qrReady) return
+  if (Date.now() - avatarRefreshedAt < AVATAR_REFRESH_GAP_MS) return
+  await refreshAvatarAfterLogin()
 }
 
 async function refreshStatus() {
   try {
     const r = await fetchXxtStatus(engUrl.value, tok.value)
     verdict.value = r.verdict
-    avatar.value = r.avatar_dataurl || null
+    // D190：头像只在登录成功收尾时取（refreshAvatarAfterLogin）。
+    // 轮询期间若还没头像，这里接住引擎刚返回的即可；已有头像不要被 null 清掉。
+    if (r.avatar_dataurl) avatar.value = r.avatar_dataurl
+    if (r.verdict !== 'alive') avatar.value = null
     statusReasons.value = r.info?.reasons || []
     const redirectTs = Number(r.login_redirect_ts || 0)
     // 本次重新扫码成功之后的旧跳转记录不再提示（跨页面刷新也保留判断）。
     loginRedirect.value = r.login_redirect === true
       && !(reloginAt.value > 0 && redirectTs <= reloginAt.value)
     if (r.verdict === 'alive') {
-      loginHint.value = `已登录（体检 ${r.info?.checked_at || ''}；storage 已回写续期）`
+      // D190：扫码任务进行中不要用“已登录”顶掉“二维码已就绪”——
+      // 教师看到的提示必须是当前扫码阶段，否则会以为扫完了、实际还在等码。
+      if (!qrReady && !qrLoading) {
+        loginHint.value = `已登录（体检 ${r.info?.checked_at || ''}；storage 已回写续期）`
+      }
     } else if (r.verdict === 'dead') {
       loginHint.value = `会话失效${safeReasons.value.join('，')}——请点「🔁 重新扫码登录」`
     } else {
@@ -161,6 +197,9 @@ async function startScan() {
   loginJobCheckedAt = 0
   loginJobId = ''
   loginStartedAlive = verdict.value === 'alive'
+  // D190：发起的这一刻起旧会话/旧头像都不再可信；头像位必须立刻让给二维码，
+  // 否则“已生成二维码”提示下仍显示上一次登录的头像，教师找不到码可扫。
+  avatar.value = null
   loginHint.value = loginStartedAlive
     ? '已发起重新扫码任务：正在生成新二维码（旧会话可能立即失效）……'
     : '已发起扫码任务：正在生成二维码……'
@@ -175,6 +214,7 @@ async function startScan() {
     loginHint.value = /已有扫码登录任务/.test(msg)
       ? `⚠ ${msg}`
       : `启动失败：${msg}（检查引擎在线/playwright 安装项）`
+    // 409 时 loginJobId 为空：用不带 job_id 的只读状态说明当前“已在跑”的阶段。
     const st = await fetchXxtLoginState(engUrl.value, tok.value)
     const detail = describeLoginState(st)
     if (detail) loginHint.value += `\n${detail}`
@@ -191,7 +231,8 @@ async function relogin() {
   loginStartedAlive = false
   qrcode.value = ''
   qrReady = false
-  qrLoading.value = false
+  qrLoading.value = true
+  avatar.value = null
   webSessionSuspect.value = false
   loginHint.value = '已清除旧二维码/任务状态，正在重新发起扫码登录……'
   await startScan()
@@ -202,6 +243,8 @@ async function startQrPolling(run: number) {
     if (run !== loginSeq) return
     await refreshStatus()
     if (run !== loginSeq) return
+    // D190：登录任务进行中一律不允许显示旧头像（头像只属于“已登录成功”的收尾态）。
+    if (verdict.value !== 'alive') avatar.value = null
     if (verdict.value === 'alive' && !loginStartedAlive) {
       finishLoginSuccess('扫码登录成功，已刷新登录状态与头像')
       return
@@ -215,17 +258,20 @@ async function startQrPolling(run: number) {
         if (job.status === 'failed') {
           const line = maskSensitive(String((job.lines || []).slice(-1)[0]
             || `任务状态：${job.status}`))
-          const st = await fetchXxtLoginState(engUrl.value, tok.value)
+          const st = await fetchXxtLoginState(engUrl.value, tok.value, loginJobId)
           const detail = describeLoginState(st)
           qrcode.value = ''
           qrReady = false
           qrLoading.value = false
           const stage = String(st?.stage || '')
+          // D190：任务已失败但状态文件可能是上一轮的 logged_in（清理窗口/写失败），
+          // 不能把“任务失败”包装成“已登录”。只有本轮 waiting_scan/timeout/failed 才可信。
+          const detailText = /waiting_scan|timeout|failed/.test(stage) ? detail : ''
           const why = /timeout/.test(stage)
             ? '等待扫码超时：二维码可能已过期'
             : (/failed/.test(stage) ? '二维码生成/浏览器阶段失败' : '')
-          loginHint.value = `扫码登录失败${why ? `（${why}）` : ''}：${detail || line}`
-          if (!/已登录/.test(detail) && !detail) loginHint.value += `；任务最后一行：${line}`
+          loginHint.value = `扫码登录失败${why ? `（${why}）` : ''}：${detailText || line}`
+          if (!detailText) loginHint.value += `；任务最后一行：${line}`
           stopLoginPolling()
           return
         }
@@ -240,8 +286,24 @@ async function startQrPolling(run: number) {
       } catch { /* 任务状态查询失败时继续等 QR/体检 */ }
     }
     if (!qrReady) {
+      // D190：除了探测 /xxt/qr 是否可解码，还要求引擎登录状态已到 waiting_scan
+      // （qrExists=true）。否则浏览器刚启动时可能拿到上一轮残留字节或半张图，
+      // 画面停在“二维码生成中”太久甚至显示成头像。
+      let st = await fetchXxtLoginState(engUrl.value, tok.value, loginJobId)
+      if (run !== loginSeq) return
+      const qrFiled = st?.qrExists !== false
+      const qrStageReady = !st?.stage || /waiting_scan|logged_in/.test(String(st.stage))
       const url = buildQrUrl()
-      if (await probeQr(url)) {
+      let imgOk = false
+      if (qrFiled && qrStageReady) {
+        imgOk = await probeQr(url)
+        if (run !== loginSeq) return
+        // 图片能解码说明码已落盘；状态文件可能还停在 starting → 以图片为准放行显示。
+        if (imgOk && !/waiting_scan|logged_in/.test(String(st?.stage || ''))) {
+          st = { ...(st || {}), stage: 'waiting_scan', qrExists: true }
+        }
+      }
+      if (imgOk) {
         if (run !== loginSeq) return
         qrcode.value = url
         qrReady = true
@@ -259,7 +321,19 @@ async function startQrPolling(run: number) {
           }
         } catch { /* 任务状态查询失败时继续重试 QR */ }
       } else {
-        loginHint.value = '二维码生成中，请稍候……'
+        const stage = String(st?.stage || '')
+        // D190：二维码/浏览器阶段已明确失败 → 立刻收尾给出原因，不要一直转圈。
+        if (/failed|timeout/.test(stage) && Date.now() - qrStartedAt > 3000) {
+          qrcode.value = ''
+          qrReady = false
+          qrLoading.value = false
+          loginHint.value = `扫码登录失败：${describeLoginState(st) || stage}`
+          stopLoginPolling()
+          return
+        }
+        const stText = describeLoginState(st)
+        loginHint.value = stText || '二维码生成中，请稍候……'
+        qrLoading.value = true
       }
     } else {
       loginHint.value = '二维码已就绪，请用学习通 App 扫描'
@@ -1646,7 +1720,7 @@ const grouped = computed(() => courses.value.map(c => {
 
 
 onMounted(() => {
-  refreshStatus()
+  refreshStatus().then(() => { void ensureAvatarLoaded() })
   refreshRuns()
   loadTargets().catch(() => { /* 无历史发现结果时忽略 */ })
   loadWorks().catch(() => { /* 无历史作业清单时忽略 */ })
@@ -1671,17 +1745,28 @@ onUnmounted(() => { loginSeq += 1; stopLoginPolling(); stopExtractPolling(); sto
         <div style="width:168px; text-align:center">
           <div style="border:1px solid var(--c-border); border-radius:12px; padding:6px; background:#fff; min-height:156px; display:flex; align-items:center; justify-content:center">
             <img v-if="qrcode" :src="qrcode" alt="登录二维码" style="width:150px" />
-            <img v-else-if="verdict==='alive' && avatar" :src="avatar" alt="登录头像"
-                 style="width:140px; height:140px; border-radius:50%; object-fit:cover" />
-            <div v-else-if="verdict==='alive'"
+            <!-- D190：扫码流程一旦开始，头像位只让给二维码；头像只在“已登录且无扫码任务”时显示。 -->
+            <div v-else-if="verdict==='alive' && avatar && !loginFlowActive"
+                 style="display:flex; flex-direction:column; align-items:center; gap:6px">
+              <img :src="avatar" alt="登录头像"
+                   style="width:140px; height:140px; border-radius:50%; object-fit:cover" />
+            </div>
+            <div v-else-if="verdict==='alive' && !loginFlowActive"
                  style="width:140px; height:140px; border-radius:50%; display:flex; align-items:center; justify-content:center; flex-direction:column; background:var(--c-bg,#f7f7f9)">
               <span style="font-size:44px">🎓</span><small>已登录</small>
             </div>
-            <span v-else-if="qrLoading" class="hint" style="color:var(--c-muted)">二维码生成中…</span>
+            <div v-else-if="loginFlowActive"
+                 style="width:150px; height:150px; display:flex; align-items:center; justify-content:center; flex-direction:column; gap:6px; color:var(--c-muted)">
+              <span style="font-size:28px">⏳</span><small>二维码生成中…</small>
+            </div>
             <span v-else class="hint" style="color:var(--c-muted)">待扫码</span>
           </div>
           <div style="margin-top:6px">
-            {{ qrcode ? '请用学习通 App 扫码' : (verdict==='alive' ? '● 已登录' : '○ 未登录/失效') }}
+            {{ qrcode ? '请用学习通 App 扫码'
+              : (loginFlowActive ? '○ 等待出码' : (verdict==='alive' ? '● 已登录' : '○ 未登录/失效')) }}
+          </div>
+          <div v-if="qrLoading && !qrcode" class="hint" style="color:var(--c-muted); margin-top:4px">
+            二维码生成中（浏览器启动约 5–20s）
           </div>
         </div>
         <div style="flex:1; min-width:260px">
@@ -1697,7 +1782,8 @@ onUnmounted(() => { loginSeq += 1; stopLoginPolling(); stopExtractPolling(); sto
             请点「🔁 重新扫码登录」后重试。
           </p>
           <p>
-            <button class="btn primary" :disabled="verdict==='alive'" @click="startScan">📷 扫码登录（QR）</button>
+            <!-- D190：不再因 verdict=alive 禁用——教师需要随时能重新出码。 -->
+            <button class="btn primary" :disabled="qrLoading" @click="startScan">📷 扫码登录（QR）</button>
             <button class="btn" style="margin-left:8px"
                     :style="sessionInvalid || redirectSuspect ? 'border-color:#dc2626;color:#b91c1c;font-weight:600' : ''"
                     @click="relogin">🔁 重新扫码登录</button>

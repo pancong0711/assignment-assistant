@@ -219,14 +219,32 @@ def _mask_secret_text(text: str) -> str:
     return t
 
 
-def _xxt_login_state(home: "Path | None" = None) -> dict:
-    """D189：只读登录状态（阶段/错误/URL 主机/cookie 名），不含任何敏感值。"""
+def _xxt_task_started_at(job_id: str) -> float:
+    """D190：登录任务开始时间（epoch 秒）；未知返回 0。"""
+    with _JOBS_LOCK:
+        t0 = float((_JOBS.get(job_id) or {}).get("started_at") or 0.0)
+    return t0
+
+
+def _xxt_login_state(home: "Path | None" = None,
+                     since: float = 0.0) -> dict:
+    """D189/D190：只读登录状态（阶段/错误/URL 主机/cookie 名），不含任何敏感值。
+
+    D190：`since>0` 时，若 `xxt-login-state.json` 的 mtime 早于该时间，说明它是
+    **上一轮**登录遗留（例如上一轮已 `logged_in`），本次任务还没写新状态。
+    此时返回空 stage，避免前端把旧“已登录”误当成本轮成功。
+    """
     home = Path(home) if home else _xxt_home()
     p = home / "xxt-login-state.json"
     out = {"ok": True, "stage": "", "error": "", "urlHost": "",
            "cookies": [], "updatedAt": 0, "qrExists": (home / "xxt-qr.png").is_file()}
     try:
         if p.is_file():
+            mtime = p.stat().st_mtime
+            out["updatedAt"] = int(mtime)
+            if since and mtime < float(since) - 1.0:
+                # 旧任务遗留状态：不回显 stage/error，交给前端显示“生成中”。
+                return out
             data = json.loads(p.read_text(encoding="utf-8"))
             if isinstance(data, dict):
                 out["stage"] = str(data.get("stage") or "")
@@ -238,7 +256,6 @@ def _xxt_login_state(home: "Path | None" = None) -> dict:
                     out["urlHost"] = ""
                 ck = data.get("cookies")
                 out["cookies"] = [str(x) for x in ck][:30] if isinstance(ck, list) else []
-                out["updatedAt"] = int(p.stat().st_mtime)
     except Exception:  # noqa: BLE001 —— 只读诊断，坏文件不影响接口
         pass
     return out
@@ -903,7 +920,8 @@ class Handler(BaseHTTPRequestHandler):
         q_, out = queue.Queue(), []
         with _JOBS_LOCK:
             _JOBS[job_id] = {"item": item, "queue": q_, "lines": out,
-                             "status": "running", "returncode": None}
+                             "status": "running", "returncode": None,
+                             "started_at": time.time()}
 
         def worker():
             t0 = time.time()
@@ -1417,6 +1435,11 @@ class Handler(BaseHTTPRequestHandler):
                     (home / name).unlink()
                 except FileNotFoundError:
                     pass
+            # D190：进入扫码流程后头像属于旧会话，必须作废进程内缓存；
+            # 否则 /xxt/status 会在二维码还没生成时先跑一次抓头像（25s），
+            # 表现为“提示已生成二维码、画面却还是旧头像/一直转圈”。
+            global _XXT_AVATAR
+            _XXT_AVATAR = None
             # 顺序很重要：本引擎解析出的 xxt 根必须覆盖外部环境里的旧 XXT_STORAGE/XXT_HOME；
             # 这样 qr_login 写出的 QR 与 GET /xxt/qr 读取的路径才是同一处。
             # D68：与 docs/16 §20.3 “CLI 套壳”决议对齐——PWA 不直接调 qr_login()，
@@ -3457,7 +3480,11 @@ class Handler(BaseHTTPRequestHandler):
                                 "hint": "关闭引擎窗口 → 删除 workspace/_engine → 重新双击 start.bat；见 docs/24 §14"}, 503)
                 return
         if u.path == "/xxt/login/state":
-            self._json(_xxt_login_state(_xxt_home()))
+            qs = urllib.parse.parse_qs(u.query or "")
+            job = (qs.get("job_id") or [""])[0]
+            # D190：带上本轮 job_id 时，只认该任务开始后写入的状态。
+            since = _xxt_task_started_at(job) if job else 0.0
+            self._json(_xxt_login_state(_xxt_home(), since=since))
             return
         if u.path == "/xxt/status":
             rep = _xxt_session_check_cached()
