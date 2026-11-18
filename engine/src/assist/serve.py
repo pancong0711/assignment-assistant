@@ -371,6 +371,41 @@ def _xxt_login_state(home: "Path | None" = None,
     return out
 
 
+def report_versions_view(ws, *, class_dir: str = "", task_id: str = "",
+                         student: str = "") -> dict:
+    """D193：只读报告版本历史（`reports/.versions/index.json`）。
+
+    只返回学生名/版本号/时间/分数/文件名，不回显报告正文（正文可能含学生作答内容）。
+    """
+    try:
+        from .grading import report_versions
+        cd = str(class_dir or "").strip().strip("/")
+        tid = str(task_id or "").strip()
+        if not cd or not tid:
+            return {"ok": False, "error": "classDir/taskId 必填"}
+        import re as _re
+        safe = lambda x: _re.sub(r"[\\/:*?\"<>|]", "_", str(x)).strip(" .") or "x"  # noqa: E731
+        root = Path(ws).resolve() / cd / "grading" / safe(tid) / "reports"
+        if student:
+            rows = report_versions.history(root, student)
+        else:
+            rows = report_versions.read_index(root).get("items") or []
+            rows = sorted(rows, key=lambda x: float(x.get("ts") or 0), reverse=True)
+        return {"ok": True, "dir": str(root), "count": len(rows),
+                "items": [{
+                    "student": str(x.get("student") or ""),
+                    "version": str(x.get("version") or ""),
+                    "tag": str(x.get("tag") or ""),
+                    "at": str(x.get("at") or ""),
+                    "kind": str(x.get("kind") or ""),
+                    "score": x.get("score"),
+                    "files": [str(f) for f in (x.get("files") or [])][:10],
+                    "reason": str(x.get("reason") or "")[:80],
+                } for x in rows if isinstance(x, dict)]}
+    except Exception as exc:  # noqa: BLE001 —— 只读诊断
+        return {"ok": False, "error": str(exc)[:200]}
+
+
 def installer_for(item: str) -> tuple[list[str] | None, str | None]:
     """item → (cmd, guide)；guide 非 None 表示逐行文本引导（无法静默装的系统级依赖）。"""
     py = str(_venv_python() or sys.executable)
@@ -3221,7 +3256,58 @@ class Handler(BaseHTTPRequestHandler):
                 work_id=str(payload.get("workId") or ""),
                 task_id=str(payload.get("taskId") or ""),
                 class_dir=str(payload.get("classDir") or ""),
-                with_report_png=bool(payload.get("withReportPng", True)))
+                with_report_png=bool(payload.get("withReportPng", True)),
+                reason=str(payload.get("reason") or "pwa-render"))
+            self._json(rep, 200 if rep.get("ok") else 400)
+            return
+        if u.path == "/xxt/grade/upload-preview":
+            # D193：上传前对照表（只读）。local=仅本地；platform=同时读平台已批阅内容。
+            payload: dict = {}
+            try:
+                length = int(self.headers.get("Content-Length") or 0)
+                if length:
+                    payload = json.loads(self.rfile.read(length).decode("utf-8")) or {}
+            except Exception:  # noqa: BLE001
+                payload = {}
+            from .xxt import upload_preview
+            ws = Path(self.ws).resolve()
+            cid = str(payload.get("classId") or "")
+            work = str(payload.get("workId") or "")
+            cdir = str(payload.get("classDir") or "")
+            tid = str(payload.get("taskId") or "")
+            only = str(payload.get("student") or "")
+            read_platform = bool(payload.get("platform"))
+            if read_platform:
+                from .xxt import grade_store
+                drafts = grade_store.read_drafts_normalized(
+                    _xxt_home(), cid, work, ws=ws, class_dir=cdir, task_id=tid)
+                from .xxt.grade_upload import drafts_to_payloads
+                payloads = drafts_to_payloads(drafts, only=only)
+                rep = upload_preview.build_preview(
+                    storage=_xxt_home() / "xxt-storage.json",
+                    course_id=str(payload.get("courseId") or ""),
+                    class_id=cid, cpi=str(payload.get("cpi") or "0"), work_id=work,
+                    payloads=payloads, only=only)
+            else:
+                rep = upload_preview.local_preview(
+                    ws=ws, class_dir=cdir, task_id=tid, class_id=cid, work_id=work,
+                    only=only)
+            self._json(rep, 200 if rep.get("ok") else 400)
+            return
+        if u.path == "/xxt/grade/report-versions":
+            # D193：只读报告版本历史（内容哈希版本，便于与上传清单对照）。
+            payload: dict = {}
+            try:
+                length = int(self.headers.get("Content-Length") or 0)
+                if length:
+                    payload = json.loads(self.rfile.read(length).decode("utf-8")) or {}
+            except Exception:  # noqa: BLE001
+                payload = {}
+            rep = report_versions_view(
+                Path(self.ws).resolve(),
+                class_dir=str(payload.get("classDir") or ""),
+                task_id=str(payload.get("taskId") or ""),
+                student=str(payload.get("student") or ""))
             self._json(rep, 200 if rep.get("ok") else 400)
             return
         if u.path == "/xxt/grade/delete-draft":

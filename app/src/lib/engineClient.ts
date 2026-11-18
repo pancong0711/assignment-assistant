@@ -2599,12 +2599,82 @@ export async function fetchKbCatalog(
 /** POST /xxt/grade/render-from-drafts：按本地双套草稿逐生生成报告（人工在前+附件AI+修订标红）。 */
 export async function renderReportsFromDrafts(
   engineAddr: string, token: string | undefined,
-  payload: { classId: string; workId: string; taskId?: string; classDir?: string; withReportPng?: boolean },
+  payload: { classId: string; workId: string; taskId?: string; classDir?: string
+    withReportPng?: boolean; reason?: string },
 ): Promise<{ ok?: boolean; error?: string; count?: number; dir?: string
-  reports?: { key?: string; student?: string; kind?: string; revised?: boolean; png?: boolean }[] }> {
+  versionsFile?: string
+  reports?: { key?: string; student?: string; kind?: string; revised?: boolean; png?: boolean
+    version?: string; tag?: string; changed?: boolean }[] }> {
   const base = normalizeEngineAddr(engineAddr)
   const res = await fetch(engineUrlWithToken(base, '/xxt/grade/render-from-drafts', token), {
     method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(payload),
+  })
+  const o = (await res.json().catch(() => ({}))) as any
+  if (!res.ok && !o?.error) throw new Error(`HTTP ${res.status}`)
+  return o
+}
+
+/* ---------- D193：上传对照表 + 报告版本历史（只读） ---------- */
+
+export interface XxtUploadPreviewRow {
+  student: string
+  localScore?: number | null
+  localCommentLength?: number
+  reportVersion?: string
+  reportTag?: string
+  platformStatus?: string
+  platformScore?: number | null
+  platformCommentLength?: number | null
+  decision?: string
+  reason?: string
+  needsConfirm?: boolean
+}
+
+export interface XxtUploadPreview {
+  ok?: boolean
+  error?: string
+  mode?: string
+  rows?: XxtUploadPreviewRow[]
+  summary?: { counts?: Record<string, number>; applied?: string[]; unchanged?: string[]
+    skipped?: string[]; conflict?: string[]; failed?: string[]; ok?: boolean }
+  at?: string
+}
+
+/** POST /xxt/grade/upload-preview：上传前对照表。
+ *
+ * `platform=true` 会打开批阅列表读取平台已批阅内容（较慢，但能给出 conflict/unchanged）；
+ * 只读，不写平台任何内容。
+ */
+export async function fetchXxtUploadPreview(
+  engineAddr: string, token: string | undefined,
+  payload: { courseId?: string; classId: string; cpi?: string; workId: string
+    classDir?: string; taskId?: string; student?: string; platform?: boolean },
+): Promise<XxtUploadPreview> {
+  const base = normalizeEngineAddr(engineAddr)
+  const res = await fetch(engineUrlWithToken(base, '/xxt/grade/upload-preview', token), {
+    method: 'POST', headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(payload),
+  })
+  const o = (await res.json().catch(() => ({}))) as XxtUploadPreview
+  if (!res.ok && !o?.error) throw new Error(`HTTP ${res.status}`)
+  return o
+}
+
+export interface XxtReportVersionRow {
+  student?: string; version?: string; tag?: string; at?: string
+  kind?: string; score?: number | null; files?: string[]; reason?: string
+}
+
+/** POST /xxt/grade/report-versions：报告内容哈希版本历史（只读，不回显正文）。 */
+export async function fetchXxtReportVersions(
+  engineAddr: string, token: string | undefined,
+  payload: { classDir: string; taskId: string; student?: string },
+): Promise<{ ok?: boolean; error?: string; count?: number; dir?: string
+  items?: XxtReportVersionRow[] }> {
+  const base = normalizeEngineAddr(engineAddr)
+  const res = await fetch(engineUrlWithToken(base, '/xxt/grade/report-versions', token), {
+    method: 'POST', headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(payload),
   })
   const o = (await res.json().catch(() => ({}))) as any
   if (!res.ok && !o?.error) throw new Error(`HTTP ${res.status}`)

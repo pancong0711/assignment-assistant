@@ -97,7 +97,7 @@
 - `docs/133-D190-xxt-qr-before-avatar.md` — **D190 重新扫码时先显示二维码、登录成功后才显示头像**
 - `docs/134-D191-xxt-login-attach-and-stale-state.md` — **D191 已有扫码任务时页面接管（409 不再卡死）+ 遗留登录态/旧二维码不再冒充当前扫码**
 - `docs/135-D192-xxt-cancel-stuck-login-and-reissue.md` — **D192 审核：卡住的扫码任务可取消并强制重新出码（无需退出学习通账号）**
-- `docs/136-D193-upload-gbk-unicode-and-report-versioning.md` — **D193 上传批语/成绩 GBK 编码崩溃修复 + 报告版本化与已批阅对照方案**
+- `docs/136-D193-upload-gbk-unicode-and-report-versioning.md` — **D193 上传批语/成绩 GBK 编码崩溃修复 + 已批阅三态对照 + 报告内容哈希版本（.versions 历史）**
 
 > **当前活动需求单 = `docs/112-D168`（口径/快照）+ `docs/113-D169`（路线/架构）**；
 > 历史条目保留供追溯，与最新口径冲突时以这两份为准。

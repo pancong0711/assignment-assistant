@@ -299,6 +299,15 @@ def mark_submitted(*, storage, course_id: str, class_id: str, cpi: str, work_id:
 
 # ---------------- §4 grading 产物装配 ----------------
 
+def draft_report_version(d: dict) -> dict:
+    """D193：从草稿里取报告版本（`human.report`）；旧草稿没有则返回空。"""
+    rep = ((d or {}).get("human") or {}).get("report")
+    if not isinstance(rep, dict):
+        return {}
+    return {k: rep.get(k) for k in ("version", "tag", "sha256", "generatedAt", "file", "kind")
+            if rep.get(k) is not None}
+
+
 def build_upload_payloads(ws, task_path) -> list[dict]:
     """从某任务包的批阅产物装配上传 payload（每生一条）。
 
@@ -421,7 +430,9 @@ def drafts_to_payloads(drafts: dict, only: str = "") -> list[dict]:
                             or d.get("images") or []) if isinstance(i, dict)]
         out.append({"key": str(key), "score": eff["score"], "comment": eff["comment"],
                     "images": imgs, "student": str(d.get("student") or ""),
-                    "source": eff["source"], "humanMode": eff["humanMode"]})
+                    "source": eff["source"], "humanMode": eff["humanMode"],
+                    # D193：报告版本随 payload 走，上传清单/对照表与报告页脚可对齐
+                    "report": draft_report_version(d)})
     return sorted(out, key=lambda x: x["key"])
 
 
@@ -462,7 +473,13 @@ def upload_grade(*, storage, course_id: str, class_id: str, cpi: str, work_id: s
                  question_scores: "list[float] | None" = None,
                  send: bool = False, force: bool = False,
                  workspace=None) -> dict:
-    """批阅页写入批语/图片/分数；dry-run 默认只填不提交。"""
+    """批阅页写入批语/图片/分数；dry-run 默认只填不提交。
+
+    D193 §2：上传前先判断平台状态（未批阅 / 已批阅但一致 / 已批阅但冲突），
+    冲突需 `force=True`（= 教师在上传对照表里显式确认覆盖）。
+    """
+    from . import grade_plan
+    from .grade_plan import decide, platform_snapshot
     from .work import validate_work_target
     err = validate_work_target(str(course_id), str(class_id), workspace)
     if err:
@@ -491,16 +508,29 @@ def upload_grade(*, storage, course_id: str, class_id: str, cpi: str, work_id: s
                                f"（status={row.get('status')}）→ 需先设为已交或学生提交")
             result["screenshot"] = _shot(page, "grade-upload-nowa")
             return result
-        if "已批阅" in str(row.get("status") or "") and not force:
-            result.update({"ok": False, "status": "already-reviewed",
-                           "error": "该学生已是「已批阅」；如需覆盖请加 force"})
-            return result
         result["matched"] = {"name": row.get("name"), "status": row.get("status"),
                              "workAnswerId": wa}
         step = "打开批阅页"
         result["url"] = open_mark_page(page, str(course_id), str(class_id), wid, wa)
         result["before"] = read_back(page)
         result["preScreenshot"] = _shot(page, "grade-upload-pre")
+
+        # D193 §2：上传前先做「未批阅 / 已批阅但内容相同 / 已批阅且内容不同」三态判断。
+        # 旧实现只看状态就拒绝或盲目覆盖 —— 教师无法知道“平台那份和我这份是否一样”。
+        plan = decide(status=str(row.get("status") or ""),
+                      local_score=total_score, local_comment=comment,
+                      platform=platform_snapshot(result["before"]),
+                      has_local_content=bool(comment or total_score is not None
+                                             or question_comments or comment_images),
+                      force=bool(force))
+        result.update({"decision": plan["decision"], "decisionReason": plan["reason"],
+                       "needsConfirm": plan["needsConfirm"],
+                       "platformBefore": plan["platformBefore"]})
+        if not plan["upload"]:
+            result.update({"ok": plan["decision"] in (grade_plan.UNCHANGED,),
+                           "status": plan["decision"], "error": plan["reason"],
+                           "skipped": True})
+            return result
 
         # 先传图片（UEditor 会插到文首），再把批语文字放到图片**之前**，保证阅读顺序
         for img in (comment_images or []):
@@ -605,6 +635,11 @@ def write_upload_manifest(ws, class_dir: str, task_id: str, work_id: str,
     data = {
         "workId": str(work_id), "taskId": str(task_id), "classDir": str(class_dir),
         "source": source or prev.get("source") or "",
+        # D193：清单带“这是哪一版报告”的元信息，便于和报告 .versions 索引对照
+        "reportVersions": sorted({
+            str((x or {}).get("report", {}).get("version") or "")
+            for x in (payloads or []) if isinstance(x, dict)
+        } - {""}),
         "generatedAt": prev.get("generatedAt") or time.strftime("%Y-%m-%d %H:%M:%S"),
         "items": [_slim(x) for x in (payloads or [])],
     }

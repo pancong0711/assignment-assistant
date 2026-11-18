@@ -631,9 +631,16 @@ def register(group: click.Group) -> None:
                 reps.append(rep)
                 if len(payloads) > 1:
                     click.echo(json.dumps(rep, ensure_ascii=False, indent=1))
+            from . import grade_plan as _gp
+            buckets = _gp.summarize(reps)
             summary = reps[0] if len(reps) == 1 else {
-                "ok": all(x.get("ok") for x in reps), "count": len(reps),
-                "okCount": sum(1 for x in reps if x.get("ok")), "results": reps}
+                "ok": buckets["ok"], "count": len(reps),
+                "okCount": sum(1 for x in reps if x.get("ok")),
+                # D193：五类汇总，教师能看清谁被上传/跳过/冲突/失败
+                "applied": buckets["applied"], "unchanged": buckets["unchanged"],
+                "skipped": buckets["skipped"], "conflict": buckets["conflict"],
+                "failed": buckets["failed"], "counts": buckets["counts"],
+                "results": reps}
             _journal("xxt_grade_upload",
                      params={"courseId": course_id, "classId": class_id, "workId": work_id,
                              "mode": summary.get("mode"), "fromDrafts": True,

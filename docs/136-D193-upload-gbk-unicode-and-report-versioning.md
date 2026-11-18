@@ -142,3 +142,70 @@ grading/<taskId>/reports/
 | 3 | 直接命令行运行 CLI | 入口强制 UTF-8 |
 | 4 | Python 3.11 语法 | 源码可解析（无 3.12+ 多行 f-string） |
 | 5 | 回归 | 全量 pytest 通过（1747 passed） |
+
+---
+
+## 7. 实施结果（§2 / §3 按推荐方案落地，2026-11-18）
+
+### §2 已批阅三态对照
+
+新增 `engine/src/assist/xxt/grade_plan.py`（纯函数，可离线单测）：
+
+| 决策 | 条件 | 动作 |
+|---|---|---|
+| `new` | 平台未批阅 | 直接上传 |
+| `unchanged` | 已批阅且分数+批语（归一文本）一致 | 跳过，不打扰 |
+| `conflict` | 已批阅且分数或批语不同 | 需教师显式确认（`force`）才覆盖 |
+| `skipped` | 本地没有可上传内容 | 跳过 |
+
+- `text_of()`：批语 HTML → 归一纯文本（去标签/`&nbsp;`/多余空白），仅用于比对；
+- `platform_snapshot()`：`read_back()` 结果 → `{score, commentText, commentLength, commentImages}`；
+- `summarize()`：批量结果五类分桶 `applied / unchanged / skipped / conflict / failed`；
+- `upload_grade()` 接入：打开批阅页后先 `read_back()` 做三态判断，结果字段
+  `decision / decisionReason / needsConfirm / platformBefore`；
+- CLI `--from-drafts` 汇总改为五类分桶（不再只给最后一行）。
+
+### §3 报告内容哈希版本
+
+新增 `engine/src/assist/grading/report_versions.py`：
+
+```text
+grading/<taskId>/reports/
+  <学生>.md/.html/.png                     ← 始终最新（路径不变，前端零改动）
+  .versions/<学生>/<YYYYmmdd-HHMMSS>-<ver>.{md,html,png}
+  .versions/index.json                     ← student/version/sha256/tag/ts/kind/score/reason/files
+```
+
+- 版本号 = `sha256(markdown)[:6]`：**内容不变不产生新版本**（幂等，避免重复生成膨胀）；
+- `render_reports_from_drafts()` 生成后 `report_versions.record(...)`，并把
+  `human.report = {version, tag, sha256, generatedAt, changed, file, kind}` 回写草稿；
+- 每生索引最多保留 30 条、历史文件按 `_MAX_KEEP*3` 上限清理；
+- `upload/drafts_to_payloads()` 带上 `report` 版本；上传清单新增 `reportVersions[]`；
+- 新增只读端点 `POST /xxt/grade/report-versions`（不回显报告正文）。
+
+### 前端
+
+- 「🔍 上传前对照（含平台状态）」：表格列出 学生 / 报告版本 / 本地分数 / 平台状态 / 平台分数 / 决定，
+  并按五类汇总；「按对照表上传」只上传 `new`，`conflict` 需二次确认（列出分差）后才带 `force`；
+- 「🕘 报告版本」：查看版本历史（学生/版本/时间/类型/分数/原因）；
+- 生成报告完成后提示本次版本号，并说明“内容未变不产生新版本”。
+
+### 只读端点
+
+| 端点 | 说明 |
+|---|---|
+| `POST /xxt/grade/upload-preview` | `platform=false` 仅本地；`platform=true` 打开批阅列表读取平台已批阅内容（只读） |
+| `POST /xxt/grade/report-versions` | 报告版本历史（只读，不含正文） |
+
+### 验证
+
+- 新增 `engine/tests/test_d193b_report_versions_and_upload_preview.py`（25 项）
+- 新增 `app/tests/selfcheck-d193-upload-preview-report-version.mjs`
+- 全量 pytest：`1772 passed`；前端 build 通过；`selfcheck:d188–d193` 全部通过
+- 脱敏检查、启动脚本 lint、`git diff --check` 通过
+
+### 隐私边界
+
+- 平台侧只读回显 `分数 / 批语长度 / 图片数`，**不回显批语正文**；
+- 版本索引只存元信息（学生名/版本/分数/文件名），报告正文仍在报告文件内；
+- 上传清单只存图片**元信息**（文件名/字节数），不存 base64。

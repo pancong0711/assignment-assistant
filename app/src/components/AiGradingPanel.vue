@@ -11,6 +11,7 @@ import {
   extractJobError, fetchLlmConfig, fetchXxtClassMap, fetchXxtGradeDrafts, fetchXxtLoginJob,
   fetchXxtReviewIndex, fetchXxtReviewStudents, postLlmProvider, postXxtClassMap,
   startXxtGradeAi, startXxtGradeUpload, renderReportsFromDrafts, testLlmStages,
+  fetchXxtUploadPreview, fetchXxtReportVersions,
   applyTagAudit, fetchTagAudit, fetchTagAuditHistory, runTagAudit, undoTagAudit,
   undoStudentTagApi,
 } from '../lib/engineClient'
@@ -36,6 +37,24 @@ const svgRedraw = ref(false)
 const allowPartial = ref(false)
 /** D171-T1：强制重做（覆盖已有转写/评阅产物，会重新花额度） */
 const forceRedo = ref(false)
+/* D193：上传前对照表（只读）——未批阅/一致/冲突 三态，教师确认后才覆盖。 */
+interface UploadPreviewRow {
+  student: string; localScore?: number | null; localCommentLength?: number
+  reportVersion?: string; reportTag?: string
+  platformStatus?: string; platformScore?: number | null
+  platformCommentLength?: number | null
+  decision?: string; reason?: string; needsConfirm?: boolean
+}
+const previewOpen = ref(false)
+const previewBusy = ref(false)
+const previewRows = ref<UploadPreviewRow[]>([])
+const previewSummary = ref<Record<string, number>>({})
+const previewCheckedPlatform = ref(false)
+/* D193：报告版本历史（只读；便于与上传清单/报告页脚对照）。 */
+const versionsOpen = ref(false)
+const versionsBusy = ref(false)
+const versionsRows = ref<{ student?: string; version?: string; tag?: string; at?: string
+  kind?: string; score?: number | null; files?: string[]; reason?: string }[]>([])
 const busy = ref(false)
 const progress = ref('')
 let pollTimer: number | undefined
@@ -1024,7 +1043,13 @@ async function renderReports() {
     if (r?.ok) {
       const n = r.count ?? (r.reports || []).length
       const types = Array.from(new Set((r.reports || []).map((x) => x.kind))).join('/')
-      progress.value = `✅ 已生成 ${n} 份报告（类型：${types || '自动'}）；写入本地草稿（含报告图）`
+      const vers = Array.from(new Set((r.reports || [])
+        .map((x) => x.tag || x.version).filter(Boolean)))
+      progress.value = `✅ 已生成 ${n} 份报告（类型：${types || '自动'}）`
+        + (vers.length ? `；版本 ${vers.slice(0, 3).join('、')}${vers.length > 3 ? ' …' : ''}` : '')
+        + '；写入本地草稿（含报告图）'
+        + ((r.reports || []).some((x) => x.changed === false)
+          ? '；部分学生内容未变（版本号不变，不重复产生历史）' : '')
       await loadStudents()
       // D126-B：让教师总结报告跟着刷新（评阅结果没变也会重算，成本很低：纯统计）
       reportReloadKey.value += 1
@@ -1040,12 +1065,88 @@ async function renderReports() {
     }
   } catch (e) { busy.value = false; progress.value = `启动失败：${String(e)}` }
 }
-async function uploadAll(force: boolean) {
+/** D193：打开上传对照表。`platform=true` 会读取平台已批阅内容（较慢但更准）。 */
+async function openUploadPreview(platform: boolean) {
+  const w = curWork.value
+  if (!w) { msg.value = '请选择作业'; return }
+  const taskId = packId.value || padId.value || resolvedScope.value
+  if (!curWorkDir.value) { msg.value = '⚠ 请先关联本地班级目录'; return }
+  previewOpen.value = true
+  previewBusy.value = true
+  previewRows.value = []
+  previewSummary.value = {}
+  previewCheckedPlatform.value = platform
+  progress.value = platform
+    ? '正在读取平台批阅状态并比对（只读，不会修改平台内容）……'
+    : '正在整理本地分数/批语/报告版本……'
+  try {
+    const r = await fetchXxtUploadPreview(props.engineAddr, props.token, {
+      courseId: w.courseId, classId: w.classId, cpi: w.cpi, workId: w.workId,
+      classDir: curWorkDir.value, taskId: taskId || undefined, platform,
+    })
+    if (!r?.ok) { progress.value = `❌ 对照表生成失败：${r?.error || '未知错误'}`; return }
+    previewRows.value = r.rows || []
+    previewSummary.value = (r.summary?.counts || {}) as Record<string, number>
+    const c = previewSummary.value
+    progress.value = `✅ 对照表就绪：可上传 ${c.new ?? 0} 人，一致 ${c.unchanged ?? 0} 人，`
+      + `冲突 ${c.conflict ?? 0} 人，无可传内容 ${c.skipped ?? 0} 人`
+      + (platform ? '' : '（未读取平台状态：点「读取平台状态」更准确）')
+  } catch (e) {
+    progress.value = `对照表失败：${String((e as Error)?.message || e)}`
+  } finally { previewBusy.value = false }
+}
+
+/** D193：查看报告版本历史（只读；同一内容不会重复产生版本）。 */
+async function loadReportVersions() {
+  const taskId = packId.value || padId.value || resolvedScope.value
+  if (!curWorkDir.value || !taskId) { msg.value = '⚠ 请先关联班级目录并选择作业包'; return }
+  versionsOpen.value = true
+  versionsBusy.value = true
+  versionsRows.value = []
+  try {
+    const r = await fetchXxtReportVersions(props.engineAddr, props.token, {
+      classDir: curWorkDir.value, taskId,
+    })
+    if (!r?.ok) { progress.value = `❌ 版本读取失败：${r?.error || '未知错误'}`; return }
+    versionsRows.value = r.items || []
+    progress.value = `报告版本：${versionsRows.value.length} 条记录（目录 ${r.dir || ''}）`
+  } catch (e) {
+    progress.value = `版本读取失败：${String((e as Error)?.message || e)}`
+  } finally { versionsBusy.value = false }
+}
+
+/** 确认执行上传：只上传「可上传」的人；冲突需再次确认后才 force 覆盖。 */
+async function confirmUploadFromPreview() {
   const w = curWork.value
   if (!w) return
-  const n = Object.keys(drafts.value).length
+  const conflicts = previewRows.value.filter(r => r.decision === 'conflict')
+  const uploadable = previewRows.value.filter(r => r.decision === 'new')
+  if (!uploadable.length && !conflicts.length) {
+    msg.value = '没有需要上传的学生（都一致或无可传内容）'
+    return
+  }
+  const lines: string[] = []
+  lines.push(`可上传（未批阅）：${uploadable.length} 人`)
+  if (conflicts.length) {
+    lines.push(`已批阅且内容不同：${conflicts.length} 人 ——`)
+    for (const c of conflicts.slice(0, 10)) {
+      lines.push(`  · ${c.student}：平台 ${c.platformScore ?? '—'} 分 → 本地 ${c.localScore ?? '—'} 分`)
+    }
+    if (conflicts.length > 10) lines.push(`  …共 ${conflicts.length} 人`)
+    lines.push('')
+    lines.push('⚠ 这些学生平台已有批阅，继续将**覆盖**平台内容。')
+  }
+  if (!window.confirm(lines.join('\n') + '\n\n确定继续上传？')) return
+  previewOpen.value = false
+  await uploadAll(conflicts.length > 0 && previewCheckedPlatform.value, uploadable.map(r => r.student))
+}
+
+async function uploadAll(force: boolean, only?: string[]) {
+  const w = curWork.value
+  if (!w) return
+  const n = only?.length ?? Object.keys(drafts.value).length
   if (!n) { msg.value = '还没有本地草稿：先跑 AI 批阅或逐生填写后保存'; return }
-  if (force && !window.confirm(`强制覆盖：将上传 ${n} 份本地草稿（含打分）并覆盖平台已批阅内容？`)) return
+  if (force && !only && !window.confirm(`强制覆盖：将上传 ${n} 份本地草稿（含打分）并覆盖平台已批阅内容？`)) return
   try {
     const jobId = await startXxtGradeUpload(props.engineAddr, props.token, {
       courseId: w.courseId, classId: w.classId, cpi: w.cpi, workId: w.workId,
@@ -1493,13 +1594,118 @@ onMounted(async () => {
         报告类型**自动**由逐生审核决定（AI批阅报告 / 人工批阅报告 / 人工在前+【附件】AI / …（人工修订））
       </span>
       <button class="btn" :disabled="busy" @click="renderReports">📄 一键生成批阅报告</button>
+      <button class="btn" :disabled="busy || versionsBusy" @click="loadReportVersions">
+        🕘 报告版本
+      </button>
       <span style="flex:1"></span>
+      <!-- D193：上传先看对照表（未批阅/一致/冲突），再决定覆盖，避免盲传 -->
+      <button class="btn primary" :disabled="busy || previewBusy" @click="openUploadPreview(true)">
+        🔍 上传前对照（含平台状态）
+      </button>
       <button class="btn" :disabled="busy" @click="uploadAll(false)">⬆⬆ 上传全部批阅（含打分）</button>
       <button class="btn" :disabled="busy" @click="uploadAll(true)">⬆⬆ 强制覆盖上传全部</button>
     </div>
     <p class="hint" style="margin-top:6px">
       完整逐生预览（作答图 + 两栏批语 + 旋转/上下位）仍在「作业预览-学习通 → 批阅图片 → 逐生预览」。
     </p>
+
+    <!-- D193：上传对照表（只读；冲突项需再次确认才覆盖） -->
+    <div v-if="previewOpen" class="card" style="margin-top:10px; border:1px solid #d97706">
+      <h3 style="margin:0 0 6px">上传前对照
+        <small style="font-weight:400;color:var(--c-muted)">
+          {{ previewCheckedPlatform ? '已读取平台状态（只读）' : '仅本地信息' }}
+          · 共 {{ previewRows.length }} 人
+        </small>
+      </h3>
+      <p class="hint" style="margin:4px 0">
+        可上传 <b>{{ previewSummary.new ?? 0 }}</b> ·
+        已一致（跳过）<b>{{ previewSummary.unchanged ?? 0 }}</b> ·
+        冲突（需确认）<b style="color:#b45309">{{ previewSummary.conflict ?? 0 }}</b> ·
+        无可传内容 <b>{{ previewSummary.skipped ?? 0 }}</b> ·
+        失败 <b style="color:#b91c1c">{{ previewSummary.failed ?? 0 }}</b>
+      </p>
+      <div style="max-height:280px; overflow:auto; border:1px solid var(--c-border); border-radius:8px">
+        <table style="width:100%; border-collapse:collapse; font-size:13px">
+          <thead>
+            <tr style="background:#f6f6f8">
+              <th style="text-align:left; padding:4px 8px">学生</th>
+              <th style="text-align:left; padding:4px 8px">报告版本</th>
+              <th style="text-align:left; padding:4px 8px">本地分数</th>
+              <th style="text-align:left; padding:4px 8px">平台状态</th>
+              <th style="text-align:left; padding:4px 8px">平台分数</th>
+              <th style="text-align:left; padding:4px 8px">决定</th>
+            </tr>
+          </thead>
+          <tbody>
+            <tr v-for="r in previewRows" :key="r.student">
+              <td style="padding:4px 8px">{{ r.student }}</td>
+              <td style="padding:4px 8px">
+                <code v-if="r.reportVersion">{{ r.reportTag || r.reportVersion }}</code>
+                <span v-else style="color:#b45309">未生成</span>
+              </td>
+              <td style="padding:4px 8px">{{ r.localScore ?? '—' }}</td>
+              <td style="padding:4px 8px">{{ r.platformStatus || '—' }}</td>
+              <td style="padding:4px 8px">{{ r.platformScore ?? '—' }}</td>
+              <td style="padding:4px 8px" :title="r.reason || ''">
+                <span v-if="r.decision==='new'" style="color:#15803d">可上传</span>
+                <span v-else-if="r.decision==='unchanged'" style="color:#6b7280">一致·跳过</span>
+                <span v-else-if="r.decision==='conflict'" style="color:#b45309;font-weight:600">冲突·需确认</span>
+                <span v-else-if="r.decision==='skipped'" style="color:#6b7280">无可传内容</span>
+                <span v-else>{{ r.decision || '—' }}</span>
+              </td>
+            </tr>
+          </tbody>
+        </table>
+      </div>
+      <p style="margin-top:8px">
+        <button class="btn primary" :disabled="previewBusy || busy" @click="confirmUploadFromPreview">
+          按对照表上传
+        </button>
+        <button class="btn" style="margin-left:8px" :disabled="previewBusy"
+                @click="openUploadPreview(false)">仅本地重算</button>
+        <button class="btn" style="margin-left:8px" :disabled="previewBusy"
+                @click="openUploadPreview(true)">🔍 重新读取平台状态</button>
+        <button class="btn" style="margin-left:8px" @click="previewOpen=false">关闭</button>
+        <span v-if="previewBusy" class="hint" style="margin-left:8px">读取中…</span>
+      </p>
+    </div>
+
+    <!-- D193：报告版本历史（内容哈希；同一内容不重复产生版本） -->
+    <div v-if="versionsOpen" class="card" style="margin-top:10px">
+      <h3 style="margin:0 0 6px">报告版本
+        <small style="font-weight:400;color:var(--c-muted)">
+          {{ versionsBusy ? '读取中…' : `${versionsRows.length} 条` }} · 版本号=报告内容哈希前 6 位
+        </small>
+      </h3>
+      <div style="max-height:240px; overflow:auto">
+        <table style="width:100%; border-collapse:collapse; font-size:13px">
+          <thead>
+            <tr style="background:#f6f6f8">
+              <th style="text-align:left; padding:4px 8px">学生</th>
+              <th style="text-align:left; padding:4px 8px">版本</th>
+              <th style="text-align:left; padding:4px 8px">生成时间</th>
+              <th style="text-align:left; padding:4px 8px">类型</th>
+              <th style="text-align:left; padding:4px 8px">分数</th>
+              <th style="text-align:left; padding:4px 8px">原因</th>
+            </tr>
+          </thead>
+          <tbody>
+            <tr v-for="(v, i) in versionsRows" :key="`${v.student}-${v.version}-${i}`">
+              <td style="padding:4px 8px">{{ v.student }}</td>
+              <td style="padding:4px 8px"><code>{{ v.tag || v.version }}</code></td>
+              <td style="padding:4px 8px">{{ v.at }}</td>
+              <td style="padding:4px 8px">{{ v.kind || '—' }}</td>
+              <td style="padding:4px 8px">{{ v.score ?? '—' }}</td>
+              <td style="padding:4px 8px; color:var(--c-muted)">{{ v.reason || '—' }}</td>
+            </tr>
+          </tbody>
+        </table>
+      </div>
+      <p style="margin-top:6px">
+        <button class="btn" :disabled="versionsBusy" @click="loadReportVersions">刷新</button>
+        <button class="btn" style="margin-left:8px" @click="versionsOpen=false">关闭</button>
+      </p>
+    </div>
 
     <!-- D130-T9：评阅规则卡（教师可见/可改评分口径；此前完全硬编码） -->
     <GradingRulesCard :engine-addr="props.engineAddr" :token="props.token"

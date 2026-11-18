@@ -131,16 +131,20 @@ def build_draft_report(d: dict) -> "tuple[str, str]":
 
 def render_reports_from_drafts(ws, *, class_id: str, work_id: str, task_id: str = "",
                                class_dir: str = "", home=None, katex_dir=None,
-                               with_report_png: bool = True) -> dict:
+                               with_report_png: bool = True,
+                               reason: str = "") -> dict:
     """D92-R2：按**已保存的双套草稿**逐生生成报告 PNG（人工在前 + 【附件】AI + 修订标红）。
 
     - 读 <xxt_home>/grade-drafts/<classId>/<workId>.json → normalize_draft；
     - 按 {构成 × 修订} 生成 md/html/png；写回草稿 human.reportImages（覆盖旧报告图）。
+    - D193：同时登记**内容哈希版本**（`reports/.versions/index.json`）并把版本号写进草稿
+      `human.report`；`reason` 记录本次生成原因（三键/强制重做/手动生成等）。
     """
     import base64
     from pathlib import Path
     from ..xxt import grade_store
     from .report import (_mode_report_md, report_html_from_md, html_to_png)
+    from . import report_versions
 
     ws = Path(ws)
     if home is None:
@@ -164,30 +168,53 @@ def render_reports_from_drafts(ws, *, class_id: str, work_id: str, task_id: str 
                                    revision=d.get("revision") or {},
                                    revised=bool(d.get("revised")))
         title = f"{student} 批阅报告"
+        # D193：固定“最新”文件名（前端零改动），版本信息放 .versions/index.json
         base = out_root / f"{student}"
         md_file = base.with_suffix(".md"); md_file.write_text(md, encoding="utf-8")
         html_file = base.with_suffix(".html")
-        html_file.write_text(report_html_from_md(md, kind=kind, title=title,
-                                                 katex_dir=katex_dir), encoding="utf-8")
+        html_text = report_html_from_md(md, kind=kind, title=title, katex_dir=katex_dir)
+        html_file.write_text(html_text, encoding="utf-8")
         imgs = []
+        produced: list[Path] = [md_file, html_file]
         if with_report_png:
-            png = html_to_png(report_html_from_md(md, kind=kind, title=title, katex_dir=katex_dir),
-                              base.with_suffix(".png"))
+            png = html_to_png(html_text, base.with_suffix(".png"))
             if png and Path(png).is_file():
+                produced.append(Path(png))
                 imgs.append({"name": f"{student}-report.png",
                              "data_b64": base64.b64encode(Path(png).read_bytes()).decode()})
+        # D193 §3：登记内容哈希版本（内容未变不产生新版本；历史进 .versions/）
+        ver = report_versions.record(
+            out_root, student, md, kind=kind,
+            score=(d.get("human") or {}).get("score")
+            if (d.get("human") or {}).get("score") is not None
+            else (d.get("ai") or {}).get("score"),
+            reason=str(reason or "render_reports_from_drafts"),
+            files=produced)
         # 报告图回写人工套（供上传）；不动 ai 基线
         # D175-FIX：必须写带 scope 的**同一份**草稿（此前漏传 ws/class_dir/task_id
         # → 落到旧布局 `<xxt_home>/grade-drafts/<classId>/<workId>.json`，
         # 与刚读的 `grading/<taskId>/drafts/` 不是同一份 → 报告预览永远"未生成"）。
+        human_patch: dict = {}
+        if imgs:
+            human_patch["reportImages"] = imgs
+        # D193：版本号与上传清单共用同一口径，教师可直接对照
+        human_patch["report"] = {
+            "version": ver["version"], "tag": ver["tag"],
+            "sha256": ver["sha256"], "generatedAt": ver["entry"]["at"],
+            "changed": ver["changed"], "file": f"{student}.png", "kind": kind,
+        }
         grade_store.save_draft_sets(home, class_id, work_id, key,
-                                    human={"reportImages": imgs} if imgs else None,
+                                    human=human_patch,
                                     student=student,
                                     ws=ws, class_dir=str(class_dir or f"classes/{class_id}"),
                                     task_id=str(task_id))
         done.append({"key": key, "student": student, "kind": kind,
-                     "revised": bool(d.get("revised")), "png": bool(imgs)})
-    return {"ok": True, "count": len(done), "reports": done, "dir": str(out_root)}
+                     "revised": bool(d.get("revised")), "png": bool(imgs),
+                     "version": ver["version"], "tag": ver["tag"],
+                     "changed": ver["changed"]})
+    return {"ok": True, "count": len(done), "reports": done, "dir": str(out_root),
+            "versionsFile": str(out_root / report_versions.VERSIONS_DIR
+                                / report_versions.INDEX_NAME)}
 
 
 def save_transcripts_to_drafts(ws, *, class_id: str, work_id: str, task_id: str,
