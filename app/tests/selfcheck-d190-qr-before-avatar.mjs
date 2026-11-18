@@ -60,7 +60,7 @@ must(/扫码登录失败\$\{why \? `（\$\{why\}）` : ''\}：\$\{detailText \|\
 must(/_XXT_AVATAR = None/.test(servePy), '登录开始未清理头像缓存')
 must(/def _xxt_task_started_at/.test(servePy), '缺 _xxt_task_started_at')
 must(/"started_at": time\.time\(\)/.test(servePy), '_start_stream_job 未记录 started_at')
-must(/since: float = 0\.0/.test(servePy) && /if since and mtime < float\(since\) - 1\.0/.test(servePy),
+must(/since: float = 0\.0/.test(servePy) && /since and mtime < float\(since\) - 1\.0/.test(servePy),
   'login state 未按任务起点过滤旧状态')
 must(/job_id=\$\{encodeURIComponent\(jobId\)\}/.test(client), 'engineClient 未传 job_id')
 

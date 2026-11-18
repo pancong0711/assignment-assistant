@@ -56,6 +56,10 @@ let loginJobCheckedAt = 0
  *   头像另起一次独立刷新（refreshAvatarAfterLogin），不阻塞登录状态展示。 */
 let avatarRefreshedAt = 0
 const AVATAR_REFRESH_GAP_MS = 30000
+/* D191：本页是否接管了一个“引擎里已在跑”的扫码任务（409 不是失败）。 */
+let attachedToRunningJob = false
+/* D191：只读状态是否已明确“没有在等扫码”（二维码是上一轮残留）→ 不再显示等待扫码。 */
+const qrStale = ref(false)
 let extractTimer: number | undefined
 
 /** D188：错误/原因里只脱敏展示，绝不把 cookie/token/ticket 值带到界面。 */
@@ -145,8 +149,14 @@ async function refreshStatus() {
     statusReasons.value = r.info?.reasons || []
     const redirectTs = Number(r.login_redirect_ts || 0)
     // 本次重新扫码成功之后的旧跳转记录不再提示（跨页面刷新也保留判断）。
-    loginRedirect.value = r.login_redirect === true
-      && !(reloginAt.value > 0 && redirectTs <= reloginAt.value)
+    // D191：登录成功后引擎已把该记录翻成 loginRedirect=false；否则用 loginCompletedTs
+    // （最近一次扫码登录成功时间）兜底——比它更早的“被跳登录页”记录一律不再提示，
+    // 避免登录成功后红字一直挂着、让人以为还要再扫一次。
+    const loginOkTs = Number(r.login_completed_ts || 0)
+    const staleRedirect = (redirectTs > 0) && (
+      (reloginAt.value > 0 && redirectTs <= reloginAt.value)
+      || (loginOkTs > 0 && redirectTs <= loginOkTs))
+    loginRedirect.value = r.login_redirect === true && !staleRedirect
     if (r.verdict === 'alive') {
       // D190：扫码任务进行中不要用“已登录”顶掉“二维码已就绪”——
       // 教师看到的提示必须是当前扫码阶段，否则会以为扫完了、实际还在等码。
@@ -200,21 +210,33 @@ async function startScan() {
   // D190：发起的这一刻起旧会话/旧头像都不再可信；头像位必须立刻让给二维码，
   // 否则“已生成二维码”提示下仍显示上一次登录的头像，教师找不到码可扫。
   avatar.value = null
-  loginHint.value = loginStartedAlive
-    ? '已发起重新扫码任务：正在生成新二维码（旧会话可能立即失效）……'
-    : '已发起扫码任务：正在生成二维码……'
+  attachedToRunningJob = false
+  qrStale.value = false
   try {
-    loginJobId = await startXxtLogin(engUrl.value, tok.value)
+    const started = await startXxtLogin(engUrl.value, tok.value)
+    if (started.kind === 'busy') {
+      // D191：409 不是失败——已有扫码任务在跑（可能来自上一个页面/上一次点击）。
+      // 旧逻辑直接把它当错误显示，二维码永远出不来，教师只能关引擎重启。
+      // 现在接管该任务：继续轮询它的二维码，提示里说明“已接上正在进行的任务”。
+      attachedToRunningJob = true
+      loginJobId = started.jobId
+      qrStartedAt = Date.now() - started.ageSec * 1000
+      loginHint.value = started.ageSec > 0
+        ? `已接上正在进行的扫码任务（已运行 ${started.ageSec}s）：正在显示它的二维码……`
+        : '已接上正在进行的扫码任务：正在显示它的二维码……'
+      if (started.hint) loginHint.value += `\n${started.hint}`
+    } else {
+      loginJobId = started.jobId
+      loginHint.value = loginStartedAlive
+        ? '已发起重新扫码任务：正在生成新二维码（旧会话可能立即失效）……'
+        : '已发起扫码任务：正在生成二维码……'
+    }
     void startQrPolling(run)
   } catch (e) {
     qrLoading.value = false
     const msg = maskSensitive(String((e as Error)?.message || e))
-    qrLoading.value = false
-    // D189：409=已有登录任务在跑；引擎把原因放在 error 里，直接展示。
-    loginHint.value = /已有扫码登录任务/.test(msg)
-      ? `⚠ ${msg}`
-      : `启动失败：${msg}（检查引擎在线/playwright 安装项）`
-    // 409 时 loginJobId 为空：用不带 job_id 的只读状态说明当前“已在跑”的阶段。
+    loginHint.value = `启动失败：${msg}（检查引擎在线/playwright 安装项）`
+    // 用不带 job_id 的只读状态说明当前引擎看到的阶段（可能是上一轮遗留，引擎会过滤）。
     const st = await fetchXxtLoginState(engUrl.value, tok.value)
     const detail = describeLoginState(st)
     if (detail) loginHint.value += `\n${detail}`
@@ -233,6 +255,8 @@ async function relogin() {
   qrReady = false
   qrLoading.value = true
   avatar.value = null
+  qrStale.value = false
+  attachedToRunningJob = false
   webSessionSuspect.value = false
   loginHint.value = '已清除旧二维码/任务状态，正在重新发起扫码登录……'
   await startScan()
@@ -255,6 +279,15 @@ async function startQrPolling(run: number) {
       loginJobCheckedAt = Date.now()
       try {
         const job = await fetchXxtLoginJob(engUrl.value, tok.value, loginJobId)
+        if (job.status === 'missing') {
+          // D191：接管来的任务可能已随引擎重启消失；二维码也就不再可信。
+          qrcode.value = ''
+          qrReady = false
+          qrLoading.value = false
+          loginHint.value = '上一次扫码任务已结束（引擎可能已重启），请点「🔁 重新扫码登录」重新出码'
+          stopLoginPolling()
+          return
+        }
         if (job.status === 'failed') {
           const line = maskSensitive(String((job.lines || []).slice(-1)[0]
             || `任务状态：${job.status}`))
@@ -308,18 +341,32 @@ async function startQrPolling(run: number) {
         qrcode.value = url
         qrReady = true
         qrLoading.value = false
-        loginHint.value = '二维码已就绪，请用学习通 App 扫描'
+        qrStale.value = false
+        loginHint.value = attachedToRunningJob
+          ? '已接上正在进行的扫码任务，二维码已就绪，请用学习通 App 扫描'
+          : '二维码已就绪，请用学习通 App 扫描'
       } else if (loginJobId && Date.now() - qrStartedAt > 12000) {
         try {
           const job = await fetchXxtLoginJob(engUrl.value, tok.value, loginJobId)
           if (job.status !== 'running') {
             const line = (job.lines || []).slice(-1)[0] || `任务状态：${job.status}`
             qrLoading.value = false
-            loginHint.value = `二维码生成失败：${line}`
+            qrStale.value = true
+            loginHint.value = `二维码不可用：${line}。请点「🔁 重新扫码登录」重新出码`
             stopLoginPolling()
             return
           }
         } catch { /* 任务状态查询失败时继续重试 QR */ }
+      } else if (!loginJobId && !qrFiled) {
+        // D191：没有任务在跑且引擎说二维码不是本轮的（已清掉/是上一轮残留）→
+        // 不能继续挂着“等待扫码”；提示重新出码，并停止空转轮询。
+        qrcode.value = ''
+        qrReady = false
+        qrLoading.value = false
+        qrStale.value = true
+        loginHint.value = '没有正在等待的扫码任务（二维码已失效或已被清理），请点「🔁 重新扫码登录」重新出码'
+        stopLoginPolling()
+        return
       } else {
         const stage = String(st?.stage || '')
         // D190：二维码/浏览器阶段已明确失败 → 立刻收尾给出原因，不要一直转圈。
@@ -1759,11 +1806,16 @@ onUnmounted(() => { loginSeq += 1; stopLoginPolling(); stopExtractPolling(); sto
                  style="width:150px; height:150px; display:flex; align-items:center; justify-content:center; flex-direction:column; gap:6px; color:var(--c-muted)">
               <span style="font-size:28px">⏳</span><small>二维码生成中…</small>
             </div>
+            <div v-else-if="qrStale"
+                 style="width:150px; height:150px; display:flex; align-items:center; justify-content:center; flex-direction:column; gap:6px; color:#b45309">
+              <span style="font-size:28px">⌛</span><small>二维码已失效</small>
+            </div>
             <span v-else class="hint" style="color:var(--c-muted)">待扫码</span>
           </div>
           <div style="margin-top:6px">
             {{ qrcode ? '请用学习通 App 扫码'
-              : (loginFlowActive ? '○ 等待出码' : (verdict==='alive' ? '● 已登录' : '○ 未登录/失效')) }}
+              : (loginFlowActive ? '○ 等待出码'
+                : (qrStale ? '⌛ 需重新出码' : (verdict==='alive' ? '● 已登录' : '○ 未登录/失效'))) }}
           </div>
           <div v-if="qrLoading && !qrcode" class="hint" style="color:var(--c-muted); margin-top:4px">
             二维码生成中（浏览器启动约 5–20s）

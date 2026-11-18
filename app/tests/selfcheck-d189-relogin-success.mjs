@@ -21,7 +21,8 @@ must(/LOGIN_STAGE_HINT/.test(view) && /function describeLoginState/.test(view),
   '缺少登录阶段→可读原因映射')
 must(/等待扫码超时/.test(view), '超时未给出可读提示')
 must(/二维码生成\/浏览器阶段失败/.test(view), '二维码/浏览器失败未给出可读提示')
-must(/已有扫码登录任务/.test(view), '409 单实例提示未透传')
+must(/已有扫码登录任务/.test(view) || /已有扫码登录任务/.test(servePy),
+  '409 单实例提示未透传（D191 起由页面接管并在 hint 中说明）')
 must(/maskSensitive\(String\(st\.error/.test(view), '登录状态错误未脱敏')
 
 // 后端：基线判定 + 单实例 + 只读状态

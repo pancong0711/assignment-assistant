@@ -375,6 +375,10 @@ export interface XxtSessionStatus {
   loginRedirect?: boolean
   /** D188：上述跳转记录的时间戳（epoch 秒）；仅用于前端判断是否早于本次重新登录。 */
   loginRedirectTs?: number
+  /** D191：最近一次扫码登录成功完成的时间（epoch 秒，0=无）；隐藏更早的“被跳登录页”提示。 */
+  loginCompletedTs?: number
+  /** D191：当前仍在运行的扫码登录任务（空对象=没有）；刷新页面后可据此接上二维码。 */
+  loginJob?: { job_id?: string; started_at?: number; age?: number }
 }
 
 export interface XxtRunRow {
@@ -389,7 +393,8 @@ export interface XxtRunRow {
 /** GET /xxt/status：体检（engine 侧 TTL 缓存）+ 头像 data-URL（alive 时非空）。 */
 export async function fetchXxtStatus(engineAddr: string, token?: string)
   : Promise<{ verdict: string; avatar_dataurl?: string | null; info?: XxtSessionStatus
-              login_redirect?: boolean; login_redirect_ts?: number }> {
+              login_redirect?: boolean; login_redirect_ts?: number
+              login_completed_ts?: number }> {
   const base = normalizeEngineAddr(engineAddr)
   const o = (await getJson2(engineUrlWithToken(base, '/xxt/status', token))) as
     { ok: boolean; xxt?: XxtSessionStatus; avatar?: { ok?: boolean; dataurl?: string } }
@@ -400,20 +405,43 @@ export async function fetchXxtStatus(engineAddr: string, token?: string)
     info: x,
     login_redirect: x.loginRedirect === true,
     login_redirect_ts: Number(x.loginRedirectTs || 0) || 0,
+    login_completed_ts: Number(x.loginCompletedTs || 0) || 0,
   }
 }
 
+/** D191：`/xxt/login/start` 的不同返回。
+ *
+ * `busy` = 已有扫码任务在跑（409）：**不是失败**，页面应接管该任务继续显示二维码，
+ * 而不是把教师卡在“已有任务在进行中”。
+ */
+export type XxtLoginStart =
+  | { kind: 'started'; jobId: string }
+  | { kind: 'busy'; jobId: string; startedAt: number; ageSec: number; error: string; hint: string }
+
 /** POST /xxt/login/start：后台扫码登录任务（job_id 起步，QR 由 /xxt/qr 轮询）。 */
-export async function startXxtLogin(engineAddr: string, token?: string): Promise<string> {
+export async function startXxtLogin(
+  engineAddr: string, token?: string,
+): Promise<XxtLoginStart> {
   const base = normalizeEngineAddr(engineAddr)
   const res = await fetch(engineUrlWithToken(base, '/xxt/login/start', token), { method: 'POST' })
   const o = (await res.json().catch(() => ({}))) as {
-    job_id?: string; ok?: boolean; error?: string; hint?: string; stage?: string }
+    job_id?: string; ok?: boolean; error?: string; hint?: string; stage?: string
+    startedAt?: number; ageSec?: number }
+  if (res.status === 409 && o.stage === 'busy') {
+    return {
+      kind: 'busy',
+      jobId: String(o.job_id || ''),
+      startedAt: Number(o.startedAt || 0) || 0,
+      ageSec: Number(o.ageSec || 0) || 0,
+      error: String(o.error || '已有扫码登录任务在进行中'),
+      hint: String(o.hint || ''),
+    }
+  }
   if (!res.ok) {
-    // D189：409 = 已有登录任务在跑；把引擎的可读原因透传，不要只剩 “HTTP 409”。
+    // D189：把引擎的可读原因透传，不要只剩 “HTTP 409”。
     throw new Error(o.error || o.hint || `HTTP ${res.status}`)
   }
-  return String(o.job_id || '')
+  return { kind: 'started', jobId: String(o.job_id || '') }
 }
 
 /** D189：GET /xxt/login/state —— 只读登录阶段（不含 cookie 值/token）。 */
@@ -430,6 +458,7 @@ export interface XxtLoginState {
  *
  * D190：传 `jobId` 时引擎只认该任务开始后写入的状态，避免把上一轮 `logged_in`
  * 当成这一轮的成功。
+ * D191：不带 jobId 时（没有任务在跑），引擎会过滤上一轮遗留的 `logged_in`/旧二维码。
  */
 export async function fetchXxtLoginState(
   engineAddr: string, token?: string, jobId?: string,
@@ -468,6 +497,8 @@ export function extractJobError(output: string): string {
 export interface XxtLoginJobStatus {
   status: string
   returncode?: number | null
+  /** D191：任务开始 epoch（/jobs 透传；仅诊断用，过滤仍以 job_id 为准）。 */
+  started_at?: number
   lines?: string[]
 }
 
@@ -475,13 +506,18 @@ export async function fetchXxtLoginJob(
   engineAddr: string, token: string | undefined, jobId: string,
 ): Promise<XxtLoginJobStatus> {
   const base = normalizeEngineAddr(engineAddr)
-  const o = (await getJson2(engineUrlWithToken(
-    base, `/jobs/${encodeURIComponent(jobId)}`, token))) as {
-      status?: string; returncode?: number | null; lines?: string[]
+  const res = await fetch(engineUrlWithToken(base, `/jobs/${encodeURIComponent(jobId)}`, token))
+  if (res.status === 404) {
+    // D191：引擎重启/任务过期后 job 不再存在——调用方据此停止轮询，而不是无限“生成中”。
+    return { status: 'missing', returncode: null, started_at: 0, lines: [] }
+  }
+  const o = (await res.json().catch(() => ({}))) as {
+      status?: string; returncode?: number | null; lines?: string[]; started_at?: number
     }
   return {
     status: String(o.status ?? 'unknown'),
     returncode: o.returncode ?? null,
+    started_at: Number(o.started_at || 0) || 0,
     lines: Array.isArray(o.lines) ? o.lines.map(String) : [],
   }
 }

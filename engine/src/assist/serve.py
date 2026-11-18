@@ -208,6 +208,18 @@ def _xxt_login_job_running() -> "str | None":
     return None
 
 
+def _xxt_login_job_running_info() -> "dict | None":
+    """D191：仍在运行的 xxt_login 任务摘要（job_id/started_at/已运行秒数），没有则 None。"""
+    with _JOBS_LOCK:
+        for jid, info in _JOBS.items():
+            if str(info.get("item") or "") == "xxt_login" and \
+                    str(info.get("status") or "") == "running":
+                t0 = float(info.get("started_at") or 0.0)
+                return {"job_id": jid, "started_at": t0,
+                        "age": max(0, int(time.time() - t0)) if t0 else 0}
+    return None
+
+
 def _mask_secret_text(text: str) -> str:
     """D189：错误文本脱敏（token/cookie/password/ticket 的值），供只读状态接口使用。"""
     import re as _re
@@ -227,23 +239,39 @@ def _xxt_task_started_at(job_id: str) -> float:
 
 
 def _xxt_login_state(home: "Path | None" = None,
-                     since: float = 0.0) -> dict:
-    """D189/D190：只读登录状态（阶段/错误/URL 主机/cookie 名），不含任何敏感值。
+                     since: float = 0.0,
+                     readonly_since: float = 0.0) -> dict:
+    """D189/D190/D191：只读登录状态（阶段/错误/URL 主机/cookie 名），不含任何敏感值。
 
     D190：`since>0` 时，若 `xxt-login-state.json` 的 mtime 早于该时间，说明它是
     **上一轮**登录遗留（例如上一轮已 `logged_in`），本次任务还没写新状态。
     此时返回空 stage，避免前端把旧“已登录”误当成本轮成功。
+
+    D191：`readonly_since>0`（**本进程没有登录任务在跑**时的只读查询）时：
+      - 状态文件并不比它新 → 那是上一轮遗留，不采信（否则会一直显示旧 `logged_in`）；
+      - 没有状态文件、但 `xxt-qr.png` 也不新鲜 → 二维码同样是上一轮的残留，`qrExists=False`。
+    避免“二维码早被清掉/任务早结束，页面却还显示已生成二维码、等待扫码”。
     """
     home = Path(home) if home else _xxt_home()
     p = home / "xxt-login-state.json"
+    qr = home / "xxt-qr.png"
+    qr_exists = qr.is_file()
     out = {"ok": True, "stage": "", "error": "", "urlHost": "",
-           "cookies": [], "updatedAt": 0, "qrExists": (home / "xxt-qr.png").is_file()}
+           "cookies": [], "updatedAt": 0, "qrExists": qr_exists}
+    if readonly_since:
+        try:
+            if not qr_exists or qr.stat().st_mtime < float(readonly_since) - 1.0:
+                out["qrExists"] = False
+        except OSError:
+            out["qrExists"] = False
     try:
         if p.is_file():
             mtime = p.stat().st_mtime
             out["updatedAt"] = int(mtime)
-            if since and mtime < float(since) - 1.0:
-                # 旧任务遗留状态：不回显 stage/error，交给前端显示“生成中”。
+            stale = bool((since and mtime < float(since) - 1.0) or
+                         (readonly_since and mtime < float(readonly_since) - 1.0))
+            if stale:
+                # 旧任务遗留状态：不回显 stage/error，交给前端显示“生成中/已失效”。
                 return out
             data = json.loads(p.read_text(encoding="utf-8"))
             if isinstance(data, dict):
@@ -604,6 +632,30 @@ def _xxt_latest_run_json(home: Path) -> "Path | None":
     return None
 
 
+def _xxt_login_completed_after(ts: float) -> "float | None":
+    """D191：`ts` 之后若有一次成功登录（状态文件 `stage=logged_in`），返回其 mtime。
+
+    D188 的 loginRedirect 来自「最近一次发现/提取产物」，登录成功后到下一个人工
+    发现/提取之间会一直亮着“会话已失效”。这里给出完成时间点，前端据此隐藏旧提示。
+    只返回时间戳，不返回任何 URL/cookie。
+    """
+    if not ts:
+        return None
+    try:
+        p = _xxt_home() / "xxt-login-state.json"
+        if not p.is_file():
+            return None
+        mtime = p.stat().st_mtime
+        if mtime < float(ts) - 1.0:
+            return None
+        data = json.loads(p.read_text(encoding="utf-8"))
+        if isinstance(data, dict) and str(data.get("stage") or "") == "logged_in":
+            return mtime
+    except Exception:  # noqa: BLE001 —— 只读诊断
+        return None
+    return None
+
+
 def _xxt_login_redirect(rep: "dict | None" = None) -> dict:
     """D188：最近一次体检/发现/提取是否命中学习通登录页。
 
@@ -685,6 +737,7 @@ _XXT_AVATAR = None  # (ts, dataurl|None)
 # D67：进程实例身份与重启监督协议
 _INSTANCE_ID = ""      # 每次 serve() 启动生成；/status 用于判断是否换了新进程
 _STARTED_AT = ""       # 人类可读启动时间
+_STARTED_EPOCH = 0.0   # D191：进程启动 epoch；只读登录状态不得采信早于它的遗留文件
 _SERVER_PORT = 0       # 当前监听端口（/status 回显，便于验收固定端口）
 
 
@@ -1421,11 +1474,16 @@ class Handler(BaseHTTPRequestHandler):
         if u.path == "/xxt/login/start":
             home = _xxt_home()
             # D189：登录任务单实例——两个任务并发会抢写同一张二维码。
-            running = _xxt_login_job_running()
+            running = _xxt_login_job_running_info()
             if running:
-                self._json({"ok": False, "job_id": running,
+                age = running.get("age") or 0
+                self._json({"ok": False, "job_id": running.get("job_id") or "",
+                            "startedAt": running.get("started_at") or 0,
+                            "ageSec": age,
                             "error": "已有扫码登录任务在进行中，请先完成扫码或稍后再试",
-                            "hint": "若二维码已失效，请关闭引擎窗口后重启，再点「重新扫码登录」",
+                            "hint": ("页面会自动接管这个正在进行的任务并继续显示它的二维码；"
+                                     "若该二维码已失效（有效期约 2 分钟），等这轮结束或"
+                                     "点「重新扫码登录」重新出码"),
                             "stage": "busy"}, 409)
                 return
             job_id = secrets.token_urlsafe(6)
@@ -3484,12 +3542,32 @@ class Handler(BaseHTTPRequestHandler):
             job = (qs.get("job_id") or [""])[0]
             # D190：带上本轮 job_id 时，只认该任务开始后写入的状态。
             since = _xxt_task_started_at(job) if job else 0.0
-            self._json(_xxt_login_state(_xxt_home(), since=since))
+            readonly_since = 0.0
+            if not since:
+                # D191：没有可确认的任务基准 → 当前没有登录任务在跑时，
+                # 上一轮遗留的 logged_in/旧二维码不得继续冒充“正在等待扫码”。
+                # 基准取「运行中任务起点」或「本进程启动时间」（不会为 0）。
+                t0 = _xxt_task_started_at(_xxt_login_job_running() or "")
+                if not t0:
+                    t0 = _STARTED_EPOCH or time.time()
+                readonly_since = t0
+            self._json(_xxt_login_state(_xxt_home(), since=since,
+                                        readonly_since=readonly_since))
             return
         if u.path == "/xxt/status":
             rep = _xxt_session_check_cached()
             view = dict(rep)
-            view.update(_xxt_login_redirect(rep))
+            redirect = _xxt_login_redirect(rep)
+            view.update(redirect)
+            # D191：本次登录成功之后，旧的“被跳登录页”记录不再提示（成功发现/提取后自愈）。
+            login_ok_ts = (_xxt_login_completed_after(redirect.get("loginRedirectTs") or 0)
+                           if redirect.get("loginRedirect") else None)
+            if login_ok_ts:
+                view["loginRedirect"] = False
+                view["loginRedirectTs"] = 0
+            view["loginCompletedTs"] = int(login_ok_ts or 0)
+            # D191：只读回显“是否还有登录任务在跑”，前端刷新页面后也能接上二维码。
+            view["loginJob"] = _xxt_login_job_running_info() or {}
             self._json({"ok": True, "xxt": view,
                         "avatar": _xxt_avatar_cached()})
             return
@@ -4631,7 +4709,9 @@ class Handler(BaseHTTPRequestHandler):
                     pass
                 return
             self._json({"ok": True, "item": job["item"], "status": job["status"],
-                        "returncode": job["returncode"], "lines": job["lines"][-200:]})
+                        "returncode": job["returncode"],
+                        "started_at": float(job.get("started_at") or 0.0),
+                        "lines": job["lines"][-200:]})
         elif u.path == "/pw/pkgs":
             # D65-P2：浏览器直下清单——实测镜像链接 + 收包路径 + 已装/在包状态
             from .xxt.installer import pkg_manifest
@@ -4694,10 +4774,11 @@ def serve(workspace: str | None, host: str = "127.0.0.1", port: int = 8601,
     else:
         logger.info(f"本机模式 http://127.0.0.1:{port}/（引擎与 PWA 同源）")
     logger.info(f"workspace={ws}")
-    global _RESTART_ARGS, _INSTANCE_ID, _STARTED_AT, _SERVER_PORT
+    global _RESTART_ARGS, _INSTANCE_ID, _STARTED_AT, _SERVER_PORT, _STARTED_EPOCH
     _RESTART_ARGS = ("serve", "--workspace", str(ws), "--port", str(port)) + (("--lan",) if lan else ())
     _INSTANCE_ID = secrets.token_urlsafe(6)
     _STARTED_AT = time.strftime("%Y-%m-%d %H:%M:%S")
+    _STARTED_EPOCH = time.time()
     _SERVER_PORT = port
     httpd = ThreadingHTTPServer((host, port), Handler)
     Handler.token = token
