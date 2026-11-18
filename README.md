@@ -99,6 +99,7 @@
 - `docs/135-D192-xxt-cancel-stuck-login-and-reissue.md` — **D192 审核：卡住的扫码任务可取消并强制重新出码（无需退出学习通账号）**
 - `docs/136-D193-upload-gbk-unicode-and-report-versioning.md` — **D193 上传批语/成绩 GBK 编码崩溃修复 + 已批阅三态对照 + 报告内容哈希版本（.versions 历史）**
 - `docs/137-D194-report-render-interrupt-resume.md` — **D194 一键生成报告的中断语义与续做（逐生隔离 + 进度落盘 + resume/只补失败）**
+- `docs/138-D195-report-scope-and-duplicate-students.md` — **D195 只部分出报告/重复姓名的根因（按学生合并多键 + 生成前范围核对 + 重生成/清理入口）**
 
 > **当前活动需求单 = `docs/112-D168`（口径/快照）+ `docs/113-D169`（路线/架构）**；
 > 历史条目保留供追溯，与最新口径冲突时以这两份为准。

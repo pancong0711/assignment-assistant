@@ -159,3 +159,55 @@ def history(reports_dir, student: str) -> "list[dict]":
     rows = [x for x in read_index(reports_dir).get("items") or []
             if isinstance(x, dict) and str(x.get("student") or "") == str(student or "")]
     return sorted(rows, key=lambda x: float(x.get("ts") or 0), reverse=True)
+
+
+def cleanup_reports(reports_dir, *, keep_students: "list[str] | None" = None,
+                    dry_run: bool = True) -> dict:
+    """D195：清理“重复/不在名单”的报告文件（只动 reports/，不碰草稿/分数）。
+
+    触发场景：历史上同一学生按两个草稿键生成了两份报告，写进同名文件；
+    或作业包换过、reports/ 里残留了旧学生名。
+    `keep_students` 给出时应保留的学生名（其余视为多余）。
+    """
+    reports_dir = Path(reports_dir)
+    if not reports_dir.is_dir():
+        return {"ok": True, "removed": [], "kept": [], "dryRun": dry_run}
+    keep = {str(x).strip() for x in (keep_students or []) if str(x).strip()}
+    removed: list[dict] = []
+    kept: list[str] = []
+    for f in sorted(reports_dir.iterdir()):
+        if not f.is_file() or f.name.startswith("."):
+            continue
+        if f.suffix.lower() not in (".md", ".html", ".png"):
+            continue
+        stem = f.stem
+        if keep and stem not in keep:
+            removed.append({"name": f.name, "reason": "不在当前名单"})
+            if not dry_run:
+                try:
+                    f.unlink()
+                except OSError:
+                    pass
+        else:
+            kept.append(f.name)
+    # 版本历史：只清理“已不在名单”的学生目录
+    vroot = reports_dir / VERSIONS_DIR
+    if vroot.is_dir():
+        for d in sorted(vroot.iterdir()):
+            if not d.is_dir() or not keep:
+                continue
+            if d.name in keep:
+                continue
+            removed.append({"name": f"{VERSIONS_DIR}/{d.name}/", "reason": "历史版本（不在名单）"})
+            if not dry_run:
+                for f in sorted(d.iterdir()):
+                    try:
+                        f.unlink()
+                    except OSError:
+                        pass
+                try:
+                    d.rmdir()
+                except OSError:
+                    pass
+    return {"ok": True, "dryRun": bool(dry_run), "removed": removed, "kept": kept,
+            "count": len(removed)}

@@ -3266,6 +3266,15 @@ class Handler(BaseHTTPRequestHandler):
                 self._json(read_report_progress(ws, class_id=cid, work_id=work,
                                                 task_id=tid, class_dir=cdir))
                 return
+            if payload.get("scopeOnly"):
+                # D195：只读范围核对（谁会有报告 / 谁有平台行但没草稿 / 是否有重复键）
+                from .grading.drafts import report_scope_report
+                names = payload.get("students")
+                names = [str(x) for x in names] if isinstance(names, list) else None
+                self._json(report_scope_report(
+                    ws, class_id=cid, work_id=work, task_id=tid,
+                    class_dir=cdir, students=names))
+                return
             # D194：同一作业的报告生成单实例——并发点两次会抢写同名文件/重复渲染。
             lock_key = f"render:{cdir}:{tid}:{work}"
             with _RENDER_LOCK:
@@ -3319,6 +3328,30 @@ class Handler(BaseHTTPRequestHandler):
                     ws=ws, class_dir=cdir, task_id=tid, class_id=cid, work_id=work,
                     only=only)
             self._json(rep, 200 if rep.get("ok") else 400)
+            return
+        if u.path == "/xxt/grade/report-cleanup":
+            # D195：清理“重复/不在名单”的报告文件（只动 reports/，默认 dry-run）。
+            payload: dict = {}
+            try:
+                length = int(self.headers.get("Content-Length") or 0)
+                if length:
+                    payload = json.loads(self.rfile.read(length).decode("utf-8")) or {}
+            except Exception:  # noqa: BLE001
+                payload = {}
+            from .grading import report_versions as _rv
+            cdir = str(payload.get("classDir") or "")
+            tid = str(payload.get("taskId") or "")
+            if not cdir or not tid:
+                self._json({"ok": False, "error": "classDir/taskId 必填"}, 400)
+                return
+            import re as _re
+            safe = lambda x: _re.sub(r"[\\/:*?\"<>|]", "_", str(x)).strip(" .") or "x"  # noqa: E731
+            root = Path(self.ws).resolve() / cdir / "grading" / safe(tid) / "reports"
+            students = payload.get("students")
+            students = [str(x) for x in students] if isinstance(students, list) else None
+            rep = _rv.cleanup_reports(root, keep_students=students,
+                                      dry_run=bool(payload.get("dryRun", False)))
+            self._json(rep)
             return
         if u.path == "/xxt/grade/report-versions":
             # D193：只读报告版本历史（内容哈希版本，便于与上传清单对照）。

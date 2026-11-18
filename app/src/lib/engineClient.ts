@@ -2604,12 +2604,22 @@ export async function renderReportsFromDrafts(
     /** D194：只重做这些学生（姓名或草稿 key）。 */
     only?: string[]
     /** D194：续做——已有报告的学生跳过。 */
-    resume?: boolean },
+    resume?: boolean
+    /** D195：只做范围核对（不渲染）。 */
+    scopeOnly?: boolean
+    /** D195：平台名单姓名，用于指出“有行但无草稿”的学生。 */
+    students?: string[] },
 ): Promise<{ ok?: boolean; partial?: boolean; busy?: boolean; error?: string
   count?: number; dir?: string; total?: number; hint?: string
   versionsFile?: string
   failed?: { key?: string; student?: string; error?: string }[]
   skipped?: { key?: string; student?: string; reason?: string; version?: string }[]
+  /** D195：范围核对结果（scopeOnly=true 时返回）。 */
+  draftCount?: number; studentCount?: number
+  students?: string[]
+  duplicateKeys?: Record<string, string[]>
+  missingDraft?: string[]
+  notInList?: string[]
   reports?: { key?: string; student?: string; kind?: string; revised?: boolean; png?: boolean
     version?: string; tag?: string; changed?: boolean }[] }> {
   const base = normalizeEngineAddr(engineAddr)
@@ -2646,6 +2656,22 @@ export async function fetchReportProgress(
     body: JSON.stringify({ ...payload, progressOnly: true }),
   })
   return (await res.json().catch(() => ({ ok: false }))) as XxtReportProgress
+}
+
+/** D195：清理“重复/不在名单”的报告文件（只动 reports/；默认 dryRun=true）。 */
+export async function cleanupXxtReports(
+  engineAddr: string, token: string | undefined,
+  payload: { classDir: string; taskId: string; students?: string[]; dryRun?: boolean },
+): Promise<{ ok?: boolean; error?: string; count?: number
+  removed?: { name?: string; reason?: string }[]; kept?: string[] }> {
+  const base = normalizeEngineAddr(engineAddr)
+  const res = await fetch(engineUrlWithToken(base, '/xxt/grade/report-cleanup', token), {
+    method: 'POST', headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(payload),
+  })
+  const o = (await res.json().catch(() => ({}))) as any
+  if (!res.ok && !o?.error) throw new Error(`HTTP ${res.status}`)
+  return o
 }
 
 /* ---------- D193：上传对照表 + 报告版本历史（只读） ---------- */

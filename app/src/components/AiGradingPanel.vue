@@ -12,6 +12,7 @@ import {
   fetchXxtReviewIndex, fetchXxtReviewStudents, postLlmProvider, postXxtClassMap,
   startXxtGradeAi, startXxtGradeUpload, renderReportsFromDrafts, testLlmStages,
   fetchXxtUploadPreview, fetchXxtReportVersions, fetchReportProgress,
+  cleanupXxtReports,
   applyTagAudit, fetchTagAudit, fetchTagAuditHistory, runTagAudit, undoTagAudit,
   undoStudentTagApi,
 } from '../lib/engineClient'
@@ -56,6 +57,10 @@ const versionsBusy = ref(false)
 const versionsRows = ref<{ student?: string; version?: string; tag?: string; at?: string
   kind?: string; score?: number | null; files?: string[]; reason?: string }[]>([])
 /* D194：上次报告生成进度（中断后显示“已生成 X/Y”，可续做/只补失败学生）。 */
+/* D195：生成前范围核对（谁会有报告 / 平台有行但无草稿 / 重复键）。 */
+const scopeCheck = ref<{ studentCount?: number; draftCount?: number
+  missingDraft?: string[]; notInList?: string[]
+  duplicateKeys?: Record<string, string[]>; hint?: string } | null>(null)
 const reportProgress = ref<{ exists?: boolean; state?: string; total?: number
   done?: string[]; failed?: { student?: string; error?: string }[]
   skipped?: { student?: string }[]; finishedAt?: string; updatedAt?: string } | null>(null)
@@ -1035,6 +1040,14 @@ async function renderReports(opts?: { resume?: boolean; only?: string[] }) {
   if (!taskId) { msg.value = '⚠ 请先选择作业包/作业纸，或先读取一次学生清单'; return }
   if (!curWorkDir.value) { msg.value = '⚠ 请先关联本地班级目录'; return }
   busy.value = true
+  // D195：先做一次**只读**范围核对——避免“以为全班都出了报告，其实只有有草稿的出了”。
+  try {
+    scopeCheck.value = await renderReportsFromDrafts(props.engineAddr, props.token, {
+      classId: w.classId, workId: w.workId, taskId,
+      classDir: curWorkDir.value, scopeOnly: true,
+      students: students.value.map((x) => x.name).filter(Boolean),
+    })
+  } catch { scopeCheck.value = null }
   progress.value = opts?.resume
     ? '正在续做报告（已有报告的学生会跳过，内容未变不产生新版本）……'
     : opts?.only?.length
@@ -1071,6 +1084,12 @@ async function renderReports(opts?: { resume?: boolean; only?: string[] }) {
         + ((r.reports || []).some((x) => x.changed === false)
           ? '；部分学生内容未变（版本号不变，不重复产生历史）' : '')
         + (failed.length ? `；失败 ${failed.length} 人：${failed.map((x) => x.student).join('、')}` : '')
+      const miss = scopeCheck.value?.missingDraft || []
+      if (miss.length) {
+        progress.value += `\n⚠ 另有 ${miss.length} 名学生（表格里有行）**没有本地草稿**，`
+          + `因此不会生成报告、也没有分数：${miss.slice(0, 8).join('、')}${miss.length > 8 ? ' …' : ''}`
+          + '。请先对他们跑「转写+评阅」或在逐生审核里保存批阅后再生成。'
+      }
       await loadStudents()
       // D126-B：让教师总结报告跟着刷新（评阅结果没变也会重算，成本很低：纯统计）
       reportReloadKey.value += 1
@@ -1115,6 +1134,32 @@ async function openUploadPreview(platform: boolean) {
   } catch (e) {
     progress.value = `对照表失败：${String((e as Error)?.message || e)}`
   } finally { previewBusy.value = false }
+}
+
+/** D195：**重新生成**全部报告（覆盖旧版；内容未变不产生新版本）。 */
+async function regenerateAllReports() {
+  if (!window.confirm('将按当前草稿**重新生成**全部报告（覆盖“最新”报告文件；'
+    + '内容未变不会产生新版本，历史保留在 .versions）。继续？')) return
+  await renderReports()
+}
+
+/** D195：一键清理重复/多余的报告文件（例如旧版按多键生成了重复报告）。 */
+async function cleanupDuplicateReports() {
+  const taskId = packId.value || padId.value || resolvedScope.value
+  if (!curWorkDir.value || !taskId) { msg.value = '⚠ 请先关联班级目录并选择作业包'; return }
+  if (!window.confirm('将删除 reports/ 下“不是本班名单/重复学生名”的报告文件'
+    + '（只删报告 md/html/png 与其历史版本，不动草稿/分数/批语）。继续？')) return
+  try {
+    const r = await cleanupXxtReports(props.engineAddr, props.token, {
+      classDir: curWorkDir.value, taskId,
+      students: students.value.map((x) => x.name).filter(Boolean),
+    })
+    progress.value = r?.ok
+      ? `✅ 已清理 ${r.removed?.length ?? 0} 个多余报告文件`
+        + ((r.removed || []).length ? `：${(r.removed || []).slice(0, 6).map((x) => x.name).join('、')}` : '')
+      : `❌ 清理失败：${r?.error || '未知错误'}`
+    await refreshReportProgress()
+  } catch (e) { progress.value = `清理失败：${String((e as Error)?.message || e)}` }
 }
 
 /** D194：读取上次报告生成进度（只读；用于显示“已生成 X/Y”和续做入口）。 */
@@ -1658,6 +1703,12 @@ onMounted(async () => {
       <button class="btn" :disabled="busy || versionsBusy" @click="loadReportVersions">
         🕘 报告版本
       </button>
+      <!-- D195：明确的重生成/清理入口（避免“以为生成了全部”） -->
+      <button class="btn" :disabled="busy" @click="regenerateAllReports">🔁 重新生成全部报告</button>
+      <button class="btn" :disabled="busy" @click="cleanupDuplicateReports"
+              title="删除不在当前名单/重复学生名的报告文件（只动 reports/，不动草稿与分数）">
+        🧹 清理多余报告
+      </button>
       <span style="flex:1"></span>
       <!-- D193：上传先看对照表（未批阅/一致/冲突），再决定覆盖，避免盲传 -->
       <button class="btn primary" :disabled="busy || previewBusy" @click="openUploadPreview(true)">
@@ -1666,6 +1717,23 @@ onMounted(async () => {
       <button class="btn" :disabled="busy" @click="uploadAll(false)">⬆⬆ 上传全部批阅（含打分）</button>
       <button class="btn" :disabled="busy" @click="uploadAll(true)">⬆⬆ 强制覆盖上传全部</button>
     </div>
+    <p v-if="scopeCheck && (scopeCheck.missingDraft?.length || scopeCheck.duplicateKeys
+                           && Object.keys(scopeCheck.duplicateKeys).length)"
+       class="hint" style="margin-top:6px; color:#b45309; background:#fffbeb;
+                           border:1px solid #fcd34d; border-radius:8px; padding:6px 10px">
+      ⚠ 范围核对：本次可用于生成报告的草稿 <b>{{ scopeCheck.studentCount ?? 0 }}</b> 人
+      （草稿记录 {{ scopeCheck.draftCount ?? 0 }} 条）。
+      <span v-if="scopeCheck.missingDraft?.length">
+        表格里另有 <b>{{ scopeCheck.missingDraft.length }}</b> 名学生**没有本地草稿**，
+        不会生成报告也不会有分数：{{ scopeCheck.missingDraft.slice(0, 8).join('、') }}
+        {{ scopeCheck.missingDraft.length > 8 ? ' …' : '' }}。
+        → 先对他们「转写+评阅」或逐生保存批阅后再生成。
+      </span>
+      <span v-if="scopeCheck.duplicateKeys && Object.keys(scopeCheck.duplicateKeys).length">
+        <br>同一学生在草稿里有多个键（会已自动按姓名合并，不再出现重复报告）：
+        {{ Object.keys(scopeCheck.duplicateKeys).slice(0, 6).join('、') }}
+      </span>
+    </p>
     <p v-if="reportProgress?.exists" class="hint" style="margin-top:6px"
        :style="reportProgress.state === 'partial' ? 'color:#b45309' : ''">
       报告生成进度：{{ reportProgress.state === 'done' ? '已完成'

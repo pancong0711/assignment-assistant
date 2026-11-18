@@ -130,6 +130,26 @@ def build_draft_report(d: dict) -> "tuple[str, str]":
                            revised=bool(d.get("revised")))
 
 
+def _draft_richness(d: dict) -> int:
+    """D195：同名学生多份草稿时，挑“内容更完整”的那份（用于报告生成）。
+
+    权重：人工套已使用(8) > 有批语(4) > 有分数(2) > 有转写/图片(1)。
+    """
+    d = d if isinstance(d, dict) else {}
+    score = 0
+    h = d.get("human") or {}
+    a = d.get("ai") or {}
+    if h.get("used"):
+        score += 8
+    if str(h.get("comment") or "").strip() or str(a.get("comment") or "").strip():
+        score += 4
+    if h.get("score") is not None or a.get("score") is not None:
+        score += 2
+    if str(a.get("transcript") or "").strip() or (h.get("reportImages") or a.get("images")):
+        score += 1
+    return score
+
+
 def _reports_root(ws, class_dir: str, class_id: str, task_id: str) -> Path:
     return (Path(ws) / (class_dir or f"classes/{class_id}") / "grading"
             / (task_id or "task") / "reports")
@@ -170,6 +190,50 @@ def _write_progress(out_root: Path, data: dict) -> None:
         pass
 
 
+def report_scope_report(ws, *, class_id: str, work_id: str, task_id: str = "",
+                        class_dir: str = "", home=None,
+                        students: "list[str] | None" = None) -> dict:
+    """D195：生成报告前的**范围核对**（只读，不渲染任何东西）。
+
+    回答教师实际遇到的三个问题：
+      1. 这次会为哪些学生生成报告（= 有草稿的学生）；
+      2. 平台名单里有、但没有草稿的学生有哪些（→ 表格有行、却不会有报告）；
+      3. 同一学生是否在草稿里有多个键（→ 旧版本会生成重复报告/重复姓名）。
+
+    `students` 传平台名单姓名（可选）；不给则只报告草稿侧统计。
+    """
+    from ..xxt import grade_store
+    ws = Path(ws)
+    if home is None:
+        from ..xxt.session import xxt_home
+        home = xxt_home()
+    data = grade_store.read_drafts(home, class_id, work_id, ws=ws,
+                                   class_dir=str(class_dir or f"classes/{class_id}"),
+                                   task_id=str(task_id))
+    by_student: dict[str, list[str]] = {}
+    for k, raw in data.items():
+        d = grade_store.normalize_draft(raw if isinstance(raw, dict) else {})
+        stu = str(d.get("student") or k).strip() or str(k)
+        by_student.setdefault(stu, []).append(str(k))
+    with_draft = sorted(by_student)
+    duplicates = {s: ks for s, ks in by_student.items() if len(ks) > 1}
+    listed = [str(x).strip() for x in (students or []) if str(x).strip()]
+    missing = sorted(set(listed) - set(with_draft)) if listed else []
+    extra = sorted(set(with_draft) - set(listed)) if listed else []
+    return {
+        "ok": True, "taskId": str(task_id), "classDir": str(class_dir or f"classes/{class_id}"),
+        "draftCount": len(data), "studentCount": len(with_draft),
+        "students": with_draft,
+        "duplicateKeys": duplicates,
+        "listedCount": len(listed),
+        "missingDraft": missing,          # 平台有、无草稿 → 不会有报告
+        "notInList": extra,               # 有草稿、平台名单没有
+        "hint": ("部分学生没有草稿（未跑 AI 批阅/未保存人工批阅），点「一键生成」只会为有草稿的学生出报告；"
+                 + ("另有 %d 名学生在草稿里有多个键，已自动按姓名合并。" % len(duplicates)
+                    if duplicates else "")),
+    }
+
+
 def render_reports_from_drafts(ws, *, class_id: str, work_id: str, task_id: str = "",
                                class_dir: str = "", home=None, katex_dir=None,
                                with_report_png: bool = True,
@@ -207,10 +271,29 @@ def render_reports_from_drafts(ws, *, class_id: str, work_id: str, task_id: str 
     out_root = _reports_root(ws, class_dir, class_id, task_id)
     out_root.mkdir(parents=True, exist_ok=True)
     only_set = {str(x).strip() for x in (only or []) if str(x).strip()}
-    pending = [(k, v) for k, v in data.items()
-               if not only_set or str((v or {}).get("student") or k) in only_set
-               or str(k) in only_set]
+    # D195：同一学生可能在草稿里有**两个键**（按 workAnswerId 写 + 按姓名写，历史遗留）。
+    # 旧实现按 key 遍历 → 同一人生成两份报告、写同一个 `<学生>.png` 互相覆盖，
+    # 版本索引也重复；前端表格还会出现“重复姓名”。
+    # 这里按**学生姓名**合并：保留内容更完整的一份（人工套 > 有批语 > 有分数 > 有转写），
+    # 并记下所有键，便于回写时同步到各个键。
+    merged: "dict[str, tuple[str, dict, list[str]]]" = {}
+    for k, raw in data.items():
+        d0 = grade_store.normalize_draft(raw if isinstance(raw, dict) else {})
+        stu = str(d0.get("student") or k).strip() or str(k)
+        if only_set and not (stu in only_set or str(k) in only_set):
+            continue
+        prev = merged.get(stu)
+        if prev is None:
+            merged[stu] = (str(k), d0, [str(k)])
+        else:
+            keep_key, keep_d, keys = prev
+            if _draft_richness(d0) > _draft_richness(keep_d):
+                keep_key, keep_d = str(k), d0
+            merged[stu] = (keep_key, keep_d, keys + [str(k)])
+    pending = [(stu, {"__key": kk, "__keys": keys, "__draft": dd})
+               for stu, (kk, dd, keys) in merged.items()]
     total = len(pending)
+    merged_keys = {stu: row["__keys"] for stu, row in pending}
     started_at = time.strftime("%Y-%m-%d %H:%M:%S")
     progress = {"ok": True, "state": "running", "startedAt": started_at,
                 "updatedAt": started_at, "reason": str(reason or ""),
@@ -221,9 +304,10 @@ def render_reports_from_drafts(ws, *, class_id: str, work_id: str, task_id: str 
     done = []
     failed = []
     skipped = []
-    for idx, (key, raw) in enumerate(pending, 1):
-        d = grade_store.normalize_draft(raw if isinstance(raw, dict) else {})
-        student = str(d.get("student") or key)
+    for idx, (student, bundle) in enumerate(pending, 1):
+        key = str(bundle.get("__key") or student)
+        d = bundle.get("__draft") or {}
+        sibling_keys = [x for x in (bundle.get("__keys") or [key]) if x != key]
         # D194：续做时，已有报告图且本次不是“强制重做”→ 跳过（避免重复渲染/重复进版本）
         prev_report = ((d.get("human") or {}).get("report") or {})
         if resume and not only_set and prev_report.get("version") \
@@ -277,11 +361,12 @@ def render_reports_from_drafts(ws, *, class_id: str, work_id: str, task_id: str 
                 "sha256": ver["sha256"], "generatedAt": ver["entry"]["at"],
                 "changed": ver["changed"], "file": f"{student}.png", "kind": kind,
             }
-            grade_store.save_draft_sets(home, class_id, work_id, key,
-                                        human=human_patch,
-                                        student=student,
-                                        ws=ws, class_dir=str(class_dir or f"classes/{class_id}"),
-                                        task_id=str(task_id))
+            for kk in [key] + sibling_keys:
+                grade_store.save_draft_sets(home, class_id, work_id, kk,
+                                            human=human_patch,
+                                            student=student,
+                                            ws=ws, class_dir=str(class_dir or f"classes/{class_id}"),
+                                            task_id=str(task_id))
             done.append({"key": key, "student": student, "kind": kind,
                          "revised": bool(d.get("revised")), "png": bool(imgs),
                          "version": ver["version"], "tag": ver["tag"],
