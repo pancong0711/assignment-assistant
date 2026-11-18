@@ -30,7 +30,7 @@ must(/confirm\(/.test(reloginBody), 'relogin 缺少确认提示')
 must(/旧会话可能立即失效/.test(reloginBody), 'relogin 未提示旧会话可能立即失效')
 must(/loginJobId = ''/.test(reloginBody), 'relogin 未清掉旧 job 状态')
 must(/qrcode\.value = ''/.test(reloginBody), 'relogin 未清掉旧二维码')
-must(/startScan\(\)/.test(reloginBody), 'relogin 未重新发起 startXxtLogin 流程')
+must(/startScan\(/.test(reloginBody), 'relogin 未重新发起 startXxtLogin 流程')
 must(/loginStartedAlive = verdict\.value === 'alive'/.test(view),
   'active 会话重新扫码时未记录 baseline，轮询会误判成功')
 must(/job\.status === 'done' && \(job\.returncode \?\? 0\) === 0/.test(view),

@@ -26,7 +26,11 @@ must(tpl.indexOf('v-if="qrcode"') < tpl.indexOf("verdict==='alive' && avatar"),
   '模板顺序错误：二维码必须在头像之前')
 
 // 2) 发起扫码立刻清旧头像
-const startBody = view.split('async function startScan() {')[1]?.split('async function relogin()')[0] || ''
+// D192：startScan 之前新增了 forceReissueQr，取函数体到下一个顶层 async function。
+const startIdx = view.indexOf('async function startScan(')
+const startBody = startIdx >= 0
+  ? view.slice(startIdx, view.indexOf('\n}\n', startIdx) + 1)
+  : ''
 must(/avatar\.value = null/.test(startBody), 'startScan 未清掉旧头像')
 const reloginBody = view.split('async function relogin() {')[1]?.split('async function startQrPolling')[0] || ''
 must(/avatar\.value = null/.test(reloginBody), 'relogin 未清掉旧头像')
@@ -65,7 +69,7 @@ must(/since: float = 0\.0/.test(servePy) && /since and mtime < float\(since\) - 
 must(/job_id=\$\{encodeURIComponent\(jobId\)\}/.test(client), 'engineClient 未传 job_id')
 
 // 8) 按钮不再因 alive 禁用
-must(/<button class="btn primary" :disabled="qrLoading" @click="startScan">/.test(view),
+must(/<button class="btn primary" :disabled="qrLoading" @click="startScan\(\)">/.test(view),
   '扫码按钮仍被 verdict=alive 禁用')
 
 // 9) selfcheck 接入

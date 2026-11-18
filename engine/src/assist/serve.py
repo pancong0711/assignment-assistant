@@ -85,6 +85,8 @@ def install_katex(ws: Path, emit) -> int:
     return 0
 
 _JOBS: dict[str, dict] = {}
+# D192：登录任务超过这个时长仍 running，视为卡死的旧任务（CLI 等待窗口 1800s + 余量）。
+_XXT_LOGIN_MAX_AGE = 1900
 _RESTART_ARGS: tuple = (  # ('serve', --workspace …)：python -c 入口的 click argv
     'serve',
 )  # serve() 收到的启动参数（/restart 用 os.execv 原样再生进程）
@@ -209,15 +211,69 @@ def _xxt_login_job_running() -> "str | None":
 
 
 def _xxt_login_job_running_info() -> "dict | None":
-    """D191：仍在运行的 xxt_login 任务摘要（job_id/started_at/已运行秒数），没有则 None。"""
+    """D191/D192：仍在运行的 xxt_login 任务摘要（job_id/started_at/已运行秒数/pid）。
+
+    `stale` 为真表示已超过扫码等待上限（默认 30 分钟）却仍停在 running：
+    这种任务不可能再产出新二维码，应允许直接取消重开。
+    """
     with _JOBS_LOCK:
         for jid, info in _JOBS.items():
             if str(info.get("item") or "") == "xxt_login" and \
                     str(info.get("status") or "") == "running":
                 t0 = float(info.get("started_at") or 0.0)
-                return {"job_id": jid, "started_at": t0,
-                        "age": max(0, int(time.time() - t0)) if t0 else 0}
+                age = max(0, int(time.time() - t0)) if t0 else 0
+                proc = info.get("proc")
+                return {"job_id": jid, "started_at": t0, "age": age,
+                        "pid": int(getattr(proc, "pid", 0) or 0),
+                        "stale": bool(age > _XXT_LOGIN_MAX_AGE)}
     return None
+
+
+def cancel_job(job_id: str, reason: str = "") -> dict:
+    """D192：终止一个仍在运行的子进程任务（只用于明确需要重开的场景）。
+
+    先 terminate，3 秒后仍在则 kill；返回是否已发出终止信号。
+    """
+    if not job_id:
+        return {"ok": False, "error": "job_id required"}
+    with _JOBS_LOCK:
+        info = _JOBS.get(job_id)
+        if info is None:
+            return {"ok": False, "error": "no such job"}
+        if str(info.get("status") or "") != "running":
+            return {"ok": False, "error": f"job not running ({info.get('status')})"}
+        proc = info.get("proc")
+        if proc is None:
+            return {"ok": False, "error": "job has no process handle"}
+        info["cancelled"] = True
+        info["cancel_reason"] = str(reason or "cancelled")[:200]
+    try:
+        proc.terminate()
+    except Exception as exc:  # noqa: BLE001
+        return {"ok": False, "error": f"terminate failed: {str(exc)[:160]}"}
+
+    def _force_kill():
+        try:
+            proc.wait(timeout=3)
+        except Exception:  # noqa: BLE001
+            try:
+                proc.kill()
+            except Exception:  # noqa: BLE001
+                pass
+
+    threading.Thread(target=_force_kill, daemon=True).start()
+    return {"ok": True, "job_id": job_id}
+
+
+def cancel_xxt_login_job(reason: str = "relogin") -> dict:
+    """D192：取消当前正在运行的扫码登录任务（重新扫码前调用）。"""
+    info = _xxt_login_job_running_info()
+    if not info:
+        return {"ok": True, "cancelled": False, "reason": "no running login job"}
+    rep = cancel_job(str(info.get("job_id") or ""), reason=reason)
+    rep["cancelled"] = bool(rep.get("ok"))
+    rep["job_id"] = info.get("job_id")
+    return rep
 
 
 def _mask_secret_text(text: str) -> str:
@@ -240,7 +296,8 @@ def _xxt_task_started_at(job_id: str) -> float:
 
 def _xxt_login_state(home: "Path | None" = None,
                      since: float = 0.0,
-                     readonly_since: float = 0.0) -> dict:
+                     readonly_since: float = 0.0,
+                     job_running: "bool | None" = None) -> dict:
     """D189/D190/D191：只读登录状态（阶段/错误/URL 主机/cookie 名），不含任何敏感值。
 
     D190：`since>0` 时，若 `xxt-login-state.json` 的 mtime 早于该时间，说明它是
@@ -251,6 +308,12 @@ def _xxt_login_state(home: "Path | None" = None,
       - 状态文件并不比它新 → 那是上一轮遗留，不采信（否则会一直显示旧 `logged_in`）；
       - 没有状态文件、但 `xxt-qr.png` 也不新鲜 → 二维码同样是上一轮的残留，`qrExists=False`。
     避免“二维码早被清掉/任务早结束，页面却还显示已生成二维码、等待扫码”。
+
+    D192：`readonly_since` 可能远早于上一轮任务写文件的时间（例如浏览器开着的旧任务
+    一直在刷新状态），mtime 比较会误判“新鲜”。因此 HTTP 端点会显式传
+    `job_running`：False 表示本进程没有扫码任务在跑 → 状态文件与二维码一律视为
+    **上一轮遗留**，不采信。`job_running=None` 时保留按时间戳判断的旧行为
+    （供纯函数/诊断调用）。
     """
     home = Path(home) if home else _xxt_home()
     p = home / "xxt-login-state.json"
@@ -258,7 +321,17 @@ def _xxt_login_state(home: "Path | None" = None,
     qr_exists = qr.is_file()
     out = {"ok": True, "stage": "", "error": "", "urlHost": "",
            "cookies": [], "updatedAt": 0, "qrExists": qr_exists}
-    if readonly_since:
+    if job_running is False:
+        # D192：本进程没有登录任务在跑 → 状态文件与二维码都属于上一轮，一律不采信。
+        # （旧实现只比 mtime，旧任务持续刷新状态时会被误判成“正在等待扫码”。）
+        out["qrExists"] = False
+        try:
+            if p.is_file():
+                out["updatedAt"] = int(p.stat().st_mtime)
+        except OSError:
+            pass
+        return out
+    if not job_running and readonly_since:
         try:
             if not qr_exists or qr.stat().st_mtime < float(readonly_since) - 1.0:
                 out["qrExists"] = False
@@ -969,12 +1042,16 @@ class Handler(BaseHTTPRequestHandler):
                           item: str, prefix: str, cwd: "str | None" = None,
                           journal_kind: "str | None" = None,
                           journal_params: "dict | None" = None):
-        """D72：通用 CLI job 流式转发（terminal/start.log + /jobs + SSE）。"""
+        """D72：通用 CLI job 流式转发（terminal/start.log + /jobs + SSE）。
+
+        D192：登记子进程句柄，支持 `/jobs/<id>/cancel` 真正终止（登录任务否则要占满
+        30 分钟等待窗口，期间无法重新出码）。
+        """
         q_, out = queue.Queue(), []
         with _JOBS_LOCK:
             _JOBS[job_id] = {"item": item, "queue": q_, "lines": out,
                              "status": "running", "returncode": None,
-                             "started_at": time.time()}
+                             "started_at": time.time(), "proc": None}
 
         def worker():
             t0 = time.time()
@@ -984,6 +1061,9 @@ class Handler(BaseHTTPRequestHandler):
                     cmd, stdout=subprocess.PIPE, stderr=subprocess.STDOUT,
                     text=True, bufsize=1, env=env,
                     cwd=cwd or str(_ENGINE_ROOT.parent))
+                with _JOBS_LOCK:
+                    if job_id in _JOBS:
+                        _JOBS[job_id]["proc"] = proc
 
                 def reader():
                     try:
@@ -1471,8 +1551,26 @@ class Handler(BaseHTTPRequestHandler):
                 return
             self._json({"ok": True, "path": str(out), "kind": kind})
             return
+        if (m_cancel := re.fullmatch(r"/jobs/([A-Za-z0-9_\-]+)/cancel", u.path)):
+            # D192：真正终止一个卡住的扫码登录任务（其它 job 也可用，但仅供显式重开场景）。
+            rep = cancel_job(m_cancel.group(1), reason="pwa")
+            self._json(rep, 200 if rep.get("ok") else 409)
+            return
         if u.path == "/xxt/login/start":
             home = _xxt_home()
+            # D192：`replace=1` = 教师明确要求重新出码：先取消正在运行的旧任务。
+            # 否则旧任务会一直占着单实例锁（最长 30 分钟），新二维码永远出不来。
+            replace_running = (urllib.parse.parse_qs(u.query or "")
+                               .get("replace", [""])[0].lower() in ("1", "true", "yes"))
+            replaced_job = ""
+            if replace_running:
+                rep_cancel = cancel_xxt_login_job(reason="replace")
+                if rep_cancel.get("cancelled"):
+                    replaced_job = str(rep_cancel.get("job_id") or "")
+                    # 等旧进程退出，避免两个浏览器同时写同一张二维码。
+                    deadline = time.time() + 8
+                    while time.time() < deadline and _xxt_login_job_running():
+                        time.sleep(0.2)
             # D189：登录任务单实例——两个任务并发会抢写同一张二维码。
             running = _xxt_login_job_running_info()
             if running:
@@ -1481,9 +1579,10 @@ class Handler(BaseHTTPRequestHandler):
                             "startedAt": running.get("started_at") or 0,
                             "ageSec": age,
                             "error": "已有扫码登录任务在进行中，请先完成扫码或稍后再试",
-                            "hint": ("页面会自动接管这个正在进行的任务并继续显示它的二维码；"
-                                     "若该二维码已失效（有效期约 2 分钟），等这轮结束或"
-                                     "点「重新扫码登录」重新出码"),
+                            "hint": ("页面会先接管这个正在进行的任务并显示它的二维码；"
+                                     "若要强制重新出码，可点「🔁 重新扫码登录」"
+                                     "（会取消旧任务后重新生成）"),
+                            "canReplace": True,
                             "stage": "busy"}, 409)
                 return
             job_id = secrets.token_urlsafe(6)
@@ -1514,7 +1613,8 @@ class Handler(BaseHTTPRequestHandler):
             cmd = _xxt_login_cmd(home)
             self._start_stream_job(job_id, cmd, env, "xxt_login", "xxt-login", cwd,
                                     journal_kind="xxt_login")
-            self._json({"ok": True, "job_id": job_id, "qr_url": "/xxt/qr"})
+            self._json({"ok": True, "job_id": job_id, "qr_url": "/xxt/qr",
+                        "replacedJob": replaced_job})
             return
         if u.path == "/xxt/extract":
             payload: dict = {}
@@ -3542,17 +3642,27 @@ class Handler(BaseHTTPRequestHandler):
             job = (qs.get("job_id") or [""])[0]
             # D190：带上本轮 job_id 时，只认该任务开始后写入的状态。
             since = _xxt_task_started_at(job) if job else 0.0
+            running_info = _xxt_login_job_running_info()
+            job_running = bool(running_info)
             readonly_since = 0.0
             if not since:
-                # D191：没有可确认的任务基准 → 当前没有登录任务在跑时，
+                # D191/D192：没有可确认的任务基准 → 当前没有登录任务在跑时，
                 # 上一轮遗留的 logged_in/旧二维码不得继续冒充“正在等待扫码”。
                 # 基准取「运行中任务起点」或「本进程启动时间」（不会为 0）。
-                t0 = _xxt_task_started_at(_xxt_login_job_running() or "")
+                t0 = float((running_info or {}).get("started_at") or 0.0)
                 if not t0:
                     t0 = _STARTED_EPOCH or time.time()
                 readonly_since = t0
-            self._json(_xxt_login_state(_xxt_home(), since=since,
-                                        readonly_since=readonly_since))
+            st = _xxt_login_state(_xxt_home(), since=since,
+                                  readonly_since=readonly_since,
+                                  job_running=job_running)
+            st["jobRunning"] = job_running
+            if running_info:
+                st["job"] = {"job_id": running_info.get("job_id"),
+                             "started_at": running_info.get("started_at"),
+                             "age": running_info.get("age"),
+                             "stale": running_info.get("stale")}
+            self._json(st)
             return
         if u.path == "/xxt/status":
             rep = _xxt_session_check_cached()
@@ -4711,6 +4821,7 @@ class Handler(BaseHTTPRequestHandler):
             self._json({"ok": True, "item": job["item"], "status": job["status"],
                         "returncode": job["returncode"],
                         "started_at": float(job.get("started_at") or 0.0),
+                        "cancelled": bool(job.get("cancelled")),
                         "lines": job["lines"][-200:]})
         elif u.path == "/pw/pkgs":
             # D65-P2：浏览器直下清单——实测镜像链接 + 收包路径 + 已装/在包状态

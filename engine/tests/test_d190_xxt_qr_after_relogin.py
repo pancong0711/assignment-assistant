@@ -111,7 +111,8 @@ def test_source_contract_for_d190():
     assert "refreshAvatarAfterLogin" in view
     assert "void refreshAvatarAfterLogin()" in view
     # 发起扫码立即清旧头像
-    start_body = view.split("async function startScan() {")[1].split("async function relogin()")[0]
+    # D192：startScan 增加了 replace 参数，签名变化不影响本契约（只取函数体）。
+    start_body = view.split("async function startScan(", 1)[1].split("async function relogin()")[0]
     assert "avatar.value = null" in start_body
     # 客户端把 job_id 传给只读状态接口
     assert "job_id=" in client

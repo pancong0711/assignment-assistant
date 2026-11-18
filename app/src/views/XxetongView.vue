@@ -7,7 +7,7 @@ import {
   fetchXxtReviewWork, fetchXxtRun, fetchXxtRuns, fetchXxtStatus, fetchXxtStorage, fetchXxtTargets,
   fetchXxtWorks, importXxtRun, pruneXxtReview, pruneXxtRuns, startXxtDiscover,
   startXxtDiscoverWorks, startXxtExtract, startXxtExtractTargets, startXxtLogin,
-  fetchXxtLoginState,
+  fetchXxtLoginState, cancelXxtJob,
   deleteXxtReviewWork, purgeXxtReviewWork, startXxtReviewDownload, startXxtReviewProbe,
   xxtReviewFileUrl, deleteXxtGradeDraft, fetchXxtGradeDrafts, saveXxtGradeDraft,
   startXxtGradeUpload, extractJobError,
@@ -60,6 +60,8 @@ const AVATAR_REFRESH_GAP_MS = 30000
 let attachedToRunningJob = false
 /* D191：只读状态是否已明确“没有在等扫码”（二维码是上一轮残留）→ 不再显示等待扫码。 */
 const qrStale = ref(false)
+/* D192：任务在跑但迟迟出不来二维码 / 任务已超时 → 提供「强制重新出码」。 */
+const qrBlocked = ref(false)
 let extractTimer: number | undefined
 
 /** D188：错误/原因里只脱敏展示，绝不把 cookie/token/ticket 值带到界面。 */
@@ -197,7 +199,13 @@ function probeQr(url: string): Promise<boolean> {
   })
 }
 
-async function startScan() {
+/** 启动扫码。
+ *
+ * `replace=true`（教师点「重新扫码登录」/强制重新出码）：要求引擎取消正在跑的旧任务再出新码。
+ * `replace=false`（普通「扫码登录」）：若已有任务在跑则接管它，避免扫到上一张票据。
+ */
+async function startScan(opts?: { replace?: boolean }) {
+  const replace = opts?.replace === true
   const run = ++loginSeq
   stopLoginPolling()
   qrcode.value = ''
@@ -213,7 +221,7 @@ async function startScan() {
   attachedToRunningJob = false
   qrStale.value = false
   try {
-    const started = await startXxtLogin(engUrl.value, tok.value)
+    const started = await startXxtLogin(engUrl.value, tok.value, { replace })
     if (started.kind === 'busy') {
       // D191：409 不是失败——已有扫码任务在跑（可能来自上一个页面/上一次点击）。
       // 旧逻辑直接把它当错误显示，二维码永远出不来，教师只能关引擎重启。
@@ -227,9 +235,13 @@ async function startScan() {
       if (started.hint) loginHint.value += `\n${started.hint}`
     } else {
       loginJobId = started.jobId
-      loginHint.value = loginStartedAlive
-        ? '已发起重新扫码任务：正在生成新二维码（旧会话可能立即失效）……'
-        : '已发起扫码任务：正在生成二维码……'
+      if (started.replacedJob) {
+        loginHint.value = '已取消上一次扫码任务，正在生成新二维码……'
+      } else {
+        loginHint.value = loginStartedAlive
+          ? '已发起重新扫码任务：正在生成新二维码（旧会话可能立即失效）……'
+          : '已发起扫码任务：正在生成二维码……'
+      }
     }
     void startQrPolling(run)
   } catch (e) {
@@ -241,6 +253,29 @@ async function startScan() {
     const detail = describeLoginState(st)
     if (detail) loginHint.value += `\n${detail}`
   }
+}
+
+/** D192：任务卡住时的“强制重新出码”：先取消引擎里的旧扫码任务，再 replace 出新码。
+ *
+ * 这是“是否需要退出账号”的替代方案——重新扫码只需换浏览器会话，不需要退出学习通账号。
+ */
+async function forceReissueQr() {
+  loginSeq += 1
+  stopLoginPolling()
+  qrBlocked.value = false
+  const oldJob = loginJobId
+  loginHint.value = '正在取消旧的扫码任务并重新出码……'
+  if (oldJob) await cancelXxtJob(engUrl.value, tok.value, oldJob)
+  loginJobId = ''
+  loginJobCheckedAt = 0
+  loginStartedAlive = false
+  qrcode.value = ''
+  qrReady = false
+  qrLoading.value = true
+  avatar.value = null
+  qrStale.value = false
+  attachedToRunningJob = false
+  await startScan({ replace: true })
 }
 
 /** D188：任何 verdict 都可主动重新扫码；先清旧 QR/job 前端状态再发起。 */
@@ -256,10 +291,11 @@ async function relogin() {
   qrLoading.value = true
   avatar.value = null
   qrStale.value = false
+  qrBlocked.value = false
   attachedToRunningJob = false
   webSessionSuspect.value = false
-  loginHint.value = '已清除旧二维码/任务状态，正在重新发起扫码登录……'
-  await startScan()
+  loginHint.value = '已清除旧二维码/任务状态，正在重新发起扫码登录（会取消旧扫码任务）……'
+  await startScan({ replace: true })
 }
 
 async function startQrPolling(run: number) {
@@ -352,11 +388,38 @@ async function startQrPolling(run: number) {
             const line = (job.lines || []).slice(-1)[0] || `任务状态：${job.status}`
             qrLoading.value = false
             qrStale.value = true
+            qrBlocked.value = true
             loginHint.value = `二维码不可用：${line}。请点「🔁 重新扫码登录」重新出码`
             stopLoginPolling()
             return
           }
+          // D192：任务还在跑但 45s 仍没有可显示的二维码 → 给出强制重新出码入口，
+          // 不再让人对着“二维码生成中”无限等。
+          const stalled = (st?.job?.stale === true) || (Date.now() - qrStartedAt > 45000)
+          if (stalled) {
+            qrBlocked.value = true
+            const age = Number(st?.job?.age || 0)
+            loginHint.value = `扫码任务已运行 ${age}s 但仍没有可用二维码`
+              + `（当前页：${maskSensitive(String(st?.urlHost || '')) || '—'}）。`
+              + '可点「⚡ 强制重新出码」取消该任务并重新生成；无需退出学习通账号。'
+          }
         } catch { /* 任务状态查询失败时继续重试 QR */ }
+      } else if (!loginJobId && st?.jobRunning === true && st?.job?.job_id) {
+        // D192：页面刷新过、引擎里仍有任务在跑，且它已经有了二维码 → 直接接上，
+        // 不必让教师再点一次（也避免手滑开第二个任务）。
+        attachedToRunningJob = true
+        loginJobId = String(st.job.job_id)
+        qrStartedAt = Date.now() - Number(st.job.age || 0) * 1000
+        if (st.qrExists && await probeQr(url)) {
+          if (run !== loginSeq) return
+          qrcode.value = url
+          qrReady = true
+          qrLoading.value = false
+          loginHint.value = '已接上正在进行的扫码任务，二维码已就绪，请用学习通 App 扫描'
+        } else {
+          qrLoading.value = true
+          loginHint.value = '已接上正在进行的扫码任务，正在等待其二维码生成……'
+        }
       } else if (!loginJobId && !qrFiled) {
         // D191：没有任务在跑且引擎说二维码不是本轮的（已清掉/是上一轮残留）→
         // 不能继续挂着“等待扫码”；提示重新出码，并停止空转轮询。
@@ -1835,11 +1898,19 @@ onUnmounted(() => { loginSeq += 1; stopLoginPolling(); stopExtractPolling(); sto
           </p>
           <p>
             <!-- D190：不再因 verdict=alive 禁用——教师需要随时能重新出码。 -->
-            <button class="btn primary" :disabled="qrLoading" @click="startScan">📷 扫码登录（QR）</button>
+            <button class="btn primary" :disabled="qrLoading" @click="startScan()">📷 扫码登录（QR）</button>
             <button class="btn" style="margin-left:8px"
                     :style="sessionInvalid || redirectSuspect ? 'border-color:#dc2626;color:#b91c1c;font-weight:600' : ''"
                     @click="relogin">🔁 重新扫码登录</button>
             <button class="btn" style="margin-left:8px" @click="refreshStatus">🔄 刷新体检</button>
+            <!-- D192：任务卡住/二维码出不来时的强制重开（取消旧任务后重新出码）。 -->
+            <button v-if="qrBlocked" class="btn"
+                    style="margin-left:8px; border-color:#d97706; color:#b45309; font-weight:600"
+                    :disabled="qrLoading" @click="forceReissueQr">⚡ 强制重新出码</button>
+          </p>
+          <p v-if="qrBlocked" class="hint" style="color:#b45306">
+            旧的扫码任务可能已卡住（浏览器未退出/二维码已作废）。点「⚡ 强制重新出码」会终止该任务并重新生成二维码；
+            <b>不需要退出学习通账号</b>，也无需关闭引擎。
           </p>
           <p class="hint" style="color:var(--c-muted)">
             体检=三信号判活+storage 回写续期（§11）；

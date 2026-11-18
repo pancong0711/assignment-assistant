@@ -415,18 +415,25 @@ export async function fetchXxtStatus(engineAddr: string, token?: string)
  * 而不是把教师卡在“已有任务在进行中”。
  */
 export type XxtLoginStart =
-  | { kind: 'started'; jobId: string }
+  | { kind: 'started'; jobId: string; replacedJob: string }
   | { kind: 'busy'; jobId: string; startedAt: number; ageSec: number; error: string; hint: string }
 
-/** POST /xxt/login/start：后台扫码登录任务（job_id 起步，QR 由 /xxt/qr 轮询）。 */
+/** POST /xxt/login/start：后台扫码登录任务（job_id 起步，QR 由 /xxt/qr 轮询）。
+ *
+ * `replace=true`（D192）：教师明确要重新出码 → 引擎先取消正在运行的旧扫码任务再开新的。
+ * 不传时若已有任务在跑返回 409 busy，调用方可选择接管。
+ */
 export async function startXxtLogin(
-  engineAddr: string, token?: string,
+  engineAddr: string, token?: string, opts?: { replace?: boolean },
 ): Promise<XxtLoginStart> {
   const base = normalizeEngineAddr(engineAddr)
-  const res = await fetch(engineUrlWithToken(base, '/xxt/login/start', token), { method: 'POST' })
+  const path = opts?.replace
+    ? '/xxt/login/start?replace=1'
+    : '/xxt/login/start'
+  const res = await fetch(engineUrlWithToken(base, path, token), { method: 'POST' })
   const o = (await res.json().catch(() => ({}))) as {
     job_id?: string; ok?: boolean; error?: string; hint?: string; stage?: string
-    startedAt?: number; ageSec?: number }
+    startedAt?: number; ageSec?: number; replacedJob?: string }
   if (res.status === 409 && o.stage === 'busy') {
     return {
       kind: 'busy',
@@ -441,7 +448,26 @@ export async function startXxtLogin(
     // D189：把引擎的可读原因透传，不要只剩 “HTTP 409”。
     throw new Error(o.error || o.hint || `HTTP ${res.status}`)
   }
-  return { kind: 'started', jobId: String(o.job_id || '') }
+  return { kind: 'started', jobId: String(o.job_id || ''),
+           replacedJob: String(o.replacedJob || '') }
+}
+
+/** POST /jobs/<id>/cancel：终止正在运行的 job（D192，用于取消卡住的扫码任务）。 */
+export async function cancelXxtJob(
+  engineAddr: string, token?: string, jobId?: string,
+): Promise<{ ok: boolean; cancelled?: boolean; error?: string }> {
+  if (!jobId) return { ok: false, error: 'job_id required' }
+  const base = normalizeEngineAddr(engineAddr)
+  try {
+    const res = await fetch(
+      engineUrlWithToken(base, `/jobs/${encodeURIComponent(jobId)}/cancel`, token),
+      { method: 'POST' })
+    const o = (await res.json().catch(() => ({}))) as {
+      ok?: boolean; cancelled?: boolean; error?: string }
+    return { ok: !!o.ok, cancelled: !!o.cancelled, error: o.error }
+  } catch (e) {
+    return { ok: false, error: String((e as Error)?.message || e) }
+  }
 }
 
 /** D189：GET /xxt/login/state —— 只读登录阶段（不含 cookie 值/token）。 */
@@ -453,6 +479,10 @@ export interface XxtLoginState {
   cookies?: string[]
   updatedAt?: number
   qrExists?: boolean
+  /** D192：引擎此刻是否有扫码登录任务在跑。 */
+  jobRunning?: boolean
+  /** D192：在跑任务的只读摘要（stale=已超过扫码等待上限、不可能再出新码）。 */
+  job?: { job_id?: string; started_at?: number; age?: number; stale?: boolean }
 }
 /** GET /xxt/login/state —— 只读登录阶段（不含 cookie 值/token）。
  *

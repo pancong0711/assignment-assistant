@@ -25,16 +25,18 @@ must(/qrStartedAt = Date\.now\(\) - started\.ageSec \* 1000/.test(view),
 
 // 2) 上一轮遗留状态/二维码不再冒充“等待扫码”
 must(/readonly_since/.test(servePy), '引擎缺 readonly_since 只读过滤')
-must(/def _xxt_login_state\(home: "Path \| None" = None,\n                     since: float = 0\.0,\n                     readonly_since: float = 0\.0\)/.test(servePy),
+must(/def _xxt_login_state\(home: "Path \| None" = None,/.test(servePy)
+  && /readonly_since: float = 0\.0/.test(servePy),
   '_xxt_login_state 未支持 readonly_since')
 must(/if not qr_exists or qr\.stat\(\)\.st_mtime < float\(readonly_since\) - 1\.0/.test(servePy),
   '只读查询未过滤陈旧二维码')
 must(/!_xxt_task_started_at\(_xxt_login_job_running\(\) or ""\)/.test(servePy) === false,
   '不太可能')
-must(servePy.includes('t0 = _xxt_task_started_at(_xxt_login_job_running() or "")')
+must(servePy.includes('t0 = float((running_info or {}).get("started_at") or 0.0)')
   && servePy.includes('t0 = _STARTED_EPOCH or time.time()')
   && servePy.includes('readonly_since = t0'),
   '只读查询未以“运行中任务起点/进程启动时间”为基准')
+must(/job_running=job_running/.test(servePy), '只读查询未显式传 job_running（D192）')
 must(/!loginJobId && !qrFiled/.test(view), '前端未处理“无任务且二维码非本轮”')
 must(/没有正在等待的扫码任务/.test(view), '缺少“没有正在等待的扫码任务”提示')
 must(/qrStale/.test(view) && /二维码已失效/.test(view), '缺少二维码失效态展示')
