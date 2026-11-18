@@ -9,6 +9,7 @@ from __future__ import annotations
 
 import base64
 import json
+import time
 from pathlib import Path
 
 from loguru import logger
@@ -129,16 +130,63 @@ def build_draft_report(d: dict) -> "tuple[str, str]":
                            revised=bool(d.get("revised")))
 
 
+def _reports_root(ws, class_dir: str, class_id: str, task_id: str) -> Path:
+    return (Path(ws) / (class_dir or f"classes/{class_id}") / "grading"
+            / (task_id or "task") / "reports")
+
+
+def _progress_path(out_root: Path) -> Path:
+    return out_root / ".progress.json"
+
+
+def read_report_progress(ws, *, class_id: str, work_id: str, task_id: str = "",
+                         class_dir: str = "") -> dict:
+    """D194：读取上一次报告生成进度（中断后可据此显示“已生成 X/Y，可继续”）。
+
+    只读；文件不存在时 `{ok: True, exists: False}`。
+    """
+    root = _reports_root(ws, class_dir, class_id, task_id)
+    p = _progress_path(root)
+    if not p.is_file():
+        return {"ok": True, "exists": False, "dir": str(root)}
+    try:
+        data = json.loads(p.read_text(encoding="utf-8"))
+        if not isinstance(data, dict):
+            return {"ok": True, "exists": False, "dir": str(root)}
+        data.update({"ok": True, "exists": True, "dir": str(root)})
+        return data
+    except Exception as exc:  # noqa: BLE001 —— 坏进度文件不影响主流程
+        return {"ok": True, "exists": False, "dir": str(root),
+                "warn": f"进度文件损坏：{str(exc)[:120]}"}
+
+
+def _write_progress(out_root: Path, data: dict) -> None:
+    """尽力而为地写进度（失败不影响报告生成本身）。"""
+    try:
+        from ..filelock import atomic_write_text
+        atomic_write_text(_progress_path(out_root),
+                          json.dumps(data, ensure_ascii=False, indent=1))
+    except Exception:  # noqa: BLE001
+        pass
+
+
 def render_reports_from_drafts(ws, *, class_id: str, work_id: str, task_id: str = "",
                                class_dir: str = "", home=None, katex_dir=None,
                                with_report_png: bool = True,
-                               reason: str = "") -> dict:
+                               reason: str = "", only: "list[str] | None" = None,
+                               resume: bool = False) -> dict:
     """D92-R2：按**已保存的双套草稿**逐生生成报告 PNG（人工在前 + 【附件】AI + 修订标红）。
 
     - 读 <xxt_home>/grade-drafts/<classId>/<workId>.json → normalize_draft；
     - 按 {构成 × 修订} 生成 md/html/png；写回草稿 human.reportImages（覆盖旧报告图）。
     - D193：同时登记**内容哈希版本**（`reports/.versions/index.json`）并把版本号写进草稿
       `human.report`；`reason` 记录本次生成原因（三键/强制重做/手动生成等）。
+    - D194：**逐生原子、可中断、可续做**：
+      * 每完成一名学生就写 `.progress.json`（done/total/pending/状态）；
+      * 单人失败不中断全班（记入 `failed` 并在结果里返回），其余继续；
+      * `resume=True` → 跳过“已有报告图且进度未标记需重做”的学生；
+        内容哈希版本幂等，重复渲染**内容没变也不会产生新版本**；
+      * `only=[学生…]` → 只重做指定学生。
     """
     import base64
     from pathlib import Path
@@ -156,63 +204,117 @@ def render_reports_from_drafts(ws, *, class_id: str, work_id: str, task_id: str 
                                    task_id=str(task_id))
     if not data:
         return {"ok": False, "error": "无本地批阅草稿（先跑一次 AI 批阅或保存人工批阅）"}
-    out_root = ws / (class_dir or f"classes/{class_id}") / "grading" / (task_id or "task") / "reports"
+    out_root = _reports_root(ws, class_dir, class_id, task_id)
     out_root.mkdir(parents=True, exist_ok=True)
+    only_set = {str(x).strip() for x in (only or []) if str(x).strip()}
+    pending = [(k, v) for k, v in data.items()
+               if not only_set or str((v or {}).get("student") or k) in only_set
+               or str(k) in only_set]
+    total = len(pending)
+    started_at = time.strftime("%Y-%m-%d %H:%M:%S")
+    progress = {"ok": True, "state": "running", "startedAt": started_at,
+                "updatedAt": started_at, "reason": str(reason or ""),
+                "classId": class_id, "workId": work_id, "taskId": task_id,
+                "total": total, "done": [], "failed": [], "skipped": [],
+                "mode": "resume" if resume else "full"}
+    _write_progress(out_root, progress)
     done = []
-    for key, raw in data.items():
+    failed = []
+    skipped = []
+    for idx, (key, raw) in enumerate(pending, 1):
         d = grade_store.normalize_draft(raw if isinstance(raw, dict) else {})
         student = str(d.get("student") or key)
-        md, kind = _mode_report_md(student=student, ai=d.get("ai") or {},
-                                   human=d.get("human") or {},
-                                   human_mode=d.get("humanMode") or "none",
-                                   revision=d.get("revision") or {},
-                                   revised=bool(d.get("revised")))
-        title = f"{student} 批阅报告"
-        # D193：固定“最新”文件名（前端零改动），版本信息放 .versions/index.json
-        base = out_root / f"{student}"
-        md_file = base.with_suffix(".md"); md_file.write_text(md, encoding="utf-8")
-        html_file = base.with_suffix(".html")
-        html_text = report_html_from_md(md, kind=kind, title=title, katex_dir=katex_dir)
-        html_file.write_text(html_text, encoding="utf-8")
-        imgs = []
-        produced: list[Path] = [md_file, html_file]
-        if with_report_png:
-            png = html_to_png(html_text, base.with_suffix(".png"))
-            if png and Path(png).is_file():
-                produced.append(Path(png))
-                imgs.append({"name": f"{student}-report.png",
-                             "data_b64": base64.b64encode(Path(png).read_bytes()).decode()})
-        # D193 §3：登记内容哈希版本（内容未变不产生新版本；历史进 .versions/）
-        ver = report_versions.record(
-            out_root, student, md, kind=kind,
-            score=(d.get("human") or {}).get("score")
-            if (d.get("human") or {}).get("score") is not None
-            else (d.get("ai") or {}).get("score"),
-            reason=str(reason or "render_reports_from_drafts"),
-            files=produced)
-        # 报告图回写人工套（供上传）；不动 ai 基线
-        # D175-FIX：必须写带 scope 的**同一份**草稿（此前漏传 ws/class_dir/task_id
-        # → 落到旧布局 `<xxt_home>/grade-drafts/<classId>/<workId>.json`，
-        # 与刚读的 `grading/<taskId>/drafts/` 不是同一份 → 报告预览永远"未生成"）。
-        human_patch: dict = {}
-        if imgs:
-            human_patch["reportImages"] = imgs
-        # D193：版本号与上传清单共用同一口径，教师可直接对照
-        human_patch["report"] = {
-            "version": ver["version"], "tag": ver["tag"],
-            "sha256": ver["sha256"], "generatedAt": ver["entry"]["at"],
-            "changed": ver["changed"], "file": f"{student}.png", "kind": kind,
-        }
-        grade_store.save_draft_sets(home, class_id, work_id, key,
-                                    human=human_patch,
-                                    student=student,
-                                    ws=ws, class_dir=str(class_dir or f"classes/{class_id}"),
-                                    task_id=str(task_id))
-        done.append({"key": key, "student": student, "kind": kind,
-                     "revised": bool(d.get("revised")), "png": bool(imgs),
-                     "version": ver["version"], "tag": ver["tag"],
-                     "changed": ver["changed"]})
-    return {"ok": True, "count": len(done), "reports": done, "dir": str(out_root),
+        # D194：续做时，已有报告图且本次不是“强制重做”→ 跳过（避免重复渲染/重复进版本）
+        prev_report = ((d.get("human") or {}).get("report") or {})
+        if resume and not only_set and prev_report.get("version") \
+                and (out_root / f"{student}.png").is_file():
+            skipped.append({"key": key, "student": student,
+                            "reason": "已有报告（续做跳过）",
+                            "version": prev_report.get("version")})
+            progress["skipped"] = skipped
+            progress["updatedAt"] = time.strftime("%Y-%m-%d %H:%M:%S")
+            _write_progress(out_root, progress)
+            continue
+        try:
+            md, kind = _mode_report_md(student=student, ai=d.get("ai") or {},
+                                       human=d.get("human") or {},
+                                       human_mode=d.get("humanMode") or "none",
+                                       revision=d.get("revision") or {},
+                                       revised=bool(d.get("revised")))
+            title = f"{student} 批阅报告"
+            # D193：固定“最新”文件名（前端零改动），版本信息放 .versions/index.json
+            base = out_root / f"{student}"
+            md_file = base.with_suffix(".md"); md_file.write_text(md, encoding="utf-8")
+            html_file = base.with_suffix(".html")
+            html_text = report_html_from_md(md, kind=kind, title=title, katex_dir=katex_dir)
+            html_file.write_text(html_text, encoding="utf-8")
+            imgs = []
+            produced: list[Path] = [md_file, html_file]
+            if with_report_png:
+                png = html_to_png(html_text, base.with_suffix(".png"))
+                if png and Path(png).is_file():
+                    produced.append(Path(png))
+                    imgs.append({"name": f"{student}-report.png",
+                                 "data_b64": base64.b64encode(Path(png).read_bytes()).decode()})
+            # D193 §3：登记内容哈希版本（内容未变不产生新版本；历史进 .versions/）
+            ver = report_versions.record(
+                out_root, student, md, kind=kind,
+                score=(d.get("human") or {}).get("score")
+                if (d.get("human") or {}).get("score") is not None
+                else (d.get("ai") or {}).get("score"),
+                reason=str(reason or "render_reports_from_drafts"),
+                files=produced)
+            # 报告图回写人工套（供上传）；不动 ai 基线
+            # D175-FIX：必须写带 scope 的**同一份**草稿（此前漏传 ws/class_dir/task_id
+            # → 落到旧布局 `<xxt_home>/grade-drafts/<classId>/<workId>.json`，
+            # 与刚读的 `grading/<taskId>/drafts/` 不是同一份 → 报告预览永远"未生成"）。
+            human_patch: dict = {}
+            if imgs:
+                human_patch["reportImages"] = imgs
+            # D193：版本号与上传清单共用同一口径，教师可直接对照
+            human_patch["report"] = {
+                "version": ver["version"], "tag": ver["tag"],
+                "sha256": ver["sha256"], "generatedAt": ver["entry"]["at"],
+                "changed": ver["changed"], "file": f"{student}.png", "kind": kind,
+            }
+            grade_store.save_draft_sets(home, class_id, work_id, key,
+                                        human=human_patch,
+                                        student=student,
+                                        ws=ws, class_dir=str(class_dir or f"classes/{class_id}"),
+                                        task_id=str(task_id))
+            done.append({"key": key, "student": student, "kind": kind,
+                         "revised": bool(d.get("revised")), "png": bool(imgs),
+                         "version": ver["version"], "tag": ver["tag"],
+                         "changed": ver["changed"]})
+        except Exception as exc:  # noqa: BLE001 —— D194：单人失败不拖垮全班
+            logger.warning(f"报告生成失败（{student}）：{exc}")
+            failed.append({"key": key, "student": student,
+                           "error": str(exc)[:300]})
+        # D194：每完成一人就落盘进度（中断后可从进度看出做到哪、谁失败了）
+        progress.update({
+            "done": [x["student"] for x in done],
+            "failed": failed,
+            "skipped": skipped,
+            "updatedAt": time.strftime("%Y-%m-%d %H:%M:%S"),
+            "state": "running",
+            "current": student,
+            "processed": idx,
+        })
+        _write_progress(out_root, progress)
+    finished = time.strftime("%Y-%m-%d %H:%M:%S")
+    progress.update({"state": "partial" if failed else "done",
+                     "finishedAt": finished, "current": "",
+                     "done": [x["student"] for x in done],
+                     "failed": failed, "skipped": skipped})
+    _write_progress(out_root, progress)
+    return {"ok": bool(done) and not failed,
+            "partial": bool(failed) and bool(done),
+            "count": len(done), "reports": done, "dir": str(out_root),
+            "failed": failed, "skipped": skipped,
+            "total": total,
+            "hint": ("部分学生报告生成失败：" + "、".join(x["student"] for x in failed)
+                     + "；可直接再点「一键生成批阅报告」续做（已完成的不重复渲染）")
+            if failed else "",
             "versionsFile": str(out_root / report_versions.VERSIONS_DIR
                                 / report_versions.INDEX_NAME)}
 

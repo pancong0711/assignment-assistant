@@ -2600,9 +2600,16 @@ export async function fetchKbCatalog(
 export async function renderReportsFromDrafts(
   engineAddr: string, token: string | undefined,
   payload: { classId: string; workId: string; taskId?: string; classDir?: string
-    withReportPng?: boolean; reason?: string },
-): Promise<{ ok?: boolean; error?: string; count?: number; dir?: string
+    withReportPng?: boolean; reason?: string
+    /** D194：只重做这些学生（姓名或草稿 key）。 */
+    only?: string[]
+    /** D194：续做——已有报告的学生跳过。 */
+    resume?: boolean },
+): Promise<{ ok?: boolean; partial?: boolean; busy?: boolean; error?: string
+  count?: number; dir?: string; total?: number; hint?: string
   versionsFile?: string
+  failed?: { key?: string; student?: string; error?: string }[]
+  skipped?: { key?: string; student?: string; reason?: string; version?: string }[]
   reports?: { key?: string; student?: string; kind?: string; revised?: boolean; png?: boolean
     version?: string; tag?: string; changed?: boolean }[] }> {
   const base = normalizeEngineAddr(engineAddr)
@@ -2612,6 +2619,33 @@ export async function renderReportsFromDrafts(
   const o = (await res.json().catch(() => ({}))) as any
   if (!res.ok && !o?.error) throw new Error(`HTTP ${res.status}`)
   return o
+}
+
+/** D194：只读报告生成进度（中断后判断“已生成 X/Y、可续做”）。 */
+export interface XxtReportProgress {
+  ok?: boolean
+  exists?: boolean
+  state?: string
+  total?: number
+  done?: string[]
+  failed?: { key?: string; student?: string; error?: string }[]
+  skipped?: { student?: string; reason?: string }[]
+  startedAt?: string
+  updatedAt?: string
+  finishedAt?: string
+  dir?: string
+}
+
+export async function fetchReportProgress(
+  engineAddr: string, token: string | undefined,
+  payload: { classId: string; workId: string; taskId?: string; classDir?: string },
+): Promise<XxtReportProgress> {
+  const base = normalizeEngineAddr(engineAddr)
+  const res = await fetch(engineUrlWithToken(base, '/xxt/grade/render-from-drafts', token), {
+    method: 'POST', headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ ...payload, progressOnly: true }),
+  })
+  return (await res.json().catch(() => ({ ok: false }))) as XxtReportProgress
 }
 
 /* ---------- D193：上传对照表 + 报告版本历史（只读） ---------- */

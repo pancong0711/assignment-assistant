@@ -11,7 +11,7 @@ import {
   extractJobError, fetchLlmConfig, fetchXxtClassMap, fetchXxtGradeDrafts, fetchXxtLoginJob,
   fetchXxtReviewIndex, fetchXxtReviewStudents, postLlmProvider, postXxtClassMap,
   startXxtGradeAi, startXxtGradeUpload, renderReportsFromDrafts, testLlmStages,
-  fetchXxtUploadPreview, fetchXxtReportVersions,
+  fetchXxtUploadPreview, fetchXxtReportVersions, fetchReportProgress,
   applyTagAudit, fetchTagAudit, fetchTagAuditHistory, runTagAudit, undoTagAudit,
   undoStudentTagApi,
 } from '../lib/engineClient'
@@ -55,6 +55,10 @@ const versionsOpen = ref(false)
 const versionsBusy = ref(false)
 const versionsRows = ref<{ student?: string; version?: string; tag?: string; at?: string
   kind?: string; score?: number | null; files?: string[]; reason?: string }[]>([])
+/* D194：上次报告生成进度（中断后显示“已生成 X/Y”，可续做/只补失败学生）。 */
+const reportProgress = ref<{ exists?: boolean; state?: string; total?: number
+  done?: string[]; failed?: { student?: string; error?: string }[]
+  skipped?: { student?: string }[]; finishedAt?: string; updatedAt?: string } | null>(null)
 const busy = ref(false)
 const progress = ref('')
 let pollTimer: number | undefined
@@ -1024,32 +1028,49 @@ function reportMode(s: { key: string; name?: string; altKeys?: string[] }): stri
   return d.human?.used ? 'auto(人工)' : 'auto(AI)'
 }
 
-async function renderReports() {
+async function renderReports(opts?: { resume?: boolean; only?: string[] }) {
   const w = curWork.value
   if (!w) { msg.value = '请选择作业'; return }
   const taskId = packId.value || padId.value || resolvedScope.value
   if (!taskId) { msg.value = '⚠ 请先选择作业包/作业纸，或先读取一次学生清单'; return }
   if (!curWorkDir.value) { msg.value = '⚠ 请先关联本地班级目录'; return }
   busy.value = true
-  progress.value = '正在按草稿逐生生成报告（人工在前 + 【附件】AI + 修订标红）……'
+  progress.value = opts?.resume
+    ? '正在续做报告（已有报告的学生会跳过，内容未变不产生新版本）……'
+    : opts?.only?.length
+      ? `正在为 ${opts.only.length} 名学生重做报告……`
+      : '正在按草稿逐生生成报告（人工在前 + 【附件】AI + 修订标红）……'
   try {
     const r = await renderReportsFromDrafts(props.engineAddr, props.token, {
       classId: w.classId, workId: w.workId, taskId,
       // D187：必须带 classDir；否则后端会落到 classes/<学习通数字 classId>，
       // 与真实 classes/<中文班级目录>/grading/<taskId>/drafts 不一致。
       classDir: curWorkDir.value,
+      resume: opts?.resume === true,
+      only: opts?.only,
+      reason: opts?.resume ? 'pwa-resume' : (opts?.only ? 'pwa-only' : 'pwa-render'),
     })
     busy.value = false
-    if (r?.ok) {
+    await refreshReportProgress()
+    if (r?.busy) {
+      progress.value = `⚠ ${r.error || '该作业正在生成报告，请稍候'}`
+      return
+    }
+    if (r?.ok || r?.partial) {
       const n = r.count ?? (r.reports || []).length
       const types = Array.from(new Set((r.reports || []).map((x) => x.kind))).join('/')
       const vers = Array.from(new Set((r.reports || [])
         .map((x) => x.tag || x.version).filter(Boolean)))
-      progress.value = `✅ 已生成 ${n} 份报告（类型：${types || '自动'}）`
+      const failed = r.failed || []
+      const skippedN = (r.skipped || []).length
+      progress.value = `${r.partial ? '⚠ 部分完成' : '✅ 已生成'} ${n} 份报告`
+        + `（类型：${types || '自动'}）`
         + (vers.length ? `；版本 ${vers.slice(0, 3).join('、')}${vers.length > 3 ? ' …' : ''}` : '')
         + '；写入本地草稿（含报告图）'
+        + (skippedN ? `；续做跳过 ${skippedN} 人` : '')
         + ((r.reports || []).some((x) => x.changed === false)
           ? '；部分学生内容未变（版本号不变，不重复产生历史）' : '')
+        + (failed.length ? `；失败 ${failed.length} 人：${failed.map((x) => x.student).join('、')}` : '')
       await loadStudents()
       // D126-B：让教师总结报告跟着刷新（评阅结果没变也会重算，成本很低：纯统计）
       reportReloadKey.value += 1
@@ -1094,6 +1115,31 @@ async function openUploadPreview(platform: boolean) {
   } catch (e) {
     progress.value = `对照表失败：${String((e as Error)?.message || e)}`
   } finally { previewBusy.value = false }
+}
+
+/** D194：读取上次报告生成进度（只读；用于显示“已生成 X/Y”和续做入口）。 */
+async function refreshReportProgress() {
+  const w = curWork.value
+  const taskId = packId.value || padId.value || resolvedScope.value
+  if (!w || !curWorkDir.value || !taskId) { reportProgress.value = null; return }
+  try {
+    reportProgress.value = await fetchReportProgress(props.engineAddr, props.token, {
+      classId: w.classId, workId: w.workId, taskId, classDir: curWorkDir.value,
+    })
+  } catch { reportProgress.value = null }
+}
+
+/** D194：续做——已完成（有报告的）学生跳过；零成本重复点也安全。 */
+async function resumeReports() {
+  await renderReports({ resume: true })
+}
+
+/** D194：只补做上次失败的学生。 */
+async function retryFailedReports() {
+  const names = (reportProgress.value?.failed || []).map((x) => x.student || '')
+    .filter(Boolean)
+  if (!names.length) { msg.value = '没有失败记录'; return }
+  await renderReports({ only: names })
 }
 
 /** D193：查看报告版本历史（只读；同一内容不会重复产生版本）。 */
@@ -1188,7 +1234,10 @@ watch([workKey, packId, padId], () => { tagAutoSelectDone = false }, { flush: 'p
 /** D117：作业选择变化就加载学生清单 + 草稿。
  *  旧实现只有下拉 `@change="loadStudents()"`，而 `loadWorks()` 是**代码自动赋值** workKey，
  *  不会触发 change 事件 → 进页面/批阅完成后「逐生审核」永远显示"无学生清单"、没有「审核」按钮。 */
-watch(workKey, (k) => { if (k) void loadStudents(); else { students.value = []; drafts.value = {} } }, { flush: 'post' })
+watch(workKey, (k) => {
+  if (k) { void loadStudents(); void refreshReportProgress() }
+  else { students.value = []; drafts.value = {}; reportProgress.value = null }
+}, { flush: 'post' })
 
 onMounted(async () => {
   await loadConfig()
@@ -1593,7 +1642,19 @@ onMounted(async () => {
       <span class="hint" style="margin:0">
         报告类型**自动**由逐生审核决定（AI批阅报告 / 人工批阅报告 / 人工在前+【附件】AI / …（人工修订））
       </span>
-      <button class="btn" :disabled="busy" @click="renderReports">📄 一键生成批阅报告</button>
+      <button class="btn" :disabled="busy" @click="renderReports()">📄 一键生成批阅报告</button>
+      <!-- D194：中断后可续做（已有报告的跳过）；重复点也安全 -->
+      <button v-if="reportProgress?.exists && (reportProgress.done?.length || 0) > 0
+                    && reportProgress.state !== 'done'"
+              class="btn" style="border-color:#d97706;color:#b45309"
+              :disabled="busy" @click="resumeReports">
+        ⏯ 续做报告（已完成 {{ reportProgress.done?.length ?? 0 }}/{{ reportProgress.total ?? '?' }}）
+      </button>
+      <button v-if="reportProgress?.exists && (reportProgress.failed?.length || 0) > 0"
+              class="btn" style="border-color:#dc2626;color:#b91c1c"
+              :disabled="busy" @click="retryFailedReports">
+        ↻ 只补失败 {{ reportProgress.failed?.length }} 人
+      </button>
       <button class="btn" :disabled="busy || versionsBusy" @click="loadReportVersions">
         🕘 报告版本
       </button>
@@ -1605,6 +1666,19 @@ onMounted(async () => {
       <button class="btn" :disabled="busy" @click="uploadAll(false)">⬆⬆ 上传全部批阅（含打分）</button>
       <button class="btn" :disabled="busy" @click="uploadAll(true)">⬆⬆ 强制覆盖上传全部</button>
     </div>
+    <p v-if="reportProgress?.exists" class="hint" style="margin-top:6px"
+       :style="reportProgress.state === 'partial' ? 'color:#b45309' : ''">
+      报告生成进度：{{ reportProgress.state === 'done' ? '已完成'
+        : (reportProgress.state === 'partial' ? '部分完成（有失败）'
+          : (reportProgress.state === 'running' ? '上次中断/仍在进行' : '—')) }}
+      · 已生成 {{ reportProgress.done?.length ?? 0 }}/{{ reportProgress.total ?? 0 }} 人
+      <span v-if="reportProgress.failed?.length"> · 失败 {{ reportProgress.failed.length }} 人</span>
+      <span v-if="reportProgress.skipped?.length"> · 续做跳过 {{ reportProgress.skipped.length }} 人</span>
+      <span v-if="reportProgress.updatedAt"> · 更新于 {{ reportProgress.updatedAt }}</span>
+      <br>
+      中断后可直接再点「📄 一键生成批阅报告」：已完成的学生会**跳过**（内容未变不产生新版本），
+      只补做缺失/失败的部分；同一作业重复点击不会并发渲染。
+    </p>
     <p class="hint" style="margin-top:6px">
       完整逐生预览（作答图 + 两栏批语 + 旋转/上下位）仍在「作业预览-学习通 → 批阅图片 → 逐生预览」。
     </p>

@@ -85,6 +85,9 @@ def install_katex(ws: Path, emit) -> int:
     return 0
 
 _JOBS: dict[str, dict] = {}
+# D194：报告生成单实例（同一作业并发点两次会抢写同名报告文件）。
+_RENDER_LOCK = threading.Lock()
+_RENDER_RUNNING: set = set()
 # D192：登录任务超过这个时长仍 running，视为卡死的旧任务（CLI 等待窗口 1800s + 余量）。
 _XXT_LOGIN_MAX_AGE = 1900
 _RESTART_ARGS: tuple = (  # ('serve', --workspace …)：python -c 入口的 click argv
@@ -3249,15 +3252,38 @@ class Handler(BaseHTTPRequestHandler):
             except Exception as exc:  # noqa: BLE001
                 self._json({"ok": False, "error": f"bad json: {exc}"}, 400)
                 return
-            from .grading.drafts import render_reports_from_drafts
+            from .grading.drafts import render_reports_from_drafts, read_report_progress
             ws = Path(self.ws).resolve()
-            rep = render_reports_from_drafts(
-                ws, class_id=str(payload.get("classId") or ""),
-                work_id=str(payload.get("workId") or ""),
-                task_id=str(payload.get("taskId") or ""),
-                class_dir=str(payload.get("classDir") or ""),
-                with_report_png=bool(payload.get("withReportPng", True)),
-                reason=str(payload.get("reason") or "pwa-render"))
+            cid = str(payload.get("classId") or "")
+            work = str(payload.get("workId") or "")
+            tid = str(payload.get("taskId") or "")
+            cdir = str(payload.get("classDir") or "")
+            only = payload.get("only")
+            only = [str(x) for x in only] if isinstance(only, list) else None
+            resume = bool(payload.get("resume"))
+            if payload.get("progressOnly"):
+                # D194：只读进度（供前端显示“已生成 X/Y，可续做”）
+                self._json(read_report_progress(ws, class_id=cid, work_id=work,
+                                                task_id=tid, class_dir=cdir))
+                return
+            # D194：同一作业的报告生成单实例——并发点两次会抢写同名文件/重复渲染。
+            lock_key = f"render:{cdir}:{tid}:{work}"
+            with _RENDER_LOCK:
+                if lock_key in _RENDER_RUNNING:
+                    self._json({"ok": False, "busy": True,
+                                "error": "该作业正在生成报告，请等这次完成（不会重复渲染）",
+                                "stage": "busy"}, 409)
+                    return
+                _RENDER_RUNNING.add(lock_key)
+            try:
+                rep = render_reports_from_drafts(
+                    ws, class_id=cid, work_id=work, task_id=tid, class_dir=cdir,
+                    with_report_png=bool(payload.get("withReportPng", True)),
+                    reason=str(payload.get("reason") or "pwa-render"),
+                    only=only, resume=resume)
+            finally:
+                with _RENDER_LOCK:
+                    _RENDER_RUNNING.discard(lock_key)
             self._json(rep, 200 if rep.get("ok") else 400)
             return
         if u.path == "/xxt/grade/upload-preview":
