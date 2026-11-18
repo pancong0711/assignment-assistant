@@ -407,9 +407,34 @@ export async function fetchXxtStatus(engineAddr: string, token?: string)
 export async function startXxtLogin(engineAddr: string, token?: string): Promise<string> {
   const base = normalizeEngineAddr(engineAddr)
   const res = await fetch(engineUrlWithToken(base, '/xxt/login/start', token), { method: 'POST' })
-  if (!res.ok) throw new Error(`HTTP ${res.status}`)
-  const o = (await res.json()) as { job_id: string }
-  return o.job_id
+  const o = (await res.json().catch(() => ({}))) as {
+    job_id?: string; ok?: boolean; error?: string; hint?: string; stage?: string }
+  if (!res.ok) {
+    // D189：409 = 已有登录任务在跑；把引擎的可读原因透传，不要只剩 “HTTP 409”。
+    throw new Error(o.error || o.hint || `HTTP ${res.status}`)
+  }
+  return String(o.job_id || '')
+}
+
+/** D189：GET /xxt/login/state —— 只读登录阶段（不含 cookie 值/token）。 */
+export interface XxtLoginState {
+  ok?: boolean
+  stage?: string
+  error?: string
+  urlHost?: string
+  cookies?: string[]
+  updatedAt?: number
+  qrExists?: boolean
+}
+export async function fetchXxtLoginState(
+  engineAddr: string, token?: string,
+): Promise<XxtLoginState> {
+  const base = normalizeEngineAddr(engineAddr)
+  try {
+    return (await getJson2(engineUrlWithToken(base, '/xxt/login/state', token))) as XxtLoginState
+  } catch {
+    return { ok: false }
+  }
 }
 
 /** 从 CLI job 输出里提取可读错误信息（D83 修复）。

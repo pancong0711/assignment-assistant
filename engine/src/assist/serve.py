@@ -195,6 +195,55 @@ def _xxt_login_cmd(home: Path) -> list[str]:
     ])
 
 
+def _xxt_login_job_running() -> "str | None":
+    """D189：返回仍在运行的 xxt_login 任务 job_id（没有则 None）。
+
+    并发两个扫码任务会抢写同一张 `xxt-qr.png`，教师可能扫到上一张票据。
+    """
+    with _JOBS_LOCK:
+        for jid, info in _JOBS.items():
+            if str(info.get("item") or "") == "xxt_login" and \
+                    str(info.get("status") or "") == "running":
+                return jid
+    return None
+
+
+def _mask_secret_text(text: str) -> str:
+    """D189：错误文本脱敏（token/cookie/password/ticket 的值），供只读状态接口使用。"""
+    import re as _re
+    t = str(text or "")
+    t = _re.sub(r"((?:token|cookie|pwd|passwd|password|ticket|_uid|uid)\s*[=:]\s*)[^\s,;，；)]+",
+                r"\1***", t, flags=_re.I)
+    t = _re.sub(r"[?&](?:token|cookie|pwd|passwd|password|ticket|_uid|uid)=[^&\s]+",
+                "", t, flags=_re.I)
+    return t
+
+
+def _xxt_login_state(home: "Path | None" = None) -> dict:
+    """D189：只读登录状态（阶段/错误/URL 主机/cookie 名），不含任何敏感值。"""
+    home = Path(home) if home else _xxt_home()
+    p = home / "xxt-login-state.json"
+    out = {"ok": True, "stage": "", "error": "", "urlHost": "",
+           "cookies": [], "updatedAt": 0, "qrExists": (home / "xxt-qr.png").is_file()}
+    try:
+        if p.is_file():
+            data = json.loads(p.read_text(encoding="utf-8"))
+            if isinstance(data, dict):
+                out["stage"] = str(data.get("stage") or "")
+                out["error"] = _mask_secret_text(str(data.get("error") or ""))[:300]
+                try:
+                    from urllib.parse import urlparse as _up
+                    out["urlHost"] = _up(str(data.get("url") or "")).netloc.lower()
+                except Exception:  # noqa: BLE001
+                    out["urlHost"] = ""
+                ck = data.get("cookies")
+                out["cookies"] = [str(x) for x in ck][:30] if isinstance(ck, list) else []
+                out["updatedAt"] = int(p.stat().st_mtime)
+    except Exception:  # noqa: BLE001 —— 只读诊断，坏文件不影响接口
+        pass
+    return out
+
+
 def installer_for(item: str) -> tuple[list[str] | None, str | None]:
     """item → (cmd, guide)；guide 非 None 表示逐行文本引导（无法静默装的系统级依赖）。"""
     py = str(_venv_python() or sys.executable)
@@ -1352,13 +1401,22 @@ class Handler(BaseHTTPRequestHandler):
             self._json({"ok": True, "path": str(out), "kind": kind})
             return
         if u.path == "/xxt/login/start":
-            job_id = secrets.token_urlsafe(6)
             home = _xxt_home()
-            # D66：同步清掉旧二维码，避免后台任务刚启动时又让前端拿到过去的登录票据。
-            try:
-                (home / "xxt-qr.png").unlink()
-            except FileNotFoundError:
-                pass
+            # D189：登录任务单实例——两个任务并发会抢写同一张二维码。
+            running = _xxt_login_job_running()
+            if running:
+                self._json({"ok": False, "job_id": running,
+                            "error": "已有扫码登录任务在进行中，请先完成扫码或稍后再试",
+                            "hint": "若二维码已失效，请关闭引擎窗口后重启，再点「重新扫码登录」",
+                            "stage": "busy"}, 409)
+                return
+            job_id = secrets.token_urlsafe(6)
+            # D66/D189：清掉旧二维码/旧登录状态，避免扫到上一张票据或看到旧错误。
+            for name in ("xxt-qr.png", "xxt-qr.tmp.png", "xxt-login-state.json"):
+                try:
+                    (home / name).unlink()
+                except FileNotFoundError:
+                    pass
             # 顺序很重要：本引擎解析出的 xxt 根必须覆盖外部环境里的旧 XXT_STORAGE/XXT_HOME；
             # 这样 qr_login 写出的 QR 与 GET /xxt/qr 读取的路径才是同一处。
             # D68：与 docs/16 §20.3 “CLI 套壳”决议对齐——PWA 不直接调 qr_login()，
@@ -3398,6 +3456,9 @@ class Handler(BaseHTTPRequestHandler):
                                 "detail": xxt_err,
                                 "hint": "关闭引擎窗口 → 删除 workspace/_engine → 重新双击 start.bat；见 docs/24 §14"}, 503)
                 return
+        if u.path == "/xxt/login/state":
+            self._json(_xxt_login_state(_xxt_home()))
+            return
         if u.path == "/xxt/status":
             rep = _xxt_session_check_cached()
             view = dict(rep)

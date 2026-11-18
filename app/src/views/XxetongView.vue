@@ -7,6 +7,7 @@ import {
   fetchXxtReviewWork, fetchXxtRun, fetchXxtRuns, fetchXxtStatus, fetchXxtStorage, fetchXxtTargets,
   fetchXxtWorks, importXxtRun, pruneXxtReview, pruneXxtRuns, startXxtDiscover,
   startXxtDiscoverWorks, startXxtExtract, startXxtExtractTargets, startXxtLogin,
+  fetchXxtLoginState,
   deleteXxtReviewWork, purgeXxtReviewWork, startXxtReviewDownload, startXxtReviewProbe,
   xxtReviewFileUrl, deleteXxtGradeDraft, fetchXxtGradeDrafts, saveXxtGradeDraft,
   startXxtGradeUpload, extractJobError,
@@ -66,6 +67,24 @@ const sessionInvalid = computed(() =>
 /** D188：体检可能 alive（个人空间可开），但最近一次发现/提取已被跳回登录页。 */
 const redirectSuspect = computed(() =>
   !sessionInvalid.value && (loginRedirect.value || webSessionSuspect.value))
+
+/* D189：扫码登录阶段 → 教师可读原因（引擎 /xxt/login/state 的 stage/error）。 */
+const LOGIN_STAGE_HINT: Record<string, string> = {
+  starting: '正在启动浏览器…',
+  waiting_scan: '已生成二维码，等待手机扫码（扫码后请勿关闭页面）',
+  failed: '二维码/浏览器阶段失败',
+  timeout: '等待扫码超时（二维码可能已过期）',
+  logged_in: '已登录',
+}
+function describeLoginState(st: { stage?: string; error?: string; urlHost?: string } | null): string {
+  if (!st) return ''
+  const stage = String(st.stage || '')
+  const head = LOGIN_STAGE_HINT[stage] || (stage ? `阶段：${stage}` : '')
+  const err = maskSensitive(String(st.error || ''))
+  const host = maskSensitive(String(st.urlHost || ''))
+  const parts = [head, err ? `原因：${err}` : '', host ? `当前页：${host}` : '']
+  return parts.filter(Boolean).join('；')
+}
 
 function stopLoginPolling() {
   if (loginTimer !== undefined) {
@@ -150,7 +169,15 @@ async function startScan() {
     void startQrPolling(run)
   } catch (e) {
     qrLoading.value = false
-    loginHint.value = `启动失败：${String(e)}（检查引擎在线/playwright 安装项）`
+    const msg = maskSensitive(String((e as Error)?.message || e))
+    qrLoading.value = false
+    // D189：409=已有登录任务在跑；引擎把原因放在 error 里，直接展示。
+    loginHint.value = /已有扫码登录任务/.test(msg)
+      ? `⚠ ${msg}`
+      : `启动失败：${msg}（检查引擎在线/playwright 安装项）`
+    const st = await fetchXxtLoginState(engUrl.value, tok.value)
+    const detail = describeLoginState(st)
+    if (detail) loginHint.value += `\n${detail}`
   }
 }
 
@@ -186,11 +213,19 @@ async function startQrPolling(run: number) {
       try {
         const job = await fetchXxtLoginJob(engUrl.value, tok.value, loginJobId)
         if (job.status === 'failed') {
-          const line = (job.lines || []).slice(-1)[0] || `任务状态：${job.status}`
+          const line = maskSensitive(String((job.lines || []).slice(-1)[0]
+            || `任务状态：${job.status}`))
+          const st = await fetchXxtLoginState(engUrl.value, tok.value)
+          const detail = describeLoginState(st)
           qrcode.value = ''
           qrReady = false
           qrLoading.value = false
-          loginHint.value = `扫码登录失败：${line}`
+          const stage = String(st?.stage || '')
+          const why = /timeout/.test(stage)
+            ? '等待扫码超时：二维码可能已过期'
+            : (/failed/.test(stage) ? '二维码生成/浏览器阶段失败' : '')
+          loginHint.value = `扫码登录失败${why ? `（${why}）` : ''}：${detail || line}`
+          if (!/已登录/.test(detail) && !detail) loginHint.value += `；任务最后一行：${line}`
           stopLoginPolling()
           return
         }

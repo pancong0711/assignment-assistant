@@ -8,6 +8,7 @@ verdict=alive 时执行 storage_state 回写续期（旧 xuexitong/browser.py �
 """
 from __future__ import annotations
 
+import hashlib
 import json
 import os
 import time
@@ -199,30 +200,79 @@ def _cookie_names(page) -> list[str]:
         return []
 
 
-def _is_logged_in(page) -> bool:
-    """扫码后轮询判定（D68 对齐旧 capture；D70 改为 cookie 先判、URL 后判）。
+# D189：扫码登录依赖的会话 cookie（大小写不敏感）。
+# 只看名字判断会把“以前登录残留的旧 _uid”误当成本次扫码成功。
+_SESSION_COOKIE_NAMES = ("_uid", "uid", "fid", "vc3", "uf", "xxtenc")
 
-    旧实现先做 passport/login URL 拦截，导致“cookie 已有 _uid、但页面 URL
-    没来得及跳转”的场景永远检测不到。新口径：
-      1) 先看 _uid/uid cookie；
-      2) 再看是否已到 i.chaoxing.com/教学域；
-      3) 最后才用 passport/login URL 兜底判 False。
-    真伪最终由 qr_login 中的 goto HOME_URL + CLI check_session 二次确认。
+
+def cookie_fingerprint(cookies) -> dict:
+    """D189：cookie 指纹（只含名字 → 值的短哈希），用于内存比较，不落盘。
+
+    `cookies` 为 Playwright `context.cookies()` 的结果；返回
+    `{"_uid": "ab12cd34", ...}`。值永不进入日志/状态文件/界面。
     """
+    out: dict = {}
     try:
-        names = {c["name"].lower() for c in page.context.cookies()}
-    except Exception:
-        names = set()
-    if "_uid" in names or "uid" in names:
-        return True
-    u = urlparse(page.url)
-    host, path = u.netloc.lower(), u.path.lower()
-    if "passport" in host or "login" in path:
-        return False
-    if host == "i.chaoxing.com" or host.endswith(".chaoxing.com"):
-        if host != "passport2.chaoxing.com" and "passport" not in host and "login" not in path:
+        for c in cookies or []:
+            if not isinstance(c, dict):
+                continue
+            name = str(c.get("name") or "").strip().lower()
+            if not name:
+                continue
+            raw = str(c.get("value") or "")
+            out[name] = hashlib.sha256(raw.encode("utf-8", "ignore")).hexdigest()[:8]
+    except Exception:  # noqa: BLE001 —— 诊断用，失败只返回空指纹
+        return {}
+    return out
+
+
+def session_cookie_changed(baseline: "dict | None", current: "dict | None") -> bool:
+    """D189：本次扫码是否带来了**新的/变化的**会话 cookie。
+
+    基线为空（第一次扫码）时，只要出现会话 cookie 就视为变化；
+    否则至少有一个会话 cookie 新增或值变化。
+    """
+    cur = current if isinstance(current, dict) else {}
+    base = baseline if isinstance(baseline, dict) else {}
+    for name in _SESSION_COOKIE_NAMES:
+        if not cur.get(name):
+            continue
+        if not base:
+            return True
+        if base.get(name) != cur.get(name):
             return True
     return False
+
+
+def _is_logged_in(page, baseline: "dict | None" = None) -> bool:
+    """扫码后轮询判定（D68/D70 口径 + D189 基线校验）。
+
+    原实现只看 `_uid/uid` 是否存在：教师以前登录过时，浏览器里残留旧 cookie，
+    新二维码还没扫就被判“已登录”，循环提前退出 → 表现为“扫了没反应/不跳转”。
+
+    D189 口径：
+      1) URL 仍是 passport/login → 未登录；
+      2) 必须**相对 baseline 出现新的/变化的会话 cookie**；
+      3) 页面在 i.chaoxing.com/教学域且不是登录页。
+    真伪最终仍由 qr_login 的 HOME_URL 跳转 + CLI check_session 二次确认。
+    """
+    u = urlparse(page.url)
+    host, path = u.netloc.lower(), (u.path or "").lower()
+    try:
+        current = cookie_fingerprint(page.context.cookies())
+    except Exception:  # noqa: BLE001
+        return False
+    has_session_cookie = any(current.get(n) for n in _SESSION_COOKIE_NAMES)
+    if "passport" in host or "login" in path:
+        # D70：URL 还在登录页，但**本次扫码**已经写入了新的会话 cookie → 也算成功。
+        return bool(has_session_cookie and session_cookie_changed(baseline, current))
+    if host != "i.chaoxing.com" and not host.endswith(".chaoxing.com"):
+        return False
+    # 教学域页面：旧实现无 cookie 也判真（保底行为）；D189 只在 baseline 为空
+    # （首次扫码）时保留该保底，避免把“以前登录残留”误判成本次成功。
+    if has_session_cookie and session_cookie_changed(baseline, current):
+        return True
+    return not baseline and not has_session_cookie
 
 
 def _require_playwright():
@@ -324,6 +374,8 @@ def qr_login(storage: "Path | str | None" = None,
                 page.wait_for_selector("#quickCode", timeout=30000)
                 page.locator("#quickCode").screenshot(path=str(qr_tmp))
                 os.replace(qr_tmp, qr_out)
+                # D189：记录“扫码前”的 cookie 指纹（仅内存），用于判定本次扫码是否真的生效。
+                baseline = cookie_fingerprint(ctx.cookies())
             except Exception as e:  # noqa: BLE001 —— 二维码阶段失败要留证并让任务终结
                 try:
                     qr_tmp.unlink()
@@ -335,13 +387,14 @@ def qr_login(storage: "Path | str | None" = None,
                 raise
             _write(stage="waiting_scan", url=page.url, qr=str(qr_out),
                    browser=browser_label, browser_connected=browser.is_connected(),
-                   page_closed=page.is_closed(), cookies=[])
+                   page_closed=page.is_closed(), cookies=[],
+                   session_cookie_names=sorted(baseline))
             deadline = time.time() + timeout
             while time.time() < deadline:
                 time.sleep(2)
                 # D71：先判登录（cookie-first），再做存活检查；导航中的 evaluate
                 # 异常不再提前误杀扫码任务。
-                if _is_logged_in(page):
+                if _is_logged_in(page, baseline):
                     time.sleep(3)
                     try:
                         page.goto("https://i.chaoxing.com/", wait_until="domcontentloaded",
