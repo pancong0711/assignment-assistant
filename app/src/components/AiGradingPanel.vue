@@ -12,7 +12,7 @@ import {
   fetchXxtReviewIndex, fetchXxtReviewStudents, postLlmProvider, postXxtClassMap,
   startXxtGradeAi, startXxtGradeUpload, renderReportsFromDrafts, testLlmStages,
   fetchXxtUploadPreview, fetchXxtReportVersions, fetchReportProgress,
-  cleanupXxtReports,
+  cleanupXxtReports, compactXxtReportVersions,
   applyTagAudit, fetchTagAudit, fetchTagAuditHistory, runTagAudit, undoTagAudit,
   undoStudentTagApi,
 } from '../lib/engineClient'
@@ -61,7 +61,10 @@ const oneUploadResult = ref<Record<string, string>>({})
 /* D197：清理结果（明确显示“完成/试运行”，并展示索引同步清理条数）。 */
 const cleanupResult = ref<{ ok?: boolean; dryRun?: boolean; error?: string
   count?: number; indexRemoved?: number; indexAfter?: number; indexBefore?: number
-  removed?: { name?: string; reason?: string }[]; kept?: string[] } | null>(null)
+  removed?: { name?: string; reason?: string }[]; kept?: string[]
+  stats?: { totalRecords?: number; studentCount?: number; avgVersions?: number
+    historyRecords?: number; orphanRecords?: number }
+  hint?: string } | null>(null)
 /* D193：报告版本历史（只读；便于与上传清单/报告页脚对照）。 */
 const versionsOpen = ref(false)
 const versionsBusy = ref(false)
@@ -1195,8 +1198,14 @@ async function cleanupDuplicateReports() {
     const nFiles = preview.count ?? preview.removed?.length ?? 0
     const nIndex = preview.indexRemoved ?? 0
     if (!nFiles && !nIndex) {
+      const st = preview.stats || {}
       cleanupResult.value = { ...preview, dryRun: true, count: 0, indexRemoved: 0 }
-      msg.value = `✅ 核对完成：没有多余报告（名单内 ${names.length} 人，索引 ${preview.indexBefore ?? 0} 条）`
+      const detail = st.totalRecords
+        ? `名单内 ${st.studentCount ?? names.length} 名学生共 ${st.totalRecords} 条版本记录`
+          + (st.historyRecords ? `（其中 ${st.historyRecords} 条为历史版本，不是多余学生）` : '')
+        : `名单内 ${names.length} 人`
+      msg.value = `✅ 核对完成：没有“多余学生”的报告或记录 —— ${detail}。`
+        + (preview.hint ? ` ${preview.hint}` : '')
       return
     }
     const ok = window.confirm(
@@ -1222,6 +1231,51 @@ async function cleanupDuplicateReports() {
     if (versionsOpen.value) await loadReportVersions()
   } catch (e) {
     msg.value = `清理失败：${String((e as Error)?.message || e)}`
+  }
+}
+
+/** D198：压缩版本历史（每生保留最新 1 版）——用于“记录数太多但其实没有多余学生”。 */
+async function compactReportVersions() {
+  const taskId = packId.value || padId.value || resolvedScope.value
+  if (!curWorkDir.value || !taskId) { msg.value = '⚠ 请先关联班级目录并选择作业包'; return }
+  const names = students.value.map((x) => x.name).filter(Boolean)
+  try {
+    // 先 dry-run
+    const preview = await compactXxtReportVersions(props.engineAddr, props.token, {
+      classDir: curWorkDir.value, taskId, keepLatest: 1,
+      students: names.length ? names : undefined, dryRun: true,
+    })
+    if (!preview?.ok) { msg.value = `❌ 核对失败：${preview?.error || '未知错误'}`; return }
+    if (!preview.removed) {
+      cleanupResult.value = { ok: true, dryRun: true, count: 0, indexRemoved: 0,
+        stats: { totalRecords: preview.before, studentCount: preview.students,
+                 historyRecords: 0 },
+        hint: '每名学生都只有 1 条版本记录，无需压缩。' }
+      msg.value = `✅ 核对完成：共 ${preview.before ?? 0} 条记录，每生都只有最新 1 版，无需压缩`
+      return
+    }
+    const ok = window.confirm(
+      `将把版本历史压缩为“每生只保留最新 1 版”：\n\n`
+      + `· 记录：${preview.before} → ${preview.after}（删除 ${preview.removed} 条索引）\n`
+      + `· 涉及学生：${preview.students ?? '?'} 名\n`
+      + `· 历史 .versions 文件：**保留**（只压缩索引，不删文件）\n\n`
+      + `草稿里的 AI 批语/人工修改/报告图副本都不受影响。确认？`)
+    if (!ok) { msg.value = '已取消压缩'; return }
+    const r = await compactXxtReportVersions(props.engineAddr, props.token, {
+      classDir: curWorkDir.value, taskId, keepLatest: 1,
+      students: names.length ? names : undefined, dryRun: false,
+    })
+    cleanupResult.value = { ok: r?.ok, count: 0,
+      indexRemoved: r?.removed, indexBefore: r?.before, indexAfter: r?.after,
+      stats: { totalRecords: r?.after, studentCount: r?.students },
+      hint: r?.ok ? `已压缩版本历史：${r.before} → ${r.after} 条（历史文件保留）` : r?.error }
+    msg.value = r?.ok
+      ? `✅ 压缩完成：版本记录 ${r.before} → ${r.after} 条（每生保留最新 1 版，历史文件仍保留）`
+      : `❌ 压缩失败：${r?.error || '未知错误'}`
+    await refreshReportProgress()
+    if (versionsOpen.value) await loadReportVersions()
+  } catch (e) {
+    msg.value = `压缩失败：${String((e as Error)?.message || e)}`
   }
 }
 
@@ -1264,9 +1318,11 @@ async function loadReportVersions() {
     })
     if (!r?.ok) { progress.value = `❌ 版本读取失败：${r?.error || '未知错误'}`; return }
     versionsRows.value = r.items || []
-    progress.value = `报告版本：${versionsRows.value.length} 条（索引共 ${r.totalInIndex ?? versionsRows.value.length} 条`
-      + (r.orphanCount ? `；其中 ${r.orphanCount} 条不属于本次名单，可点「🧹 清理多余报告」` : '')
-      + `；目录 ${r.dir || ''}）`
+    const hist = r.historyRecords ?? 0
+    progress.value = `报告版本：${r.studentCount ?? '?'} 名学生 / 共 ${r.totalInIndex ?? versionsRows.value.length} 条记录`
+      + (hist ? `（其中 ${hist} 条为历史版本，平均 ${r.avgVersions ?? '?'} 版/人）` : '')
+      + (r.orphanCount ? `；另有 ${r.orphanCount} 条不属于本次名单，可点「🧹 清理多余报告」` : '')
+      + `；目录 ${r.dir || ''}`
   } catch (e) {
     progress.value = `版本读取失败：${String((e as Error)?.message || e)}`
   } finally { versionsBusy.value = false }
@@ -1839,6 +1895,10 @@ onMounted(async () => {
               title="删除不在当前名单/重复学生名的报告文件（只动 reports/，不动草稿与分数）">
         🧹 清理多余报告
       </button>
+      <button class="btn" :disabled="busy" @click="compactReportVersions"
+              title="每生只保留最新 1 条版本记录（只压缩索引，历史文件保留）">
+        🗜 压缩版本历史
+      </button>
       <span style="flex:1"></span>
       <!-- D193：上传先看对照表（未批阅/一致/冲突），再决定覆盖，避免盲传 -->
       <button class="btn primary" :disabled="busy || previewBusy" @click="openUploadPreview(true)">
@@ -1995,6 +2055,7 @@ onMounted(async () => {
       <p v-if="cleanupResult.ok === false" style="color:#b91c1c; margin:4px 0">
         {{ cleanupResult.error }}
       </p>
+      <p v-else-if="cleanupResult.hint" style="margin:4px 0">{{ cleanupResult.hint }}</p>
       <div v-else-if="(cleanupResult.removed || []).length"
            style="max-height:160px; overflow:auto; font-size:13px">
         <div v-for="(x, i) in (cleanupResult.removed || []).slice(0, 40)" :key="i">

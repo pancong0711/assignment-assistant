@@ -2666,9 +2666,32 @@ export async function cleanupXxtReports(
   removed?: { name?: string; reason?: string }[]; kept?: string[]
   /** D197：版本索引同步清理结果（旧实现只删文件、索引会一直保留旧批次）。 */
   indexRemoved?: number; indexBefore?: number; indexAfter?: number
-  indexRemovedItems?: { student?: string; version?: string; reason?: string }[] }> {
+  indexRemovedItems?: { student?: string; version?: string; reason?: string }[]
+  /** D198：索引构成（区分“记录数”与“学生数”）。 */
+  stats?: { totalRecords?: number; studentCount?: number; avgVersions?: number
+    historyRecords?: number; orphanRecords?: number; orphanStudents?: string[] }
+  /** D198：为什么没删 / 删了什么（人类可读）。 */
+  hint?: string }> {
   const base = normalizeEngineAddr(engineAddr)
   const res = await fetch(engineUrlWithToken(base, '/xxt/grade/report-cleanup', token), {
+    method: 'POST', headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(payload),
+  })
+  const o = (await res.json().catch(() => ({}))) as any
+  if (!res.ok && !o?.error) throw new Error(`HTTP ${res.status}`)
+  return o
+}
+
+/** D198：压缩版本历史（每生保留最新 N 条；默认 dryRun）。 */
+export async function compactXxtReportVersions(
+  engineAddr: string, token: string | undefined,
+  payload: { classDir: string; taskId: string; students?: string[]
+    keepLatest?: number; dryRun?: boolean; deleteHistoryFiles?: boolean },
+): Promise<{ ok?: boolean; error?: string; dryRun?: boolean; before?: number
+  after?: number; removed?: number; filesDeleted?: number; students?: number
+  removedItems?: { student?: string; version?: string; tag?: string }[] }> {
+  const base = normalizeEngineAddr(engineAddr)
+  const res = await fetch(engineUrlWithToken(base, '/xxt/grade/report-compact', token), {
     method: 'POST', headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify(payload),
   })
@@ -2754,6 +2777,7 @@ export async function fetchXxtReportVersions(
   payload: { classDir: string; taskId: string; student?: string; students?: string[] },
 ): Promise<{ ok?: boolean; error?: string; count?: number; dir?: string
   totalInIndex?: number; keptByRoster?: boolean; orphanCount?: number
+  studentCount?: number; avgVersions?: number; historyRecords?: number
   items?: XxtReportVersionRow[] }> {
   const base = normalizeEngineAddr(engineAddr)
   const res = await fetch(engineUrlWithToken(base, '/xxt/grade/report-versions', token), {

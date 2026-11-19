@@ -161,6 +161,97 @@ def history(reports_dir, student: str) -> "list[dict]":
     return sorted(rows, key=lambda x: float(x.get("ts") or 0), reverse=True)
 
 
+def index_stats(reports_dir, *, keep_students: "list[str] | None" = None) -> dict:
+    """D198：索引构成诊断——区分“**版本记录数**”与“**学生数**”。
+
+    现场误解：清理后仍显示 106 条，教师以为是 106 名学生；实际是
+    53 名学生 × 2 个内容版本 = 106 条**记录**，按名单清理自然一条都不用删。
+
+    返回：
+      totalRecords      索引总记录数
+      studentCount      索引涉及的学生数（去重）
+      avgVersions       平均每生几条
+      historyRecords    各生“最新”之外的历史版本记录数
+      inRosterRecords   属于当前名单的记录数（无名单时等于 totalRecords）
+      orphanRecords     不属于当前名单的记录数
+      orphanStudents    不属于当前名单的学生名（最多 50）
+    """
+    reports_dir = Path(reports_dir)
+    items = [x for x in (read_index(reports_dir).get("items") or [])
+             if isinstance(x, dict)]
+    names = {str(x).strip() for x in (keep_students or []) if str(x).strip()}
+    by_student: dict[str, int] = {}
+    for x in items:
+        stu = str(x.get("student") or "")
+        by_student[stu] = by_student.get(stu, 0) + 1
+    student_count = len(by_student)
+    history = sum(max(0, n - 1) for n in by_student.values())
+    orphan_students = sorted(s for s in by_student if names and s not in names)
+    orphan_records = sum(by_student[s] for s in orphan_students)
+    return {"ok": True, "totalRecords": len(items), "studentCount": student_count,
+            "avgVersions": round(len(items) / student_count, 2) if student_count else 0.0,
+            "historyRecords": history,
+            "inRosterRecords": len(items) - orphan_records if names else len(items),
+            "orphanRecords": orphan_records,
+            "orphanStudents": orphan_students[:50],
+            "byStudent": by_student}
+
+
+def compact_index(reports_dir, *, keep_latest: int = 1,
+                  keep_students: "list[str] | None" = None,
+                  dry_run: bool = True,
+                  delete_history_files: bool = False) -> dict:
+    """D198：**压缩版本历史**——每生只保留最新 N 条索引（默认 1）。
+
+    用于“索引条数太多”但并没有凑数学生的场景：106 条 = 53 人 × 2 版。
+    默认只压缩索引；`delete_history_files=True` 时一并删除被压缩掉的
+    `.versions/<学生>/` 历史文件（谨慎，默认关）。
+
+    返回 `{ok, dryRun, before, after, removed, students, filesDeleted}`
+    """
+    reports_dir = Path(reports_dir)
+    keep_latest = max(1, int(keep_latest or 1))
+    items = [x for x in (read_index(reports_dir).get("items") or [])
+             if isinstance(x, dict)]
+    names = {str(x).strip() for x in (keep_students or []) if str(x).strip()}
+    # 按学生分组，组内按时间新→旧；名单外的学生**不压缩**（交给 cleanup 处理）
+    groups: dict[str, list[dict]] = {}
+    for x in items:
+        stu = str(x.get("student") or "")
+        groups.setdefault(stu, []).append(x)
+    keep_items: list[dict] = []
+    dropped: list[dict] = []
+    files_deleted = 0
+    vroot = reports_dir / VERSIONS_DIR
+    for stu, rows in groups.items():
+        rows.sort(key=lambda x: float(x.get("ts") or 0), reverse=True)
+        if names and stu not in names:
+            keep_items.extend(rows)   # 不在名单：保持原样
+            continue
+        keep_items.extend(rows[:keep_latest])
+        for old in rows[keep_latest:]:
+            dropped.append({"student": stu, "version": str(old.get("version") or ""),
+                            "tag": str(old.get("tag") or "")})
+            if not dry_run and delete_history_files:
+                for f in (old.get("files") or []):
+                    fp = vroot / safe_stem(stu) / str(f)
+                    try:
+                        if fp.is_file():
+                            fp.unlink()
+                            files_deleted += 1
+                    except OSError:
+                        pass
+    if not dry_run and dropped:
+        data = read_index(reports_dir)
+        data["items"] = sorted(keep_items, key=lambda x: float(x.get("ts") or 0))
+        _write_index(reports_dir, data)
+    return {"ok": True, "dryRun": bool(dry_run), "keepLatest": keep_latest,
+            "before": len(items), "after": len(items) - len(dropped),
+            "removed": len(dropped), "removedItems": dropped[:50],
+            "filesDeleted": files_deleted,
+            "students": len(groups)}
+
+
 def prune_index(reports_dir, *, keep_students: "list[str] | None" = None,
                 drop_missing_files: bool = True) -> dict:
     """D197：清理版本索引（`.versions/index.json`）里**不属于本次名单**的记录。
@@ -274,9 +365,28 @@ def cleanup_reports(reports_dir, *, keep_students: "list[str] | None" = None,
                "kept": len(items) - len(would)}
     else:
         idx = prune_index(reports_dir, keep_students=list(keep), drop_missing_files=True)
+    stats = index_stats(reports_dir, keep_students=list(keep))
+    # D198：把“为什么索引没减”说清楚——106 条常常是 53 人 × 2 版，不是 106 名学生。
+    parts: list[str] = []
+    if removed:
+        parts.append(f"删除报告文件 {len(removed)} 个")
+    if idx.get("count"):
+        parts.append(f"版本索引记录 {idx.get('count', 0)} 条")
+    if not parts:
+        parts.append("没有“多余学生”的报告文件")
+    if stats["historyRecords"] > 0:
+        parts.append(
+            f"名单内 {stats['studentCount']} 名学生共 {stats['totalRecords']} 条版本记录，"
+            f"其中 {stats['historyRecords']} 条为**历史版本**（不是多余学生）；"
+            f"若要减少记录数请用「🗜 压缩版本历史」（每生保留最新 1 版）")
+    elif not idx.get("count"):
+        parts.append(
+            f"名单内 {stats['studentCount']} 名学生共 {stats['totalRecords']} 条记录，没有多余内容")
+    hint = "；".join(parts) + "。"
     return {"ok": True, "dryRun": bool(dry_run), "removed": removed, "kept": kept,
             "count": len(removed),
             "indexRemoved": idx.get("count", 0),
             "indexBefore": idx.get("before", 0),
             "indexAfter": idx.get("after", 0),
-            "indexRemovedItems": idx.get("removed", [])[:50]}
+            "indexRemovedItems": idx.get("removed", [])[:50],
+            "stats": stats, "hint": hint}

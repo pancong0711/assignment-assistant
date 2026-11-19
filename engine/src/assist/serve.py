@@ -404,8 +404,12 @@ def report_versions_view(ws, *, class_dir: str = "", task_id: str = "",
                          and str(x.get("student") or "") not in names)
             rows = [x for x in rows
                     if isinstance(x, dict) and str(x.get("student") or "") in names]
+        stats = report_versions.index_stats(root, keep_students=list(names) or None)
         return {"ok": True, "dir": str(root), "count": len(rows),
                 "totalInIndex": len(all_rows),
+                "studentCount": stats["studentCount"],
+                "avgVersions": stats["avgVersions"],
+                "historyRecords": stats["historyRecords"],
                 "keptByRoster": bool(names), "orphanCount": orphan,
                 "items": [{
                     "student": str(x.get("student") or ""),
@@ -3340,6 +3344,32 @@ class Handler(BaseHTTPRequestHandler):
                     ws=ws, class_dir=cdir, task_id=tid, class_id=cid, work_id=work,
                     only=only)
             self._json(rep, 200 if rep.get("ok") else 400)
+            return
+        if u.path == "/xxt/grade/report-compact":
+            # D198：压缩版本历史（每生保留最新 N 条）——用于“106 条其实是 53 人×2 版”
+            payload: dict = {}
+            try:
+                length = int(self.headers.get("Content-Length") or 0)
+                if length:
+                    payload = json.loads(self.rfile.read(length).decode("utf-8")) or {}
+            except Exception:  # noqa: BLE001
+                payload = {}
+            from .grading import report_versions as _rv
+            cdir = str(payload.get("classDir") or "")
+            tid = str(payload.get("taskId") or "")
+            if not cdir or not tid:
+                self._json({"ok": False, "error": "classDir/taskId 必填"}, 400)
+                return
+            import re as _re
+            safe = lambda x: _re.sub(r"[\\/:*?\"<>|]", "_", str(x)).strip(" .") or "x"  # noqa: E731
+            root = Path(self.ws).resolve() / cdir / "grading" / safe(tid) / "reports"
+            students = payload.get("students")
+            students = [str(x) for x in students] if isinstance(students, list) else None
+            rep = _rv.compact_index(
+                root, keep_latest=int(payload.get("keepLatest") or 1),
+                keep_students=students, dry_run=bool(payload.get("dryRun", True)),
+                delete_history_files=bool(payload.get("deleteHistoryFiles")))
+            self._json(rep)
             return
         if u.path == "/xxt/grade/report-cleanup":
             # D195：清理“重复/不在名单”的报告文件（只动 reports/，默认 dry-run）。
