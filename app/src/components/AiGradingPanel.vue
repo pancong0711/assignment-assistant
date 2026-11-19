@@ -45,8 +45,11 @@ interface UploadPreviewRow {
   platformStatus?: string; platformScore?: number | null
   platformCommentLength?: number | null
   decision?: string; reason?: string; needsConfirm?: boolean
-  /* D196：平台是否已提交 + 上传就绪分类（ready/no-comment/no-draft/not-submitted）。 */
+  /* D196/D200：平台是否已提交 + 上传就绪分类（ready/no-report/no-draft/not-submitted）。 */
   submitted?: boolean; readyState?: string; readyReason?: string
+  /* D200：报告图 / 批语文本 / 分数 三要素（决定上传什么）。 */
+  hasImage?: boolean; hasComment?: boolean; hasScore?: boolean
+  imageCount?: number; uploadMode?: 'report-only' | 'text'
 }
 const previewOpen = ref(false)
 const previewBusy = ref(false)
@@ -54,8 +57,11 @@ const previewRows = ref<UploadPreviewRow[]>([])
 const previewSummary = ref<Record<string, number>>({})
 const previewCheckedPlatform = ref(false)
 /* D196：上传就绪分类（只传已提交且批语齐全）；逐生上传进度。 */
-const previewReadiness = ref<{ ready?: string[]; noComment?: string[]; noDraft?: string[]
-  notSubmitted?: string[]; summary?: Record<string, number>; hint?: string } | null>(null)
+const previewReadiness = ref<{ ready?: string[]; noReport?: string[]; noComment?: string[]
+  emptyComment?: string[]; noDraft?: string[]; notSubmitted?: string[]
+  summary?: Record<string, number>; hint?: string } | null>(null)
+/* D200：只上传“报告图 + 分数”（不重复上传原始批语文本）——教师的标准工作流。 */
+const uploadReportOnly = ref(true)
 const oneUploadBusy = ref('')
 const oneUploadResult = ref<Record<string, string>>({})
 /* D197：清理结果（明确显示“完成/试运行”，并展示索引同步清理条数）。 */
@@ -1167,9 +1173,11 @@ async function openUploadPreview(platform: boolean) {
     }
     const c = previewSummary.value
     const rd = previewReadiness.value?.summary || {}
+    const emptyTxt = (previewReadiness.value?.emptyComment || []).length
     progress.value = `✅ 对照表就绪：可上传 ${rd.ready ?? c.new ?? 0} 人`
-      + ` · 已提交但批语为空 ${rd['no-comment'] ?? 0} 人`
-      + ` · 已提交但无草稿 ${rd['no-draft'] ?? 0} 人`
+      + (emptyTxt ? `（其中 ${emptyTxt} 人走“报告图+分数”，不上传批语文本）` : '')
+      + ` · 无报告图/批语/分数 ${rd['no-report'] ?? 0} 人`
+      + ` · 无本地草稿 ${rd['no-draft'] ?? 0} 人`
       + ` · 未提交（不上传）${rd['not-submitted'] ?? 0} 人`
       + (platform ? '' : '（未读取平台状态：点「读取平台状态」更准确）')
   } catch (e) {
@@ -1368,8 +1376,9 @@ async function uploadOneStudent(row: { student: string; readyState?: string
     msg.value = `${row.student} 平台未提交，无需上传批阅报告`
     return
   }
-  if (row.readyState === 'no-comment' || row.readyState === 'no-draft') {
-    msg.value = `${row.student} 还没有可上传的批语：请先「转写+评阅」或填写人工批语`
+  if (row.readyState === 'no-report' || row.readyState === 'no-comment'
+      || row.readyState === 'no-draft') {
+    msg.value = `${row.student} 没有可上传的内容（报告图/批语/分数都缺）：请先生成批阅报告或补批阅`
     return
   }
   const needForce = row.decision === 'conflict'
@@ -1380,6 +1389,7 @@ async function uploadOneStudent(row: { student: string; readyState?: string
     const jobId = await startXxtGradeUpload(props.engineAddr, props.token, {
       courseId: w.courseId, classId: w.classId, cpi: w.cpi, workId: w.workId,
       student: row.student, send: true, force: needForce,
+      reportOnly: uploadReportOnly.value,
     })
     const tick = async () => {
       try {
@@ -1420,8 +1430,8 @@ async function confirmUploadFromPreview() {
   const uploadable = previewRows.value.filter(r => r.readyState
     ? r.readyState === 'ready'
     : r.decision === 'new')
-  const blocked = previewRows.value.filter(r => r.readyState === 'no-comment'
-    || r.readyState === 'no-draft')
+  const blocked = previewRows.value.filter(r => r.readyState === 'no-report'
+    || r.readyState === 'no-comment' || r.readyState === 'no-draft')
   const notSub = previewRows.value.filter(r => r.readyState === 'not-submitted')
   if (!uploadable.length && !conflicts.length) {
     msg.value = `没有需要上传的学生（未提交 ${notSub.length} 人不上传；`
@@ -1431,7 +1441,7 @@ async function confirmUploadFromPreview() {
   const lines: string[] = []
   lines.push(`可上传（已提交 + 批语齐全）：${uploadable.length} 人`)
   if (blocked.length) {
-    lines.push(`⚠ 已提交但批语为空/无草稿：${blocked.length} 人（请先批阅/AI 批阅）`)
+    lines.push(`⚠ 已提交但没有报告图/批语/分数：${blocked.length} 人（请先生成报告或补批阅）`)
     for (const b of blocked.slice(0, 8)) lines.push(`  · ${b.student}：${b.readyReason || ''}`)
   }
   if (notSub.length) lines.push(`ℹ 未提交（不上传批阅报告）：${notSub.length} 人`)
@@ -1458,7 +1468,7 @@ async function uploadAll(force: boolean, only?: string[]) {
   try {
     const jobId = await startXxtGradeUpload(props.engineAddr, props.token, {
       courseId: w.courseId, classId: w.classId, cpi: w.cpi, workId: w.workId,
-      send: true, force,
+      send: true, force, reportOnly: uploadReportOnly.value,
     })
     busy.value = true; progress.value = `正在上传全部草稿（${force ? '强制覆盖' : '跳过已批阅'}）……`
     stopPoll()
@@ -1984,14 +1994,26 @@ onMounted(async () => {
          style="margin:4px 0; color:#b45309; background:#fffbeb;
                 border:1px solid #fcd34d; border-radius:8px; padding:6px 10px">
         {{ previewReadiness.hint }}
-        <template v-if="previewReadiness.noComment?.length">
-          <br>批语为空：{{ previewReadiness.noComment.slice(0, 8).join('、') }}
-          {{ previewReadiness.noComment.length > 8 ? ' …' : '' }} → 请先「转写+评阅」或填人工批语
+        <template v-if="previewReadiness.emptyComment?.length">
+          <br>批语文本为空但有报告图（将只传报告图+分数）：
+          {{ previewReadiness.emptyComment.slice(0, 8).join('、') }}
+          {{ previewReadiness.emptyComment.length > 8 ? ' …' : '' }}
+        </template>
+        <template v-if="previewReadiness.noReport?.length">
+          <br>没有报告图/批语/分数：{{ previewReadiness.noReport.slice(0, 8).join('、') }}
+          {{ previewReadiness.noReport.length > 8 ? ' …' : '' }} → 请先「📄 一键生成批阅报告」
         </template>
         <template v-if="previewReadiness.notSubmitted?.length">
           <br>未提交（不上传）：{{ previewReadiness.notSubmitted.slice(0, 8).join('、') }}
           {{ previewReadiness.notSubmitted.length > 8 ? ' …' : '' }}
         </template>
+      </p>
+      <p style="margin:6px 0">
+        <label class="field" style="display:inline-flex; gap:6px; align-items:center">
+          <input type="checkbox" v-model="uploadReportOnly" />
+          只上传<b>报告图 + 分数</b>，不再重复上传原始批语文本
+          <span class="hint">（推荐：报告图里已经是排版好的批语）</span>
+        </label>
       </p>
       <p class="hint" style="margin:4px 0">
         可上传 <b>{{ previewSummary.new ?? 0 }}</b> ·
@@ -2025,9 +2047,13 @@ onMounted(async () => {
               <td style="padding:4px 8px">{{ r.platformStatus || '—' }}</td>
               <td style="padding:4px 8px">{{ r.platformScore ?? '—' }}</td>
               <td style="padding:4px 8px" :title="r.readyReason || ''">
-                <span v-if="r.readyState==='ready'" style="color:#15803d">已提交·可传</span>
+                <span v-if="r.readyState==='ready'" style="color:#15803d">
+                  已提交·可传<template v-if="r.hasImage">（报告图）</template>
+                </span>
+                <span v-else-if="r.readyState==='no-report'"
+                      style="color:#b45309;font-weight:600">已提交·无报告图</span>
                 <span v-else-if="r.readyState==='no-comment'"
-                      style="color:#b45309;font-weight:600">已提交·批语空</span>
+                      style="color:#b45309;font-weight:600">已提交·无内容</span>
                 <span v-else-if="r.readyState==='no-draft'"
                       style="color:#b45309;font-weight:600">已提交·无草稿</span>
                 <span v-else-if="r.readyState==='not-submitted'" style="color:#6b7280">未提交</span>
@@ -2044,12 +2070,14 @@ onMounted(async () => {
                 <button class="btn small"
                         :disabled="oneUploadBusy !== '' || busy
                           || r.readyState === 'not-submitted'
+                          || r.readyState === 'no-report'
                           || r.readyState === 'no-comment'
                           || r.readyState === 'no-draft'"
                         :title="r.readyState === 'not-submitted' ? '未提交，无需上传'
-                          : (r.readyState === 'no-comment' || r.readyState === 'no-draft')
-                            ? '批语缺失，请先批阅'
-                            : '只上传这一名学生'"
+                          : (r.readyState === 'no-report' || r.readyState === 'no-comment'
+                             || r.readyState === 'no-draft')
+                            ? '没有可上传内容，请先生成报告/补批阅'
+                            : (r.hasImage ? '上传报告图 + 分数' : '上传批语 + 分数')"
                         @click="uploadOneStudent(r)">上传</button>
                 <span v-if="oneUploadResult[r.student]" class="hint" style="margin-left:6px">
                   {{ oneUploadResult[r.student] }}

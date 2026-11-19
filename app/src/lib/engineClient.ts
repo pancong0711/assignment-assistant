@@ -1133,7 +1133,9 @@ export async function deleteXxtGradeDraft(
 export async function startXxtGradeUpload(
   engineAddr: string, token: string | undefined,
   payload: { courseId: string; classId: string; cpi: string; workId: string
-    student?: string; send?: boolean; force?: boolean },
+    student?: string; send?: boolean; force?: boolean
+    /** D200：true=只上传报告图+分数（不重复上传原始批语文本）；false=连批语文本一起传。 */
+    reportOnly?: boolean },
 ): Promise<string> {
   const base = normalizeEngineAddr(engineAddr)
   const res = await fetch(engineUrlWithToken(base, '/xxt/grade/upload', token), {
@@ -2716,16 +2718,26 @@ export interface XxtUploadPreviewRow {
   needsConfirm?: boolean
   /** D196：平台是否已提交（未提交不上传批阅报告）。 */
   submitted?: boolean
-  /** D196：ready | no-comment | no-draft | not-submitted。 */
+  /** D196/D200：ready | no-report | no-draft | not-submitted。 */
   readyState?: string
   readyReason?: string
+  /** D200：报告图 / 批语文本 / 分数 三要素（决定上传什么）。 */
+  hasImage?: boolean
+  hasComment?: boolean
+  hasScore?: boolean
+  imageCount?: number
+  uploadMode?: 'report-only' | 'text'
 }
 
 /** D196：上传就绪分类（只上传已提交且批语齐全的学生）。 */
 export interface XxtUploadReadiness {
   ok?: boolean
   ready?: string[]
+  /** 没有报告图/批语/分数（旧字段 noComment 保留兼容）。 */
+  noReport?: string[]
   noComment?: string[]
+  /** 有内容可传但批语文本为空（走“报告图+分数”模式即可）。 */
+  emptyComment?: string[]
   noDraft?: string[]
   notSubmitted?: string[]
   summary?: Record<string, number>

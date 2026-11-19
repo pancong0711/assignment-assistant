@@ -436,6 +436,63 @@ def drafts_to_payloads(drafts: dict, only: str = "") -> list[dict]:
     return sorted(out, key=lambda x: x["key"])
 
 
+def enrich_payloads_from_evaluations(payloads: list[dict], ws,
+                                     *, class_dir: str = "", task_id: str = "") -> list[dict]:
+    """D200：草稿缺批语/分数时，用 `evaluations/*.json` 的 AI 评阅结果补齐。
+
+    现场：教师确认“全部学生都有 AI 批语”，但上传对照表却显示大量“批语为空”。
+    原因是草稿的 `ai.comment` 可能为空（例如只写入了转写/报告图，或旧版本落盘缺字段），
+    而 AI 批语实际在 `evaluations/<学生>.json` 的 `feedback_md` 里。
+
+    只补空字段，不覆盖已有内容；找不到 evaluations 时原样返回。
+    """
+    import json as _json
+    from pathlib import Path as _P
+    if not payloads:
+        return payloads or []
+    cd = str(class_dir or "").strip().strip("/")
+    tid = str(task_id or "").strip()
+    if not cd or not tid:
+        return payloads
+    import re as _re
+    safe = lambda x: _re.sub(r"[\\/:*?\"<>|]", "_", str(x)).strip(" .") or "x"  # noqa: E731
+    ev_dir = _P(ws).resolve() / cd / "grading" / safe(tid) / "evaluations"
+    if not ev_dir.is_dir():
+        return payloads
+    by_name: dict[str, dict] = {}
+    for f in sorted(ev_dir.glob("[!_]*.json")):
+        try:
+            d = _json.loads(f.read_text(encoding="utf-8"))
+        except Exception:  # noqa: BLE001
+            continue
+        if not isinstance(d, dict):
+            continue
+        nm = str(d.get("student") or f.stem).strip()
+        if nm:
+            by_name[nm] = d
+    if not by_name:
+        return payloads
+    out: list[dict] = []
+    for p in payloads:
+        q = dict(p or {})
+        nm = str(q.get("student") or "").strip()
+        ev = by_name.get(nm)
+        if ev:
+            filled = []
+            if not str(q.get("comment") or "").strip():
+                fb = str(ev.get("feedback_md") or "").strip()
+                if fb:
+                    q["comment"] = fb
+                    filled.append("comment")
+            if q.get("score") is None and _is_num(ev.get("total_score")):
+                q["score"] = float(ev["total_score"])
+                filled.append("score")
+            if filled:
+                q["filledFromEvaluations"] = filled
+        out.append(q)
+    return out
+
+
 def find_payload(payloads: list[dict], student: str) -> "dict | None":
     """按学生名匹配 payload（精确优先，其次子串）。"""
     key = str(student or "").strip().lower()

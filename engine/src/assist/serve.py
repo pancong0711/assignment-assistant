@@ -3378,8 +3378,13 @@ class Handler(BaseHTTPRequestHandler):
                 from .xxt import grade_store
                 drafts = grade_store.read_drafts_normalized(
                     _xxt_home(), cid, work, ws=ws, class_dir=cdir, task_id=tid)
-                from .xxt.grade_upload import drafts_to_payloads
+                from .xxt.grade_upload import (drafts_to_payloads,
+                                               enrich_payloads_from_evaluations)
                 payloads = drafts_to_payloads(drafts, only=only)
+                # D200：草稿缺批语/分数时用 evaluations 的 AI 评阅结果补齐，
+                # 否则“明明有 AI 批语”却被判成批语为空。
+                payloads = enrich_payloads_from_evaluations(
+                    payloads, ws, class_dir=cdir, task_id=tid)
                 rep = upload_preview.build_preview(
                     storage=_xxt_home() / "xxt-storage.json",
                     course_id=str(payload.get("courseId") or ""),
@@ -3510,6 +3515,11 @@ class Handler(BaseHTTPRequestHandler):
                 args += ["--confirm-send"]
             if force:
                 args += ["--force"]
+            # D200：默认“只上传报告图+分数”（有报告图时不重复上传原始批语文本）
+            if payload.get("reportOnly") is False:
+                args += ["--with-comment-text"]
+            elif payload.get("reportOnly") is True:
+                args += ["--report-only"]
             home = _xxt_home(); env = _xxt_env(home); cwd = str(_ws())
             # D106：图片压缩模式与 SVG 重绘开关（PWA 设置 → 环境变量）
             if str(payload.get("imageMode") or "") == "original":

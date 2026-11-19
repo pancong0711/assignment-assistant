@@ -145,8 +145,9 @@ def summarize(results: "list[dict] | None") -> dict:
 
 # ---------------- D196：上传范围（只传已提交学生）+ 批语缺失提醒 ----------------
 
-READY = "ready"            # 已提交 + 有批语 → 可上传
-NO_COMMENT = "no-comment"  # 已提交但本地没有批语 → 应先去批阅/AI 批阅
+READY = "ready"            # 已提交 + 有可上传内容（报告图/批语/分数）→ 可上传
+NO_COMMENT = "no-comment"  # 兼容旧值：无可上传内容（保留给外部调用方）
+NO_REPORT = "no-report"    # 已提交但没有报告图，也没有批语/分数 → 请先生成报告
 NOT_SUBMITTED = "not-submitted"  # 平台未提交 → 不上传批阅报告
 NO_DRAFT = "no-draft"      # 已提交但本地没有草稿 → 先批阅
 
@@ -173,10 +174,14 @@ def upload_readiness(*, platform_rows: "list[dict] | None" = None,
                      payloads: "list[dict] | None" = None) -> dict:
     """D196：把“平台已提交名单”和“本地可上传内容”对照成上传就绪表。
 
-    - 平台未提交（不在清单/状态含未交）→ `not-submitted`：**不上传**，也不提醒批语；
+    - 平台未提交（不在清单/状态含未交）→ `not-submitted`：**不上传**；
     - 已提交但没有本地草稿 → `no-draft`：提醒先去批阅；
-    - 已提交有草稿但批语为空 → `no-comment`：提醒去 AI 批阅/人工批语；
-    - 已提交且批语/分数齐全 → `ready`：可上传。
+    - 已提交有草稿，但**报告图、批语、分数都没有** → `no-report`：提醒先生成报告；
+    - 已提交且有任一可上传内容 → `ready`。
+
+    D200：**报告图本身就是可上传内容**。教师的工作流是「上传批阅报告图片 + 打分」，
+    平台批语框由报告图承载，并不需要再单独上传原始批语文本。旧实现只看 `comment`
+    文本 → 有报告图但没批语文本时被误判成“批语为空”（现场 48 人）。
 
     返回 `{rows, ready, noComment, noDraft, notSubmitted, summary}`
     """
@@ -196,18 +201,29 @@ def upload_readiness(*, platform_rows: "list[dict] | None" = None,
         submitted = is_submitted(prow)
         comment = text_of(p.get("comment") or "")
         score = p.get("score")
-        has_report = bool((p.get("report") or {}).get("version"))
+        images = [i for i in (p.get("images") or []) if isinstance(i, dict)]
+        has_image = bool(images)
+        has_report = has_image or bool((p.get("report") or {}).get("version"))
+        has_score = score is not None
         if not submitted:
             state, why = NOT_SUBMITTED, "平台未提交/无作答，无需上传批阅报告"
         elif not p:
             state, why = NO_DRAFT, "已提交但本地没有草稿：请先「转写+评阅」或人工批阅"
-        elif not comment:
-            state, why = NO_COMMENT, "已提交但批语为空：请先 AI 批阅或填写人工批语"
+        elif has_image:
+            # 主路径：只上传报告图 + 分数（报告图已包含排版好的批语）
+            state, why = READY, "可上传（报告图 + 分数；批语文本不重复上传）"
+        elif comment:
+            state, why = READY, "可上传（批语文本 + 分数）"
+        elif has_score:
+            state, why = READY, "可上传（仅分数；无报告图/批语）"
         else:
-            state, why = READY, "可上传"
+            state, why = NO_REPORT, "已提交但没有报告图、批语或分数：请先生成批阅报告"
         rows.append({"student": name, "submitted": submitted, "state": state,
                      "reason": why, "score": score, "hasComment": bool(comment),
                      "commentLength": len(comment), "hasReport": has_report,
+                     "hasImage": has_image, "hasScore": has_score,
+                     "imageCount": len(images),
+                     "uploadMode": "report-only" if has_image else "text",
                      "reportVersion": str((p.get("report") or {}).get("version") or ""),
                      "status": str(prow.get("status") or ""),
                      "source": "platform"})
@@ -223,16 +239,23 @@ def upload_readiness(*, platform_rows: "list[dict] | None" = None,
                      "hasReport": bool((p.get("report") or {}).get("version")),
                      "reportVersion": str((p.get("report") or {}).get("version") or ""),
                      "status": "", "source": "local-only"})
-    buckets = {READY: [], NO_COMMENT: [], NO_DRAFT: [], NOT_SUBMITTED: []}
+    buckets = {READY: [], NO_REPORT: [], NO_COMMENT: [], NO_DRAFT: [], NOT_SUBMITTED: []}
     for r in rows:
         buckets.setdefault(r["state"], []).append(r["student"])
+    # 兼容旧字段名：noComment 现在等价于 no-report（没有可上传内容）
+    no_content = buckets[NO_REPORT] + buckets.get(NO_COMMENT, [])
+    empty_comment = [r["student"] for r in rows
+                     if r["state"] == READY and not r["hasComment"]]
     return {"ok": True, "rows": rows,
-            "ready": buckets[READY], "noComment": buckets[NO_COMMENT],
+            "ready": buckets[READY], "noReport": buckets[NO_REPORT],
+            "noComment": no_content, "emptyComment": empty_comment,
             "noDraft": buckets[NO_DRAFT], "notSubmitted": buckets[NOT_SUBMITTED],
-            "summary": {k: len(v) for k, v in buckets.items()},
-            "hint": ("将上传 %d 名已提交且批语齐全的学生" % len(buckets[READY])
-                     + (("；%d 名已提交但**批语为空**，请先批阅/AI 批阅" % len(buckets[NO_COMMENT]))
-                        if buckets[NO_COMMENT] else "")
+            "summary": {READY: len(buckets[READY]), NO_REPORT: len(buckets[NO_REPORT]),
+                        NO_DRAFT: len(buckets[NO_DRAFT]),
+                        NOT_SUBMITTED: len(buckets[NOT_SUBMITTED])},
+            "hint": ("将上传 %d 名已提交的学生（有报告图的上传报告图+分数）" % len(buckets[READY])
+                     + (("；%d 名已提交但**没有报告图/批语/分数**，请先生成批阅报告"
+                         % len(buckets[NO_REPORT])) if buckets[NO_REPORT] else "")
                      + (("；%d 名已提交但**没有本地草稿**" % len(buckets[NO_DRAFT]))
                         if buckets[NO_DRAFT] else "")
                      + (("；%d 名未提交（不上传）" % len(buckets[NOT_SUBMITTED]))

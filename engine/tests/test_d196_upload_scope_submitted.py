@@ -45,13 +45,16 @@ def test_upload_readiness_buckets():
     platform = [_row("学生甲", "待批阅"), _row("学生乙", "待批阅"),
                 _row("学生丙", "已批阅")]
     payloads = [_payload("学生甲", comment="有批语"),
-                _payload("学生乙", comment=""),        # 批语空
+                # D200：批语空且无分数/报告图 → 没有可上传内容
+                _payload("学生乙", comment="", score=None),
                 ]                                       # 学生丙无草稿
     rep = GP.upload_readiness(platform_rows=platform, payloads=payloads)
     assert rep["ready"] == ["学生甲"]
-    assert rep["noComment"] == ["学生乙"]
+    assert rep["noReport"] == ["学生乙"]
     assert rep["noDraft"] == ["学生丙"]
-    assert rep["summary"][GP.NO_COMMENT] == 1
+    assert rep["summary"][GP.NO_REPORT] == 1
+    # 兼容字段：noComment 指向“没有可上传内容”
+    assert rep["noComment"] == ["学生乙"]
 
 
 def test_unsubmitted_students_never_ready():
@@ -70,10 +73,13 @@ def test_local_draft_not_in_platform_list_is_not_submitted():
     assert "学生乙" in rep["notSubmitted"]
 
 
-def test_readiness_hint_mentions_missing_comment():
+def test_readiness_hint_mentions_missing_content():
+    """D200：提示改为“没有报告图/批语/分数”，不再说“批语为空”。"""
     rep = GP.upload_readiness(platform_rows=[_row("学生甲"), _row("学生乙")],
-                              payloads=[_payload("学生甲"), _payload("学生乙", comment="")])
-    assert "批语为空" in rep["hint"]
+                              payloads=[_payload("学生甲"),
+                                        _payload("学生乙", comment="", score=None)])
+    assert "没有报告图/批语/分数" in rep["hint"]
+    assert "批语为空" not in rep["hint"]
 
 
 def test_upload_readiness_handles_empty_inputs():

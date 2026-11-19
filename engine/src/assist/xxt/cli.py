@@ -569,14 +569,34 @@ def register(group: click.Group) -> None:
                   help="对产物内全部学生上传（默认仅 --student 指定的一人）")
     @click.option("--from-drafts", "from_drafts", is_flag=True, default=False,
                   help="D85：上传本地人工批阅草稿（<xxt_home>/grade-drafts）；可配 --student 只传一人")
+    @click.option("--report-only/--with-comment-text", "report_only", default=True,
+                  help="D200：只上传报告图+分数，不再重复上传原始批语文本（默认开；"
+                       "有报告图时生效，无报告图仍会传批语文本）")
     @click.option("--storage", "storage", default=None, type=click.Path(dir_okay=False))
     def xxt_grade_upload(course_id, class_id, cpi, work_id, student, work_answer_id,
                          comment, comment_images, question_comments, total_score,
                          question_scores, send, force, task_path, all_students,
-                         from_drafts, storage):
+                         from_drafts, report_only, storage):
         """D84 §2：批阅页上传批语（文字+图片）/分数并提交（默认 dry-run，白名单限制）。"""
         from .grade_upload import upload_grade
         from .marking import parse_question_scores
+
+        def _upload_scope(ws_, course_id_: str, class_id_: str, work_id_: str):
+            """D200：解析 (classDir, taskId)——用于 evaluations 兜底与上传清单。"""
+            cd = ""
+            try:
+                from .classmap import class_dir_for
+                cd = str(class_dir_for(ws_, course_id_, class_id_) or "").strip().strip("/")
+            except Exception:  # noqa: BLE001
+                cd = ""
+            tids: list[str] = []
+            if cd:
+                try:
+                    from . import grade_store as _gs
+                    tids = _gs.discover_draft_scopes(ws_, cd, work_id_) or []
+                except Exception:  # noqa: BLE001
+                    tids = []
+            return cd, (tids[0] if tids else "")
         from .notice import safe_attachment_path
         from ..workspace import find_workspace
         ws = find_workspace(None)
@@ -598,6 +618,14 @@ def register(group: click.Group) -> None:
             # score/comment（双套结构里没有）→ 上传的分数/批语恒为空。
             drafts = grade_store.read_drafts_normalized(xxt_home(), class_id, work_id)
             payloads = drafts_to_payloads(drafts, only=student)
+            # D200：草稿缺批语/分数时用 evaluations 的 AI 评阅结果补齐
+            cd_scope, tid_scope = _upload_scope(ws, course_id, class_id, work_id)
+            try:
+                from .grade_upload import enrich_payloads_from_evaluations
+                payloads = enrich_payloads_from_evaluations(
+                    payloads, ws, class_dir=cd_scope, task_id=tid_scope)
+            except Exception:  # noqa: BLE001 —— 兜底失败不影响主流程
+                pass
             if not payloads:
                 click.echo(json.dumps({"ok": False, "error": "本地无该作业的批阅草稿",
                                        "hint": "先在逐生预览的『人工批阅』栏填写并保存到本地",
@@ -621,12 +649,18 @@ def register(group: click.Group) -> None:
                         imgs.append(str(fp))
                     except Exception as exc:  # noqa: BLE001
                         reps.append({"ok": False, "error": f"草稿图片解码失败：{exc}"})
+                # D200：有报告图时只上传“报告图 + 分数”，不重复写入原始批语文本
+                # （报告图本身就是排版好的批语；重复文本会让平台批语框变两条内容）。
+                payload_comment = str(pl.get("comment") or "")
+                if report_only and imgs:
+                    payload_comment = ""
                 rep = upload_grade(storage=default_storage(None), course_id=course_id,
                                    class_id=class_id, cpi=cpi, work_id=work_id,
                                    student=str(pl["key"]),
-                                   comment=str(pl.get("comment") or ""), comment_images=imgs,
+                                   comment=payload_comment, comment_images=imgs,
                                    total_score=pl.get("score"), question_scores=None,
                                    send=bool(send), force=bool(force), workspace=ws)
+                rep["uploadMode"] = "report-only" if (report_only and imgs) else "text"
                 rep["draftKey"] = pl["key"]
                 reps.append(rep)
                 if len(payloads) > 1:
@@ -669,10 +703,14 @@ def register(group: click.Group) -> None:
                 raise SystemExit(2)
 
         # D121-G6：上传前先落盘「即将发送什么」（可复现/可审计）
+        # D200-FIX：`_resolve_class_dir()`/`_task_id()` 这两个函数**从来不存在**，
+        # NameError 被 except 吞掉 → 上传清单一直没写成功。改用真实解析。
         try:
             from .grade_upload import write_upload_manifest
-            write_upload_manifest(ws, _resolve_class_dir(), _task_id(), work_id,
-                                  payloads, source="evaluations")
+            cd_scope, tid_scope = _upload_scope(ws, course_id, class_id, work_id)
+            if cd_scope and tid_scope:
+                write_upload_manifest(ws, cd_scope, tid_scope, work_id,
+                                      payloads, source="evaluations")
         except Exception:  # noqa: BLE001
             pass
         reps: list[dict] = []
