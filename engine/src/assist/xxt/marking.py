@@ -318,37 +318,94 @@ _JS_CLICK_SUBMIT = """() => {
 }"""
 
 
-def handle_confirmation_dialog(page, timeout_s: float = 10.0) -> bool:
-    """处理提交后的确认弹窗（未评分/未全部批阅等情况）；无弹窗返回 False。"""
+_JS_FIND_POPUP = r"""() => {
+  // D203：弹窗选择器放宽——不同版本学习通的确认层 id 不一致。
+  const sels = ['#tabindexWorkpop', '#tabindexWorkpopTwice', '#confirmPiyueWin',
+                '#popok', '#popokTwice', '.layui-layer', '.popup', '.dialog'];
+  const visible = (el) => {
+    if (!el) return false;
+    const st = getComputedStyle(el);
+    return st.display !== 'none' && st.visibility !== 'hidden' && el.offsetParent !== null;
+  };
+  for (const sel of sels) {
+    for (const el of document.querySelectorAll(sel)) {
+      if (!visible(el)) continue;
+      const text = (el.innerText || '').replace(/\s+/g, ' ').trim();
+      // 只把“带确定按钮/带提示文案”的层当作确认弹窗，避免误点页面其它浮层
+      const hasConfirm = !!(el.querySelector('#popok, #popokTwice') ||
+        Array.from(el.querySelectorAll('a,button,span')).some(x =>
+          /confirmPiyueWork|确定|确认|继续/.test((x.getAttribute('onclick') || '') +
+                                                (x.textContent || ''))));
+      if (!hasConfirm && !/确定|确认|是否|未批阅|评分/.test(text)) continue;
+      return {id: sel, text: text.slice(0, 200)};
+    }
+  }
+  return null;
+}"""
+
+_JS_CLICK_POPUP_CONFIRM = r"""() => {
+  const visible = (el) => {
+    if (!el) return false;
+    const st = getComputedStyle(el);
+    return st.display !== 'none' && st.visibility !== 'hidden' && el.offsetParent !== null;
+  };
+  const cands = [];
+  // 1) 经典 id
+  for (const sel of ['#popok', '#popokTwice']) {
+    document.querySelectorAll(sel).forEach(el => cands.push([el, sel]));
+  }
+  // 2) 调用 confirmPiyueWork() 的按钮（学习通新版的确认入口）
+  document.querySelectorAll('a,button,span,input').forEach(el => {
+    const onclick = el.getAttribute('onclick') || '';
+    if (/confirmPiyueWork/.test(onclick)) cands.push([el, 'onclick:confirmPiyueWork']);
+  });
+  // 3) 弹窗内文案为“确定/确认/继续”的按钮
+  document.querySelectorAll('a,button,span').forEach(el => {
+    const t = (el.textContent || '').replace(/\s+/g, '');
+    if (t === '确定' || t === '确认' || t === '继续' || t === '确定提交') {
+      cands.push([el, 'text:' + t]);
+    }
+  });
+  for (const [el, how] of cands) {
+    if (!visible(el)) continue;
+    try { el.scrollIntoView(); el.click(); } catch (e) { continue; }
+    return {ok: true, how, text: (el.textContent || '').trim().slice(0, 40)};
+  }
+  return {ok: false, reason: 'no-visible-confirm'};
+}"""
+
+
+def handle_confirmation_dialog(page, timeout_s: float = 10.0) -> dict:
+    """D203：处理提交后的确认弹窗（可能有多层），返回处理详情。
+
+    现场：点 `markAction(1)` 后平台弹确认层，但确认按钮**不是** `#popok`
+    （新版调用 `confirmPiyueWork()`）→ 旧实现只认 `#popok`，点不到确认，
+    提交实际被取消，平台状态一直停在「待批阅」。
+    """
     deadline = time.time() + max(0.0, timeout_s)
+    popups: list[dict] = []
+    clicks: list[dict] = []
+    idle = 0
     while time.time() < deadline:
-        popup = page.evaluate(
-            """() => {
-              const sels = ['#tabindexWorkpop', '#tabindexWorkpopTwice', '#confirmPiyueWin'];
-              for (const sel of sels) {
-                const el = document.querySelector(sel);
-                if (!el) continue;
-                const st = getComputedStyle(el);
-                if (st.display !== 'none' && st.visibility !== 'hidden' && el.offsetParent !== null) {
-                  return {id: sel, text: (el.innerText || '').slice(0, 120)};
-                }
-              }
-              return null;
-            }""")
-        if popup:
-            clicked = page.evaluate(
-                """() => {
-                  const el = document.querySelector('#popok, #popokTwice');
-                  if (el && el.offsetParent !== null) { el.click(); return true; }
-                  return false;
-                }""")
-            logger.info(f"批阅提交确认弹窗：{popup} → 确定={clicked}")
-            return True
         try:
-            page.wait_for_timeout(500)
+            popup = page.evaluate(_JS_FIND_POPUP)
         except Exception:  # noqa: BLE001
-            return False
-    return False
+            return {"ok": False, "popups": popups, "clicks": clicks,
+                    "error": "读取确认弹窗失败"}
+        if not popup:
+            idle += 1
+            # 连续 3 次（约 1.5s）没有弹窗 → 认为已处理完
+            if idle >= 3:
+                break
+            page.wait_for_timeout(500)
+            continue
+        idle = 0
+        popups.append(popup)
+        clicked = page.evaluate(_JS_CLICK_POPUP_CONFIRM)
+        clicks.append({"popup": popup.get("id"), "clicked": clicked})
+        logger.info(f"批阅提交确认弹窗：{popup.get('id')} → 点击={clicked}")
+        page.wait_for_timeout(800)
+    return {"ok": bool(clicks) or not popups, "popups": popups, "clicks": clicks}
 
 
 def submit(page, *, handle_confirm: bool = True) -> dict:
@@ -361,4 +418,18 @@ def submit(page, *, handle_confirm: bool = True) -> dict:
         res["confirmPopup"] = handle_confirmation_dialog(page)
     page.wait_for_timeout(2500)
     res["urlAfter"] = page.url
+    # D203：诊断信息——平台 confirm/alert 文案 + 页面上所有 markAction 候选按钮。
+    try:
+        res["dialogs"] = page.evaluate("() => window.__assistDialogs || []")
+    except Exception:  # noqa: BLE001
+        res["dialogs"] = []
+    try:
+        res["submitCandidates"] = page.evaluate(r"""() => Array.from(
+            document.querySelectorAll('a,button')).map(el => ({
+              text: (el.textContent || '').replace(/\s+/g, ' ').trim().slice(0, 40),
+              onclick: (el.getAttribute('onclick') || '').slice(0, 120),
+            })).filter(x => /markAction|confirmPiyueWork|submit/i.test(x.onclick)
+              || /提交|保存|批阅/.test(x.text))""")
+    except Exception:  # noqa: BLE001
+        res["submitCandidates"] = []
     return res

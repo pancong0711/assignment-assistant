@@ -152,6 +152,23 @@ def _start_browser(storage):
                               viewport={"width": 1440, "height": 1000}, locale="zh-CN")
     page = ctx.new_page()
     page.on("dialog", lambda d: d.accept())
+    # D203：记录平台自己的 confirm/alert 调用（提交被取消时能从结果里看到原因），
+    # 并把 confirm 一律接受（学习通“确定提交？”需要确认才会真正保存）。
+    try:
+        page.add_init_script("""
+          window.__assistDialogs = window.__assistDialogs || [];
+          const _c = window.confirm;
+          window.confirm = function(msg) {
+            window.__assistDialogs.push({type: 'confirm', msg: String(msg || ''), accepted: true});
+            return true;
+          };
+          const _a = window.alert;
+          window.alert = function(msg) {
+            window.__assistDialogs.push({type: 'alert', msg: String(msg || '')});
+          };
+        """)
+    except Exception:  # noqa: BLE001 —— 诊断增强失败不影响主流程
+        pass
     return pw, browser, page, None
 
 
@@ -690,26 +707,61 @@ def upload_grade(*, storage, course_id: str, class_id: str, cpi: str, work_id: s
 
         if send:
             step = "提交批阅"
-            result["submitResult"] = submit(page)
-            result["postScreenshot"] = _shot(page, "grade-upload-submitted")
-            clicked = bool(result["submitResult"].get("ok"))
-            # D202：**必须核验平台真的保存了**。只判断“点到按钮”会把失败当成功。
-            step = "提交后核验"
-            ver = verify_submission(page, str(course_id), str(class_id), wid,
-                                    student=str(result.get("matched", {}).get("name")
-                                                 or student),
-                                    work_answer_id=wa, expect_score=total_score)
-            result["afterSubmit"] = ver
+            attempts: list[dict] = []
+            ver: dict = {}
+            clicked = False
+            matched_name = str(result.get("matched", {}).get("name") or student)
+            for attempt in (1, 2):
+                result["submitResult"] = submit(page)
+                clicked = bool(result["submitResult"].get("ok"))
+                attempts.append({
+                    "attempt": attempt, "clicked": clicked,
+                    "confirmPopup": result["submitResult"].get("confirmPopup"),
+                    "dialogs": result["submitResult"].get("dialogs"),
+                    "urlAfter": result["submitResult"].get("urlAfter"),
+                })
+                result["postScreenshot"] = _shot(
+                    page, "grade-upload-submitted" + ("" if attempt == 1 else "-retry"))
+                # D202：**必须核验平台真的保存了**。只判断“点到按钮”会把失败当成功。
+                step = "提交后核验"
+                ver = verify_submission(page, str(course_id), str(class_id), wid,
+                                        student=matched_name, work_answer_id=wa,
+                                        expect_score=total_score)
+                result["afterSubmit"] = ver
+                if clicked and ver.get("ok"):
+                    break
+                if not clicked:
+                    break          # 连按钮都找不到，重试没意义
+                # D203：点了按钮但未生效（多为确认弹窗没点中）→ 再提交一次
+                page.wait_for_timeout(2000)
+            result["submitAttempts"] = attempts
             result["ok"] = bool(clicked and ver.get("ok"))
             if result["ok"]:
                 result["status"] = "submitted"
             else:
                 result["status"] = "unverified" if clicked else "submit-failed"
-                result["error"] = (f"提交后核验失败：{ver.get('error')}"
-                                   if clicked else f"提交失败：{result['submitResult']}")
+                popup_info = attrs = ""
+                try:
+                    cp = (result.get("submitResult") or {}).get("confirmPopup") or {}
+                    attrs = (f"；确认弹窗 {len(cp.get('popups') or [])} 个，"
+                             f"点击 {cp.get('clicks')}")
+                except Exception:  # noqa: BLE001
+                    attrs = ""
+                dialogs = (result.get("submitResult") or {}).get("dialogs") or []
+                if dialogs:
+                    attrs += "；页面提示：" + " | ".join(
+                        str(x.get("msg") or "")[:80] for x in dialogs[:3])
+                cands = (result.get("submitResult") or {}).get("submitCandidates") or []
+                if cands:
+                    attrs += "；候选按钮：" + "、".join(
+                        f"{c.get('text')}({c.get('onclick')})" for c in cands[:4])
+                result["error"] = ((f"提交后核验失败：{ver.get('error')}" if clicked
+                                    else f"提交失败：{result['submitResult']}")
+                                   + attrs)
                 if clicked:
-                    result["hint"] = ("已点到提交按钮，但平台状态/分数未更新；"
-                                      "请到学习通手动确认该生批阅页，或检查是否需要点两次/弹窗未确认")
+                    result["hint"] = ("已点到提交按钮但平台未保存：常见原因是确认弹窗未点中"
+                                      "（新版用 confirmPiyueWork()）或分数校验未通过。"
+                                      "详情见 submitAttempts / receipts 截图。")
         else:
             result.update({"ok": True, "status": "dry-run-filled",
                            "note": "dry-run：已填入并读回，未点提交"})
