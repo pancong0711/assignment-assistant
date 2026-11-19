@@ -2761,6 +2761,9 @@ export interface XxtUploadPreview {
   needComment?: string[]
   noReport?: string[]
   at?: string
+  /** D210：平台状态缓存信息（命中时不重新开浏览器）。 */
+  cache?: { hit?: boolean; ageSec?: number; maxAgeSec?: number
+    fetchedAt?: string; stale?: boolean; hint?: string }
 }
 
 /** POST /xxt/grade/upload-preview：上传前对照表。
@@ -2771,7 +2774,9 @@ export interface XxtUploadPreview {
 export async function fetchXxtUploadPreview(
   engineAddr: string, token: string | undefined,
   payload: { courseId?: string; classId: string; cpi?: string; workId: string
-    classDir?: string; taskId?: string; student?: string; platform?: boolean },
+    classDir?: string; taskId?: string; student?: string; platform?: boolean
+    /** D210：true=忽略本地缓存，重新读取平台状态。 */
+    force?: boolean },
 ): Promise<XxtUploadPreview> {
   const base = normalizeEngineAddr(engineAddr)
   const res = await fetch(engineUrlWithToken(base, '/xxt/grade/upload-preview', token), {

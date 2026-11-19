@@ -3385,11 +3385,14 @@ class Handler(BaseHTTPRequestHandler):
                 # 否则“明明有 AI 批语”却被判成批语为空。
                 payloads = enrich_payloads_from_evaluations(
                     payloads, ws, class_dir=cdir, task_id=tid)
+                # D210：默认走本地缓存（平台状态读取慢）；force=true 才重新读平台
                 rep = upload_preview.build_preview(
                     storage=_xxt_home() / "xxt-storage.json",
                     course_id=str(payload.get("courseId") or ""),
                     class_id=cid, cpi=str(payload.get("cpi") or "0"), work_id=work,
-                    payloads=payloads, only=only)
+                    payloads=payloads, only=only,
+                    ws=ws, class_dir=cdir, task_id=tid,
+                    force_refresh=bool(payload.get("force")))
             else:
                 rep = upload_preview.local_preview(
                     ws=ws, class_dir=cdir, task_id=tid, class_id=cid, work_id=work,
@@ -3546,6 +3549,13 @@ class Handler(BaseHTTPRequestHandler):
                 self._json({"ok": False, "error": "engine 无法 import assist.cli", "detail": detail}, 500)
                 return
             job_id = secrets.token_urlsafe(6)
+            # D210：上传会改变平台状态 → 使对照缓存失效，下次对照重新读取
+            try:
+                from .xxt import upload_preview as _up
+                _up.invalidate_cache(ws, str(payload.get("classDir") or ""),
+                                     str(payload.get("taskId") or ""), work)
+            except Exception:  # noqa: BLE001 —— 失效失败不影响上传
+                pass
             self._start_stream_job(job_id, _xxt_cli_cmd(args), env, "xxt_grade_upload", "xxt-grade", cwd,
                                    journal_kind="xxt_grade_upload",
                                    journal_params={"courseId": cid, "classId": kid,

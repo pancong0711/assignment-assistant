@@ -56,6 +56,9 @@ const previewBusy = ref(false)
 const previewRows = ref<UploadPreviewRow[]>([])
 const previewSummary = ref<Record<string, number>>({})
 const previewCheckedPlatform = ref(false)
+/* D210：平台状态缓存信息（命中缓存时秒开，点“重新读取平台状态”才刷新）。 */
+const previewCache = ref<{ hit?: boolean; ageSec?: number; maxAgeSec?: number
+  fetchedAt?: string; stale?: boolean; hint?: string } | null>(null)
 /* D196：上传就绪分类（只传已提交且批语齐全）；逐生上传进度。 */
 const previewReadiness = ref<{ ready?: string[]; noReport?: string[]; noComment?: string[]
   emptyComment?: string[]; noDraft?: string[]; notSubmitted?: string[]
@@ -1140,7 +1143,8 @@ async function renderReports(opts?: { resume?: boolean; only?: string[] }) {
   } catch (e) { busy.value = false; progress.value = `启动失败：${String(e)}` }
 }
 /** D193：打开上传对照表。`platform=true` 会读取平台已批阅内容（较慢但更准）。 */
-async function openUploadPreview(platform: boolean) {
+async function openUploadPreview(platform: boolean, opts?: { force?: boolean }) {
+  const force = opts?.force === true
   const w = curWork.value
   if (!w) { msg.value = '请选择作业'; return }
   const taskId = packId.value || padId.value || resolvedScope.value
@@ -1151,17 +1155,20 @@ async function openUploadPreview(platform: boolean) {
   previewSummary.value = {}
   previewCheckedPlatform.value = platform
   progress.value = platform
-    ? '正在读取平台批阅状态并比对（只读，不会修改平台内容）……'
+    ? (force ? '正在重新读取平台批阅状态（只读）……'
+             : '正在读取上传前对照（优先用本地缓存）……')
     : '正在整理本地分数/批语/报告版本……'
   try {
     const r = await fetchXxtUploadPreview(props.engineAddr, props.token, {
       courseId: w.courseId, classId: w.classId, cpi: w.cpi, workId: w.workId,
       classDir: curWorkDir.value, taskId: taskId || undefined, platform,
+      force,
     })
     if (!r?.ok) { progress.value = `❌ 对照表生成失败：${r?.error || '未知错误'}`; return }
     previewRows.value = r.rows || []
     previewSummary.value = (r.summary?.counts || {}) as Record<string, number>
     previewReadiness.value = (r.readiness || null) as any
+    previewCache.value = (r.cache || null) as any
     if (!platform && (r.needComment?.length || r.noReport?.length)) {
       // 仅本地核对时也能提醒“批语为空/无报告”
       previewReadiness.value = {
@@ -1179,7 +1186,13 @@ async function openUploadPreview(platform: boolean) {
       + ` · 无报告图/批语/分数 ${rd['no-report'] ?? 0} 人`
       + ` · 无本地草稿 ${rd['no-draft'] ?? 0} 人`
       + ` · 未提交（不上传）${rd['not-submitted'] ?? 0} 人`
-      + (platform ? '' : '（未读取平台状态：点「读取平台状态」更准确）')
+      + (platform
+        ? (previewCache.value?.hit
+          ? `；平台状态：本地缓存（${previewCache.value.fetchedAt || ''}，`
+            + `${Math.round((previewCache.value.ageSec ?? 0) / 60)} 分钟前）`
+            + (previewCache.value.stale ? ' ⚠ 本地内容已变化，建议「重新读取平台状态」' : '')
+          : '；平台状态：刚刚实时读取')
+        : '（未读取平台状态：点「读取平台状态」更准确）')
   } catch (e) {
     progress.value = `对照表失败：${String((e as Error)?.message || e)}`
   } finally { previewBusy.value = false }
@@ -1965,7 +1978,9 @@ onMounted(async () => {
       </button>
       <span style="flex:1"></span>
       <!-- D193：上传先看对照表（未批阅/一致/冲突），再决定覆盖，避免盲传 -->
-      <button class="btn primary" :disabled="busy || previewBusy" @click="openUploadPreview(true)">
+      <button class="btn primary" :disabled="busy || previewBusy"
+              @click="openUploadPreview(true)"
+              title="优先用本地缓存的平台状态（秒开）；需要最新状态请点右侧「重新读取平台状态」">
         🔍 上传前对照（含平台状态）
       </button>
       <button class="btn" :disabled="busy" @click="uploadAll(false)">⬆⬆ 上传全部批阅（含打分）</button>
@@ -2030,6 +2045,18 @@ onMounted(async () => {
           <br>未提交（不上传）：{{ previewReadiness.notSubmitted.slice(0, 8).join('、') }}
           {{ previewReadiness.notSubmitted.length > 8 ? ' …' : '' }}
         </template>
+      </p>
+      <p v-if="previewCache && previewCheckedPlatform" class="hint"
+         style="margin:4px 0"
+         :style="previewCache.stale ? 'color:#b45309' : 'color:var(--c-muted)'">
+        <template v-if="previewCache.hit">
+          📦 平台状态来自本地缓存（{{ previewCache.fetchedAt || '—' }}，
+          {{ Math.round((previewCache.ageSec ?? 0) / 60) }} 分钟前；有效期
+          {{ Math.round((previewCache.maxAgeSec ?? 1800) / 60) }} 分钟）。
+          <span v-if="previewCache.stale">⚠ {{ previewCache.hint }}</span>
+          <span v-else>如需最新状态请点「🔍 重新读取平台状态」。</span>
+        </template>
+        <template v-else>🌐 平台状态为刚刚实时读取，已写入本地缓存。</template>
       </p>
       <p style="margin:6px 0">
         <label class="field" style="display:inline-flex; gap:6px; align-items:center">
@@ -2125,7 +2152,7 @@ onMounted(async () => {
         <button class="btn" style="margin-left:8px" :disabled="previewBusy"
                 @click="openUploadPreview(false)">仅本地重算</button>
         <button class="btn" style="margin-left:8px" :disabled="previewBusy"
-                @click="openUploadPreview(true)">🔍 重新读取平台状态</button>
+                @click="openUploadPreview(true, { force: true })">🔍 重新读取平台状态</button>
         <button class="btn" style="margin-left:8px" @click="previewOpen=false">关闭</button>
         <span v-if="previewBusy" class="hint" style="margin-left:8px">读取中…</span>
       </p>

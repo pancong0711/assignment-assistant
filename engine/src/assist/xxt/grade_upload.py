@@ -596,6 +596,7 @@ def verify_submission(page, course_id: str, class_id: str, work_id: str, *,
       - 状态包含“已批阅”；
       - 若给了 `expect_score`，列表回读的分数与之相符（容差 0.005）。
     """
+    from . import grade_plan
     from .grade_plan import same_score
     try:
         _open_mark_list(page, course_id, class_id, work_id)
@@ -615,10 +616,10 @@ def verify_submission(page, course_id: str, class_id: str, work_id: str, *,
     got = row.get("score")
     out = {"ok": False, "name": row.get("name"), "status": status,
            "score": got, "expectScore": expect_score, "rows": len(rows)}
-    # D206/D207：真实平台状态可能是 "已批阅" / "Reviewed" / "Completed（教师提交）"。
-    pending = bool(re.search(r"待批阅|unreview|未完成|unsubmitted", status, re.I))
-    reviewed = (not pending) and bool(re.search(
-        r"已批阅|补交|\breviewed\b|\bcompleted\b|完成|教师提交", status, re.I))
+    # D206/D207/D210：真实平台状态可能是 "已批阅" / "Reviewed" /
+    # "Completed（教师提交）" / "已完成" / "To be reviewed" —— 与 grade_plan 同一口径
+    pending = grade_plan.is_pending_status(status)
+    reviewed = grade_plan.is_reviewed_status(status)
     score_ok = expect_score is None or same_score(got, expect_score)
     # 状态文本**明确**表示未批阅（如“待批阅”“Unreview”）时，优先报状态问题（最直观）
     if status.strip() and not reviewed:

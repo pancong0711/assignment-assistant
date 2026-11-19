@@ -85,7 +85,10 @@ def decide(*, status: str = "", local_score=None, local_comment: str = "",
     if not has_local_content or (local_score is None and not local_text):
         return {"decision": SKIPPED, "reason": "本地没有可上传的分数/批语",
                 "needsConfirm": False, "upload": False, "platformBefore": None}
-    reviewed = "已批阅" in str(status or "")
+    # D210-FIX：原实现只认中文“已批阅”，真实平台还会返回
+    # “已完成 / Completed / Completed（教师提交）/ Reviewed”，
+    # 会被误判成“未批阅”→ 跳过覆盖确认，直接覆盖平台已有批阅。
+    reviewed = is_reviewed_status(status)
     if not reviewed:
         return {"decision": NEW, "reason": "平台未批阅，直接上传",
                 "needsConfirm": False, "upload": True,
@@ -150,6 +153,25 @@ NO_COMMENT = "no-comment"  # 兼容旧值：无可上传内容（保留给外部
 NO_REPORT = "no-report"    # 已提交但没有报告图，也没有批语/分数 → 请先生成报告
 NOT_SUBMITTED = "not-submitted"  # 平台未提交 → 不上传批阅报告
 NO_DRAFT = "no-draft"      # 已提交但本地没有草稿 → 先批阅
+
+
+_PENDING_RE = r"待批阅|unreview|未完成|unsubmitted|to be reviewed"
+_REVIEWED_RE = r"已批阅|补交|reviewed|completed|完成|教师提交"
+
+
+def is_reviewed_status(status: str) -> bool:
+    """D210：平台状态是否表示“已批阅”（覆盖中英文多种文案）。"""
+    import re as _re
+    st = str(status or "")
+    if _re.search(_PENDING_RE, st, _re.I):
+        return False
+    return bool(_re.search(_REVIEWED_RE, st, _re.I))
+
+
+def is_pending_status(status: str) -> bool:
+    """D210：平台状态是否明确表示“未批阅”。"""
+    import re as _re
+    return bool(_re.search(_PENDING_RE, str(status or ""), _re.I))
 
 
 def is_submitted(row: "dict | None") -> bool:
