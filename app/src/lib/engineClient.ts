@@ -1138,7 +1138,9 @@ export async function startXxtGradeUpload(
     reportOnly?: boolean
     /** D201：必须带 scope，否则引擎只读旧布局草稿 → “本地无该作业的批阅草稿”。 */
     classDir?: string
-    taskId?: string },
+    taskId?: string
+    /** D208：只上传这些学生（按对照表确认后的名单）。 */
+    students?: string[] },
 ): Promise<string> {
   const base = normalizeEngineAddr(engineAddr)
   const res = await fetch(engineUrlWithToken(base, '/xxt/grade/upload', token), {

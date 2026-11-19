@@ -1487,8 +1487,13 @@ async function uploadAll(force: boolean, only?: string[]) {
       send: true, force, reportOnly: uploadReportOnly.value,
       classDir: curWorkDir.value,
       taskId: packId.value || padId.value || resolvedScope.value || undefined,
+      // D208：按对照表上传时只传确认名单（旧实现忽略 only → 实际全传）
+      students: only && only.length ? only : undefined,
     })
-    busy.value = true; progress.value = `正在上传全部草稿（${force ? '强制覆盖' : '跳过已批阅'}）……`
+    busy.value = true
+    progress.value = only && only.length
+      ? `正在上传已确认的 ${only.length} 名学生……`
+      : `正在上传全部草稿（${force ? '强制覆盖' : '跳过已批阅'}）……`
     stopPoll()
     const tick = async () => {
       try {

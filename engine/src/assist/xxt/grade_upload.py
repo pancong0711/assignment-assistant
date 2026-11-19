@@ -53,20 +53,58 @@ def _write_receipt(kind: str, payload: dict) -> str:
 
 # ---------------- 学生定位（纯函数便于测试） ----------------
 
-def find_student_row(rows: list[dict], student: str) -> "dict | None":
-    """在 mark 页学生行里按姓名/学号/workAnswerId 匹配（大小写不敏感）。"""
+# 允许的“姓名后缀”字符：备注/编号等，不是姓名字符
+_NAME_SUFFIX_CHARS = set("(（[【 -_#·.、,，")
+
+
+def name_suffix_match(key: str, name: str) -> bool:
+    """D208：key 是 name 的**前缀**且后面是“备注后缀”时才算匹配。
+
+    - `张三` vs `张三(补交)` → True（后面是括号）
+    - `张三` vs `张三 补交` → True（后面是空格）
+    - `王伟` vs `王伟伟`     → False（后面还是姓名字符）
+    """
+    key, name = str(key or "").strip().lower(), str(name or "").strip().lower()
+    if not key or not name or not name.startswith(key):
+        return False
+    rest = name[len(key):]
+    return bool(rest) and rest[0] in _NAME_SUFFIX_CHARS
+
+
+def match_students(rows: list[dict], student: str) -> dict:
+    """D208：学生行匹配诊断——返回 {exact, fuzzy:[...]}（供安全决策与报错）。"""
     key = str(student or "").strip().lower()
+    exact = None
+    fuzzy: list[dict] = []
+    similar: list[dict] = []
     if not key:
-        return None
-    fuzzy = None
+        return {"exact": None, "fuzzy": [], "similar": []}
     for r in rows or []:
         name = str(r.get("name") or "").strip().lower()
         wa = str(r.get("workAnswerId") or "").lower()
         if key == name or key == wa:
-            return r
-        if fuzzy is None and key and key in name:
-            fuzzy = r
-    return fuzzy
+            exact = r
+        elif name_suffix_match(key, name):
+            fuzzy.append(r)
+        elif key in name or (wa and key in wa):
+            # 仅用于“为什么不给传”的诊断展示，不参与匹配
+            similar.append(r)
+    return {"exact": exact, "fuzzy": fuzzy, "similar": similar}
+
+
+def find_student_row(rows: list[dict], student: str) -> "dict | None":
+    """按姓名/学号/workAnswerId 匹配学生行（大小写不敏感）。
+
+    D208 安全口径：**子串兜底必须是唯一命中**才采用。
+    现场风险：名单里同时有「王伟」「王伟伟」时，给「王伟」上传会模糊命中
+    「王伟伟」→ 把批阅/分数写到**另一个学生**身上。宁可报“找不到/有多名候选”。
+    """
+    info = match_students(rows, student)
+    if info["exact"] is not None:
+        return info["exact"]
+    if len(info["fuzzy"]) == 1:
+        return info["fuzzy"][0]
+    return None
 
 
 def pick_work_id(items: list[dict], given: str) -> str:
@@ -512,7 +550,10 @@ def enrich_payloads_from_evaluations(payloads: list[dict], ws,
 
 
 def find_payload(payloads: list[dict], student: str) -> "dict | None":
-    """按学生名匹配 payload（精确优先，其次子串）。"""
+    """按学生名/草稿键匹配 payload（精确优先；子串仅唯一命中才采用）。
+
+    D208：与 find_student_row 同口径——避免“王伟”命中“王伟伟”的错人上传。
+    """
     key = str(student or "").strip().lower()
     if not key:
         return None
@@ -520,9 +561,11 @@ def find_payload(payloads: list[dict], student: str) -> "dict | None":
         if str(p.get("student") or "").strip().lower() == key:
             return p
     for p in payloads or []:
-        if key in str(p.get("student") or "").strip().lower():
+        if str(p.get("key") or "").strip().lower() == key:
             return p
-    return None
+    fuzzy = [p for p in payloads or []
+             if name_suffix_match(key, str(p.get("student") or ""))]
+    return fuzzy[0] if len(fuzzy) == 1 else None
 
 
 # ---------------- §2 批阅上传 ----------------
@@ -629,7 +672,24 @@ def upload_grade(*, storage, course_id: str, class_id: str, cpi: str, work_id: s
         row = _resolve_target(page, str(course_id), str(class_id), wid,
                               student, work_answer_id)
         if row is None:
-            result["error"] = f"未找到学生：{student or work_answer_id}"
+            # D208：把“候选姓名”带回结果，便于判断是重名/漏交/输错
+            try:
+                _rows = _students_from_mark_list(page)
+                _info = match_students(_rows, student)
+                _cands = [r.get("name") for r in (_info["fuzzy"] + _info["similar"])][:8]
+                result["matchCandidates"] = _cands
+                if _info["fuzzy"]:
+                    result["error"] = (f"学生「{student}」匹配到 {len(_info['fuzzy'])} 名候选"
+                                       f"（{('、'.join(_cands))}），"
+                                       "为避免写错人已中止；请用 workAnswerId 精确指定")
+                elif _cands:
+                    result["error"] = (f"未找到学生「{student}」的精确匹配，"
+                                       f"但有相似姓名（{('、'.join(_cands))}）；"
+                                       "为避免写错人已中止，请核对名单或用 workAnswerId")
+                else:
+                    result["error"] = f"未找到学生：{student or work_answer_id}"
+            except Exception:  # noqa: BLE001
+                result["error"] = f"未找到学生：{student or work_answer_id}"
             result["screenshot"] = _shot(page, "grade-upload-notfound")
             return result
         wa = row.get("workAnswerId") or ""
@@ -788,7 +848,16 @@ def upload_grade(*, storage, course_id: str, class_id: str, cpi: str, work_id: s
                     return result
                 if not clicked:
                     break          # 连按钮都找不到，重试没意义
+                # D208：重试前先**复验一次**（平台列表偶有延迟）。
+                # 若已保存就不重复提交，避免重复提交/覆盖。
                 page.wait_for_timeout(2000)
+                ver2 = verify_submission(page, str(course_id), str(class_id), wid,
+                                         student=matched_name, work_answer_id=wa,
+                                         expect_score=total_score)
+                result["afterSubmitRecheck"] = ver2
+                if ver2.get("ok"):
+                    ver = ver2
+                    break
             result["submitAttempts"] = attempts
             result["ok"] = bool(clicked and ver.get("ok"))
             if result["ok"]:

@@ -569,6 +569,9 @@ def register(group: click.Group) -> None:
                   help="对产物内全部学生上传（默认仅 --student 指定的一人）")
     @click.option("--from-drafts", "from_drafts", is_flag=True, default=False,
                   help="D85：上传本地人工批阅草稿（<xxt_home>/grade-drafts）；可配 --student 只传一人")
+    @click.option("--students", "students_filter", multiple=True,
+                  help="D208：只上传这些学生（可重复；配合 --from-drafts，"
+                       "用于“按对照表上传”只传已确认名单）")
     @click.option("--report-only/--with-comment-text", "report_only", default=True,
                   help="D200：只上传报告图+分数，不再重复上传原始批语文本（默认开；"
                        "有报告图时生效，无报告图仍会传批语文本）")
@@ -580,7 +583,8 @@ def register(group: click.Group) -> None:
     def xxt_grade_upload(course_id, class_id, cpi, work_id, student, work_answer_id,
                          comment, comment_images, question_comments, total_score,
                          question_scores, send, force, task_path, all_students,
-                         from_drafts, report_only, class_dir, task_id, storage):
+                         from_drafts, report_only, class_dir, task_id, storage,
+                         students_filter):
         """D84 §2：批阅页上传批语（文字+图片）/分数并提交（默认 dry-run，白名单限制）。"""
         from .grade_upload import upload_grade
         from .marking import parse_question_scores
@@ -648,6 +652,19 @@ def register(group: click.Group) -> None:
                 }, ensure_ascii=False, indent=1))
                 raise SystemExit(2)
             payloads = drafts_to_payloads(drafts, only=student)
+            # D208：按对照表上传时只传**教师确认过**的学生名单，
+            # 旧实现忽略该名单 → 实际把全部草稿都传了（含未确认/未提交者）。
+            want = [str(x).strip() for x in (students_filter or []) if str(x).strip()]
+            if want:
+                want_set = {x.lower() for x in want}
+                payloads = [p for p in payloads
+                            if str(p.get("student") or "").strip().lower() in want_set
+                            or str(p.get("key") or "").strip().lower() in want_set]
+                if not payloads:
+                    click.echo(json.dumps({
+                        "ok": False, "error": "指定的学生名单在本地草稿中不存在",
+                        "students": want[:50]}, ensure_ascii=False, indent=1))
+                    raise SystemExit(2)
             try:
                 from .grade_upload import enrich_payloads_from_evaluations
                 payloads = enrich_payloads_from_evaluations(

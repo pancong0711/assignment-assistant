@@ -507,6 +507,11 @@ _JS_CLICK_SUBMIT_FALLBACK = r"""() => {
   for (const [el, r] of cands) {
     const onclick = el.getAttribute('onclick') || '';
     const text = (el.textContent || el.value || '').trim().slice(0, 40);
+    // D208：绝不点“提交并进入下一份”——那会把批阅带到下一个学生
+    if (/next|下一|下一位|下份/i.test(text + ' ' + onclick)) {
+      tried.push({text, onclick: onclick.slice(0, 120), rank: r, skipped: 'next-student'});
+      continue;
+    }
     tried.push({text, onclick: onclick.slice(0, 120), rank: r});
     try { el.scrollIntoView(); el.click(); } catch (e) { continue; }
     return {ok: true, how: 'fallback', text, tried};

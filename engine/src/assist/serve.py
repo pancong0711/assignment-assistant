@@ -3519,6 +3519,13 @@ class Handler(BaseHTTPRequestHandler):
                 args += ["--task-id", tid_up]
             if student:
                 args += ["--student", student]
+            # D208：按对照表上传——透传已确认学生名单（可多个）
+            _stu_list = payload.get("students")
+            if isinstance(_stu_list, list):
+                for _s in _stu_list[:300]:
+                    _s = str(_s).strip()
+                    if _s:
+                        args += ["--students", _s]
             if send:
                 args += ["--confirm-send"]
             if force:
