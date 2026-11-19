@@ -34,7 +34,8 @@ must(/studentCount/.test(serve) && /historyRecords/.test(serve), '版本查询�
 must(/export async function compactXxtReportVersions/.test(client), 'engineClient 缺少压缩接口')
 must(/async function compactReportVersions/.test(view), '缺少压缩历史前端逻辑')
 must(/🗜 压缩版本历史/.test(view), '缺少压缩按钮')
-must(/名学生 \/ 共/.test(view), '版本面板未显示“学生数/记录数”')
+must(/逐生审核名单/.test(view) && /版本记录共/.test(view),
+  '版本面板未显示“名单人数/记录数”')
 must(/历史版本，不是多余学生|不是多余学生/.test(view), '未解释记录≠学生')
 must(/每生只保留最新 1 版/.test(view), '压缩确认未说明策略')
 must(/只压缩索引，不删文件/.test(view), '压缩确认未说明“不删历史文件”')

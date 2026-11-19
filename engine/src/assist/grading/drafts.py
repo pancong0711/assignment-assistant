@@ -130,6 +130,43 @@ def build_draft_report(d: dict) -> "tuple[str, str]":
                            revised=bool(d.get("revised")))
 
 
+def student_name_map(ws, *, class_id: str, work_id: str, task_id: str = "",
+                     class_dir: str = "", plan: "dict | None" = None) -> dict:
+    """D199：草稿键（workAnswerId）→ **学生姓名** 的映射。
+
+    现场问题：草稿若没有 `student` 字段，报告会以 `wa_2001` 之类的键命名，
+    版本索引里记录的也是键而不是姓名 → 按逐生审核名单核对时“少了几个人”。
+
+    来源优先级：调用方 plan → 批阅下载清单 `students.json` → plan.json。
+    只读，不写盘。
+    """
+    out: dict[str, str] = {}
+    def _put(wa, name):
+        wa, name = str(wa or "").strip(), str(name or "").strip()
+        if wa and name:
+            out[wa] = name
+    for s in ((plan or {}).get("students") or []):
+        if isinstance(s, dict):
+            _put(s.get("workAnswerId"), s.get("name"))
+    try:
+        from . import inputs as _inputs
+        _d, rev = _inputs.read_review_students(class_id, work_id)
+        for s in rev:
+            _put(s.get("workAnswerId"), s.get("name"))
+    except Exception:  # noqa: BLE001 —— 只读兜底，失败不影响生成
+        pass
+    if not out:
+        try:
+            from . import inputs as _inputs2
+            _pl = _inputs2.load_plan(ws, task_id, class_dir) or {}
+            for s in (_pl.get("students") or []):
+                if isinstance(s, dict):
+                    _put(s.get("workAnswerId"), s.get("name"))
+        except Exception:  # noqa: BLE001
+            pass
+    return out
+
+
 def _draft_richness(d: dict) -> int:
     """D195：同名学生多份草稿时，挑“内容更完整”的那份（用于报告生成）。
 
@@ -276,10 +313,16 @@ def render_reports_from_drafts(ws, *, class_id: str, work_id: str, task_id: str 
     # 版本索引也重复；前端表格还会出现“重复姓名”。
     # 这里按**学生姓名**合并：保留内容更完整的一份（人工套 > 有批语 > 有分数 > 有转写），
     # 并记下所有键，便于回写时同步到各个键。
+    name_map = student_name_map(ws, class_id=class_id, work_id=work_id,
+                               task_id=str(task_id),
+                               class_dir=str(class_dir or f"classes/{class_id}"))
     merged: "dict[str, tuple[str, dict, list[str]]]" = {}
     for k, raw in data.items():
         d0 = grade_store.normalize_draft(raw if isinstance(raw, dict) else {})
-        stu = str(d0.get("student") or k).strip() or str(k)
+        # D199：姓名优先；草稿没写 student 时用 workAnswerId 反查姓名，绝不用键当报告名
+        stu = str(d0.get("student") or "").strip() or name_map.get(str(k)) or str(k)
+        if stu != str(d0.get("student") or "").strip():
+            d0 = {**d0, "student": stu}
         if only_set and not (stu in only_set or str(k) in only_set):
             continue
         prev = merged.get(stu)

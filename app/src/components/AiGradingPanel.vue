@@ -70,6 +70,20 @@ const versionsOpen = ref(false)
 const versionsBusy = ref(false)
 const versionsRows = ref<{ student?: string; version?: string; tag?: string; at?: string
   kind?: string; score?: number | null; files?: string[]; reason?: string }[]>([])
+/* D199：以逐生审核名单为基准的报告状态（含“未生成”）。 */
+const versionRoster = ref<{ student?: string; versionCount?: number; hasReport?: boolean
+  version?: string; tag?: string; at?: string; kind?: string; score?: number | null }[]>([])
+/** D199：版本表统一为“逐生”形状（有名单用名单，没名单才回退索引记录）。 */
+const versionTableRows = computed(() => {
+  if (versionRoster.value.length) return versionRoster.value
+  return versionsRows.value.map((v) => ({
+    student: v.student, hasReport: true, version: v.version, tag: v.tag,
+    at: v.at, kind: v.kind, score: v.score, versionCount: 1,
+  }))
+})
+const versionMeta = ref<{ rosterCount?: number; reportedCount?: number
+  missingReport?: string[]; unmatched?: string[]; totalInIndex?: number
+  historyRecords?: number; studentCount?: number; avgVersions?: number } | null>(null)
 /* D194：上次报告生成进度（中断后显示“已生成 X/Y”，可续做/只补失败学生）。 */
 /* D195：生成前范围核对（谁会有报告 / 平台有行但无草稿 / 重复键）。 */
 const scopeCheck = ref<{ studentCount?: number; draftCount?: number
@@ -1313,15 +1327,32 @@ async function loadReportVersions() {
   versionsRows.value = []
   try {
     const names = students.value.map((x) => x.name).filter(Boolean)
+    const keyToName: Record<string, string> = {}
+    for (const s of students.value) {
+      if (s.key && s.name) keyToName[String(s.key)] = String(s.name)
+    }
     const r = await fetchXxtReportVersions(props.engineAddr, props.token, {
       classDir: curWorkDir.value, taskId, students: names.length ? names : undefined,
+      keyToName,
     })
     if (!r?.ok) { progress.value = `❌ 版本读取失败：${r?.error || '未知错误'}`; return }
     versionsRows.value = r.items || []
-    const hist = r.historyRecords ?? 0
-    progress.value = `报告版本：${r.studentCount ?? '?'} 名学生 / 共 ${r.totalInIndex ?? versionsRows.value.length} 条记录`
-      + (hist ? `（其中 ${hist} 条为历史版本，平均 ${r.avgVersions ?? '?'} 版/人）` : '')
-      + (r.orphanCount ? `；另有 ${r.orphanCount} 条不属于本次名单，可点「🧹 清理多余报告」` : '')
+    versionRoster.value = r.roster || []
+    versionMeta.value = {
+      rosterCount: r.rosterCount, reportedCount: r.reportedCount,
+      missingReport: r.missingReport || [], unmatched: r.unmatched || [],
+      totalInIndex: r.totalInIndex, historyRecords: r.historyRecords,
+      studentCount: r.studentCount, avgVersions: r.avgVersions,
+    }
+    const meta = versionMeta.value || {}
+    const miss = meta.missingReport || []
+    progress.value = `逐生审核名单 ${meta.rosterCount ?? names.length} 人：`
+      + `已生成报告 ${meta.reportedCount ?? 0} 人`
+      + (miss.length ? `，**未生成 ${miss.length} 人**（${miss.slice(0, 8).join('、')}${miss.length > 8 ? ' …' : ''}）` : '')
+      + `；版本记录共 ${meta.totalInIndex ?? versionsRows.value.length} 条`
+      + (meta.historyRecords ? `（其中 ${meta.historyRecords} 条为历史版本）` : '')
+      + ((meta.unmatched || []).length
+        ? `；⚠ ${(meta.unmatched || []).length} 个索引姓名不在名单内，可点「🧹 清理多余报告」` : '')
       + `；目录 ${r.dir || ''}`
   } catch (e) {
     progress.value = `版本读取失败：${String((e as Error)?.message || e)}`
@@ -2076,29 +2107,49 @@ onMounted(async () => {
     <div v-if="versionsOpen" class="card" style="margin-top:10px">
       <h3 style="margin:0 0 6px">报告版本
         <small style="font-weight:400;color:var(--c-muted)">
-          {{ versionsBusy ? '读取中…' : `${versionsRows.length} 条` }} · 版本号=报告内容哈希前 6 位
+          {{ versionsBusy ? '读取中…'
+            : `名单 ${versionMeta?.rosterCount ?? 0} 人 / 已生成 ${versionMeta?.reportedCount ?? 0} 人`
+              + ` / 未生成 ${versionMeta?.missingReport?.length ?? 0} 人`
+              + ` · 版本记录 ${versionMeta?.totalInIndex ?? versionRoster.length} 条` }}
+          · 版本号=报告内容哈希前 6 位
         </small>
       </h3>
+      <p v-if="(versionMeta?.missingReport || []).length" class="hint"
+         style="margin:4px 0; color:#b45309; background:#fffbeb;
+                border:1px solid #fcd34d; border-radius:8px; padding:6px 10px">
+        逐生审核名单里有 {{ (versionMeta?.missingReport || []).length }} 名学生**还没有报告**：
+        {{ (versionMeta?.missingReport || []).slice(0, 10).join('、') }}
+        {{ (versionMeta?.missingReport || []).length > 10 ? ' …' : '' }}
+        → 点「📄 一键生成批阅报告」补生成（已有报告的会跳过）。
+      </p>
       <div style="max-height:240px; overflow:auto">
         <table style="width:100%; border-collapse:collapse; font-size:13px">
           <thead>
             <tr style="background:#f6f6f8">
               <th style="text-align:left; padding:4px 8px">学生</th>
-              <th style="text-align:left; padding:4px 8px">版本</th>
+              <th style="text-align:left; padding:4px 8px">报告状态</th>
+              <th style="text-align:left; padding:4px 8px">最新版本</th>
               <th style="text-align:left; padding:4px 8px">生成时间</th>
               <th style="text-align:left; padding:4px 8px">类型</th>
               <th style="text-align:left; padding:4px 8px">分数</th>
-              <th style="text-align:left; padding:4px 8px">原因</th>
+              <th style="text-align:left; padding:4px 8px">版本数</th>
             </tr>
           </thead>
           <tbody>
-            <tr v-for="(v, i) in versionsRows" :key="`${v.student}-${v.version}-${i}`">
+            <tr v-for="(v, i) in versionTableRows" :key="`${v.student}-${i}`">
               <td style="padding:4px 8px">{{ v.student }}</td>
-              <td style="padding:4px 8px"><code>{{ v.tag || v.version }}</code></td>
-              <td style="padding:4px 8px">{{ v.at }}</td>
+              <td style="padding:4px 8px">
+                <span v-if="v.hasReport !== false" style="color:#15803d">已生成</span>
+                <span v-else style="color:#b45309;font-weight:600">未生成</span>
+              </td>
+              <td style="padding:4px 8px">
+                <code v-if="v.tag || v.version">{{ v.tag || v.version }}</code>
+                <span v-else style="color:#9ca3af">—</span>
+              </td>
+              <td style="padding:4px 8px">{{ v.at || '—' }}</td>
               <td style="padding:4px 8px">{{ v.kind || '—' }}</td>
               <td style="padding:4px 8px">{{ v.score ?? '—' }}</td>
-              <td style="padding:4px 8px; color:var(--c-muted)">{{ v.reason || '—' }}</td>
+              <td style="padding:4px 8px">{{ v.versionCount ?? '—' }}</td>
             </tr>
           </tbody>
         </table>

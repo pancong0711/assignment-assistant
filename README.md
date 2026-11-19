@@ -103,6 +103,7 @@
 - `docs/139-D196-upload-submitted-only-and-per-student.md` — **D196 只上传已提交学生 + 批语缺失提醒 + 逐生上传**
 - `docs/140-D197-cleanup-index-and-roster.md` — **D197 清理报告同步清理版本索引 + 按本次作业名单核对（修复版本列表残留 106 条）**
 - `docs/141-D198-version-records-vs-students.md` — **D198 版本“记录数≠学生数”：清理无内容时解释原因 + 压缩版本历史**
+- `docs/142-D199-report-version-roster-alignment.md` — **D199 报告版本以逐生审核名单为基准（修复 57 人只显示 53 人）+ 报告按学生姓名命名**
 
 > **当前活动需求单 = `docs/112-D168`（口径/快照）+ `docs/113-D169`（路线/架构）**；
 > 历史条目保留供追溯，与最新口径冲突时以这两份为准。

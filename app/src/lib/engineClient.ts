@@ -2774,10 +2774,17 @@ export interface XxtReportVersionRow {
 /** POST /xxt/grade/report-versions：报告内容哈希版本历史（只读，不回显正文）。 */
 export async function fetchXxtReportVersions(
   engineAddr: string, token: string | undefined,
-  payload: { classDir: string; taskId: string; student?: string; students?: string[] },
+  payload: { classDir: string; taskId: string; student?: string; students?: string[]
+    /** D199：逐生审核名单里的 key(workAnswerId)→姓名，用于把旧索引里的 wa_xxx 归一。 */
+    keyToName?: Record<string, string> },
 ): Promise<{ ok?: boolean; error?: string; count?: number; dir?: string
   totalInIndex?: number; keptByRoster?: boolean; orphanCount?: number
   studentCount?: number; avgVersions?: number; historyRecords?: number
+  /** D199：以逐生审核名单为基准的逐生状态（含“未生成”）。 */
+  roster?: { student?: string; versionCount?: number; hasReport?: boolean
+    version?: string; tag?: string; at?: string; kind?: string; score?: number | null }[]
+  rosterCount?: number; reportedCount?: number
+  missingReport?: string[]; unmatched?: string[]
   items?: XxtReportVersionRow[] }> {
   const base = normalizeEngineAddr(engineAddr)
   const res = await fetch(engineUrlWithToken(base, '/xxt/grade/report-versions', token), {

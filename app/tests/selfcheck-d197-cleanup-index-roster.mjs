@@ -37,7 +37,8 @@ must(/版本索引/.test(view), '未展示索引清理条数')
 must(/清理完成/.test(view), '缺少“清理完成”明确反馈')
 must(/await loadReportVersions\(\)/.test(view), '清理后未刷新版本列表')
 must(/还没有当前作业的学生清单/.test(view), '空名单未在前端拦截')
-must(/orphanCount/.test(view), '版本面板未提示孤儿记录')
+must(/orphanCount|unmatched/.test(view), '版本面板未提示不在名单内的记录')
+must(/不在名单内/.test(view) || /不属于本次名单/.test(view), '未提示孤儿记录可清理')
 must(/students: names\.length \? names : undefined/.test(view), '版本查询未带名单')
 
 // 4) 客户端字段
