@@ -216,8 +216,9 @@ def test_e2e_confirm_button_without_popok_id(browser_page, monkeypatch, tmp_path
         rep = _run_upload(monkeypatch, page, mock, tmp_path)
         assert rep["ok"] is True, rep.get("error")
         assert mock.state["saved"] is True
-        clicks = (rep["submitResult"].get("confirmPopup") or {}).get("clicks") or []
-        assert clicks and clicks[0]["clicked"].get("how", "").startswith("onclick:confirmPiyueWork")
+        # D209：确认处理改为“确认链”，结果结构从 clicks 变为 steps
+        steps = (rep["submitResult"].get("confirmPopup") or {}).get("steps") or []
+        assert steps and steps[0].get("how", "").startswith("onclick:confirmPiyueWork"), steps
     finally:
         page.close()
         mock.close()

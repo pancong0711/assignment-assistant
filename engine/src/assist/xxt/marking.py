@@ -377,8 +377,9 @@ _JS_CLICK_SUBMIT = r"""() => {
 
 _JS_FIND_POPUP = r"""() => {
   // D203：弹窗选择器放宽——不同版本学习通的确认层 id 不一致。
-  const sels = ['#tabindexWorkpop', '#tabindexWorkpopTwice', '#confirmPiyueWin',
-                '#popok', '#popokTwice', '.layui-layer', '.popup', '.dialog'];
+  const sels = ['#confirmPop2', '#tabindexWorkpop', '#tabindexWorkpopTwice',
+                '#confirmPiyueWin', '#popok', '#popokTwice', '.layui-layer',
+                '.popup', '.dialog'];
   const visible = (el) => {
     if (!el) return false;
     const st = getComputedStyle(el);
@@ -430,6 +431,64 @@ _JS_CLICK_POPUP_CONFIRM = r"""() => {
   }
   return {ok: false, reason: 'no-visible-confirm'};
 }"""
+
+
+_JS_CLICK_CONFIRM_STEP = r"""() => {
+  // D209：真实平台确认链是 showConfirmV1(..., "Continue", "Cancel", "checkPass()")
+  // 点 Continue → checkPass() → comfirmMark() → formSubmit()。
+  // 旧实现只按 #popok/文案“确定”找，永远点不到 Continue。
+  const vis = (el) => {
+    if (!el) return false;
+    const st = getComputedStyle(el);
+    return st.display !== 'none' && st.visibility !== 'hidden' && el.offsetParent !== null;
+  };
+  const BAD = /cancel|取消|关闭|next|下一|下一位|下份/i;
+  const cands = [];
+  document.querySelectorAll('[onclick],a,button,span,div').forEach(el => {
+    const t = (el.textContent || '').replace(/\s+/g, ' ').trim();
+    if (!t || t.length > 24 || !vis(el)) return;
+    const oc = el.getAttribute('onclick') || '';
+    if (BAD.test(t) || BAD.test(oc)) return;
+    let rank = 0;
+    if (/checkPass|comfirmMark|formSubmit|confirmPiyueWork/i.test(oc)) rank = 100;
+    else if (/^(continue|confirm|ok|yes|确定|确认|继续|提交)$/i.test(t)) rank = 80;
+    else if (/^(continue|confirm|确定提交)$/i.test(t)) rank = 70;
+    if (rank) cands.push({el, rank, t: t.slice(0, 24), oc: oc.slice(0, 60)});
+  });
+  cands.sort((a, b) => b.rank - a.rank);
+  if (!cands.length) return {ok: false, reason: 'no-confirm'};
+  const c = cands[0];
+  try { c.el.scrollIntoView(); c.el.click(); } catch (e) {
+    return {ok: false, reason: 'click-failed', text: c.t};
+  }
+  return {ok: true, how: c.rank >= 100 ? ('onclick:' + c.oc) : ('text:' + c.t),
+          text: c.t};
+}"""
+
+
+def click_confirm_chain(page, *, max_rounds: int = 5) -> dict:
+    """D209：反复点击确认链（Continue/Confirm/确定），直到没有可点的确认按钮。
+
+    真实链：Continue(checkPass) → [可能再来一次 Confirm(comfirmMark)] → formSubmit。
+    """
+    steps: list[dict] = []
+    idle = 0
+    for _ in range(max(1, max_rounds)):
+        try:
+            res = page.evaluate(_JS_CLICK_CONFIRM_STEP)
+        except Exception as exc:  # noqa: BLE001
+            return {"ok": False, "steps": steps, "error": f"确认弹窗处理失败：{str(exc)[:160]}"}
+        if not res or not res.get("ok"):
+            idle += 1
+            if idle >= 2:
+                break
+            page.wait_for_timeout(600)
+            continue
+        idle = 0
+        steps.append(res)
+        logger.info(f"批阅确认链：{res.get('how')} → {res.get('text')}")
+        page.wait_for_timeout(900)
+    return {"ok": True, "steps": steps}
 
 
 def handle_confirmation_dialog(page, timeout_s: float = 10.0) -> dict:
@@ -539,6 +598,12 @@ def submit(page, *, handle_confirm: bool = True) -> dict:
                 "error": ("学习通会话已失效（当前页跳到了登录页/出现登录框）："
                           "请点「🔁 重新扫码登录」后重试"),
                 **diag}
+    # D209：平台 pigai() 首行有 `if (window.itemScoreCheck) { ...; return; }` 守卫，
+    # 残留为真会让提交静默失败；提交前显式清零。
+    try:
+        page.evaluate("() => { window.itemScoreCheck = false; }")
+    except Exception:  # noqa: BLE001
+        pass
     res = page.evaluate(_JS_CLICK_SUBMIT)
     if not res.get("ok"):
         fb = page.evaluate(_JS_CLICK_SUBMIT_FALLBACK)
@@ -552,7 +617,8 @@ def submit(page, *, handle_confirm: bool = True) -> dict:
         res = fb
     page.wait_for_timeout(1500)
     if handle_confirm:
-        res["confirmPopup"] = handle_confirmation_dialog(page)
+        # D209：真实确认链 Continue(checkPass) → comfirmMark → formSubmit
+        res["confirmPopup"] = click_confirm_chain(page)
     page.wait_for_timeout(2500)
     res["urlAfter"] = page.url
     # D203：诊断信息——平台 confirm/alert 文案 + 页面上所有 markAction 候选按钮。
@@ -560,6 +626,18 @@ def submit(page, *, handle_confirm: bool = True) -> dict:
         res["dialogs"] = page.evaluate("() => window.__assistDialogs || []")
     except Exception:  # noqa: BLE001
         res["dialogs"] = []
+    # D209：平台校验失败用 toast() 提示（如“分数不能超过满分”），必须带回证据
+    try:
+        res["toasts"] = page.evaluate(r"""() => {
+          const vis = el => { const st=getComputedStyle(el);
+            return st.display!=='none' && st.visibility!=='hidden' && el.offsetParent!==null; };
+          return Array.from(document.querySelectorAll(
+              '[class*=toast],[id*=toast],.layui-layer-msg,[class*=message]'))
+            .filter(vis).map(el => (el.innerText||'').replace(/\s+/g,' ').trim().slice(0,120))
+            .filter(Boolean).slice(0, 5);
+        }""")
+    except Exception:  # noqa: BLE001
+        res["toasts"] = []
     res["page"] = diag["page"]
     res["pageCandidates"] = diag["candidates"]
     try:

@@ -875,6 +875,9 @@ def upload_grade(*, storage, course_id: str, class_id: str, cpi: str, work_id: s
                 if dialogs:
                     attrs += "；页面提示：" + " | ".join(
                         str(x.get("msg") or "")[:80] for x in dialogs[:3])
+                toasts = (result.get("submitResult") or {}).get("toasts") or []
+                if toasts:
+                    attrs += "；平台 toast：" + " | ".join(str(t)[:80] for t in toasts[:3])
                 cands = (result.get("submitResult") or {}).get("submitCandidates") or []
                 if cands:
                     attrs += "；候选按钮：" + "、".join(
