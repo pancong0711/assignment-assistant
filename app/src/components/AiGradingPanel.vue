@@ -58,6 +58,10 @@ const previewReadiness = ref<{ ready?: string[]; noComment?: string[]; noDraft?:
   notSubmitted?: string[]; summary?: Record<string, number>; hint?: string } | null>(null)
 const oneUploadBusy = ref('')
 const oneUploadResult = ref<Record<string, string>>({})
+/* D197：清理结果（明确显示“完成/试运行”，并展示索引同步清理条数）。 */
+const cleanupResult = ref<{ ok?: boolean; dryRun?: boolean; error?: string
+  count?: number; indexRemoved?: number; indexAfter?: number; indexBefore?: number
+  removed?: { name?: string; reason?: string }[]; kept?: string[] } | null>(null)
 /* D193：报告版本历史（只读；便于与上传清单/报告页脚对照）。 */
 const versionsOpen = ref(false)
 const versionsBusy = ref(false)
@@ -1163,23 +1167,62 @@ async function regenerateAllReports() {
   await renderReports()
 }
 
-/** D195：一键清理重复/多余的报告文件（例如旧版按多键生成了重复报告）。 */
+/** D195/D197：清理“不在本次名单”的报告文件 + **同步清理版本索引**。
+ *
+ * 现场问题：清理后“报告版本”仍显示 106 条（索引从未按名单核对）。
+ * 现在流程：先用 dryRun 统计（不删）→ 教师确认 → 真删 → 刷新版本/进度。
+ */
 async function cleanupDuplicateReports() {
   const taskId = packId.value || padId.value || resolvedScope.value
   if (!curWorkDir.value || !taskId) { msg.value = '⚠ 请先关联班级目录并选择作业包'; return }
-  if (!window.confirm('将删除 reports/ 下“不是本班名单/重复学生名”的报告文件'
-    + '（只删报告 md/html/png 与其历史版本，不动草稿/分数/批语）。继续？')) return
+  const names = students.value.map((x) => x.name).filter(Boolean)
+  if (!names.length) {
+    msg.value = '⚠ 还没有当前作业的学生清单：请先在「逐生审核」读取学生状态，再清理'
+      + '（空名单会误删，已被引擎拒绝）'
+    return
+  }
+  cleanupResult.value = null
   try {
-    const r = await cleanupXxtReports(props.engineAddr, props.token, {
-      classDir: curWorkDir.value, taskId,
-      students: students.value.map((x) => x.name).filter(Boolean),
+    // ① 试运行：只统计，不删除
+    const preview = await cleanupXxtReports(props.engineAddr, props.token, {
+      classDir: curWorkDir.value, taskId, students: names, dryRun: true,
     })
-    progress.value = r?.ok
-      ? `✅ 已清理 ${r.removed?.length ?? 0} 个多余报告文件`
-        + ((r.removed || []).length ? `：${(r.removed || []).slice(0, 6).map((x) => x.name).join('、')}` : '')
-      : `❌ 清理失败：${r?.error || '未知错误'}`
+    if (!preview?.ok) {
+      cleanupResult.value = preview || { ok: false, error: '试运行失败' }
+      msg.value = `❌ 清理前核对失败：${preview?.error || '未知错误'}`
+      return
+    }
+    const nFiles = preview.count ?? preview.removed?.length ?? 0
+    const nIndex = preview.indexRemoved ?? 0
+    if (!nFiles && !nIndex) {
+      cleanupResult.value = { ...preview, dryRun: true, count: 0, indexRemoved: 0 }
+      msg.value = `✅ 核对完成：没有多余报告（名单内 ${names.length} 人，索引 ${preview.indexBefore ?? 0} 条）`
+      return
+    }
+    const ok = window.confirm(
+      `将清理不在本次名单（${names.length} 人）里的报告残留：\n\n`
+      + `· 报告文件：${nFiles} 个\n`
+      + `· 版本索引记录：${nIndex} 条（${preview.indexBefore ?? 0} → ${preview.indexAfter ?? 0}）\n\n`
+      + `只删 reports/ 下的报告与历史版本＋索引记录，**不动草稿/分数/批语**。\n`
+      + `确认执行？`)
+    if (!ok) { msg.value = '已取消清理（未删除任何文件）'; return }
+    // ② 真删
+    const r = await cleanupXxtReports(props.engineAddr, props.token, {
+      classDir: curWorkDir.value, taskId, students: names, dryRun: false,
+    })
+    cleanupResult.value = r || null
+    if (!r?.ok) {
+      msg.value = `❌ 清理失败：${r?.error || '未知错误'}`
+      return
+    }
+    msg.value = `✅ 清理完成：删除报告文件 ${r.count ?? 0} 个，`
+      + `版本索引 ${r.indexBefore ?? '?'} → ${r.indexAfter ?? '?'} 条（清理 ${r.indexRemoved ?? 0} 条）`
+    // ③ 刷新版本列表与进度，避免界面继续显示旧记录
     await refreshReportProgress()
-  } catch (e) { progress.value = `清理失败：${String((e as Error)?.message || e)}` }
+    if (versionsOpen.value) await loadReportVersions()
+  } catch (e) {
+    msg.value = `清理失败：${String((e as Error)?.message || e)}`
+  }
 }
 
 /** D194：读取上次报告生成进度（只读；用于显示“已生成 X/Y”和续做入口）。 */
@@ -1215,12 +1258,15 @@ async function loadReportVersions() {
   versionsBusy.value = true
   versionsRows.value = []
   try {
+    const names = students.value.map((x) => x.name).filter(Boolean)
     const r = await fetchXxtReportVersions(props.engineAddr, props.token, {
-      classDir: curWorkDir.value, taskId,
+      classDir: curWorkDir.value, taskId, students: names.length ? names : undefined,
     })
     if (!r?.ok) { progress.value = `❌ 版本读取失败：${r?.error || '未知错误'}`; return }
     versionsRows.value = r.items || []
-    progress.value = `报告版本：${versionsRows.value.length} 条记录（目录 ${r.dir || ''}）`
+    progress.value = `报告版本：${versionsRows.value.length} 条（索引共 ${r.totalInIndex ?? versionsRows.value.length} 条`
+      + (r.orphanCount ? `；其中 ${r.orphanCount} 条不属于本次名单，可点「🧹 清理多余报告」` : '')
+      + `；目录 ${r.dir || ''}）`
   } catch (e) {
     progress.value = `版本读取失败：${String((e as Error)?.message || e)}`
   } finally { versionsBusy.value = false }
@@ -1932,6 +1978,36 @@ onMounted(async () => {
                 @click="openUploadPreview(true)">🔍 重新读取平台状态</button>
         <button class="btn" style="margin-left:8px" @click="previewOpen=false">关闭</button>
         <span v-if="previewBusy" class="hint" style="margin-left:8px">读取中…</span>
+      </p>
+    </div>
+
+    <!-- D197：清理结果（明确“是否完成”，含索引同步清理条数） -->
+    <div v-if="cleanupResult" class="card" style="margin-top:10px"
+         :style="cleanupResult.ok === false ? 'border-color:#dc2626' : 'border-color:#86efac'">
+      <h3 style="margin:0 0 6px">
+        {{ cleanupResult.ok === false ? '清理失败'
+          : (cleanupResult.dryRun ? '清理核对（未删除）' : '清理完成') }}
+        <small style="font-weight:400;color:var(--c-muted)">
+          {{ cleanupResult.ok === false ? ''
+            : `报告文件 ${cleanupResult.count ?? 0} 个 · 版本索引 ${cleanupResult.indexBefore ?? '?'} → ${cleanupResult.indexAfter ?? '?'} 条` }}
+        </small>
+      </h3>
+      <p v-if="cleanupResult.ok === false" style="color:#b91c1c; margin:4px 0">
+        {{ cleanupResult.error }}
+      </p>
+      <div v-else-if="(cleanupResult.removed || []).length"
+           style="max-height:160px; overflow:auto; font-size:13px">
+        <div v-for="(x, i) in (cleanupResult.removed || []).slice(0, 40)" :key="i">
+          · {{ x.name }} <span class="hint">{{ x.reason }}</span>
+        </div>
+        <div v-if="(cleanupResult.removed || []).length > 40" class="hint">
+          …共 {{ (cleanupResult.removed || []).length }} 项
+        </div>
+      </div>
+      <p v-else class="hint" style="margin:4px 0">没有需要清理的内容。</p>
+      <p style="margin-top:6px">
+        <button class="btn" @click="cleanupResult = null">关闭</button>
+        <button class="btn" style="margin-left:8px" @click="loadReportVersions">查看报告版本</button>
       </p>
     </div>
 

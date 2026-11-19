@@ -161,18 +161,66 @@ def history(reports_dir, student: str) -> "list[dict]":
     return sorted(rows, key=lambda x: float(x.get("ts") or 0), reverse=True)
 
 
-def cleanup_reports(reports_dir, *, keep_students: "list[str] | None" = None,
-                    dry_run: bool = True) -> dict:
-    """D195：清理“重复/不在名单”的报告文件（只动 reports/，不碰草稿/分数）。
+def prune_index(reports_dir, *, keep_students: "list[str] | None" = None,
+                drop_missing_files: bool = True) -> dict:
+    """D197：清理版本索引（`.versions/index.json`）里**不属于本次名单**的记录。
 
-    触发场景：历史上同一学生按两个草稿键生成了两份报告，写进同名文件；
-    或作业包换过、reports/ 里残留了旧学生名。
-    `keep_students` 给出时应保留的学生名（其余视为多余）。
+    现场问题：清理报告文件后，“报告版本”里仍然显示 106 条——因为旧实现只删文件、
+    从不清理索引；索引把历史批次的学生“固定”下来了，没有按本次作业提交名单核对。
+
+    规则：
+      - `keep_students` 非空：删除 `student` 不在名单里的所有条目；
+      - `drop_missing_files=True`：条目声明的文件全部不存在 → 视为孤儿条目删除；
+      - 只改索引，不动任何报告文件。
+
+    返回 `{ok, removed, kept, count}`（`removed` 为被删条目摘要）。
     """
     reports_dir = Path(reports_dir)
-    if not reports_dir.is_dir():
-        return {"ok": True, "removed": [], "kept": [], "dryRun": dry_run}
+    data = read_index(reports_dir)
+    items = [x for x in (data.get("items") or []) if isinstance(x, dict)]
     keep = {str(x).strip() for x in (keep_students or []) if str(x).strip()}
+    vroot = reports_dir / VERSIONS_DIR
+    removed: list[dict] = []
+    kept: list[dict] = []
+    for it in items:
+        stu = str(it.get("student") or "")
+        if keep and stu not in keep:
+            removed.append({"student": stu, "version": str(it.get("version") or ""),
+                            "reason": "不在当前名单"})
+            continue
+        if drop_missing_files:
+            files = [str(f) for f in (it.get("files") or [])]
+            if files and not any((vroot / safe_stem(stu) / f).is_file() for f in files):
+                removed.append({"student": stu, "version": str(it.get("version") or ""),
+                                "reason": "历史文件已不存在"})
+                continue
+        kept.append(it)
+    data["items"] = kept
+    if removed:
+        _write_index(reports_dir, data)
+    return {"ok": True, "removed": removed, "kept": len(kept), "count": len(removed),
+            "before": len(items), "after": len(kept)}
+
+
+def cleanup_reports(reports_dir, *, keep_students: "list[str] | None" = None,
+                    dry_run: bool = True) -> dict:
+    """D195/D197：清理“重复/不在名单”的报告文件 + 同步清理版本索引。
+
+    触发场景：历史上同一学生按两个草稿键生成了两份报告，写进同名文件；
+    或作业包换过、reports/ 里残留了旧学生名；或版本索引残留上一批次记录。
+
+    D197：`keep_students` **必须有值**才允许真正删除——空名单意味着前端没读到
+    当前作业的提交学生，此时按“全部都是多余的”删会误删，宁可报错让教师先读取名单。
+    """
+    reports_dir = Path(reports_dir)
+    keep = {str(x).strip() for x in (keep_students or []) if str(x).strip()}
+    if not keep:
+        return {"ok": False, "dryRun": bool(dry_run),
+                "error": "缺少本次名单（keep_students 为空）：请先在「逐生审核」读取学生清单后再清理",
+                "removed": [], "kept": [], "count": 0}
+    if not reports_dir.is_dir():
+        return {"ok": True, "dryRun": bool(dry_run), "removed": [], "kept": [],
+                "count": 0, "indexRemoved": 0, "indexBefore": 0, "indexAfter": 0}
     removed: list[dict] = []
     kept: list[str] = []
     for f in sorted(reports_dir.iterdir()):
@@ -181,8 +229,8 @@ def cleanup_reports(reports_dir, *, keep_students: "list[str] | None" = None,
         if f.suffix.lower() not in (".md", ".html", ".png"):
             continue
         stem = f.stem
-        if keep and stem not in keep:
-            removed.append({"name": f.name, "reason": "不在当前名单"})
+        if stem not in keep:
+            removed.append({"name": f.name, "reason": "不在本次名单"})
             if not dry_run:
                 try:
                     f.unlink()
@@ -190,15 +238,16 @@ def cleanup_reports(reports_dir, *, keep_students: "list[str] | None" = None,
                     pass
         else:
             kept.append(f.name)
-    # 版本历史：只清理“已不在名单”的学生目录
+    # 版本历史目录：只保留名单内学生
     vroot = reports_dir / VERSIONS_DIR
     if vroot.is_dir():
         for d in sorted(vroot.iterdir()):
-            if not d.is_dir() or not keep:
+            if not d.is_dir():
                 continue
             if d.name in keep:
                 continue
-            removed.append({"name": f"{VERSIONS_DIR}/{d.name}/", "reason": "历史版本（不在名单）"})
+            removed.append({"name": f"{VERSIONS_DIR}/{d.name}/",
+                            "reason": "历史版本（不在本次名单）"})
             if not dry_run:
                 for f in sorted(d.iterdir()):
                     try:
@@ -209,5 +258,20 @@ def cleanup_reports(reports_dir, *, keep_students: "list[str] | None" = None,
                     d.rmdir()
                 except OSError:
                     pass
+    # D197：索引同步清理（旧实现漏了这一步 → 版本列表长期显示旧批次记录）
+    if dry_run:
+        # dry-run 只统计“将会删多少索引条目”，**绝不改索引**（旧实现这里误写盘了）
+        items = [x for x in (read_index(reports_dir).get("items") or [])
+                 if isinstance(x, dict)]
+        would = [x for x in items if str(x.get("student") or "") not in keep]
+        idx = {"removed": would, "count": len(would),
+               "before": len(items), "after": len(items) - len(would),
+               "kept": len(items) - len(would)}
+    else:
+        idx = prune_index(reports_dir, keep_students=list(keep), drop_missing_files=True)
     return {"ok": True, "dryRun": bool(dry_run), "removed": removed, "kept": kept,
-            "count": len(removed)}
+            "count": len(removed),
+            "indexRemoved": idx.get("count", 0),
+            "indexBefore": idx.get("before", 0),
+            "indexAfter": idx.get("after", 0),
+            "indexRemovedItems": idx.get("removed", [])[:50]}

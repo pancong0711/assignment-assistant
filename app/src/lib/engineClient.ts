@@ -2662,8 +2662,11 @@ export async function fetchReportProgress(
 export async function cleanupXxtReports(
   engineAddr: string, token: string | undefined,
   payload: { classDir: string; taskId: string; students?: string[]; dryRun?: boolean },
-): Promise<{ ok?: boolean; error?: string; count?: number
-  removed?: { name?: string; reason?: string }[]; kept?: string[] }> {
+): Promise<{ ok?: boolean; error?: string; count?: number; dryRun?: boolean
+  removed?: { name?: string; reason?: string }[]; kept?: string[]
+  /** D197：版本索引同步清理结果（旧实现只删文件、索引会一直保留旧批次）。 */
+  indexRemoved?: number; indexBefore?: number; indexAfter?: number
+  indexRemovedItems?: { student?: string; version?: string; reason?: string }[] }> {
   const base = normalizeEngineAddr(engineAddr)
   const res = await fetch(engineUrlWithToken(base, '/xxt/grade/report-cleanup', token), {
     method: 'POST', headers: { 'Content-Type': 'application/json' },
@@ -2748,8 +2751,9 @@ export interface XxtReportVersionRow {
 /** POST /xxt/grade/report-versions：报告内容哈希版本历史（只读，不回显正文）。 */
 export async function fetchXxtReportVersions(
   engineAddr: string, token: string | undefined,
-  payload: { classDir: string; taskId: string; student?: string },
+  payload: { classDir: string; taskId: string; student?: string; students?: string[] },
 ): Promise<{ ok?: boolean; error?: string; count?: number; dir?: string
+  totalInIndex?: number; keptByRoster?: boolean; orphanCount?: number
   items?: XxtReportVersionRow[] }> {
   const base = normalizeEngineAddr(engineAddr)
   const res = await fetch(engineUrlWithToken(base, '/xxt/grade/report-versions', token), {

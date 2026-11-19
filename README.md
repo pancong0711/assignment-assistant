@@ -101,6 +101,7 @@
 - `docs/137-D194-report-render-interrupt-resume.md` — **D194 一键生成报告的中断语义与续做（逐生隔离 + 进度落盘 + resume/只补失败）**
 - `docs/138-D195-report-scope-and-duplicate-students.md` — **D195 只部分出报告/重复姓名的根因（按学生合并多键 + 生成前范围核对 + 重生成/清理入口）**
 - `docs/139-D196-upload-submitted-only-and-per-student.md` — **D196 只上传已提交学生 + 批语缺失提醒 + 逐生上传**
+- `docs/140-D197-cleanup-index-and-roster.md` — **D197 清理报告同步清理版本索引 + 按本次作业名单核对（修复版本列表残留 106 条）**
 
 > **当前活动需求单 = `docs/112-D168`（口径/快照）+ `docs/113-D169`（路线/架构）**；
 > 历史条目保留供追溯，与最新口径冲突时以这两份为准。

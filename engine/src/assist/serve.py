@@ -375,7 +375,8 @@ def _xxt_login_state(home: "Path | None" = None,
 
 
 def report_versions_view(ws, *, class_dir: str = "", task_id: str = "",
-                         student: str = "") -> dict:
+                         student: str = "",
+                         students: "list[str] | None" = None) -> dict:
     """D193：只读报告版本历史（`reports/.versions/index.json`）。
 
     只返回学生名/版本号/时间/分数/文件名，不回显报告正文（正文可能含学生作答内容）。
@@ -389,12 +390,23 @@ def report_versions_view(ws, *, class_dir: str = "", task_id: str = "",
         import re as _re
         safe = lambda x: _re.sub(r"[\\/:*?\"<>|]", "_", str(x)).strip(" .") or "x"  # noqa: E731
         root = Path(ws).resolve() / cd / "grading" / safe(tid) / "reports"
+        all_rows = report_versions.read_index(root).get("items") or []
         if student:
             rows = report_versions.history(root, student)
         else:
-            rows = report_versions.read_index(root).get("items") or []
-            rows = sorted(rows, key=lambda x: float(x.get("ts") or 0), reverse=True)
+            rows = sorted(all_rows, key=lambda x: float(x.get("ts") or 0), reverse=True)
+        # D197：按本次作业提交名单过滤；同时告诉教师“索引里还有多少条不属于本次名单”
+        names = {str(x).strip() for x in (students or []) if str(x).strip()}
+        orphan = 0
+        if names and not student:
+            orphan = sum(1 for x in all_rows
+                         if isinstance(x, dict)
+                         and str(x.get("student") or "") not in names)
+            rows = [x for x in rows
+                    if isinstance(x, dict) and str(x.get("student") or "") in names]
         return {"ok": True, "dir": str(root), "count": len(rows),
+                "totalInIndex": len(all_rows),
+                "keptByRoster": bool(names), "orphanCount": orphan,
                 "items": [{
                     "student": str(x.get("student") or ""),
                     "version": str(x.get("version") or ""),
@@ -3355,6 +3367,7 @@ class Handler(BaseHTTPRequestHandler):
             return
         if u.path == "/xxt/grade/report-versions":
             # D193：只读报告版本历史（内容哈希版本，便于与上传清单对照）。
+            # D197：可带 students（本次作业提交名单）→ 只返回名单内记录，并报告孤儿条目数。
             payload: dict = {}
             try:
                 length = int(self.headers.get("Content-Length") or 0)
@@ -3362,11 +3375,14 @@ class Handler(BaseHTTPRequestHandler):
                     payload = json.loads(self.rfile.read(length).decode("utf-8")) or {}
             except Exception:  # noqa: BLE001
                 payload = {}
+            students = payload.get("students")
+            students = [str(x) for x in students] if isinstance(students, list) else None
             rep = report_versions_view(
                 Path(self.ws).resolve(),
                 class_dir=str(payload.get("classDir") or ""),
                 task_id=str(payload.get("taskId") or ""),
-                student=str(payload.get("student") or ""))
+                student=str(payload.get("student") or ""),
+                students=students)
             self._json(rep, 200 if rep.get("ok") else 400)
             return
         if u.path == "/xxt/grade/delete-draft":
