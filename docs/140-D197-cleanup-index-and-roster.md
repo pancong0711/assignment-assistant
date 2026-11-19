@@ -111,3 +111,45 @@ prune_index(reports_dir, keep_students=[...], drop_missing_files=True)
 - 前端：dry-run → 确认 → 执行 → 结果卡（含索引前后条数）→ 刷新版本/进度；
   名单为空直接拦截；
 - 测试：`engine/tests/test_d197_cleanup_index_and_roster.py`（8 项）+ `selfcheck:d197`。
+
+---
+
+## 6. 补充：清理边界与“报告生成是否需要 AI”（2026-11-18 复核）
+
+### 6.1 清理只动 `reports/`，不碰批阅内容
+
+清理目标固定为 `classes/<班级>/grading/<packId>/reports/`：
+
+| 会删 | 不会删 |
+|---|---|
+| `reports/<学生>.md/.html/.png`（不在本次名单的） | `drafts/`（AI 批语、人工改分、人工批语、修订、转写副本） |
+| `reports/.versions/<学生>/`（不在名单的） | `evaluations/`（AI 评阅结果 JSON） |
+| `.versions/index.json` 中不在名单的条目 | `transcripts/`（转写产物） |
+| — | `images/`（作答原图） |
+| — | `audit/`、`upload/`（审计与上传清单） |
+| — | `reports/_teacher_report.*`、`_global_report.md` 等**班级级汇总**（新增保护） |
+
+实测（合成数据）：清理前后草稿中的
+`ai.comment / ai.transcript / human.score / human.comment` 完全一致。
+
+### 6.2 报告生成**不需要 AI**
+
+`render_reports_from_drafts()` → `report.py` 全链路：
+
+- `_mode_report_md()`：按「AI / 人工 / 修订」拼 markdown（纯字符串拼接）；
+- `diff_mark()`：`difflib` 按行 diff → 修订内容标红（纯算法）；
+- `report_html_from_md()` → `richdoc.render_rich()`：markdown → 白名单 HTML；
+- `html_to_png()`：Playwright Chromium `full_page=True` 截图（纯渲染）；
+- `teacher_report.analyze()`：纯统计函数（易错知识点/共现/题得分率），无 LLM。
+
+即：**报告 = 已批阅内容的排版与转图**，不调用任何模型、不消耗额度。
+唯一外部依赖是 Playwright/Chromium（截图用），缺它时只跳过 PNG，md/html 仍生成。
+
+### 6.3 一个必须知道的细节：草稿里存了报告图副本
+
+生成报告时会把 PNG 以 **base64 内嵌**写回草稿 `human.reportImages`（供上传用）。
+因此：
+
+- 删除 `reports/<学生>.png` **不会**让草稿里的报告图消失；
+- 若想“彻底丢弃某份旧报告图”，需要**重新生成报告**覆盖 `reportImages`
+  （或删除该生草稿中的 `human.reportImages`），仅清理 `reports/` 不够。

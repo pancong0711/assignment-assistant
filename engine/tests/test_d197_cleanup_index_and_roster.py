@@ -102,6 +102,26 @@ def test_cleanup_missing_dir_is_safe(tmp_path: Path):
     assert rep["ok"] is True and rep["count"] == 0
 
 
+def test_cleanup_preserves_class_level_reports(tmp_path: Path):
+    """班级级汇总产物（_teacher_report / _global_report）不是学生报告，必须保留。"""
+    reports = tmp_path / "reports"
+    _seed(reports, ["学生甲", "旧生甲"])
+    for stu in ("学生甲", "旧生甲"):
+        (reports / f"{stu}.md").write_text(f"{stu} 报告", encoding="utf-8")
+        (reports / f"{stu}.png").write_bytes(b"PNG")
+    (reports / "_teacher_report.md").write_text("教师报告", encoding="utf-8")
+    (reports / "_teacher_report.png").write_bytes(b"PNG")
+    (reports / "_global_report.md").write_text("全班报告", encoding="utf-8")
+    rep = RV.cleanup_reports(reports, keep_students=["学生甲"], dry_run=False)
+    names = {x["name"] for x in rep["removed"]}
+    assert "旧生甲.md" in names and "旧生甲.png" in names
+    assert (reports / "_teacher_report.md").is_file()
+    assert (reports / "_teacher_report.png").is_file()
+    assert (reports / "_global_report.md").is_file()
+    assert (reports / "学生甲.md").is_file()
+    assert not (reports / "旧生甲.md").exists()
+
+
 def test_source_contract_for_d197():
     root = Path(__file__).resolve().parents[1]
     rv = (root / "src/assist/grading/report_versions.py").read_text(encoding="utf-8")

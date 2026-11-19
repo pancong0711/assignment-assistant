@@ -229,6 +229,11 @@ def cleanup_reports(reports_dir, *, keep_students: "list[str] | None" = None,
         if f.suffix.lower() not in (".md", ".html", ".png"):
             continue
         stem = f.stem
+        # D197-FIX：`_teacher_report.md` / `_global_report.md` 等**班级级汇总产物**
+        # 不是“某学生的报告”，不参与按名单清理（它们是可再生的统计报告，删了会让人困惑）。
+        if stem.startswith("_"):
+            kept.append(f.name)
+            continue
         if stem not in keep:
             removed.append({"name": f.name, "reason": "不在本次名单"})
             if not dry_run:
