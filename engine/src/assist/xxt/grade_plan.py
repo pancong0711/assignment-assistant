@@ -141,3 +141,99 @@ def summarize(results: "list[dict] | None") -> dict:
         "counts": {k: len(v) for k, v in buckets.items()},
         "ok": not buckets["conflict"] and not buckets["failed"] and bool(rows),
     }
+
+
+# ---------------- D196：上传范围（只传已提交学生）+ 批语缺失提醒 ----------------
+
+READY = "ready"            # 已提交 + 有批语 → 可上传
+NO_COMMENT = "no-comment"  # 已提交但本地没有批语 → 应先去批阅/AI 批阅
+NOT_SUBMITTED = "not-submitted"  # 平台未提交 → 不上传批阅报告
+NO_DRAFT = "no-draft"      # 已提交但本地没有草稿 → 先批阅
+
+
+def is_submitted(row: "dict | None") -> bool:
+    """平台行是否“已提交（有作答）”。
+
+    学习通批阅清单只列出有作答的学生（行内有 `a.cz_py` → workAnswerId）；
+    “未交/未提交”的学生不在该清单里，**不应上传批阅报告**。
+    `status` 含“未交/未提交”也判未提交（防御性判断）。
+    """
+    row = row if isinstance(row, dict) else {}
+    status = str(row.get("status") or "")
+    if "未交" in status or "未提交" in status:
+        return False
+    if row.get("submitted") is False:
+        return False
+    return bool(str(row.get("workAnswerId") or "").strip()) or bool(
+        str(row.get("review_path") or "").strip()) or "已批阅" in status or "待批阅" in status \
+        or "已交" in status or "补交" in status
+
+
+def upload_readiness(*, platform_rows: "list[dict] | None" = None,
+                     payloads: "list[dict] | None" = None) -> dict:
+    """D196：把“平台已提交名单”和“本地可上传内容”对照成上传就绪表。
+
+    - 平台未提交（不在清单/状态含未交）→ `not-submitted`：**不上传**，也不提醒批语；
+    - 已提交但没有本地草稿 → `no-draft`：提醒先去批阅；
+    - 已提交有草稿但批语为空 → `no-comment`：提醒去 AI 批阅/人工批语；
+    - 已提交且批语/分数齐全 → `ready`：可上传。
+
+    返回 `{rows, ready, noComment, noDraft, notSubmitted, summary}`
+    """
+    by_name: dict[str, dict] = {}
+    for p in payloads or []:
+        name = str(p.get("student") or p.get("key") or "").strip()
+        if name:
+            by_name[name] = p
+    rows: list[dict] = []
+    seen: set[str] = set()
+    for prow in (platform_rows or []):
+        name = str(prow.get("name") or "").strip()
+        if not name or name in seen:
+            continue
+        seen.add(name)
+        p = by_name.get(name) or {}
+        submitted = is_submitted(prow)
+        comment = text_of(p.get("comment") or "")
+        score = p.get("score")
+        has_report = bool((p.get("report") or {}).get("version"))
+        if not submitted:
+            state, why = NOT_SUBMITTED, "平台未提交/无作答，无需上传批阅报告"
+        elif not p:
+            state, why = NO_DRAFT, "已提交但本地没有草稿：请先「转写+评阅」或人工批阅"
+        elif not comment:
+            state, why = NO_COMMENT, "已提交但批语为空：请先 AI 批阅或填写人工批语"
+        else:
+            state, why = READY, "可上传"
+        rows.append({"student": name, "submitted": submitted, "state": state,
+                     "reason": why, "score": score, "hasComment": bool(comment),
+                     "commentLength": len(comment), "hasReport": has_report,
+                     "reportVersion": str((p.get("report") or {}).get("version") or ""),
+                     "status": str(prow.get("status") or ""),
+                     "source": "platform"})
+    # 本地有草稿但平台清单里没有的学生：视为未提交（不上传）
+    for name, p in by_name.items():
+        if name in seen:
+            continue
+        rows.append({"student": name, "submitted": False, "state": NOT_SUBMITTED,
+                     "reason": "平台名单中无此学生（可能未提交）：不上传批阅报告",
+                     "score": p.get("score"),
+                     "hasComment": bool(text_of(p.get("comment") or "")),
+                     "commentLength": len(text_of(p.get("comment") or "")),
+                     "hasReport": bool((p.get("report") or {}).get("version")),
+                     "reportVersion": str((p.get("report") or {}).get("version") or ""),
+                     "status": "", "source": "local-only"})
+    buckets = {READY: [], NO_COMMENT: [], NO_DRAFT: [], NOT_SUBMITTED: []}
+    for r in rows:
+        buckets.setdefault(r["state"], []).append(r["student"])
+    return {"ok": True, "rows": rows,
+            "ready": buckets[READY], "noComment": buckets[NO_COMMENT],
+            "noDraft": buckets[NO_DRAFT], "notSubmitted": buckets[NOT_SUBMITTED],
+            "summary": {k: len(v) for k, v in buckets.items()},
+            "hint": ("将上传 %d 名已提交且批语齐全的学生" % len(buckets[READY])
+                     + (("；%d 名已提交但**批语为空**，请先批阅/AI 批阅" % len(buckets[NO_COMMENT]))
+                        if buckets[NO_COMMENT] else "")
+                     + (("；%d 名已提交但**没有本地草稿**" % len(buckets[NO_DRAFT]))
+                        if buckets[NO_DRAFT] else "")
+                     + (("；%d 名未提交（不上传）" % len(buckets[NOT_SUBMITTED]))
+                        if buckets[NOT_SUBMITTED] else ""))}

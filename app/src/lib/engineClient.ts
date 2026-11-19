@@ -2688,6 +2688,23 @@ export interface XxtUploadPreviewRow {
   decision?: string
   reason?: string
   needsConfirm?: boolean
+  /** D196：平台是否已提交（未提交不上传批阅报告）。 */
+  submitted?: boolean
+  /** D196：ready | no-comment | no-draft | not-submitted。 */
+  readyState?: string
+  readyReason?: string
+}
+
+/** D196：上传就绪分类（只上传已提交且批语齐全的学生）。 */
+export interface XxtUploadReadiness {
+  ok?: boolean
+  ready?: string[]
+  noComment?: string[]
+  noDraft?: string[]
+  notSubmitted?: string[]
+  summary?: Record<string, number>
+  hint?: string
+  rows?: XxtUploadPreviewRow[]
 }
 
 export interface XxtUploadPreview {
@@ -2697,6 +2714,9 @@ export interface XxtUploadPreview {
   rows?: XxtUploadPreviewRow[]
   summary?: { counts?: Record<string, number>; applied?: string[]; unchanged?: string[]
     skipped?: string[]; conflict?: string[]; failed?: string[]; ok?: boolean }
+  readiness?: XxtUploadReadiness
+  needComment?: string[]
+  noReport?: string[]
   at?: string
 }
 

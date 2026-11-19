@@ -91,7 +91,18 @@ def build_preview(*, storage, course_id: str, class_id: str, cpi: str, work_id: 
             [{"student": r["student"], "decision": r["decision"],
               "ok": r["decision"] in (grade_plan.NEW, grade_plan.UNCHANGED)}
              for r in rows])
+        # D196：上传范围 = **已提交**学生；未提交不上传，批语空要提醒去批阅。
+        readiness = grade_plan.upload_readiness(
+            platform_rows=platform_rows,
+            payloads=[p for p in (payloads or [])])
+        for r in rows:
+            hit = next((x for x in readiness["rows"] if x["student"] == r["student"]), None)
+            if hit:
+                r["submitted"] = hit["submitted"]
+                r["readyState"] = hit["state"]
+                r["readyReason"] = hit["reason"]
         return {"ok": True, "mode": "platform", "rows": rows, "summary": summary,
+                "readiness": readiness,
                 "at": time.strftime("%Y-%m-%d %H:%M:%S")}
     finally:
         _close(pw, browser)
@@ -128,6 +139,10 @@ def local_preview(*, ws, class_dir: str = "", task_id: str = "",
                                  or entry.get("version") or ""),
             "reportTag": str((p.get("report") or {}).get("tag") or entry.get("tag") or ""),
         })
+    # D196：本地就能判断“批语为空/无报告”的学生 → 提醒去批阅（不需要读平台）
+    need_comment = [r["student"] for r in rows if not r["localCommentLength"]]
+    no_report = [r["student"] for r in rows if not r["reportVersion"]]
     return {"ok": True, "count": len(rows), "rows": rows,
+            "needComment": need_comment, "noReport": no_report,
             "reportsDir": str(reports_dir),
             "manifest": str(upload_manifest_path(ws, class_dir, task_id, work_id) or "")}

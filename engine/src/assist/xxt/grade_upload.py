@@ -517,6 +517,26 @@ def upload_grade(*, storage, course_id: str, class_id: str, cpi: str, work_id: s
 
         # D193 §2：上传前先做「未批阅 / 已批阅但内容相同 / 已批阅且内容不同」三态判断。
         # 旧实现只看状态就拒绝或盲目覆盖 —— 教师无法知道“平台那份和我这份是否一样”。
+        # D196：未提交的学生不上传批阅报告（平台无作答，上传没有意义且会污染数据）。
+        # 判定只看平台行：无 workAnswerId 且状态不是“已批阅/待批阅” → 视为未提交；
+        # 走到这里说明已有 workAnswerId，因此只拦“状态明确未交”的极端情况。
+        if "未交" in str(row.get("status") or "") or "未提交" in str(row.get("status") or ""):
+            result.update({"ok": False, "status": grade_plan.NOT_SUBMITTED,
+                           "decision": grade_plan.NOT_SUBMITTED,
+                           "decisionReason": "该学生平台状态为未交/未提交，不上传批阅报告",
+                           "skipped": True,
+                           "error": "学生未提交，跳过上传批阅报告"})
+            return result
+        # D196：已提交但没有任何批语/分数 → 不是“上传失败”，而是“还没批阅”，
+        # 给出明确指引（AI 批阅或人工填写），避免把空批语写进平台。
+        if not (str(comment or "").strip() or total_score is not None
+                or question_comments or comment_images):
+            result.update({"ok": False, "status": grade_plan.NO_COMMENT,
+                           "decision": grade_plan.NO_COMMENT,
+                           "decisionReason": "本地没有批语/分数：请先 AI 批阅或填写人工批语",
+                           "needsReview": True, "skipped": True,
+                           "error": "该学生批语为空，请先批阅（AI 批阅或人工批语）后再上传"})
+            return result
         plan = decide(status=str(row.get("status") or ""),
                       local_score=total_score, local_comment=comment,
                       platform=platform_snapshot(result["before"]),
