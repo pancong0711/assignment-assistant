@@ -57,7 +57,8 @@ JS_REVIEW = """() => {
     if(!ne||!pb) return; let st='';
     ul.querySelectorAll('li').forEach(li=>{const t=li.textContent.trim();
       // D206：界面可能是英文（Reviewed/Unreview），中文仍是主口径
-      if(/待批阅|已批阅|补交|未交|Reviewed|Unreview|Unsubmitted/i.test(t)) st=t;});
+      // D207：真实平台提交后显示 "Completed（教师提交）"，英文版可能是 Completed
+      if(/待批阅|已批阅|补交|未交|Reviewed|Unreview|Unsubmitted|Completed|完成|教师提交/i.test(t)) st=t;});
     // D202：读列表行的分数（提交后核验用；取不到则为空串）
     let sc='';
     const si=ul.querySelector('input.scoreInput, input[name="score"], .scoreInput input');
