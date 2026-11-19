@@ -94,7 +94,7 @@ def test_find_popup_and_click_js_cover_new_platform():
 def test_upload_grade_retries_once_when_unverified():
     src = (Path(__file__).resolve().parents[1] / "src/assist/xxt/grade_upload.py").read_text(
         encoding="utf-8")
-    body = src.split("        if send:")[1].split('        result["receipt"]')[0]
+    body = src.split("        if send:")[1].split('status": "dry-run-filled')[0]
     assert "for attempt in (1, 2)" in body, '未在“点了但没生效”时重试一次'
     assert "submitAttempts" in body, '未记录提交尝试明细'
     assert "confirmPiyueWork" in body, '错误信息未提示新版确认入口'

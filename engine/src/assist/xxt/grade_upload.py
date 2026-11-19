@@ -629,6 +629,27 @@ def upload_grade(*, storage, course_id: str, class_id: str, cpi: str, work_id: s
                              "workAnswerId": wa}
         step = "打开批阅页"
         result["url"] = open_mark_page(page, str(course_id), str(class_id), wid, wa)
+        # D204：打开后先确认“这是批阅页”——会话过期会跳登录页，
+        # 后续填空/提交全部无意义，且容易产生“看起来成功”的假象。
+        from .marking import page_state as _page_state
+        _st = _page_state(page)
+        result["pageState"] = {k: _st.get(k) for k in
+                               ("url", "title", "loginRedirect", "hasPassword",
+                                "hasCommentBox", "hasScoreInput") if k in _st}
+        if _st.get("loginRedirect") or (_st.get("hasPassword")
+                                       and not _st.get("hasCommentBox")):
+            result.update({"ok": False, "status": "session-expired",
+                           "error": "学习通会话已失效（批阅页跳到了登录页）",
+                           "hint": "请点「🔁 重新扫码登录」后再上传"})
+            result["receipt"] = _write_receipt("grade-upload", result)
+            return result
+        if not _st.get("hasCommentBox") and not _st.get("hasScoreInput"):
+            result.update({"ok": False, "status": "not-mark-page",
+                           "error": ("打开的页面既没有批语框也没有分数框，"
+                                     "可能不是批阅页（作业/班级参数不对或平台改版）"),
+                           "hint": "请在逐生预览里确认该生批阅页能正常打开"})
+            result["receipt"] = _write_receipt("grade-upload", result)
+            return result
         result["before"] = read_back(page)
         result["preScreenshot"] = _shot(page, "grade-upload-pre")
 
@@ -730,6 +751,13 @@ def upload_grade(*, storage, course_id: str, class_id: str, cpi: str, work_id: s
                 result["afterSubmit"] = ver
                 if clicked and ver.get("ok"):
                     break
+                sub = result.get("submitResult") or {}
+                if str(sub.get("status") or "") == "session-expired":
+                    result.update({"ok": False, "status": "session-expired",
+                                   "error": sub.get("error"),
+                                   "hint": "请先点「🔁 重新扫码登录」，登录成功后再上传"})
+                    result["receipt"] = _write_receipt("grade-upload", result)
+                    return result
                 if not clicked:
                     break          # 连按钮都找不到，重试没意义
                 # D203：点了按钮但未生效（多为确认弹窗没点中）→ 再提交一次

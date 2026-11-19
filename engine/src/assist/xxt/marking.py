@@ -304,6 +304,46 @@ def fill_scores(page, *, total: float | None = None,
     return out
 
 
+_JS_PAGE_STATE = r"""() => {
+  // D204：提交前先判断“当前到底是什么页面”——会话过期会跳到 passport 登录页，
+  // 此时页面上当然找不到提交按钮；旧实现只会报“未找到提交按钮”，误导排查方向。
+  const url = location.href;
+  const host = location.hostname || '';
+  const path = (location.pathname || '').toLowerCase();
+  const loginRedirect = /passport|login|sso/i.test(host) || /login/i.test(path);
+  const hasPassword = !!document.querySelector('input[type=password]');
+  const hasCommentBox = !!document.querySelector('textarea[name="comment"]');
+  const hasScoreInput = !!document.querySelector('#tmpscore');
+  const vis = (el) => {
+    if (!el) return false;
+    const st = getComputedStyle(el);
+    return st.display !== 'none' && st.visibility !== 'hidden' && el.offsetParent !== null;
+  };
+  const candidates = [];
+  document.querySelectorAll('a,button,input[type=button],input[type=submit]').forEach(el => {
+    if (!vis(el)) return;
+    const onclick = el.getAttribute('onclick') || '';
+    const text = (el.textContent || el.value || '').replace(/\s+/g, ' ').trim().slice(0, 40);
+    if (/markAction|confirmPiyueWork|submit|save|publish/i.test(onclick)
+        || /提交|保存|批阅|发布/.test(text)) {
+      candidates.push({text, onclick: onclick.slice(0, 160),
+                       id: el.id || '', cls: (el.className || '').toString().slice(0, 60)});
+    }
+  });
+  return {url, host, title: (document.title || '').slice(0, 120), loginRedirect,
+          hasPassword, hasCommentBox, hasScoreInput, candidates,
+          bodyText: (document.body ? document.body.innerText : '').replace(/\s+/g, ' ').slice(0, 300)};
+}"""
+
+
+def page_state(page) -> dict:
+    """D204：只读页面状态（URL/标题/是否登录页/关键控件是否存在/提交候选按钮）。"""
+    try:
+        return page.evaluate(_JS_PAGE_STATE) or {}
+    except Exception as exc:  # noqa: BLE001
+        return {"error": str(exc)[:200]}
+
+
 _JS_CLICK_SUBMIT = """() => {
   const links = Array.from(document.querySelectorAll('a,button'));
   for (const el of links) {
@@ -408,11 +448,70 @@ def handle_confirmation_dialog(page, timeout_s: float = 10.0) -> dict:
     return {"ok": bool(clicks) or not popups, "popups": popups, "clicks": clicks}
 
 
+_JS_CLICK_SUBMIT_FALLBACK = r"""() => {
+  // D204：markAction(1) 找不到时的兜底——按 onclick 关键字/按钮文案点提交。
+  const vis = (el) => {
+    if (!el) return false;
+    const st = getComputedStyle(el);
+    return st.display !== 'none' && st.visibility !== 'hidden' && el.offsetParent !== null;
+  };
+  const tried = [];
+  const els = Array.from(document.querySelectorAll(
+    'a,button,input[type=button],input[type=submit]'));
+  const rank = (el) => {
+    const onclick = el.getAttribute('onclick') || '';
+    const text = (el.textContent || el.value || '').trim();
+    if (/markAction\(1\)/.test(onclick)) return 100;
+    if (/confirmPiyueWork/.test(onclick)) return 90;
+    if (/submit|save|publish/i.test(onclick)) return 80;
+    if (/^提交(批阅)?$/.test(text)) return 70;
+    if (/^保存(并批阅)?$/.test(text)) return 60;
+    if (/提交|保存/.test(text)) return 50;
+    return 0;
+  };
+  const cands = els.filter(vis).map(el => [el, rank(el)])
+    .filter(([, r]) => r > 0).sort((a, b) => b[1] - a[1]);
+  for (const [el, r] of cands) {
+    const onclick = el.getAttribute('onclick') || '';
+    const text = (el.textContent || el.value || '').trim().slice(0, 40);
+    tried.push({text, onclick: onclick.slice(0, 120), rank: r});
+    try { el.scrollIntoView(); el.click(); } catch (e) { continue; }
+    return {ok: true, how: 'fallback', text, tried};
+  }
+  return {ok: false, reason: 'no-submit-candidate', tried};
+}"""
+
+
 def submit(page, *, handle_confirm: bool = True) -> dict:
-    """点提交（markAction(1)）并处理确认弹窗。真正写操作，调用方必须已过白名单。"""
+    """点提交（markAction(1)）并处理确认弹窗。真正写操作，调用方必须已过白名单。
+
+    D204：先判断页面状态——会话过期会跳 passport 登录页，此时不可能有提交按钮；
+    再依次尝试 `markAction(1)` → `confirmPiyueWork` → onclick 关键字 → 按钮文案。
+    """
+    st = page_state(page)
+    diag = {"page": {k: st.get(k) for k in
+                     ("url", "title", "loginRedirect", "hasPassword",
+                      "hasCommentBox", "hasScoreInput") if k in st},
+            "candidates": (st.get("candidates") or [])[:8]}
+    if st.get("error"):
+        return {"ok": False, "status": "page-unreadable",
+                "error": f"读取批阅页失败：{st['error']}", **diag}
+    if st.get("loginRedirect") or (st.get("hasPassword") and not st.get("hasCommentBox")):
+        return {"ok": False, "status": "session-expired",
+                "error": ("学习通会话已失效（当前页跳到了登录页/出现登录框）："
+                          "请点「🔁 重新扫码登录」后重试"),
+                **diag}
     res = page.evaluate(_JS_CLICK_SUBMIT)
     if not res.get("ok"):
-        return {"ok": False, "error": f"未找到提交按钮：{res}"}
+        fb = page.evaluate(_JS_CLICK_SUBMIT_FALLBACK)
+        diag["fallback"] = fb
+        if not fb.get("ok"):
+            return {"ok": False, "status": "no-submit-button",
+                    "error": ("未找到提交按钮（页面结构可能与预期不同）"
+                              + ("" if st.get("hasCommentBox") else
+                                 "；且未检测到批语输入框，页面可能不是批阅页")),
+                    **diag}
+        res = fb
     page.wait_for_timeout(1500)
     if handle_confirm:
         res["confirmPopup"] = handle_confirmation_dialog(page)
@@ -423,6 +522,8 @@ def submit(page, *, handle_confirm: bool = True) -> dict:
         res["dialogs"] = page.evaluate("() => window.__assistDialogs || []")
     except Exception:  # noqa: BLE001
         res["dialogs"] = []
+    res["page"] = diag["page"]
+    res["pageCandidates"] = diag["candidates"]
     try:
         res["submitCandidates"] = page.evaluate(r"""() => Array.from(
             document.querySelectorAll('a,button')).map(el => ({

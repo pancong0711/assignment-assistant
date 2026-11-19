@@ -1368,8 +1368,13 @@ async function loadReportVersions() {
 }
 
 /** D196：**逐生上传**（更易定位问题：某一人失败不影响其他人，也可单独重试）。 */
+/** D204：逐生上传。`dryRun=true` 只填入并读回，不点提交——用于安全验证。
+ *
+ * 会话过期/页面不对时引擎会返回 `session-expired`/`not-mark-page`，界面直接提示重新扫码。
+ */
 async function uploadOneStudent(row: { student: string; readyState?: string
-  decision?: string }) {
+  decision?: string }, opts?: { dryRun?: boolean }) {
+  const dryRun = opts?.dryRun === true
   const w = curWork.value
   if (!w) return
   if (row.readyState === 'not-submitted') {
@@ -1382,13 +1387,17 @@ async function uploadOneStudent(row: { student: string; readyState?: string
     return
   }
   const needForce = row.decision === 'conflict'
-  if (needForce && !window.confirm(`${row.student} 平台已批阅且内容不同，覆盖？`)) return
+  if (!dryRun && needForce
+      && !window.confirm(`${row.student} 平台已批阅且内容不同，覆盖？`)) return
   oneUploadBusy.value = row.student
-  oneUploadResult.value = { ...oneUploadResult.value, [row.student]: '上传中…' }
+  oneUploadResult.value = {
+    ...oneUploadResult.value,
+    [row.student]: dryRun ? '演练中（只填不提交）…' : '上传中…',
+  }
   try {
     const jobId = await startXxtGradeUpload(props.engineAddr, props.token, {
       courseId: w.courseId, classId: w.classId, cpi: w.cpi, workId: w.workId,
-      student: row.student, send: true, force: needForce,
+      student: row.student, send: !dryRun, force: needForce,
       reportOnly: uploadReportOnly.value,
       // D201：带上 scope，否则引擎按旧布局找草稿 → “本地无该作业的批阅草稿”
       classDir: curWorkDir.value,
@@ -1407,8 +1416,9 @@ async function uploadOneStudent(row: { student: string; readyState?: string
         oneUploadResult.value = {
           ...oneUploadResult.value,
           [row.student]: rc === 0
-            ? '✅ 已上传（已核验平台状态）'
-            : `❌ ${extractJobError(lines).slice(0, 160)}`,
+            ? (dryRun ? '✅ 演练通过（已填入并读回，未提交）'
+                      : '✅ 已上传（已核验平台状态）')
+            : `❌ ${extractJobError(lines).slice(0, 200)}`,
         }
         oneUploadBusy.value = ''
         await loadStudents()
@@ -2087,6 +2097,14 @@ onMounted(async () => {
                             ? '没有可上传内容，请先生成报告/补批阅'
                             : (r.hasImage ? '上传报告图 + 分数' : '上传批语 + 分数')"
                         @click="uploadOneStudent(r)">上传</button>
+                <button class="btn small" style="margin-left:4px"
+                        :disabled="oneUploadBusy !== '' || busy
+                          || r.readyState === 'not-submitted'
+                          || r.readyState === 'no-report'
+                          || r.readyState === 'no-comment'
+                          || r.readyState === 'no-draft'"
+                        title="只填入批语/分数并读回校验，不点提交（安全验证）"
+                        @click="uploadOneStudent(r, { dryRun: true })">演练</button>
                 <span v-if="oneUploadResult[r.student]" class="hint" style="margin-left:6px">
                   {{ oneUploadResult[r.student] }}
                 </span>

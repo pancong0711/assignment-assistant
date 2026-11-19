@@ -108,6 +108,7 @@
 - `docs/144-D201-upload-draft-scope.md` — **D201 逐生上传“本地无该作业的批阅草稿”（上传链路补 classDir/taskId scope）**
 - `docs/145-D202-upload-verification.md` — **D202 上传“显示成功但平台未批阅/无分数”（提交后核验 + 提交前分数校验）**
 - `docs/146-D203-submit-confirmation-click.md` — **D203 提交后仍“待批阅”：确认弹窗支持 confirmPiyueWork/文案兜底 + 多层确认 + 失败证据**
+- `docs/147-D204-submit-session-and-dryrun.md` — **D204 “未找到提交按钮”先判会话过期/页面不对 + 提交按钮兜底 + 逐生「演练」**
 
 > **当前活动需求单 = `docs/112-D168`（口径/快照）+ `docs/113-D169`（路线/架构）**；
 > 历史条目保留供追溯，与最新口径冲突时以这两份为准。

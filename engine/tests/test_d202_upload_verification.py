@@ -88,7 +88,7 @@ def test_verify_falls_back_to_name_when_workanswerid_missing(monkeypatch):
 def test_upload_grade_requires_verification_before_ok():
     src = (Path(__file__).resolve().parents[1] / "src/assist/xxt/grade_upload.py").read_text(
         encoding="utf-8")
-    body = src.split("        if send:")[1].split("        result[\"receipt\"]")[0]
+    body = src.split("        if send:")[1].split('status": "dry-run-filled')[0]
     assert "verify_submission(" in body, '提交后未核验平台状态'
     assert 'result["ok"] = bool(clicked and ver.get("ok"))' in body, \
         'ok 仍未与核验结果绑定'
