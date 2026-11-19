@@ -572,11 +572,15 @@ def register(group: click.Group) -> None:
     @click.option("--report-only/--with-comment-text", "report_only", default=True,
                   help="D200：只上传报告图+分数，不再重复上传原始批语文本（默认开；"
                        "有报告图时生效，无报告图仍会传批语文本）")
+    @click.option("--class-dir", "class_dir", default="",
+                  help="本地班级目录（如 classes/化工25）；--from-drafts 读新布局草稿必需")
+    @click.option("--task-id", "task_id", default="",
+                  help="批阅目录键/作业包 id；缺省时按 classDir+workId 自动反查")
     @click.option("--storage", "storage", default=None, type=click.Path(dir_okay=False))
     def xxt_grade_upload(course_id, class_id, cpi, work_id, student, work_answer_id,
                          comment, comment_images, question_comments, total_score,
                          question_scores, send, force, task_path, all_students,
-                         from_drafts, report_only, storage):
+                         from_drafts, report_only, class_dir, task_id, storage):
         """D84 §2：批阅页上传批语（文字+图片）/分数并提交（默认 dry-run，白名单限制）。"""
         from .grade_upload import upload_grade
         from .marking import parse_question_scores
@@ -616,10 +620,34 @@ def register(group: click.Group) -> None:
             from .grade_upload import drafts_to_payloads
             # D175：**归一化**读取（双套草稿 ai/human/revision），否则只读到顶层
             # score/comment（双套结构里没有）→ 上传的分数/批语恒为空。
-            drafts = grade_store.read_drafts_normalized(xxt_home(), class_id, work_id)
-            payloads = drafts_to_payloads(drafts, only=student)
-            # D200：草稿缺批语/分数时用 evaluations 的 AI 评阅结果补齐
+            # D201：必须带 ws/class_dir/task_id —— 否则只读旧布局
+            # `<xxt_home>/grade-drafts/<classId>/<workId>.json`，新布局
+            # `<ws>/<classDir>/grading/<taskId>/drafts/<workId>.json` 读不到，
+            # 表现为“本地无该作业的批阅草稿”（逐生上传必踩）。
             cd_scope, tid_scope = _upload_scope(ws, course_id, class_id, work_id)
+            cd_use = str(class_dir or "").strip().strip("/") or cd_scope
+            tid_use = str(task_id or "").strip() or tid_scope
+            alt_tids: list[str] = []
+            if cd_use:
+                try:
+                    alt_tids = [t for t in (grade_store.discover_draft_scopes(
+                        ws, cd_use, work_id) or []) if t and t != tid_use]
+                except Exception:  # noqa: BLE001
+                    alt_tids = []
+            drafts = grade_store.read_drafts_normalized(
+                xxt_home(), class_id, work_id, ws=ws,
+                class_dir=cd_use, task_id=tid_use, alt_task_ids=alt_tids)
+            if not drafts:
+                # 兜底：仍读不到时给出可执行提示（而不是只说“无草稿”）
+                click.echo(json.dumps({
+                    "ok": False,
+                    "error": "本地无该作业的批阅草稿",
+                    "hint": ("请确认已对该作业跑过「转写+评阅」，且 classDir/taskId 与逐生审核一致；"
+                             "可用 `assist xxt grade-upload --class-dir <classes/xx> --task-id <packId>` 重试"),
+                    "scope": {"classDir": cd_use, "taskId": tid_use, "altTaskIds": alt_tids},
+                }, ensure_ascii=False, indent=1))
+                raise SystemExit(2)
+            payloads = drafts_to_payloads(drafts, only=student)
             try:
                 from .grade_upload import enrich_payloads_from_evaluations
                 payloads = enrich_payloads_from_evaluations(

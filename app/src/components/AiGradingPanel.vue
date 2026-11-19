@@ -1390,6 +1390,9 @@ async function uploadOneStudent(row: { student: string; readyState?: string
       courseId: w.courseId, classId: w.classId, cpi: w.cpi, workId: w.workId,
       student: row.student, send: true, force: needForce,
       reportOnly: uploadReportOnly.value,
+      // D201：带上 scope，否则引擎按旧布局找草稿 → “本地无该作业的批阅草稿”
+      classDir: curWorkDir.value,
+      taskId: packId.value || padId.value || resolvedScope.value || undefined,
     })
     const tick = async () => {
       try {
@@ -1469,6 +1472,8 @@ async function uploadAll(force: boolean, only?: string[]) {
     const jobId = await startXxtGradeUpload(props.engineAddr, props.token, {
       courseId: w.courseId, classId: w.classId, cpi: w.cpi, workId: w.workId,
       send: true, force, reportOnly: uploadReportOnly.value,
+      classDir: curWorkDir.value,
+      taskId: packId.value || padId.value || resolvedScope.value || undefined,
     })
     busy.value = true; progress.value = `正在上传全部草稿（${force ? '强制覆盖' : '跳过已批阅'}）……`
     stopPoll()

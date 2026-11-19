@@ -3509,6 +3509,14 @@ class Handler(BaseHTTPRequestHandler):
                 return
             args = ["xxt", "grade-upload", "--course", cid, "--class", kid, "--cpi", cpi,
                     "--work", work, "--from-drafts"]
+            # D201：草稿在新布局（<ws>/<classDir>/grading/<taskId>/drafts），
+            # 不传 scope 时 CLI 只会去旧目录找 → “本地无该作业的批阅草稿”。
+            cdir_up = str(payload.get("classDir") or "").strip()
+            tid_up = str(payload.get("taskId") or "").strip()
+            if cdir_up:
+                args += ["--class-dir", cdir_up]
+            if tid_up:
+                args += ["--task-id", tid_up]
             if student:
                 args += ["--student", student]
             if send:

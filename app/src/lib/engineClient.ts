@@ -1135,7 +1135,10 @@ export async function startXxtGradeUpload(
   payload: { courseId: string; classId: string; cpi: string; workId: string
     student?: string; send?: boolean; force?: boolean
     /** D200：true=只上传报告图+分数（不重复上传原始批语文本）；false=连批语文本一起传。 */
-    reportOnly?: boolean },
+    reportOnly?: boolean
+    /** D201：必须带 scope，否则引擎只读旧布局草稿 → “本地无该作业的批阅草稿”。 */
+    classDir?: string
+    taskId?: string },
 ): Promise<string> {
   const base = normalizeEngineAddr(engineAddr)
   const res = await fetch(engineUrlWithToken(base, '/xxt/grade/upload', token), {
