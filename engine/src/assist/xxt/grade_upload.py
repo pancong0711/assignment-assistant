@@ -627,112 +627,127 @@ def upload_grade(*, storage, course_id: str, class_id: str, cpi: str, work_id: s
             return result
         result["matched"] = {"name": row.get("name"), "status": row.get("status"),
                              "workAnswerId": wa}
-        step = "打开批阅页"
-        result["url"] = open_mark_page(page, str(course_id), str(class_id), wid, wa)
-        # D204：打开后先确认“这是批阅页”——会话过期会跳登录页，
-        # 后续填空/提交全部无意义，且容易产生“看起来成功”的假象。
-        from .marking import page_state as _page_state
-        _st = _page_state(page)
-        result["pageState"] = {k: _st.get(k) for k in
-                               ("url", "title", "loginRedirect", "hasPassword",
-                                "hasCommentBox", "hasScoreInput") if k in _st}
-        if _st.get("loginRedirect") or (_st.get("hasPassword")
-                                       and not _st.get("hasCommentBox")):
-            result.update({"ok": False, "status": "session-expired",
-                           "error": "学习通会话已失效（批阅页跳到了登录页）",
-                           "hint": "请点「🔁 重新扫码登录」后再上传"})
+        def _open_and_check() -> "dict | None":
+            """打开该生批阅页并校验页面状态（D204：会话过期/非批阅页在写之前拦住）。"""
+            nonlocal step
+            step = "打开批阅页"
+            result["url"] = open_mark_page(page, str(course_id), str(class_id), wid, wa)
+            from .marking import page_state as _page_state
+            _st = _page_state(page)
+            result["pageState"] = {k: _st.get(k) for k in
+                                   ("url", "title", "loginRedirect", "hasPassword",
+                                    "hasCommentBox", "hasScoreInput") if k in _st}
+            if _st.get("loginRedirect") or (_st.get("hasPassword")
+                                           and not _st.get("hasCommentBox")):
+                return {"ok": False, "status": "session-expired",
+                        "error": "学习通会话已失效（批阅页跳到了登录页）",
+                        "hint": "请点「🔁 重新扫码登录」后再上传"}
+            if not _st.get("hasCommentBox") and not _st.get("hasScoreInput"):
+                return {"ok": False, "status": "not-mark-page",
+                        "error": ("打开的页面既没有批语框也没有分数框，"
+                                  "可能不是批阅页（作业/班级参数不对或平台改版）"),
+                        "hint": "请在逐生预览里确认该生批阅页能正常打开"}
+            return None
+
+        def _fill_page(*, first: bool) -> "dict | None":
+            """在当前已打开的批阅页上：三态判断 → 传图/批语 → 打分 → 读回校验。"""
+            nonlocal step
+            result["before"] = read_back(page)
+            if first:
+                result["preScreenshot"] = _shot(page, "grade-upload-pre")
+                # D196：状态明确未交 → 不上传
+                if "未交" in str(row.get("status") or "") \
+                        or "未提交" in str(row.get("status") or ""):
+                    return {"ok": False, "status": grade_plan.NOT_SUBMITTED,
+                            "decision": grade_plan.NOT_SUBMITTED,
+                            "decisionReason": "该学生平台状态为未交/未提交，不上传批阅报告",
+                            "skipped": True,
+                            "error": "学生未提交，跳过上传批阅报告"}
+                if not (str(comment or "").strip() or total_score is not None
+                        or question_comments or comment_images):
+                    return {"ok": False, "status": grade_plan.NO_COMMENT,
+                            "decision": grade_plan.NO_COMMENT,
+                            "decisionReason": "本地没有批语/分数：请先 AI 批阅或填写人工批语",
+                            "needsReview": True, "skipped": True,
+                            "error": "该学生批语为空，请先批阅（AI 批阅或人工批语）后再上传"}
+                plan = decide(status=str(row.get("status") or ""),
+                              local_score=total_score, local_comment=comment,
+                              platform=platform_snapshot(result["before"]),
+                              has_local_content=True, force=bool(force))
+                result.update({"decision": plan["decision"],
+                               "decisionReason": plan["reason"],
+                               "needsConfirm": plan["needsConfirm"],
+                               "platformBefore": plan["platformBefore"]})
+                if not plan["upload"]:
+                    return {"ok": plan["decision"] in (grade_plan.UNCHANGED,),
+                            "status": plan["decision"], "error": plan["reason"],
+                            "skipped": True}
+            # 先传图片（UEditor 会插到文首），再把批语文字放到图片**之前**，保证阅读顺序
+            for img in (comment_images or []):
+                step = "上传评语图片"
+                up = upload_comment_image(page, img)
+                result.setdefault("commentImages", []).append(up)
+                if not up.get("ok"):
+                    raise RuntimeError(f"评语图片上传失败：{up.get('error')}")
+            if comment:
+                step = "写作业批语"
+                html = normalize_comment_html(comment)
+                if comment_images:
+                    imgs = re.findall(r"<img\b[^>]*>", str(read_back(page).get("comment") or ""))
+                    if imgs:
+                        html = html + "".join(imgs)  # 文字在前、图片在后
+                result["commentResult"] = set_comment_html(page, html)
+            if question_comments:
+                step = "写题目批语"
+                result["questionCommentResults"] = set_question_comments_html(
+                    page, question_comments)
+            step = "填分数"
+            result["scoreResult"] = fill_scores(page, total=total_score,
+                                                per_question=question_scores)
+            step = "读回校验"
+            result["after"] = read_back(page)
+            result["postScreenshot"] = _shot(
+                page, "grade-upload-" + ("sent" if send else "dry"))
+            # D202：提交前确认“要写的分数确实进了页面”。
+            if total_score is not None:
+                got_before = str((result.get("after") or {}).get("score") or "").strip()
+                if not same_score(got_before, total_score):
+                    return {"ok": False, "status": "score-not-filled",
+                            "error": (f"分数未成功写入页面（页面读到「{got_before or '空'}」，"
+                                      f"期望 {total_score}），已中止提交")}
+            return None
+
+        err = _open_and_check()
+        if err:
+            result.update(err)
             result["receipt"] = _write_receipt("grade-upload", result)
             return result
-        if not _st.get("hasCommentBox") and not _st.get("hasScoreInput"):
-            result.update({"ok": False, "status": "not-mark-page",
-                           "error": ("打开的页面既没有批语框也没有分数框，"
-                                     "可能不是批阅页（作业/班级参数不对或平台改版）"),
-                           "hint": "请在逐生预览里确认该生批阅页能正常打开"})
+        err = _fill_page(first=True)
+        if err:
+            result.update(err)
             result["receipt"] = _write_receipt("grade-upload", result)
             return result
-        result["before"] = read_back(page)
-        result["preScreenshot"] = _shot(page, "grade-upload-pre")
-
-        # D193 §2：上传前先做「未批阅 / 已批阅但内容相同 / 已批阅且内容不同」三态判断。
-        # 旧实现只看状态就拒绝或盲目覆盖 —— 教师无法知道“平台那份和我这份是否一样”。
-        # D196：未提交的学生不上传批阅报告（平台无作答，上传没有意义且会污染数据）。
-        # 判定只看平台行：无 workAnswerId 且状态不是“已批阅/待批阅” → 视为未提交；
-        # 走到这里说明已有 workAnswerId，因此只拦“状态明确未交”的极端情况。
-        if "未交" in str(row.get("status") or "") or "未提交" in str(row.get("status") or ""):
-            result.update({"ok": False, "status": grade_plan.NOT_SUBMITTED,
-                           "decision": grade_plan.NOT_SUBMITTED,
-                           "decisionReason": "该学生平台状态为未交/未提交，不上传批阅报告",
-                           "skipped": True,
-                           "error": "学生未提交，跳过上传批阅报告"})
-            return result
-        # D196：已提交但没有任何批语/分数 → 不是“上传失败”，而是“还没批阅”，
-        # 给出明确指引（AI 批阅或人工填写），避免把空批语写进平台。
-        if not (str(comment or "").strip() or total_score is not None
-                or question_comments or comment_images):
-            result.update({"ok": False, "status": grade_plan.NO_COMMENT,
-                           "decision": grade_plan.NO_COMMENT,
-                           "decisionReason": "本地没有批语/分数：请先 AI 批阅或填写人工批语",
-                           "needsReview": True, "skipped": True,
-                           "error": "该学生批语为空，请先批阅（AI 批阅或人工批语）后再上传"})
-            return result
-        plan = decide(status=str(row.get("status") or ""),
-                      local_score=total_score, local_comment=comment,
-                      platform=platform_snapshot(result["before"]),
-                      has_local_content=bool(comment or total_score is not None
-                                             or question_comments or comment_images),
-                      force=bool(force))
-        result.update({"decision": plan["decision"], "decisionReason": plan["reason"],
-                       "needsConfirm": plan["needsConfirm"],
-                       "platformBefore": plan["platformBefore"]})
-        if not plan["upload"]:
-            result.update({"ok": plan["decision"] in (grade_plan.UNCHANGED,),
-                           "status": plan["decision"], "error": plan["reason"],
-                           "skipped": True})
-            return result
-
-        # 先传图片（UEditor 会插到文首），再把批语文字放到图片**之前**，保证阅读顺序
-        for img in (comment_images or []):
-            step = "上传评语图片"
-            up = upload_comment_image(page, img)
-            result.setdefault("commentImages", []).append(up)
-            if not up.get("ok"):
-                raise RuntimeError(f"评语图片上传失败：{up.get('error')}")
-        if comment:
-            step = "写作业批语"
-            html = normalize_comment_html(comment)
-            if comment_images:
-                imgs = re.findall(r"<img\b[^>]*>", str(read_back(page).get("comment") or ""))
-                if imgs:
-                    html = html + "".join(imgs)  # 文字在前、图片在后
-            result["commentResult"] = set_comment_html(page, html)
-        if question_comments:
-            step = "写题目批语"
-            result["questionCommentResults"] = set_question_comments_html(page, question_comments)
-
-        step = "填分数"
-        result["scoreResult"] = fill_scores(page, total=total_score,
-                                            per_question=question_scores)
-        step = "读回校验"
-        result["after"] = read_back(page)
-        result["postScreenshot"] = _shot(page, "grade-upload-" + ("sent" if send else "dry"))
-        # D202：提交前确认“要写的分数确实进了页面”。否则点提交也只是空提交，
-        # 平台不会变成已批阅，而旧实现会误报成功。
-        if total_score is not None:
-            got_before = str((result.get("after") or {}).get("score") or "").strip()
-            if not same_score(got_before, total_score):
-                result.update({"ok": False, "status": "score-not-filled",
-                               "error": (f"分数未成功写入页面（页面读到「{got_before or '空'}」，"
-                                         f"期望 {total_score}），已中止提交")})
-                result["receipt"] = _write_receipt("grade-upload", result)
-                return result
 
         if send:
-            step = "提交批阅"
             attempts: list[dict] = []
             ver: dict = {}
             clicked = False
             matched_name = str(result.get("matched", {}).get("name") or student)
             for attempt in (1, 2):
+                if attempt > 1:
+                    # D205：重试必须**重新打开批阅页并重填**。
+                    # 旧实现直接在原地再点提交——而上一轮核验已把页面导航到批阅列表，
+                    # 那里根本没有提交按钮 → 误报“未找到提交按钮”。
+                    result["commentImages"] = []
+                    err = _open_and_check()
+                    if err:
+                        result.update(err)
+                        break
+                    err = _fill_page(first=False)
+                    if err:
+                        result.update(err)
+                        break
+                step = "提交批阅"
                 result["submitResult"] = submit(page)
                 clicked = bool(result["submitResult"].get("ok"))
                 attempts.append({
@@ -743,7 +758,7 @@ def upload_grade(*, storage, course_id: str, class_id: str, cpi: str, work_id: s
                 })
                 result["postScreenshot"] = _shot(
                     page, "grade-upload-submitted" + ("" if attempt == 1 else "-retry"))
-                # D202：**必须核验平台真的保存了**。只判断“点到按钮”会把失败当成功。
+                # D202：**必须核验平台真的保存了**。
                 step = "提交后核验"
                 ver = verify_submission(page, str(course_id), str(class_id), wid,
                                         student=matched_name, work_answer_id=wa,
@@ -760,7 +775,6 @@ def upload_grade(*, storage, course_id: str, class_id: str, cpi: str, work_id: s
                     return result
                 if not clicked:
                     break          # 连按钮都找不到，重试没意义
-                # D203：点了按钮但未生效（多为确认弹窗没点中）→ 再提交一次
                 page.wait_for_timeout(2000)
             result["submitAttempts"] = attempts
             result["ok"] = bool(clicked and ver.get("ok"))
@@ -768,7 +782,7 @@ def upload_grade(*, storage, course_id: str, class_id: str, cpi: str, work_id: s
                 result["status"] = "submitted"
             else:
                 result["status"] = "unverified" if clicked else "submit-failed"
-                popup_info = attrs = ""
+                attrs = ""
                 try:
                     cp = (result.get("submitResult") or {}).get("confirmPopup") or {}
                     attrs = (f"；确认弹窗 {len(cp.get('popups') or [])} 个，"

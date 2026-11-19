@@ -426,6 +426,8 @@ def handle_confirmation_dialog(page, timeout_s: float = 10.0) -> dict:
     popups: list[dict] = []
     clicks: list[dict] = []
     idle = 0
+    clicked_keys: set = set()
+    repeat = 0
     while time.time() < deadline:
         try:
             popup = page.evaluate(_JS_FIND_POPUP)
@@ -440,8 +442,22 @@ def handle_confirmation_dialog(page, timeout_s: float = 10.0) -> dict:
             page.wait_for_timeout(500)
             continue
         idle = 0
+        key = (str(popup.get("id") or ""), str(popup.get("text") or "")[:80])
+        if key in clicked_keys:
+            # D205：同一个弹窗**不重复点击**。旧实现会在弹窗关闭/导航前反复点“确定”，
+            # 造成重复提交或把请求打断；这里等它自己关闭，最多再观察 2 次。
+            repeat += 1
+            if repeat >= 2:
+                return {"ok": False, "popups": popups, "clicks": clicks,
+                        "stillOpen": True,
+                        "error": ("确认弹窗点击后仍未关闭（可能被平台校验拦住）："
+                                  + str(popup.get("text") or "")[:120])}
+            page.wait_for_timeout(500)
+            continue
+        repeat = 0
         popups.append(popup)
         clicked = page.evaluate(_JS_CLICK_POPUP_CONFIRM)
+        clicked_keys.add(key)
         clicks.append({"popup": popup.get("id"), "clicked": clicked})
         logger.info(f"批阅提交确认弹窗：{popup.get('id')} → 点击={clicked}")
         page.wait_for_timeout(800)
