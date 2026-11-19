@@ -50,6 +50,8 @@ interface UploadPreviewRow {
   /* D200：报告图 / 批语文本 / 分数 三要素（决定上传什么）。 */
   hasImage?: boolean; hasComment?: boolean; hasScore?: boolean
   imageCount?: number; uploadMode?: 'report-only' | 'text'
+  /* D211：平台分数读取状态 */
+  platformScoreUnknown?: boolean; platformReadError?: string
 }
 const previewOpen = ref(false)
 const previewBusy = ref(false)
@@ -1386,8 +1388,9 @@ async function loadReportVersions() {
  * 会话过期/页面不对时引擎会返回 `session-expired`/`not-mark-page`，界面直接提示重新扫码。
  */
 async function uploadOneStudent(row: { student: string; readyState?: string
-  decision?: string }, opts?: { dryRun?: boolean }) {
+  decision?: string }, opts?: { dryRun?: boolean; overwrite?: boolean }) {
   const dryRun = opts?.dryRun === true
+  const overwrite = opts?.overwrite === true
   const w = curWork.value
   if (!w) return
   if (row.readyState === 'not-submitted') {
@@ -1400,7 +1403,11 @@ async function uploadOneStudent(row: { student: string; readyState?: string
     return
   }
   const needForce = row.decision === 'conflict'
-  if (!dryRun && needForce
+  if (!dryRun && overwrite
+      && !window.confirm(`覆盖 ${row.student} 的原报告？\n\n`
+        + '将清空平台上该生的原批语/原报告图，替换为本地报告图与分数。\n'
+        + '（旧报告图会从批语中移除，分数会被覆盖）\n\n确定继续？')) return
+  if (!dryRun && !overwrite && needForce
       && !window.confirm(`${row.student} 平台已批阅且内容不同，覆盖？`)) return
   oneUploadBusy.value = row.student
   oneUploadResult.value = {
@@ -1410,7 +1417,8 @@ async function uploadOneStudent(row: { student: string; readyState?: string
   try {
     const jobId = await startXxtGradeUpload(props.engineAddr, props.token, {
       courseId: w.courseId, classId: w.classId, cpi: w.cpi, workId: w.workId,
-      student: row.student, send: !dryRun, force: needForce,
+      student: row.student, send: !dryRun, force: needForce || overwrite,
+      overwrite,
       reportOnly: uploadReportOnly.value,
       // D201：带上 scope，否则引擎按旧布局找草稿 → “本地无该作业的批阅草稿”
       classDir: curWorkDir.value,
@@ -1430,7 +1438,8 @@ async function uploadOneStudent(row: { student: string; readyState?: string
           ...oneUploadResult.value,
           [row.student]: rc === 0
             ? (dryRun ? '✅ 演练通过（已填入并读回，未提交）'
-                      : '✅ 已上传（已核验平台状态）')
+              : overwrite ? '✅ 已覆盖上传（旧报告图已清除，已核验）'
+                          : '✅ 已上传（已核验平台状态）')
             : `❌ ${extractJobError(lines).slice(0, 200)}`,
         }
         oneUploadBusy.value = ''
@@ -2065,6 +2074,12 @@ onMounted(async () => {
           <span class="hint">（推荐：报告图里已经是排版好的批语）</span>
         </label>
       </p>
+      <p v-if="(previewRows || []).some(r => r.platformReadError || r.platformScoreUnknown)"
+         class="hint" style="margin:4px 0; color:#b45309">
+        ⚠ 有 {{ (previewRows || []).filter(r => r.platformReadError || r.platformScoreUnknown).length }}
+        名学生的平台分数未能读取（右侧显示“读取失败/未知”）。可点「🔍 重新读取平台状态」重试；
+        不影响本地上传（上传时会再读一次平台状态做覆盖判断）。
+      </p>
       <p class="hint" style="margin:4px 0">
         可上传 <b>{{ previewSummary.new ?? 0 }}</b> ·
         已一致（跳过）<b>{{ previewSummary.unchanged ?? 0 }}</b> ·
@@ -2095,7 +2110,14 @@ onMounted(async () => {
               </td>
               <td style="padding:4px 8px">{{ r.localScore ?? '—' }}</td>
               <td style="padding:4px 8px">{{ r.platformStatus || '—' }}</td>
-              <td style="padding:4px 8px">{{ r.platformScore ?? '—' }}</td>
+              <td style="padding:4px 8px" :title="r.platformReadError || ''">
+                <template v-if="r.platformScore !== null && r.platformScore !== undefined">
+                  {{ r.platformScore }}
+                </template>
+                <span v-else-if="r.platformReadError" style="color:#b45309">读取失败</span>
+                <span v-else-if="r.platformScoreUnknown" style="color:#b45309">未知</span>
+                <span v-else>—</span>
+              </td>
               <td style="padding:4px 8px" :title="r.readyReason || ''">
                 <span v-if="r.readyState==='ready'" style="color:#15803d">
                   已提交·可传<template v-if="r.hasImage">（报告图）</template>
@@ -2137,6 +2159,14 @@ onMounted(async () => {
                           || r.readyState === 'no-draft'"
                         title="只填入批语/分数并读回校验，不点提交（安全验证）"
                         @click="uploadOneStudent(r, { dryRun: true })">演练</button>
+                <button class="btn small" style="margin-left:4px; border-color:#b45309; color:#b45309"
+                        :disabled="oneUploadBusy !== '' || busy
+                          || r.readyState === 'not-submitted'
+                          || r.readyState === 'no-report'
+                          || r.readyState === 'no-comment'
+                          || r.readyState === 'no-draft'"
+                        title="清空平台上该生原批语/原报告图，替换为本地报告图与分数"
+                        @click="uploadOneStudent(r, { overwrite: true })">覆盖</button>
                 <span v-if="oneUploadResult[r.student]" class="hint" style="margin-left:6px">
                   {{ oneUploadResult[r.student] }}
                 </span>

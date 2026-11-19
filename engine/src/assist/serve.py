@@ -3533,6 +3533,9 @@ class Handler(BaseHTTPRequestHandler):
                 args += ["--confirm-send"]
             if force:
                 args += ["--force"]
+            # D211：覆盖原报告（先清空旧批语/旧报告图再写新图）
+            if payload.get("overwrite") is True:
+                args += ["--overwrite"]
             # D200：默认“只上传报告图+分数”（有报告图时不重复上传原始批语文本）
             if payload.get("reportOnly") is False:
                 args += ["--with-comment-text"]

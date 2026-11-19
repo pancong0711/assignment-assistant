@@ -115,7 +115,8 @@ def _platform_row_brief(row: dict) -> dict:
 
 def compose_preview(*, payloads: "list[dict] | None", platform_rows: "list[dict] | None",
                     per_student: "dict | None" = None, only: str = "",
-                    mode: str = "platform") -> dict:
+                    mode: str = "platform",
+                    read_errors: "dict | None" = None) -> dict:
     """D210：由「本地 payloads + 平台快照」组装对照表（live / cache 共用同一口径）。
 
     这样缓存命中时**不需要重新计算逻辑**：只要把缓存的平台快照喂进来即可，
@@ -163,6 +164,12 @@ def compose_preview(*, payloads: "list[dict] | None", platform_rows: "list[dict]
         if snap:
             r["platformScore"] = snap.get("score")
             r["platformCommentLength"] = snap.get("commentLength")
+        elif (read_errors or {}).get(r["student"]):
+            # D211：逐生读批阅页失败时明确标出来，避免界面只显示 “—”
+            r["platformReadError"] = str(read_errors[r["student"]])[:160]
+        if r["platformScore"] is None and grade_plan.is_reviewed_status(status):
+            # 已批阅但没取到分数：标明“未知”，前端显示“读取失败/未知”而不是空白
+            r["platformScoreUnknown"] = True
         p = local.get(r["student"]) or {}
         plan = grade_plan.decide(status=status,
                                  local_score=p.get("score"),
@@ -243,6 +250,7 @@ def build_preview(*, storage, course_id: str, class_id: str, cpi: str, work_id: 
         _open_mark_list(page, str(course_id), str(class_id), wid)
         platform_rows = _students_from_mark_list(page)
         per_student: dict = {}
+        read_errors: dict = {}
         for p in payloads or []:
             stu = str(p.get("student") or p.get("key") or "")
             if not stu:
@@ -256,10 +264,12 @@ def build_preview(*, storage, course_id: str, class_id: str, cpi: str, work_id: 
                     open_mark_page(page, str(course_id), str(class_id), wid, wa)
                     snap = grade_plan.platform_snapshot(read_back(page))
                     per_student[stu] = snap
-                except Exception:  # noqa: BLE001 —— 单生读取失败不影响其它行
-                    pass
+                except Exception as exc:  # noqa: BLE001 —— 单生读取失败不影响其它行
+                    read_errors[stu] = str(exc)[:160]
         rep = compose_preview(payloads=payloads, platform_rows=platform_rows,
-                              per_student=per_student, only=only, mode="platform")
+                              per_student=per_student, only=only, mode="platform",
+                              read_errors=read_errors)
+        rep["platformReadErrors"] = len(read_errors)
         write_cache(cp, course_id=str(course_id), class_id=str(class_id),
                     work_id=str(work_id), task_id=str(task_id),
                     class_dir=str(class_dir), platform_rows=[

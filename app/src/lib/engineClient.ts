@@ -1140,7 +1140,9 @@ export async function startXxtGradeUpload(
     classDir?: string
     taskId?: string
     /** D208：只上传这些学生（按对照表确认后的名单）。 */
-    students?: string[] },
+    students?: string[]
+    /** D211：覆盖原报告——先清空平台旧批语/旧报告图，再写新图与新分数。 */
+    overwrite?: boolean },
 ): Promise<string> {
   const base = normalizeEngineAddr(engineAddr)
   const res = await fetch(engineUrlWithToken(base, '/xxt/grade/upload', token), {

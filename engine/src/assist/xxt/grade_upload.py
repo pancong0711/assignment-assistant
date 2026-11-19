@@ -459,6 +459,55 @@ def resolve_draft_effective(d: dict) -> dict:
             "humanMode": hm}
 
 
+def _payload_richness(p: dict) -> tuple:
+    """D211：同名学生多份草稿时挑“更完整”的（用于去重）。"""
+    hm = str(p.get("humanMode") or "none")
+    human_used = hm in ("replace", "human", "append", "revise")
+    return (
+        1 if human_used else 0,
+        1 if str(p.get("comment") or "").strip() else 0,
+        1 if (p.get("images") or []) else 0,
+        1 if p.get("score") is not None else 0,
+        str(p.get("updatedAt") or ""),
+    )
+
+
+def dedupe_payloads_by_student(payloads: "list[dict] | None") -> list[dict]:
+    """D211：按**学生**去重 payload（同一学生可能有 workAnswerId + 姓名两个草稿键）。
+
+    现场：上传前对照显示 112 人，实际 56 名学生（56×2）；
+    逐生上传里同一学生出现两次、分数不同、点上传会传两张图。
+
+    规则：同名保留“更完整”的一份，并合并另一份的报告版本与草稿键。
+    """
+    out: dict[str, dict] = {}
+    order: list[str] = []
+    for p in payloads or []:
+        p = dict(p or {})
+        name = str(p.get("student") or p.get("key") or "").strip()
+        if not name:
+            continue
+        if name not in out:
+            p["draftKeys"] = sorted({str(p.get("key") or "")} - {""})
+            out[name] = p
+            order.append(name)
+            continue
+        cur = out[name]
+        keep, drop = (p, cur) if _payload_richness(p) > _payload_richness(cur) else (cur, p)
+        merged = dict(keep)
+        if not (merged.get("report") or {}).get("version") \
+                and (drop.get("report") or {}).get("version"):
+            merged["report"] = drop.get("report")
+        keys = {str(k) for k in (merged.get("draftKeys") or []) if k}
+        for src in (merged, drop):
+            if src.get("key"):
+                keys.add(str(src["key"]))
+            keys.update(str(k) for k in (src.get("draftKeys") or []) if k)
+        merged["draftKeys"] = sorted(keys)
+        out[name] = merged
+    return [out[n] for n in order]
+
+
 def drafts_to_payloads(drafts: dict, only: str = "") -> list[dict]:
     """本地草稿表 → 每生 payload（D85 §3）。only 给定时只取匹配 key/姓名的一项。
 
@@ -489,7 +538,8 @@ def drafts_to_payloads(drafts: dict, only: str = "") -> list[dict]:
                     "source": eff["source"], "humanMode": eff["humanMode"],
                     # D193：报告版本随 payload 走，上传清单/对照表与报告页脚可对齐
                     "report": draft_report_version(d)})
-    return sorted(out, key=lambda x: x["key"])
+    # D211：同一学生两个草稿键只保留一条（否则对照表人数翻倍、逐生上传重复传图）
+    return sorted(dedupe_payloads_by_student(out), key=lambda x: x["key"])
 
 
 def enrich_payloads_from_evaluations(payloads: list[dict], ws,
@@ -646,12 +696,19 @@ def upload_grade(*, storage, course_id: str, class_id: str, cpi: str, work_id: s
                  total_score: "float | None" = None,
                  question_scores: "list[float] | None" = None,
                  send: bool = False, force: bool = False,
+                 overwrite: bool = False,
                  workspace=None) -> dict:
     """批阅页写入批语/图片/分数；dry-run 默认只填不提交。
 
     D193 §2：上传前先判断平台状态（未批阅 / 已批阅但一致 / 已批阅但冲突），
     冲突需 `force=True`（= 教师在上传对照表里显式确认覆盖）。
+
+    D211：`overwrite=True` = **覆盖原报告**：
+      先清空平台批语框（移除旧报告图/旧批语），再写入新报告图与新分数。
+      否则 UEditor 会把新图**追加**到旧图后面，导致学生批语里堆两张报告图。
     """
+    if overwrite:
+        force = True   # 覆盖等价于教师已确认
     from . import grade_plan
     from .grade_plan import decide, platform_snapshot, same_score
     from .work import validate_work_target
@@ -756,6 +813,13 @@ def upload_grade(*, storage, course_id: str, class_id: str, cpi: str, work_id: s
                     return {"ok": plan["decision"] in (grade_plan.UNCHANGED,),
                             "status": plan["decision"], "error": plan["reason"],
                             "skipped": True}
+            # D211：覆盖模式先清空批语框（移除平台旧报告图/旧批语），
+            # 否则新报告图会被 UEditor 追加到旧图之后 → 学生批语里出现两张报告图。
+            if overwrite:
+                step = "清空原批语"
+                result["overwrite"] = True
+                result["clearedComment"] = set_comment_html(page, "")
+                page.wait_for_timeout(600)
             # 先传图片（UEditor 会插到文首），再把批语文字放到图片**之前**，保证阅读顺序
             for img in (comment_images or []):
                 step = "上传评语图片"
@@ -766,7 +830,7 @@ def upload_grade(*, storage, course_id: str, class_id: str, cpi: str, work_id: s
             if comment:
                 step = "写作业批语"
                 html = normalize_comment_html(comment)
-                if comment_images:
+                if comment_images and not overwrite:
                     imgs = re.findall(r"<img\b[^>]*>", str(read_back(page).get("comment") or ""))
                     if imgs:
                         html = html + "".join(imgs)  # 文字在前、图片在后

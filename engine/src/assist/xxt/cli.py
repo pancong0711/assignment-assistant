@@ -563,6 +563,8 @@ def register(group: click.Group) -> None:
     @click.option("--confirm-send", "send", is_flag=True, default=False,
                   help="真正提交批阅（默认 dry-run：只填入并读回校验）")
     @click.option("--force", is_flag=True, default=False, help="已批阅也覆盖提交")
+    @click.option("--overwrite", is_flag=True, default=False,
+                  help="D211：覆盖原报告——先清空平台旧批语/旧报告图，再写入新图与新分数")
     @click.option("--task", "task_path", default=None, type=click.Path(exists=True, dir_okay=False),
                   help="任务包 JSON：从批阅产物（evaluations）装配批语/分数")
     @click.option("--all", "all_students", is_flag=True, default=False,
@@ -584,7 +586,7 @@ def register(group: click.Group) -> None:
                          comment, comment_images, question_comments, total_score,
                          question_scores, send, force, task_path, all_students,
                          from_drafts, report_only, class_dir, task_id, storage,
-                         students_filter):
+                         students_filter, overwrite):
         """D84 §2：批阅页上传批语（文字+图片）/分数并提交（默认 dry-run，白名单限制）。"""
         from .grade_upload import upload_grade
         from .marking import parse_question_scores
@@ -704,7 +706,8 @@ def register(group: click.Group) -> None:
                                    student=str(pl["key"]),
                                    comment=payload_comment, comment_images=imgs,
                                    total_score=pl.get("score"), question_scores=None,
-                                   send=bool(send), force=bool(force), workspace=ws)
+                                   send=bool(send), force=bool(force),
+                                   overwrite=bool(overwrite), workspace=ws)
                 rep["uploadMode"] = "report-only" if (report_only and imgs) else "text"
                 rep["draftKey"] = pl["key"]
                 reps.append(rep)
@@ -769,7 +772,8 @@ def register(group: click.Group) -> None:
                                total_score=(total_score if total_score is not None
                                             else tgt.get("total_score")),
                                question_scores=(scores or tgt.get("question_scores") or None),
-                               send=bool(send), force=bool(force), workspace=ws)
+                               send=bool(send), force=bool(force),
+                               overwrite=bool(overwrite), workspace=ws)
             reps.append(rep)
             if len(targets) > 1:
                 click.echo(json.dumps(rep, ensure_ascii=False, indent=1))

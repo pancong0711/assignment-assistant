@@ -31,7 +31,7 @@ must(/not-mark-page/.test(upload), '未识别“不是批阅页”')
 must(/session-expired/.test(upload), '上传链路未处理会话过期')
 
 // 4) 前端演练
-must(/async function uploadOneStudent\(row[\s\S]{0,120}opts\?: \{ dryRun\?: boolean \}/.test(view),
+must(/async function uploadOneStudent\(row[\s\S]{0,160}opts\?: \{ dryRun\?: boolean/.test(view),
   '逐生上传未支持演练参数')
 must(/send: !dryRun/.test(view), '演练未使用 send=false')
 must(/演练通过（已填入并读回，未提交）/.test(view), '缺少演练成功文案')
