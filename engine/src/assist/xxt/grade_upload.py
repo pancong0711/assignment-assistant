@@ -121,6 +121,7 @@ def _students_from_mark_list(page) -> list[dict]:
         wa = parse_work_answer_id(r.get("review_path") or "")
         out.append({"name": str(r.get("name") or "").strip(),
                     "status": str(r.get("status") or "").strip(),
+                    "score": str(r.get("score") or "").strip(),
                     "workAnswerId": wa, "review_path": r.get("review_path") or ""})
     return out
 
@@ -522,6 +523,48 @@ def _resolve_target(page, course_id: str, class_id: str, work_id: str,
     return find_student_row(rows, student)
 
 
+def verify_submission(page, course_id: str, class_id: str, work_id: str, *,
+                      student: str = "", work_answer_id: str = "",
+                      expect_score=None) -> dict:
+    """D202：**提交后核验**——重新打开批阅列表，确认平台真的保存了。
+
+    现场：界面显示“已上传”，但学习通仍显示未批阅、也没有分数。
+    旧实现只检查“是否点到了 markAction(1) 按钮”，把“点了按钮”当成“写成功了”。
+
+    判定：
+      - 能在列表里找到该学生；
+      - 状态包含“已批阅”；
+      - 若给了 `expect_score`，列表回读的分数与之相符（容差 0.005）。
+    """
+    from .grade_plan import same_score
+    try:
+        _open_mark_list(page, course_id, class_id, work_id)
+        rows = _students_from_mark_list(page)
+    except Exception as exc:  # noqa: BLE001
+        return {"ok": False, "error": f"提交后重新读取批阅列表失败：{str(exc)[:200]}"}
+    row = None
+    if work_answer_id:
+        row = next((r for r in rows
+                    if str(r.get("workAnswerId") or "") == str(work_answer_id)), None)
+    if row is None:
+        row = find_student_row(rows, student)
+    if row is None:
+        return {"ok": False, "error": f"提交后未在批阅列表找到学生：{student or work_answer_id}",
+                "rows": len(rows)}
+    status = str(row.get("status") or "")
+    got = row.get("score")
+    out = {"ok": False, "name": row.get("name"), "status": status,
+           "score": got, "expectScore": expect_score, "rows": len(rows)}
+    if "已批阅" not in status:
+        out["error"] = f"提交后平台状态仍为「{status or '空'}」（未变成已批阅）"
+        return out
+    if expect_score is not None and not same_score(got, expect_score):
+        out["error"] = f"提交后平台分数为「{got or '空'}」，与期望 {expect_score} 不一致"
+        return out
+    out["ok"] = True
+    return out
+
+
 def upload_grade(*, storage, course_id: str, class_id: str, cpi: str, work_id: str,
                  student: str = "", work_answer_id: str = "",
                  comment: str = "", comment_images: "list[str] | None" = None,
@@ -536,7 +579,7 @@ def upload_grade(*, storage, course_id: str, class_id: str, cpi: str, work_id: s
     冲突需 `force=True`（= 教师在上传对照表里显式确认覆盖）。
     """
     from . import grade_plan
-    from .grade_plan import decide, platform_snapshot
+    from .grade_plan import decide, platform_snapshot, same_score
     from .work import validate_work_target
     err = validate_work_target(str(course_id), str(class_id), workspace)
     if err:
@@ -634,15 +677,39 @@ def upload_grade(*, storage, course_id: str, class_id: str, cpi: str, work_id: s
         step = "读回校验"
         result["after"] = read_back(page)
         result["postScreenshot"] = _shot(page, "grade-upload-" + ("sent" if send else "dry"))
+        # D202：提交前确认“要写的分数确实进了页面”。否则点提交也只是空提交，
+        # 平台不会变成已批阅，而旧实现会误报成功。
+        if total_score is not None:
+            got_before = str((result.get("after") or {}).get("score") or "").strip()
+            if not same_score(got_before, total_score):
+                result.update({"ok": False, "status": "score-not-filled",
+                               "error": (f"分数未成功写入页面（页面读到「{got_before or '空'}」，"
+                                         f"期望 {total_score}），已中止提交")})
+                result["receipt"] = _write_receipt("grade-upload", result)
+                return result
 
         if send:
             step = "提交批阅"
             result["submitResult"] = submit(page)
             result["postScreenshot"] = _shot(page, "grade-upload-submitted")
-            result["ok"] = bool(result["submitResult"].get("ok"))
-            result["status"] = "submitted" if result["ok"] else "submit-failed"
-            if not result["ok"]:
-                result["error"] = f"提交失败：{result['submitResult']}"
+            clicked = bool(result["submitResult"].get("ok"))
+            # D202：**必须核验平台真的保存了**。只判断“点到按钮”会把失败当成功。
+            step = "提交后核验"
+            ver = verify_submission(page, str(course_id), str(class_id), wid,
+                                    student=str(result.get("matched", {}).get("name")
+                                                 or student),
+                                    work_answer_id=wa, expect_score=total_score)
+            result["afterSubmit"] = ver
+            result["ok"] = bool(clicked and ver.get("ok"))
+            if result["ok"]:
+                result["status"] = "submitted"
+            else:
+                result["status"] = "unverified" if clicked else "submit-failed"
+                result["error"] = (f"提交后核验失败：{ver.get('error')}"
+                                   if clicked else f"提交失败：{result['submitResult']}")
+                if clicked:
+                    result["hint"] = ("已点到提交按钮，但平台状态/分数未更新；"
+                                      "请到学习通手动确认该生批阅页，或检查是否需要点两次/弹窗未确认")
         else:
             result.update({"ok": True, "status": "dry-run-filled",
                            "note": "dry-run：已填入并读回，未点提交"})

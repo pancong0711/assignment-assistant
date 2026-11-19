@@ -276,9 +276,14 @@ def fill_scores(page, *, total: float | None = None,
               inputs.forEach((inp, i) => {
                 const v = i < scores.length ? scores[i] : scores[scores.length - 1];
                 inp.value = '';
+                inp.focus();
                 inp.value = String(v);
-                inp.dispatchEvent(new Event('change', {bubbles: true}));
+                // D202：学习通需要 change/input + 失焦（blur）与回车才会真正提交该值，
+                // 只派发 change/input 时偶尔会被框架回滚 → 提交的是空分数。
                 inp.dispatchEvent(new Event('input', {bubbles: true}));
+                inp.dispatchEvent(new Event('change', {bubbles: true}));
+                inp.dispatchEvent(new KeyboardEvent('keyup', {bubbles: true, key: 'Enter'}));
+                inp.blur();
               });
               return inputs.length;
             }""", [float(x) for x in per_question])
@@ -287,10 +292,13 @@ def fill_scores(page, *, total: float | None = None,
             """(score) => {
               const inp = document.querySelector('#tmpscore');
               if (!inp) return false;
+              inp.focus();
               inp.value = '';
               inp.value = String(score);
-              inp.dispatchEvent(new Event('change', {bubbles: true}));
               inp.dispatchEvent(new Event('input', {bubbles: true}));
+              inp.dispatchEvent(new Event('change', {bubbles: true}));
+              inp.dispatchEvent(new KeyboardEvent('keyup', {bubbles: true, key: 'Enter'}));
+              inp.blur();
               return true;
             }""", float(total))
     return out

@@ -1403,9 +1403,12 @@ async function uploadOneStudent(row: { student: string; readyState?: string
         }
         const lines = (job.lines || []).join('\n')
         const rc = job.returncode ?? 0
+        // D202：成功必须是引擎“提交后核验”通过（rc=0），否则显示可读原因
         oneUploadResult.value = {
           ...oneUploadResult.value,
-          [row.student]: rc === 0 ? '✅ 已上传' : `❌ ${extractJobError(lines).slice(0, 120)}`,
+          [row.student]: rc === 0
+            ? '✅ 已上传（已核验平台状态）'
+            : `❌ ${extractJobError(lines).slice(0, 160)}`,
         }
         oneUploadBusy.value = ''
         await loadStudents()

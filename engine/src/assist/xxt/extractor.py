@@ -57,7 +57,12 @@ JS_REVIEW = """() => {
     if(!ne||!pb) return; let st='';
     ul.querySelectorAll('li').forEach(li=>{const t=li.textContent.trim();
       if(t.includes('待批阅')||t.includes('已批阅')||t.includes('补交')) st=t;});
-    out.push({name: ne.textContent.trim(), status: st,
+    // D202：读列表行的分数（提交后核验用；取不到则为空串）
+    let sc='';
+    const si=ul.querySelector('input.scoreInput, input[name="score"], .scoreInput input');
+    if(si) sc=(si.value||'').trim();
+    if(!sc){const m=(ul.innerText||'').match(/得分\\s*[:：]?\\s*(\\d+(?:\\.\\d+)?)/); if(m) sc=m[1];}
+    out.push({name: ne.textContent.trim(), status: st, score: sc,
               // D64-c R1/R2：data 属性自带学生批阅页 URL（workAnswerId 在内）→ 报告管线直连通道
               review_path: (pb.getAttribute('data')||'').slice(0,240)});
   }); return out;

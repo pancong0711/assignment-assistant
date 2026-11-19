@@ -106,6 +106,7 @@
 - `docs/142-D199-report-version-roster-alignment.md` — **D199 报告版本以逐生审核名单为基准（修复 57 人只显示 53 人）+ 报告按学生姓名命名**
 - `docs/143-D200-report-image-upload-default.md` — **D200 上传“报告图+分数”即算就绪（修复 48 人被误判批语为空）+ 默认不重复上传批语文本**
 - `docs/144-D201-upload-draft-scope.md` — **D201 逐生上传“本地无该作业的批阅草稿”（上传链路补 classDir/taskId scope）**
+- `docs/145-D202-upload-verification.md` — **D202 上传“显示成功但平台未批阅/无分数”（提交后核验 + 提交前分数校验）**
 
 > **当前活动需求单 = `docs/112-D168`（口径/快照）+ `docs/113-D169`（路线/架构）**；
 > 历史条目保留供追溯，与最新口径冲突时以这两份为准。
