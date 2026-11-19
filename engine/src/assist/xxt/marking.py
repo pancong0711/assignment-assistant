@@ -344,15 +344,32 @@ def page_state(page) -> dict:
         return {"error": str(exc)[:200]}
 
 
-_JS_CLICK_SUBMIT = """() => {
-  const links = Array.from(document.querySelectorAll('a,button'));
-  for (const el of links) {
+_JS_CLICK_SUBMIT = r"""() => {
+  // D206：真实学习通的提交按钮可能是 <div>/<span>（实测：
+  // <div class="btnBlue fr fs14" onclick="markAction(1)">Submit</div>），
+  // 旧实现只找 a,button → 永远 no-markAction(1)。
+  const vis = (el) => {
+    if (!el) return false;
+    const st = getComputedStyle(el);
+    return st.display !== 'none' && st.visibility !== 'hidden' && el.offsetParent !== null;
+  };
+  const all = Array.from(document.querySelectorAll('[onclick]'));
+  for (const el of all) {
     const onclick = el.getAttribute('onclick') || '';
-    if (onclick.includes('markAction(1)')) {
-      el.scrollIntoView();
+    if (/markAction\(1\)/.test(onclick)) {
+      try { el.scrollIntoView(); } catch (e) {}
       el.click();
-      return {ok: true, text: (el.textContent || '').trim()};
+      return {ok: true, text: (el.textContent || '').trim().slice(0, 40),
+              tag: el.tagName, cls: (el.className || '').toString().slice(0, 60)};
     }
+  }
+  // 退化：英文界面 Submit / 中文 提交（无 onclick 的按钮）
+  for (const el of Array.from(document.querySelectorAll('a,button,input[type=button],div,span'))) {
+    const t = (el.textContent || el.value || '').trim();
+    if (!vis(el) || !/^(submit|提交|提交批阅)$/i.test(t)) continue;
+    try { el.scrollIntoView(); } catch (e) {}
+    el.click();
+    return {ok: true, text: t, tag: el.tagName, how: 'text'};
   }
   return {ok: false, reason: 'no-markAction(1)'};
 }"""
@@ -402,7 +419,7 @@ _JS_CLICK_POPUP_CONFIRM = r"""() => {
   // 3) 弹窗内文案为“确定/确认/继续”的按钮
   document.querySelectorAll('a,button,span').forEach(el => {
     const t = (el.textContent || '').replace(/\s+/g, '');
-    if (t === '确定' || t === '确认' || t === '继续' || t === '确定提交') {
+    if (/^(确定|确认|继续|确定提交|ok|confirm|yes|submit)$/i.test(t)) {
       cands.push([el, 'text:' + t]);
     }
   });
@@ -473,16 +490,16 @@ _JS_CLICK_SUBMIT_FALLBACK = r"""() => {
   };
   const tried = [];
   const els = Array.from(document.querySelectorAll(
-    'a,button,input[type=button],input[type=submit]'));
+    '[onclick],a,button,input[type=button],input[type=submit],div,span'));
   const rank = (el) => {
     const onclick = el.getAttribute('onclick') || '';
     const text = (el.textContent || el.value || '').trim();
     if (/markAction\(1\)/.test(onclick)) return 100;
     if (/confirmPiyueWork/.test(onclick)) return 90;
     if (/submit|save|publish/i.test(onclick)) return 80;
-    if (/^提交(批阅)?$/.test(text)) return 70;
-    if (/^保存(并批阅)?$/.test(text)) return 60;
-    if (/提交|保存/.test(text)) return 50;
+    if (/^(提交(批阅)?|submit)$/i.test(text)) return 70;
+    if (/^(保存(并批阅)?|save)$/i.test(text)) return 60;
+    if (/提交|保存|submit|save/i.test(text)) return 50;
     return 0;
   };
   const cands = els.filter(vis).map(el => [el, rank(el)])

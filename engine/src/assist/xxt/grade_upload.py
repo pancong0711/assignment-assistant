@@ -572,12 +572,24 @@ def verify_submission(page, course_id: str, class_id: str, work_id: str, *,
     got = row.get("score")
     out = {"ok": False, "name": row.get("name"), "status": status,
            "score": got, "expectScore": expect_score, "rows": len(rows)}
-    if "已批阅" not in status:
-        out["error"] = f"提交后平台状态仍为「{status or '空'}」（未变成已批阅）"
+    # D206：平台界面可能是英文（Reviewed/Unreview）；也有的版本列表行不写状态文本。
+    reviewed = ("已批阅" in status) or bool(re.search(r"\breviewed\b", status, re.I)) \
+        and not re.search(r"unreview", status, re.I)
+    score_ok = expect_score is None or same_score(got, expect_score)
+    # 状态文本**明确**表示未批阅（如“待批阅”“Unreview”）时，优先报状态问题（最直观）
+    if status.strip() and not reviewed:
+        out["error"] = f"提交后平台状态仍为「{status}」（未变成已批阅）"
         return out
-    if expect_score is not None and not same_score(got, expect_score):
+    if not score_ok:
         out["error"] = f"提交后平台分数为「{got or '空'}」，与期望 {expect_score} 不一致"
         return out
+    if not reviewed:
+        # 状态文本缺失但分数已与期望一致 → 视为已保存
+        # （真实平台列表行有时不渲染状态文本，见 docs/149-D206）
+        if expect_score is None:
+            out["error"] = "提交后平台未显示批阅状态，且未指定期望分数，无法确认已保存"
+            return out
+        out["note"] = "列表未渲染状态文本，但分数已与期望一致"
     out["ok"] = True
     return out
 

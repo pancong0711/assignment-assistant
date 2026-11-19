@@ -56,7 +56,8 @@ JS_REVIEW = """() => {
     const ne=ul.querySelector('li.taskBody_name div.py_name'); const pb=ul.querySelector('a.cz_py');
     if(!ne||!pb) return; let st='';
     ul.querySelectorAll('li').forEach(li=>{const t=li.textContent.trim();
-      if(t.includes('待批阅')||t.includes('已批阅')||t.includes('补交')) st=t;});
+      // D206：界面可能是英文（Reviewed/Unreview），中文仍是主口径
+      if(/待批阅|已批阅|补交|未交|Reviewed|Unreview|Unsubmitted/i.test(t)) st=t;});
     // D202：读列表行的分数（提交后核验用；取不到则为空串）
     let sc='';
     const si=ul.querySelector('input.scoreInput, input[name="score"], .scoreInput input');
