@@ -424,14 +424,16 @@ def normalize_prompt_items(items) -> list[dict]:
       - plan/expand_items 产物用 `序号`；prompts 侧旧调用方用 `no`；
       - 题型一律取 **题目级** `kind` > `kb` > `tag` > problems。
     """
-    from .rules import normalize_kind
+    from .rules import resolve_item_kind
     out: list[dict] = []
     for i, it in enumerate(items or [], start=1):
         if not isinstance(it, dict):
             continue
         d = dict(it)
         d["序号"] = d.get("序号") or d.get("no") or d.get("index") or i
-        d["kind"] = normalize_kind(d.get("kind") or d.get("kb") or d.get("tag") or "problems")
+        # D213：与算分共用同一解析口径（kind > kb > tag > problems）
+        kind, _src = resolve_item_kind(d)
+        d["kind"] = kind
         out.append(d)
     return out
 

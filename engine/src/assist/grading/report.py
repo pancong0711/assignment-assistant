@@ -309,6 +309,13 @@ def _rule_source_md(e_data: dict) -> list[str]:
         out.append(head)
     if e_data.get("all_brief"):
         out.append("- 全份：整体过程简略，已按全局规则对总分一次性扣分")
+    # D213：题库未识别的题按 problems（最严）评阅 —— 必须在报告里可见，
+    # 否则 innovation/translation 等题会被“静默按计算题扣分”。
+    fb = [x for x in (e_data.get("kind_fallback_questions") or []) if x not in (None, "")]
+    if fb:
+        out.append("- ⚠ 第" + "、".join(str(x) for x in fb[:10])
+                   + "题未识别题库来源，已按「计算/推导题(problems)」规则评阅；"
+                     "如该题属于 innovation/translation 等题库，请在作业纸里补上题目来源后重批")
     return out
 
 

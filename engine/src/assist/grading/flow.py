@@ -364,10 +364,26 @@ def _only_students(ctx: dict) -> "set[str]":
 
 
 def _plan_items_for(ctx: dict, student: str) -> "list[dict] | None":
-    """plan 模式下该生的题目（转成 evaluate 期望的 {序号,content,solution,tag} 形状）。"""
+    """plan 模式下该生的题目（转成 evaluate 期望的 {序号,content,solution,tag} 形状）。
+
+    D213：plan.json 可能是旧版（题目只存了 no/content/solution），缺 `kind/kb`。
+    这里用 `plan.questionsByTag[该生tag]` 同题号补齐——否则：
+      - 提示词按作业纸 tag 注入题型（mixed 作业纸会整份错）；
+      - 算分回落 problems（innovation 题被按逻辑错误重扣）。
+    """
     for stu in ((ctx.get("plan") or {}).get("students") or []):
         if str(stu.get("name")) != student:
             continue
+        # 同 tag 作业纸的题库信息（按题号索引）
+        _by_tag = ((ctx.get("plan") or {}).get("questionsByTag") or {})
+        _pad_qs = _by_tag.get(str(stu.get("tag") or "")) or []
+        _kb_by_no: dict = {}
+        for _q in _pad_qs:
+            if not isinstance(_q, dict):
+                continue
+            for _k in (str(_q.get("no") or ""), str(_q.get("id") or "")):
+                if _k:
+                    _kb_by_no[_k] = _q
         out = []
         for i, q in enumerate(stu.get("questions") or [], start=1):
             # D176：**必须透传每题的 kind/kb**。
@@ -375,13 +391,15 @@ def _plan_items_for(ctx: dict, student: str) -> "list[dict] | None":
             #   ① 提示词只按**作业纸 tag** 注入题型指令（一张作业纸混多题型时全错）；
             #   ② 算分只在 `q.kind`（模型自报，schema 不强制）里找，缺失则一律
             #      `problems` → 翻译/抄写题被按"每错 −5"算（实测 -20）。
+            _ref = _kb_by_no.get(str(q.get("no") or "")) or {}
             out.append({"序号": q.get("no") or i, "content": q.get("content") or "",
                         "solution": q.get("solution") or "",
                         # tag 仍保留（用于"先判题目是否对应"），但**不再**当作题型
-                        "tag": str(q.get("tag") or stu.get("tag") or ""),
-                        "kind": str(q.get("kind") or ""),
-                        "kb": str(q.get("kb") or ""),
-                        "related": str(q.get("related") or "")})
+                        "tag": str(q.get("tag") or _ref.get("tag") or stu.get("tag") or ""),
+                        # D213：题目级 kind/kb 缺失时，用同题号作业纸题目补齐
+                        "kind": str(q.get("kind") or _ref.get("kind") or ""),
+                        "kb": str(q.get("kb") or _ref.get("kb") or ""),
+                        "related": str(q.get("related") or _ref.get("related") or "")})
         return out or None
     return None
 

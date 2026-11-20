@@ -117,6 +117,7 @@
 - `docs/153-D210-preview-cache.md` — **D210 上传前对照本地缓存（21.7s→0s）+ 手动刷新平台状态；顺带修复「已完成」被误判未批阅**
 - `docs/154-D211-dedupe-and-overwrite.md` — **D211 逐生上传重复学生（112=56×2）按学生去重 + 新增「覆盖」原报告（清旧图写新图新分）**
 - `docs/155-D212-review-download-update-history.md` — **D212 作业预览重复下载：覆盖+哈希去重+`.history` 归档+孤儿清理（update 模式为默认）**
+- `docs/156-D213-kind-resolution-consistency.md` — **D213 innovation 评阅过严：提示词与算分的题库(kind)解析口径统一 + 旧 plan 补 kind + 兜底可见**
 
 > **当前活动需求单 = `docs/112-D168`（口径/快照）+ `docs/113-D169`（路线/架构）**；
 > 历史条目保留供追溯，与最新口径冲突时以这两份为准。

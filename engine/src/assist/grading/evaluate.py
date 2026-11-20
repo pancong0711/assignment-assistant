@@ -676,7 +676,7 @@ def score_from_analysis(analysis: dict, quality: dict | None = None,
     - **≥allBriefRatio 的题都简略 → 总分一次性 −allBriefDeduct**（不逐题累计）；
     - 缺签名 / 书写规范 / 总分底线沿用旧规则。
     """
-    from .rules import global_rules, normalize_kind
+    from .rules import global_rules, normalize_kind, resolve_item_kind
     g = global_rules(ws)
     item_by_no: dict[str, dict] = {}
     for it in (items or []):
@@ -695,8 +695,9 @@ def score_from_analysis(analysis: dict, quality: dict | None = None,
     for q in q_list:
         qid = q.get("id", 0)
         it = item_by_no.get(str(qid)) or {}
-        # 每题 kind：模型标注 > 任务包 item > 默认 problems
-        kind = normalize_kind(it.get("kind") or it.get("kb") or q.get("kind") or "problems")
+        # D213：与提示词**同一解析口径**（kind > kb > tag > 模型自报 > problems）。
+        # 旧实现没有 tag 回退 → plan 缺 kind/kb 时 innovation 题被按 problems 重扣。
+        kind, kind_source = resolve_item_kind(it, q)
         t = dict(DEFAULT_TYPE_RULES(kind))
         if ws is not None:
             from .rules import type_rules
@@ -713,7 +714,8 @@ def score_from_analysis(analysis: dict, quality: dict | None = None,
         if d > 0:
             score -= d
             deductions.append(f"第{qid}题 扣{d:g}分（{'；'.join(steps)}）")
-        per_q_rule.append({"id": qid, "kind": kind, "source": it.get("kb") or kind,
+        per_q_rule.append({"id": qid, "kind": kind, "kindSource": kind_source,
+                           "source": it.get("kb") or it.get("tag") or kind,
                            "rules": rules, "deduct": d, "detail": steps})
 
     # 全局惩戒：≥80% 题目"过程简略" → 总分一次性 −5
@@ -783,6 +785,9 @@ def score_from_analysis(analysis: dict, quality: dict | None = None,
         # D130：逐题来源/适用规则/扣分明细（报告"本题来源 + 适用规则"用）
         "per_question_rules": per_q_rule,
         "all_brief": all_brief,
+        # D213：题库未识别（回落到 problems）的题号——教师可据此检查作业纸题目来源
+        "kind_fallback_questions": [r["id"] for r in per_q_rule
+                                    if r.get("kindSource") == "fallback"],
     }
 
 

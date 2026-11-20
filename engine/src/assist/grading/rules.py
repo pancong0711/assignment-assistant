@@ -46,6 +46,32 @@ VALID_MODES = ("errorCount", "missingPoints", "checklist", "lengthBased", "topic
 ANALYSIS_ONLY_KINDS = ("example",)
 
 
+def resolve_item_kind(item: "dict | None", q: "dict | None" = None) -> "tuple[str, str]":
+    """D213：**唯一**的“某道题属于哪个题库”的解析口径（提示词与算分共用）。
+
+    现场：plan.json 为旧版时题目只有 `tag`（作业纸 tag）而没有 `kind/kb`；
+    提示词按 `kind > kb > tag` 注入 innovation 规则（模型据此把逻辑问题写成
+    启发式提问），但算分只认 `kind > kb > q.kind > problems` → 回落到 problems
+    “每错 −5” → innovation 题被按逻辑错误重扣。
+
+    优先级（与 prompts.normalize_prompt_items 完全一致）：
+      题目级 kind > 题目级 kb（题库表名）> 作业纸 tag > 模型自报 q.kind > problems
+
+    返回 `(kind, source)`；`source` ∈ item.kind / item.kb / item.tag / model / fallback，
+    便于把“这题到底按哪套规则评的”写进结果供教师核对。
+    """
+    it = item or {}
+    q = q or {}
+    for key, src in (("kind", "item.kind"), ("kb", "item.kb"), ("tag", "item.tag")):
+        v = str(it.get(key) or "").strip()
+        if v:
+            return normalize_kind(v), src
+    v = str(q.get("kind") or "").strip()
+    if v:
+        return normalize_kind(v), "model"
+    return "problems", "fallback"
+
+
 def normalize_kind(kind: str | None) -> str:
     """题库表名 / tag → 评阅范式 kind（未知一律回落 `problems`）。
 
