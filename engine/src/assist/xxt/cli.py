@@ -273,9 +273,10 @@ def register(group: click.Group) -> None:
     @click.option("--work-name", default="", help="用于友好文件名/报告展示")
     @click.option("--limit", default=0, type=int, help="只下载前 N 个学生（0=全部）")
     @click.option("--months", default=6, type=int, help="下载后自动清理超过 N 个月的旧批阅图片")
-    @click.option("--mode", "mode", default="missing",
-                  type=click.Choice(["full", "missing", "comments-only"]),
-                  help="full=全量；missing=只补缺失（默认）；comments-only=只刷新批语/分数，不重下作答图")
+    @click.option("--mode", "mode", default="update",
+                  type=click.Choice(["full", "missing", "update", "comments-only"]),
+                  help="update=覆盖变化+归档旧版+清孤儿（默认，D212）；"
+                       "missing=只补缺失；full=强制全量重下；comments-only=只刷新批语/分数")
     @click.option("--allow-post", "allow_post", multiple=True, help="放行的只读 POST URL 子串（可多次）")
     @click.option("--storage", "storage", default=None, type=click.Path(dir_okay=False))
     @click.option("--fallback", is_flag=True, default=False, help="使用旧版 review 页 URL")
@@ -298,8 +299,15 @@ def register(group: click.Group) -> None:
                  error=str(rep.get("error") or "")[:200])
         click.echo(json.dumps({k: rep.get(k) for k in
                                ("ok", "classId", "workId", "students", "images", "mode",
-                                "aborted", "manifest", "out_dir", "error", "pruned")},
+                                "aborted", "manifest", "out_dir", "error", "pruned",
+                                "stats", "orphans", "historyDir")},
                               ensure_ascii=False, indent=1))
+        # D212：单行统计标记，供 PWA 直接解析展示（新增/更新/未变/归档/孤儿）
+        try:
+            click.echo("__STATS__" + json.dumps(rep.get("stats") or {},
+                                                ensure_ascii=False))
+        except Exception:  # noqa: BLE001
+            pass
         raise SystemExit(0 if rep.get("ok") else 2)
 
     @group.command("notice-attachments")

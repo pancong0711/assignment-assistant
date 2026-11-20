@@ -1296,7 +1296,19 @@ function pollReviewDl(jobId: string) {
         reviewDlJobId.value = ''
         try { localStorage.removeItem('xxt-review-dl-job') } catch { /* noop */ }
         await loadReviewIndex()
-        reviewDlMsg.value = '下载完成（见下方「批阅图片」文件夹）'
+        // D212：展示“新增/更新/未变/归档/孤儿”统计
+        const statLine = (job.lines || []).filter(l => l.startsWith('__STATS__')).slice(-1)[0]
+        let summary = ''
+        if (statLine) {
+          try {
+            const st = JSON.parse(statLine.slice('__STATS__'.length)) as
+              { new?: number; updated?: number; unchanged?: number
+                archived?: number; orphans?: number }
+            summary = `（新增 ${st.new ?? 0} / 更新 ${st.updated ?? 0} / 未变 ${st.unchanged ?? 0}`
+              + ` / 归档 ${st.archived ?? 0} / 清理孤儿 ${st.orphans ?? 0}）`
+          } catch { /* 统计解析失败不影响完成提示 */ }
+        }
+        reviewDlMsg.value = `下载完成${summary}（见下方「批阅图片」文件夹）`
       } else {
         reviewDlJobId.value = ''
         try { localStorage.removeItem('xxt-review-dl-job') } catch { /* noop */ }
@@ -1328,10 +1340,14 @@ async function downloadReview(c: CourseRow, cl: ClassRow, w: WorkRow) {
     reviewDlLoading.value = false
   }
 }
-async function updateReviewWork(it: XxtReviewImageWork, mode: 'missing' | 'comments-only') {
+async function updateReviewWork(it: XxtReviewImageWork,
+                                 mode: 'missing' | 'update' | 'comments-only') {
   if (reviewDlLoading.value) return
   reviewDlLoading.value = true
-  reviewDlMsg.value = mode === 'missing' ? '正在补下缺失图片/批语……' : '正在仅更新批语/分数……'
+  reviewDlMsg.value = mode === 'missing' ? '正在补下缺失图片/批语……'
+    : mode === 'update'
+      ? '正在更新（覆盖变化内容、旧版归档、清理孤儿）……'
+      : '正在仅更新批语/分数……'
   try {
     const jobId = await startXxtReviewDownload(engUrl.value, tok.value, {
       courseId: it.courseId || '', classId: it.classId, workId: it.workId,
@@ -2288,6 +2304,9 @@ onUnmounted(() => { loginSeq += 1; stopLoginPolling(); stopExtractPolling(); sto
             <span v-if="it.images_deleted" class="tag"
                   style="background:#fee2e2;color:#991b1b;padding:1px 6px;border-radius:6px;margin-left:6px">图片已删除（保留清单）</span>
             <button class="btn" style="padding:2px 8px; margin-left:8px" @click="openReviewWork(it)">👁 打开预览</button>
+            <button class="btn" style="padding:2px 8px; margin-left:4px" :disabled="reviewDlLoading"
+                    title="覆盖有变化的图片/批语，旧版归档到 .history，并清理孤儿文件"
+                    @click="updateReviewWork(it, 'update')">🔄 更新（推荐）</button>
             <button class="btn" style="padding:2px 8px; margin-left:4px" :disabled="reviewDlLoading" @click="updateReviewWork(it, 'missing')">⬇ 补下缺失</button>
             <button class="btn" style="padding:2px 8px; margin-left:4px" :disabled="reviewDlLoading" @click="updateReviewWork(it, 'comments-only')">💬 仅更新批语</button>
             <button class="btn" style="padding:2px 8px; margin-left:4px" @click="deleteReviewWork(it)">🗑 删除图片</button>

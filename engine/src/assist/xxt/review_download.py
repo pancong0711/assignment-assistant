@@ -116,9 +116,21 @@ def download_review(storage, home, course_id: str, class_id: str, work_id: str, 
                 "hint": chk.get("hint", "请先 assist xxt login")}
     wdir = review_store.work_dir(home, class_id, work_id)
     wdir.mkdir(parents=True, exist_ok=True)
-    mode = str(mode or "missing").lower()
-    if mode not in ("full", "missing", "comments-only"):
+    mode = str(mode or "update").lower()
+    if mode not in ("full", "missing", "update", "comments-only"):
         return {"ok": False, "error": f"unsupported mode: {mode}"}
+    # D212：update/full 走“覆盖 + 历史归档 + 孤儿清理”；missing 保持旧行为
+    from . import review_history as RH
+    stats = {"new": 0, "updated": 0, "unchanged": 0, "archived": 0, "orphans": 0}
+    # D212：历史目录**按需创建**（内容全未变时不留空目录）
+    _hist_holder: dict = {"dir": None}
+
+    def _hist_dir():
+        if _hist_holder["dir"] is None:
+            _hist_holder["dir"] = RH.new_history_dir(wdir)
+        return _hist_holder["dir"]
+
+    hist_dir = _hist_dir if mode in ("update", "full") else None
     old_manifest = review_store.read_manifest(home, class_id, work_id) or {}
     old_by_key = {}
     for st in old_manifest.get("students") or []:
@@ -183,7 +195,11 @@ def download_review(storage, home, course_id: str, class_id: str, work_id: str, 
                         else:
                             fn = review_store.image_filename(
                                 s["name"], class_name or class_id, work_name or work_id, idx, ext)
-                        (wdir / fn).write_bytes(body)
+                        if mode in ("update", "full"):
+                            # D212：内容未变 → 不写盘；变了 → 归档旧文件后原子写
+                            RH.save_file(wdir, fn, body, hist_dir, stats)
+                        else:
+                            (wdir / fn).write_bytes(body)
                         total_images += 1
                         return fn
                     except Exception:  # noqa: BLE001
@@ -192,7 +208,7 @@ def download_review(storage, home, course_id: str, class_id: str, work_id: str, 
                 old_st = old_by_key.get(str(s.get("workAnswerId") or s.get("name") or "")) or {}
                 if mode != "comments-only":
                     for n, url in enumerate(detail.get("images") or [], 1):
-                        fn = _save(url, n, "answer", force=(mode == "full"))
+                        fn = _save(url, n, "answer", force=(mode in ("full", "update")))
                         if fn:
                             imgs.append(fn)
                     if mode == "missing" and not imgs:
@@ -254,12 +270,22 @@ def download_review(storage, home, course_id: str, class_id: str, work_id: str, 
                 "error": detail.get("error") or "",
             })
         browser.close()
+    # D212：按新 manifest 引用集合清理孤儿（update/full 才做）
+    keep = RH.manifest_keep_names(students_out)
+    orphans_moved: list = []
+    if mode in ("update", "full"):
+        orphans_moved = RH.cleanup_orphans(wdir, keep, hist_dir, stats)
+        try:
+            RH.prune_history(wdir, days=30)
+        except Exception:  # noqa: BLE001
+            pass
     manifest = {
         "classId": str(class_id), "workId": str(work_id), "courseId": str(course_id),
         "courseName": course_name, "className": class_name or str(class_id),
         "workName": work_name or str(work_id),
         "generated_at": time.strftime("%Y-%m-%d %H:%M:%S"),
         "mode": mode,
+        "stats": stats,
         "students": students_out, "aborted": aborted[:80],
     }
     mp = review_store.write_manifest(home, class_id, work_id, manifest)
@@ -273,4 +299,6 @@ def download_review(storage, home, course_id: str, class_id: str, work_id: str, 
                                   + sum(len(x) for x in (s.get("per_question_comment_images") or []))
                                   for s in students_out),
             "aborted": len(aborted), "manifest": str(mp), "out_dir": str(wdir),
-            "steps": steps, "pruned": pruned}
+            "steps": steps, "pruned": pruned,
+            "stats": stats, "orphans": orphans_moved[:50],
+            "historyDir": str(_hist_holder["dir"]) if _hist_holder["dir"] else ""}

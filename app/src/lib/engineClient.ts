@@ -1515,7 +1515,7 @@ export async function startXxtReviewDownload(
   engineAddr: string, token: string | undefined,
   opts: { courseId: string; classId: string; workId: string
     courseName?: string; className?: string; workName?: string; limit?: number
-    mode?: 'full' | 'missing' | 'comments-only'
+    mode?: 'full' | 'missing' | 'update' | 'comments-only'
     allowPost?: string[] },
 ): Promise<string> {
   const base = normalizeEngineAddr(engineAddr)
