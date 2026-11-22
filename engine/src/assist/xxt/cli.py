@@ -573,6 +573,8 @@ def register(group: click.Group) -> None:
     @click.option("--force", is_flag=True, default=False, help="已批阅也覆盖提交")
     @click.option("--overwrite", is_flag=True, default=False,
                   help="D211：覆盖原报告——先清空平台旧批语/旧报告图，再写入新图与新分数")
+    @click.option("--allow-mismatch", is_flag=True, default=False,
+                  help="D217：允许上传“疑似错卷”的学生（默认跳过，先改 tag 重批）")
     @click.option("--task", "task_path", default=None, type=click.Path(exists=True, dir_okay=False),
                   help="任务包 JSON：从批阅产物（evaluations）装配批语/分数")
     @click.option("--all", "all_students", is_flag=True, default=False,
@@ -594,7 +596,7 @@ def register(group: click.Group) -> None:
                          comment, comment_images, question_comments, total_score,
                          question_scores, send, force, task_path, all_students,
                          from_drafts, report_only, class_dir, task_id, storage,
-                         students_filter, overwrite):
+                         students_filter, overwrite, allow_mismatch):
         """D84 §2：批阅页上传批语（文字+图片）/分数并提交（默认 dry-run，白名单限制）。"""
         from .grade_upload import upload_grade
         from .marking import parse_question_scores
@@ -681,6 +683,27 @@ def register(group: click.Group) -> None:
                     payloads, ws, class_dir=cd_scope, task_id=tid_scope)
             except Exception:  # noqa: BLE001 —— 兜底失败不影响主流程
                 pass
+            # D217：默认跳过“疑似错卷”（题目与作业纸不匹配 → 分数/批语来自另一份卷）
+            skipped_mismatch: list = []
+            if not allow_mismatch:
+                kept = []
+                for _p in payloads:
+                    _al = _p.get("align") or {}
+                    if str((_al or {}).get("verdict") or "") == "mismatch":
+                        skipped_mismatch.append({
+                            "student": str(_p.get("student") or _p.get("key") or ""),
+                            "bestTag": str((_al or {}).get("bestTag") or ""),
+                            "reason": str((_al or {}).get("reason") or "")[:120]})
+                        continue
+                    kept.append(_p)
+                payloads = kept
+                if skipped_mismatch and not payloads:
+                    click.echo(json.dumps({
+                        "ok": False,
+                        "error": f"本次名单全部为“疑似错卷”（{len(skipped_mismatch)} 人），已默认跳过上传",
+                        "hint": "请先核对/修改 tag 后重新批阅；如确需上传请加 --allow-mismatch",
+                        "skippedMismatch": skipped_mismatch}, ensure_ascii=False, indent=1))
+                    raise SystemExit(2)
             if not payloads:
                 click.echo(json.dumps({"ok": False, "error": "本地无该作业的批阅草稿",
                                        "hint": "先在逐生预览的『人工批阅』栏填写并保存到本地",
@@ -730,6 +753,7 @@ def register(group: click.Group) -> None:
                 "applied": buckets["applied"], "unchanged": buckets["unchanged"],
                 "skipped": buckets["skipped"], "conflict": buckets["conflict"],
                 "failed": buckets["failed"], "counts": buckets["counts"],
+                "skippedMismatch": skipped_mismatch,
                 "results": reps}
             _journal("xxt_grade_upload",
                      params={"courseId": course_id, "classId": class_id, "workId": work_id,

@@ -3536,6 +3536,9 @@ class Handler(BaseHTTPRequestHandler):
             # D211：覆盖原报告（先清空旧批语/旧报告图再写新图）
             if payload.get("overwrite") is True:
                 args += ["--overwrite"]
+            # D217：默认跳过“疑似错卷”；显式 allowMismatch 才上传
+            if payload.get("allowMismatch") is True:
+                args += ["--allow-mismatch"]
             # D200：默认“只上传报告图+分数”（有报告图时不重复上传原始批语文本）
             if payload.get("reportOnly") is False:
                 args += ["--with-comment-text"]

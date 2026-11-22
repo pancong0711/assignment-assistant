@@ -151,6 +151,7 @@ def summarize(results: "list[dict] | None") -> dict:
 READY = "ready"            # 已提交 + 有可上传内容（报告图/批语/分数）→ 可上传
 NO_COMMENT = "no-comment"  # 兼容旧值：无可上传内容（保留给外部调用方）
 NO_REPORT = "no-report"    # 已提交但没有报告图，也没有批语/分数 → 请先生成报告
+ALIGN_MISMATCH = "align-mismatch"  # D217：疑似错卷（程序对齐 mismatch）→ 默认不上传
 NOT_SUBMITTED = "not-submitted"  # 平台未提交 → 不上传批阅报告
 NO_DRAFT = "no-draft"      # 已提交但本地没有草稿 → 先批阅
 
@@ -227,10 +228,19 @@ def upload_readiness(*, platform_rows: "list[dict] | None" = None,
         has_image = bool(images)
         has_report = has_image or bool((p.get("report") or {}).get("version"))
         has_score = score is not None
+        align = (p.get("align") or {}) if isinstance(p.get("align"), dict) else {}
+        align_bad = str(align.get("verdict") or "") == "mismatch"
         if not submitted:
             state, why = NOT_SUBMITTED, "平台未提交/无作答，无需上传批阅报告"
         elif not p:
             state, why = NO_DRAFT, "已提交但本地没有草稿：请先「转写+评阅」或人工批阅"
+        elif align_bad:
+            # D217：疑似错卷 → 默认不上传（分数/批语来自另一份卷）
+            _bt = str(align.get("bestTag") or "").strip()
+            state = ALIGN_MISMATCH
+            why = ("题目疑似与作业纸不匹配"
+                   + (f"（建议 tag：{_bt}）" if _bt else "")
+                   + "；默认不上传，请先核对/修改 tag 后重新批阅")
         elif has_image:
             # 主路径：只上传报告图 + 分数（报告图已包含排版好的批语）
             state, why = READY, "可上传（报告图 + 分数；批语文本不重复上传）"
@@ -261,7 +271,8 @@ def upload_readiness(*, platform_rows: "list[dict] | None" = None,
                      "hasReport": bool((p.get("report") or {}).get("version")),
                      "reportVersion": str((p.get("report") or {}).get("version") or ""),
                      "status": "", "source": "local-only"})
-    buckets = {READY: [], NO_REPORT: [], NO_COMMENT: [], NO_DRAFT: [], NOT_SUBMITTED: []}
+    buckets = {READY: [], ALIGN_MISMATCH: [], NO_REPORT: [], NO_COMMENT: [],
+               NO_DRAFT: [], NOT_SUBMITTED: []}
     for r in rows:
         buckets.setdefault(r["state"], []).append(r["student"])
     # 兼容旧字段名：noComment 现在等价于 no-report（没有可上传内容）
@@ -272,12 +283,16 @@ def upload_readiness(*, platform_rows: "list[dict] | None" = None,
             "ready": buckets[READY], "noReport": buckets[NO_REPORT],
             "noComment": no_content, "emptyComment": empty_comment,
             "noDraft": buckets[NO_DRAFT], "notSubmitted": buckets[NOT_SUBMITTED],
+            "alignMismatch": buckets[ALIGN_MISMATCH],
             "summary": {READY: len(buckets[READY]), NO_REPORT: len(buckets[NO_REPORT]),
                         NO_DRAFT: len(buckets[NO_DRAFT]),
+                        ALIGN_MISMATCH: len(buckets[ALIGN_MISMATCH]),
                         NOT_SUBMITTED: len(buckets[NOT_SUBMITTED])},
             "hint": ("将上传 %d 名已提交的学生（有报告图的上传报告图+分数）" % len(buckets[READY])
                      + (("；%d 名已提交但**没有报告图/批语/分数**，请先生成批阅报告"
                          % len(buckets[NO_REPORT])) if buckets[NO_REPORT] else "")
+                     + (("；%d 名**疑似错卷**（默认不上传，请先改 tag 重批）"
+                         % len(buckets[ALIGN_MISMATCH])) if buckets[ALIGN_MISMATCH] else "")
                      + (("；%d 名已提交但**没有本地草稿**" % len(buckets[NO_DRAFT]))
                         if buckets[NO_DRAFT] else "")
                      + (("；%d 名未提交（不上传）" % len(buckets[NOT_SUBMITTED]))

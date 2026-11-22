@@ -537,7 +537,9 @@ def drafts_to_payloads(drafts: dict, only: str = "") -> list[dict]:
                     "images": imgs, "student": str(d.get("student") or ""),
                     "source": eff["source"], "humanMode": eff["humanMode"],
                     # D193：报告版本随 payload 走，上传清单/对照表与报告页脚可对齐
-                    "report": draft_report_version(d)})
+                    "report": draft_report_version(d),
+                    # D217：把批阅前的程序对齐结论带到上传判定（mismatch 默认不上传）
+                    "align": ((d.get("ai") or {}).get("align") or {})})
     # D211：同一学生两个草稿键只保留一条（否则对照表人数翻倍、逐生上传重复传图）
     return sorted(dedupe_payloads_by_student(out), key=lambda x: x["key"])
 

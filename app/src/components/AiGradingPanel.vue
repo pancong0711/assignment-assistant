@@ -52,6 +52,8 @@ interface UploadPreviewRow {
   imageCount?: number; uploadMode?: 'report-only' | 'text'
   /* D211：平台分数读取状态 */
   platformScoreUnknown?: boolean; platformReadError?: string
+  /* D217：程序对齐结论（疑似错卷默认不上传） */
+  alignVerdict?: string; alignReason?: string; alignBestTag?: string
 }
 const previewOpen = ref(false)
 const previewBusy = ref(false)
@@ -67,6 +69,8 @@ const previewReadiness = ref<{ ready?: string[]; noReport?: string[]; noComment?
   summary?: Record<string, number>; hint?: string } | null>(null)
 /* D200：只上传“报告图 + 分数”（不重复上传原始批语文本）——教师的标准工作流。 */
 const uploadReportOnly = ref(true)
+/* D217：疑似错卷默认不上传；勾选后才包含（不新增按钮，只加勾选项）。 */
+const uploadIncludeMismatch = ref(false)
 const oneUploadBusy = ref('')
 const oneUploadResult = ref<Record<string, string>>({})
 /* D197：清理结果（明确显示“完成/试运行”，并展示索引同步清理条数）。 */
@@ -1429,6 +1433,11 @@ async function uploadOneStudent(row: { student: string; readyState?: string
     msg.value = `${row.student} 没有可上传的内容（报告图/批语/分数都缺）：请先生成批阅报告或补批阅`
     return
   }
+  const alignBad = row.readyState === 'align-mismatch'
+    || String((row as any).alignVerdict || '') === 'mismatch'
+  if (!dryRun && alignBad && !uploadIncludeMismatch.value
+      && !window.confirm(`${row.student} 疑似错卷（题目与作业纸不匹配）。\n\n`
+        + '分数/批语可能来自另一份卷。仍要上传这一名学生吗？')) return
   const needForce = row.decision === 'conflict'
   if (!dryRun && overwrite
       && !window.confirm(`覆盖 ${row.student} 的原报告？\n\n`
@@ -1445,7 +1454,7 @@ async function uploadOneStudent(row: { student: string; readyState?: string
     const jobId = await startXxtGradeUpload(props.engineAddr, props.token, {
       courseId: w.courseId, classId: w.classId, cpi: w.cpi, workId: w.workId,
       student: row.student, send: !dryRun, force: needForce || overwrite,
-      overwrite,
+      overwrite, allowMismatch: uploadIncludeMismatch.value || alignBad,
       reportOnly: uploadReportOnly.value,
       // D201：带上 scope，否则引擎按旧布局找草稿 → “本地无该作业的批阅草稿”
       classDir: curWorkDir.value,
@@ -1492,14 +1501,17 @@ async function confirmUploadFromPreview() {
   const conflicts = previewRows.value.filter(r => r.decision === 'conflict'
     && r.readyState !== 'not-submitted')
   // D196：只上传“已提交 + 批语齐全”的学生；未提交/批语空的不进入上传名单。
-  const uploadable = previewRows.value.filter(r => r.readyState
-    ? r.readyState === 'ready'
-    : r.decision === 'new')
+  const mismatched = previewRows.value.filter(r => r.readyState === 'align-mismatch')
+  const uploadable = previewRows.value.filter(r => {
+    if (r.readyState === 'align-mismatch') return uploadIncludeMismatch.value
+    return r.readyState ? r.readyState === 'ready' : r.decision === 'new'
+  })
   const blocked = previewRows.value.filter(r => r.readyState === 'no-report'
     || r.readyState === 'no-comment' || r.readyState === 'no-draft')
   const notSub = previewRows.value.filter(r => r.readyState === 'not-submitted')
   if (!uploadable.length && !conflicts.length) {
     msg.value = `没有需要上传的学生（未提交 ${notSub.length} 人不上传；`
+      + `疑似错卷 ${mismatched.length} 人默认不上传；`
       + `批语缺失 ${blocked.length} 人需先批阅）`
     return
   }
@@ -1510,6 +1522,10 @@ async function confirmUploadFromPreview() {
     for (const b of blocked.slice(0, 8)) lines.push(`  · ${b.student}：${b.readyReason || ''}`)
   }
   if (notSub.length) lines.push(`ℹ 未提交（不上传批阅报告）：${notSub.length} 人`)
+  if (mismatched.length) {
+    lines.push(`⚠ 疑似错卷：${mismatched.length} 人`
+      + (uploadIncludeMismatch.value ? '（已勾选包含，将上传）' : '（默认不上传）'))
+  }
   if (conflicts.length) {
     lines.push(`已批阅且内容不同：${conflicts.length} 人 ——`)
     for (const c of conflicts.slice(0, 10)) {
@@ -1538,6 +1554,7 @@ async function uploadAll(force: boolean, only?: string[]) {
       taskId: packId.value || padId.value || resolvedScope.value || undefined,
       // D208：按对照表上传时只传确认名单（旧实现忽略 only → 实际全传）
       students: only && only.length ? only : undefined,
+      allowMismatch: uploadIncludeMismatch.value,
     })
     busy.value = true
     progress.value = only && only.length
@@ -1952,6 +1969,9 @@ onMounted(async () => {
             </td>
             <td class="c" :title="alignCell(s).why">
               <span :style="{ color: alignCell(s).color }">{{ alignCell(s).text }}</span>
+              <div v-if="alignCell(s).text === '疑似错卷'" class="hint" style="font-size:11px">
+                改 tag 后点「转写+批阅」重批
+              </div>
             </td>
             <td class="c">
               <b :style="{ color: aiState(s).color }">{{ aiState(s).label }}</b>
@@ -2115,6 +2135,14 @@ onMounted(async () => {
           只上传<b>报告图 + 分数</b>，不再重复上传原始批语文本
           <span class="hint">（推荐：报告图里已经是排版好的批语）</span>
         </label>
+        <label v-if="(previewRows || []).some(r => r.readyState === 'align-mismatch')"
+               class="field" style="display:inline-flex; gap:6px; align-items:center; margin-left:16px">
+          <input type="checkbox" v-model="uploadIncludeMismatch" />
+          <span style="color:#b91c1c">
+            包含疑似错卷（{{ (previewRows || []).filter(r => r.readyState === 'align-mismatch').length }} 人）
+          </span>
+          <span class="hint">默认不上传；勾选才会传（分数/批语可能来自另一份卷）</span>
+        </label>
       </p>
       <p v-if="(previewRows || []).some(r => r.platformReadError || r.platformScoreUnknown)"
          class="hint" style="margin:4px 0; color:#b45309">
@@ -2124,6 +2152,7 @@ onMounted(async () => {
       </p>
       <p class="hint" style="margin:4px 0">
         可上传 <b>{{ previewSummary.new ?? 0 }}</b> ·
+        疑似错卷（默认不上传）<b style="color:#b91c1c">{{ previewSummary['align-mismatch'] ?? 0 }}</b> ·
         已一致（跳过）<b>{{ previewSummary.unchanged ?? 0 }}</b> ·
         冲突（需确认）<b style="color:#b45309">{{ previewSummary.conflict ?? 0 }}</b> ·
         无可传内容 <b>{{ previewSummary.skipped ?? 0 }}</b> ·
@@ -2164,6 +2193,9 @@ onMounted(async () => {
                 <span v-if="r.readyState==='ready'" style="color:#15803d">
                   已提交·可传<template v-if="r.hasImage">（报告图）</template>
                 </span>
+                <span v-else-if="r.readyState==='align-mismatch'"
+                      style="color:#b91c1c;font-weight:600"
+                      :title="r.readyReason || ''">疑似错卷·暂不上传</span>
                 <span v-else-if="r.readyState==='no-report'"
                       style="color:#b45309;font-weight:600">已提交·无报告图</span>
                 <span v-else-if="r.readyState==='no-comment'"
@@ -2191,7 +2223,9 @@ onMounted(async () => {
                           : (r.readyState === 'no-report' || r.readyState === 'no-comment'
                              || r.readyState === 'no-draft')
                             ? '没有可上传内容，请先生成报告/补批阅'
-                            : (r.hasImage ? '上传报告图 + 分数' : '上传批语 + 分数')"
+                            : r.readyState === 'align-mismatch'
+                              ? '疑似错卷：点击后需二次确认才会上传'
+                              : (r.hasImage ? '上传报告图 + 分数' : '上传批语 + 分数')"
                         @click="uploadOneStudent(r)">上传</button>
                 <button class="btn small" style="margin-left:4px"
                         :disabled="oneUploadBusy !== '' || busy

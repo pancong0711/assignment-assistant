@@ -1142,7 +1142,9 @@ export async function startXxtGradeUpload(
     /** D208：只上传这些学生（按对照表确认后的名单）。 */
     students?: string[]
     /** D211：覆盖原报告——先清空平台旧批语/旧报告图，再写新图与新分数。 */
-    overwrite?: boolean },
+    overwrite?: boolean
+    /** D217：允许上传“疑似错卷”的学生（默认跳过）。 */
+    allowMismatch?: boolean },
 ): Promise<string> {
   const base = normalizeEngineAddr(engineAddr)
   const res = await fetch(engineUrlWithToken(base, '/xxt/grade/upload', token), {
@@ -2728,6 +2730,10 @@ export interface XxtUploadPreviewRow {
   /** D196/D200：ready | no-report | no-draft | not-submitted。 */
   readyState?: string
   readyReason?: string
+  /** D217：程序对齐结论（疑似错卷默认不上传）。 */
+  alignVerdict?: string
+  alignReason?: string
+  alignBestTag?: string
   /** D200：报告图 / 批语文本 / 分数 三要素（决定上传什么）。 */
   hasImage?: boolean
   hasComment?: boolean
@@ -2745,6 +2751,8 @@ export interface XxtUploadReadiness {
   noComment?: string[]
   /** 有内容可传但批语文本为空（走“报告图+分数”模式即可）。 */
   emptyComment?: string[]
+  /** D217：疑似错卷（默认不上传）。 */
+  alignMismatch?: string[]
   noDraft?: string[]
   notSubmitted?: string[]
   summary?: Record<string, number>
