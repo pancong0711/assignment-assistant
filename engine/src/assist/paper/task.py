@@ -171,11 +171,13 @@ def resolve_items(kb_data: dict, task_items: list[dict], kb_dir: Path,
 
 def resolve_items_with_ids(kb_data: dict, task_items: list[dict], kb_dir: Path,
                            numbering: str = "auto", seed: int | None = None,
-                           target_tag: str = "") -> list[tuple]:
+                           target_tag: str = "",
+                           with_kind: bool = False) -> list[tuple]:
     """D103-T8：与 `resolve_items` 同逻辑，但返回带**题库 id** 的 5 元组。
 
     教师版 PDF 需要按 qid 读 `effective_solution`（题号 no 不是 id）。
-    返回 [(content, img_abspath, tag, no, qid)]。
+    返回 [(content, img_abspath, tag, no, qid)]；
+    `with_kind=True` 时追加第 6 项 `kind`（题库名），供批阅对齐标注每题来源（D216）。
     """
     from .compose import (SUMMARY_ID, SUMMARY_CONTENT, TRANSLATION_ID,
                           copy_content, pick_translation, seed_index)
@@ -214,7 +216,8 @@ def resolve_items_with_ids(kb_data: dict, task_items: list[dict], kb_dir: Path,
                 content = copy_content(str(e.get("page")), content, qid)
             img = str(e.get("img_path") or "")
             img_abs = str((kb_dir / img).resolve()) if img and not img.startswith("/") else img
-            out.append((content, img_abs, tag, no, qid))
+            out.append((content, img_abs, tag, no, qid, kind) if with_kind
+                       else (content, img_abs, tag, no, qid))
             seen_ids.add(qid)
         # 合成题（与 resolve_items 同口径）
         if tag == "summary" and SUMMARY_ID not in seen_ids:

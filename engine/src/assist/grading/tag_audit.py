@@ -314,14 +314,16 @@ def papers_from_taskpads(ws, taskpads: list[dict]) -> list[dict]:
             rows = resolve_items_with_ids(kb_data, items, kb_dir,
                                           numbering=str(pad.get("numbering") or "auto"),
                                           seed=pad.get("seed"),
-                                          target_tag=tag)
+                                          target_tag=tag, with_kind=True)
         except Exception as exc:  # noqa: BLE001 —— 单张失败不影响其余
             logger.warning(f"[tag-audit] 解析作业纸 {pad.get('id')!r} 失败：{str(exc)[:120]}")
             rows = []
         qs = []
-        for (content, _img, _tag, no, qid) in rows:
+        for row in rows:
+            content, _img, _tag, no, qid = row[:5]
+            kind = str(row[5]) if len(row) > 5 else ""
             qs.append({"no": str(no or ""), "qid": str(qid or ""),
-                       "stem": str(content or "")})
+                       "stem": str(content or ""), "kb": kind})
         out.append({"padId": str(pad.get("id") or ""), "tag": tag, "questions": qs})
     return out
 

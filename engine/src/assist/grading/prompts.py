@@ -449,7 +449,8 @@ def kinds_of_items(items) -> list[str]:
 
 
 def build_grade_prompt(items, markdown_text: str, *, student: str = "",
-                       ws=None, tag: str = "", task_size: int = 0) -> str:
+                       ws=None, tag: str = "", task_size: int = 0,
+                       align: "dict | None" = None) -> str:
     """**唯一的**评阅提示词构建入口（D177 合并两套实现）。
 
     合并前有两套：`evaluate.build_user_prompt`（生产主路径）与
@@ -549,15 +550,23 @@ def build_grade_prompt(items, markdown_text: str, *, student: str = "",
         if it.get("solution"):
             q_lines.append(f"参考答案/解题要点（仅用于核对，勿向学生透露）：\n{it['solution']}")
 
-    # ---- 先判题目，再评阅 ----
-    head = ("【第一步：先判断题目是否对应】\n"
-            "先核对学生转写中的题目/作答所针对的题目，是否就是下面这份**作业纸题目**：\n"
-            "- 一致 → question_match.match = true；\n"
-            "- 不一致（题号对不上/题干完全不同/像是另一份作业或学生自制作业纸）→ match = false，"
-            "并在 evidence 中**逐字引用**学生转写里的题目片段，在 reason 中说明差异；\n"
-            "- 学生没抄题目只有作答 → 按作答内容推断，证据不足时 match = true，"
-            "但 reason 注明「学生未抄题目，按作答内容推断」。\n"
-            "**判断只看题目本身，不受作答对错影响。**")
+    # ---- D216：题目对齐由程序先做；match 时不再让模型重复判断（省 token）----
+    _align_verdict = str((align or {}).get("verdict") or "") if isinstance(align, dict) else ""
+    if _align_verdict == "match":
+        _cov = align.get("coverage")
+        _cov_txt = f"{float(_cov):.0%}" if isinstance(_cov, (int, float)) else "—"
+        head = (f"【题目已由程序核对】学生作答与本作业纸匹配（覆盖率 {_cov_txt}）。\n"
+                "请直接逐题评阅，**不需要**再判断题目是否对应；"
+                "如确有个别题明显不属于本题单，按 question_match.note 记一句即可。")
+    else:
+        head = ("【第一步：先判断题目是否对应】\n"
+                "先核对学生转写中的题目/作答所针对的题目，是否就是下面这份**作业纸题目**：\n"
+                "- 一致 → question_match.match = true；\n"
+                "- 不一致（题号对不上/题干完全不同/像是另一份作业或学生自制作业纸）→ match = false，"
+                "并在 evidence 中**逐字引用**学生转写里的题目片段，在 reason 中说明差异；\n"
+                "- 学生没抄题目只有作答 → 按作答内容推断，证据不足时 match = true，"
+                "但 reason 注明「学生未抄题目，按作答内容推断」。\n"
+                "**判断只看题目本身，不受作答对错影响。**")
     n_items = len(items)
     if n_items > 1:
         head += f"\n本次作业共 {n_items} 题，请严格按以下题目逐题评阅，不要评阅额外内容。"
@@ -569,6 +578,10 @@ def build_grade_prompt(items, markdown_text: str, *, student: str = "",
         parts.append("【缺少作业纸题目】无法核对题目一致性，请在 question_match.reason 中注明"
                      "「未提供作业纸题目」，并仅基于作答本身评阅。")
 
+    if _align_verdict in ("mismatch", "unknown") and isinstance(align, dict):
+        _r = str(align.get("reason") or "").strip()
+        if _r:
+            parts.append(f"【程序对齐提示】{_r}。请在 question_match 中说明你看到的差异。")
     parts.append(EVIDENCE_INSTRUCTION)
     parts.append(f"【学生转写（含题目与作答）】\n{markdown_text}")
     return "\n\n".join(parts)

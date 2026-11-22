@@ -120,6 +120,7 @@
 - `docs/156-D213-kind-resolution-consistency.md` — **D213 innovation 评阅过严：提示词与算分的题库(kind)解析口径统一 + 旧 plan 补 kind + 兜底可见**
 - `docs/157-D214-grading-prompt-composition-and-tag.md` — **D214 说明：AI 批阅如何按 tag 选题、提示词只注入出现的题型、tag 错时为何仍出分及风险**
 - `docs/158-D215-align-before-grade-design.md` — **D215 设计（已定）：程序对齐替代模型题目比对；mismatch 仅警告仍出分、unknown 沿用现状、不加新按钮**
+- `docs/159-D216-align-implementation.md` — **D216 实施：程序对齐落地（省 token、逐题 kb、结果贯通 plan/草稿/报告/逐生审核表）**
 
 > **当前活动需求单 = `docs/112-D168`（口径/快照）+ `docs/113-D169`（路线/架构）**；
 > 历史条目保留供追溯，与最新口径冲突时以这两份为准。

@@ -441,10 +441,30 @@ def _run_evaluate(ctx: dict, client, evaluations_dir: Path) -> list[Path]:
                 "student": tf.stem, "status": "fail", "error": msg[:300]})
             skipped.append(msg)
             continue
+        # D216：批阅前置「程序对齐」——纯 Python 判断学生做的是哪份卷（0 token）。
+        # mismatch 仅警告、仍出分；unknown 沿用现状。
+        align = None
+        try:
+            from .align import align_student
+            from . import inputs as _inp
+            _plan = ctx.get("plan") or {}
+            _papers = _plan.get("papers") or []
+            if not _papers:
+                _papers = _inp.papers_for_plan(ws=ctx.get("ws"), plan=_plan)
+            _t = json.loads(Path(tf).read_text(encoding="utf-8"))
+            _rtag = ""
+            for _st in (_plan.get("students") or []):
+                if str(_st.get("name")) == tf.stem:
+                    _rtag = str(_st.get("tag") or "")
+                    break
+            align = align_student(_t, _papers, roster_tag=_rtag, ws=ctx.get("ws"))
+            ctx.setdefault("align", {})[tf.stem] = align
+        except Exception as exc:  # noqa: BLE001 —— 对齐失败不阻断批阅
+            logger.warning(f"[对齐] {tf.stem} 失败（不影响评阅）：{str(exc)[:160]}")
         try:
             outs.append(evaluate_student(client, tf, items or tasks_items, evaluations_dir,
                                          homework_name=ctx.get("homework", ""), model=model,
-                                         ws=ctx.get("ws")))
+                                         ws=ctx.get("ws"), align=align))
             logger.info(f"[评阅] OK {tf.stem}")
         except Exception as e:  # noqa: BLE001 —— 单生失败不阻断全班
             logger.error(f"[评阅] FAIL {tf.stem}: {e}")

@@ -1062,6 +1062,33 @@ function aiState(s: { key: string; name?: string; altKeys?: string[] }): { label
   if (ai.transcript) return { label: '已转写', color: '#a16207' }
   return { label: '未跑', color: '#9ca3af' }
 }
+/** D216：程序对齐结论 → 可读标签（数据来自草稿 ai.align）。 */
+function alignCell(s: { key?: string; name?: string; altKeys?: string[] }):
+  { text: string; color: string; why: string } {
+  const a = (draftOf(s).ai || {}).align || {}
+  const v = String(a.verdict || '')
+  if (!v) return { text: '未对齐', color: '#9ca3af',
+                   why: '该生评阅结果里没有对齐信息（旧数据）；重新批阅后显示' }
+  if (v === 'match') return { text: '匹配', color: '#15803d', why: String(a.reason || '') }
+  if (v === 'mismatch') {
+    return { text: '疑似错卷', color: '#b45309;font-weight:600',
+             why: `${a.reason || ''}（建议 tag：${a.bestTag || '—'}）` }
+  }
+  return { text: '未确定', color: '#6b7280', why: String(a.reason || '') }
+}
+/** D216：全表对齐汇总（用于列表上方提示）。 */
+const alignSummary = computed(() => {
+  let match = 0, mismatch = 0, unknown = 0, none = 0
+  for (const s of students.value) {
+    const v = String(((draftOf(s).ai || {}).align || {}).verdict || '')
+    if (v === 'match') match++
+    else if (v === 'mismatch') mismatch++
+    else if (v === 'unknown') unknown++
+    else none++
+  }
+  return { match, mismatch, unknown, none, total: students.value.length }
+})
+
 /** D127：报告模式（未人工介入时显示 auto(AI)，不再是一串 "—"）。 */
 function reportMode(s: { key: string; name?: string; altKeys?: string[] }): string {
   const d = draftOf(s)
@@ -1847,6 +1874,17 @@ onMounted(async () => {
         </span>
       </div>
 
+      <!-- D216：程序对齐汇总（纯本地，不花 token） -->
+      <p v-if="alignSummary.total" class="hint" style="margin:4px 0"
+         :style="alignSummary.mismatch ? 'color:#b45309' : 'color:var(--c-muted)'">
+        🧭 题目匹配：{{ alignSummary.match }} 匹配 · {{ alignSummary.mismatch }} 疑似错卷 ·
+        {{ alignSummary.unknown }} 未确定<template v-if="alignSummary.none"> ·
+        {{ alignSummary.none }} 未对齐（旧数据）</template>
+        <span v-if="alignSummary.mismatch">
+          —— 建议核对 tag 后用现有「改 tag」按钮修正，再重新批阅（仍会出分，不会被阻断）
+        </span>
+      </p>
+
       <!-- D173：列头统计，**每项可点做过滤**（替代原来单一的「只看不一致」） -->
       <div v-if="auditMeta?.generatedAt" class="audit-filters">
         <button class="audit-chip" :class="{ on: auditFilter === 'all' }"
@@ -1886,6 +1924,7 @@ onMounted(async () => {
           <tr>
             <th style="text-align:left">学生</th><th>tag</th>
             <th title="用转写题目反推的实际 tag（与左列不一致会整行高亮）">🛡 审计 tag</th>
+            <th title="程序对齐：学生作答是否就是该 tag 对应的作业纸（不花 token）">🧭 题目匹配</th>
             <th>AI 状态</th>
             <th>AI 分</th><th>人工</th><th>报告模式</th><th>操作</th>
           </tr>
@@ -1910,6 +1949,9 @@ onMounted(async () => {
                 <span :style="{ color: auditCell(s).color }">{{ auditCell(s).text }}</span>
                 <span class="hint" style="font-size:11px"> 详情</span>
               </span>
+            </td>
+            <td class="c" :title="alignCell(s).why">
+              <span :style="{ color: alignCell(s).color }">{{ alignCell(s).text }}</span>
             </td>
             <td class="c">
               <b :style="{ color: aiState(s).color }">{{ aiState(s).label }}</b>

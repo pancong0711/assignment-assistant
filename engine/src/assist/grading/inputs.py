@@ -132,7 +132,8 @@ def pads_by_tag(ws, explicit: "dict[str, dict] | None" = None,
     if explicit:
         for tag, task in explicit.items():
             if isinstance(task, dict):
-                out[str(tag)] = {"padId": str(task.get("id") or ""), "questions": _questions_of(task, ws)}
+                out[str(tag)] = {"padId": str(task.get("id") or ""), "pad": task,
+                                 "questions": _questions_of(task, ws)}
     root = Path(tasks_dir) if tasks_dir else (Path(ws) / "tasks")
     if root.is_dir():
         for f in sorted(root.glob("*.taskpad.json")):
@@ -202,8 +203,10 @@ def build_plan(ws, *, task_id: str, class_dir: str, class_id: str = "", work_id:
             explicit_pads=[p for p in (explicit_pads or {}).values() if isinstance(p, dict)])
         tag_pads = {}
         for nt, e in (pack_ctx.get("by_tag") or {}).items():
-            tag_pads[e["tag"]] = {"padId": e["padId"], "questions": _questions_of(e["pad"], ws)}
-        tag_pads_norm = {nt: {"padId": e["padId"], "questions": _questions_of(e["pad"], ws)}
+            tag_pads[e["tag"]] = {"padId": e["padId"], "pad": e["pad"],
+                                  "questions": _questions_of(e["pad"], ws)}
+        tag_pads_norm = {nt: {"padId": e["padId"], "pad": e["pad"],
+                              "questions": _questions_of(e["pad"], ws)}
                          for nt, e in (pack_ctx.get("by_tag") or {}).items()}
     else:
         tag_pads = pads_by_tag(ws, explicit_pads, tasks_dir)
@@ -263,6 +266,17 @@ def build_plan(ws, *, task_id: str, class_dir: str, class_id: str = "", work_id:
             students.append({"name": r["name"], "number": "", "tag": "",
                              "workAnswerId": r.get("workAnswerId") or "",
                              "images": list(r.get("images") or []), "questions": [], "padId": ""})
+    # D216：把“展开后的作业纸题目（含每题 kb）”写进 plan，供批阅前置对齐复用。
+    # 注意：taskpad.items 只有 {kb, chap, ids}，题干必须经 papers_from_taskpads 展开。
+    papers: list = []
+    try:
+        from . import tag_audit as _ta
+        _pads = [v.get("pad") for v in (tag_pads or {}).values() if isinstance(v, dict)]
+        _pads = [x for x in _pads if isinstance(x, dict)]
+        if _pads:
+            papers = _ta.papers_from_taskpads(ws, _pads)
+    except Exception:  # noqa: BLE001 —— 对齐数据缺失不影响批阅
+        papers = []
     return {
         "taskId": str(task_id), "packId": str((pack or {}).get("id") or ""),
         "classDir": str(class_dir),
@@ -271,8 +285,37 @@ def build_plan(ws, *, task_id: str, class_dir: str, class_id: str = "", work_id:
         "tags": sorted({s["tag"] for s in students if s["tag"]}),
         "questionsByTag": {t: v["questions"] for t, v in tag_pads.items()},
         "students": students,
+        "papers": papers,
         "generatedAt": time.strftime("%Y-%m-%d %H:%M:%S"),
     }
+
+
+def papers_for_plan(ws=None, plan: "dict | None" = None) -> list:
+    """D216：从 plan 兜底重建“作业纸题目（含 kb）”。
+
+    plan 里没有 `papers` 时（旧 plan / 旧客户端），用 `questionsByTag` 还原。
+    题干可能为空（旧数据），此时对齐会判 unknown —— 属预期（沿用现状评阅）。
+    """
+    plan = plan or {}
+    out: list = []
+    qbt = plan.get("questionsByTag") or {}
+    pad_by_tag: dict = {}
+    for st in (plan.get("students") or []):
+        t = str(st.get("tag") or "")
+        if t and st.get("padId"):
+            pad_by_tag.setdefault(t, str(st.get("padId")))
+    for tag, questions in qbt.items():
+        qs = []
+        for i, q in enumerate(questions or [], start=1):
+            if not isinstance(q, dict):
+                continue
+            qs.append({"no": str(q.get("no") or i), "qid": str(q.get("id") or ""),
+                       "stem": str(q.get("content") or ""),
+                       "kb": str(q.get("kb") or q.get("kind") or "")})
+        if qs:
+            out.append({"padId": pad_by_tag.get(str(tag), ""), "tag": str(tag),
+                        "questions": qs})
+    return out
 
 
 def plan_path(ws, class_dir: str, task_id: str) -> Path:

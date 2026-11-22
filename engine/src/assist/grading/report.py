@@ -472,6 +472,20 @@ def _mode_report_md(*, student: str, ai: dict, human: dict, human_mode: str,
         elif ai_score is not None:
             head.append(f"**AI 评分：** {ai_score} / 100")
         head += ["", ai_body]
+        # D216：草稿版报告也显示“题目对齐”与“评分依据”
+        # （此前只有 legacy build_report_md 有，PWA 用的草稿版完全看不到）
+        _align = (ai or {}).get("align") or {}
+        if isinstance(_align, dict) and str(_align.get("verdict") or "") == "mismatch":
+            _why = str(_align.get("reason") or "").strip()
+            head += ["", "> ℹ️ **提示**：你转写出的题目与本作业纸题目存在差异"
+                        + (f"（{_why}）" if _why else "")
+                        + "。请对照本次作业的题目，确认自己是否做的是这份作业。"]
+        _rules = _rule_source_md({
+            "per_question_rules": (ai or {}).get("per_question_rules") or [],
+            "kind_fallback_questions": (ai or {}).get("kind_fallback_questions") or [],
+        })
+        if _rules:
+            head += ["", "**评分依据（按题目来源）：**", *_rules]
         return head
 
     def _human_section() -> "list[str]":

@@ -62,6 +62,9 @@ def resolve_item_kind(item: "dict | None", q: "dict | None" = None) -> "tuple[st
     """
     it = item or {}
     q = q or {}
+    # D216：程序对齐给出的题库（逐题）优先级最高，来源标 align
+    if str(it.get("_kindSource") or "") == "align" and str(it.get("kb") or "").strip():
+        return normalize_kind(it["kb"]), "align"
     for key, src in (("kind", "item.kind"), ("kb", "item.kb"), ("tag", "item.tag")):
         v = str(it.get(key) or "").strip()
         if v:
@@ -189,6 +192,11 @@ DEFAULT_RULES: dict = {
         "bigramWeight": 0.65,   # 字面 n-gram（2/3-gram Dice）权重
         "numberWeight": 0.35,   # 数值常量重合权重（同章不同参数主要靠它区分）
         "minChars": 12,         # 题干去噪后短于此 → 视为「没抄题」（标 ?）
+        # D216：批阅前置「程序对齐」阈值（与审计同一段，避免两套口径打架）
+        "coverageMin": 0.6,          # 判定“做的是这份卷”的最低覆盖率
+        "worksheetMarginMin": 0.15,  # 与次佳作业纸的最小差值
+        "matchScore": 0.45,          # 单题算“匹配上”的最低相似度
+        "alignMinChars": 6,          # 对齐时题干最小长度（比审计宽松）
     },
 }
 
@@ -217,6 +225,11 @@ _NUM_RANGES: dict[str, tuple[float, float]] = {
     "mediumScore": (0, 1),
     "bigramWeight": (0, 1),
     "numberWeight": (0, 1),
+    # D216：批阅前置「程序对齐」阈值
+    "coverageMin": (0, 1),
+    "worksheetMarginMin": (0, 1),
+    "matchScore": (0, 1),
+    "alignMinChars": (1, 500),
 }
 
 
@@ -342,7 +355,9 @@ def validate_rules(rules: dict) -> list[str]:
             errs.append("tagAudit 必须是对象")
         else:
             for key in ("minScore", "marginMin", "mediumScore", "bigramWeight",
-                        "numberWeight", "minChars"):
+                        "numberWeight", "minChars",
+                        "coverageMin", "worksheetMarginMin", "matchScore",
+                        "alignMinChars"):
                 if key not in ta:
                     continue
                 v = ta[key]
@@ -358,7 +373,9 @@ def validate_rules(rules: dict) -> list[str]:
                 errs.append("tagAudit.bigramWeight + numberWeight 必须 > 0")
             for key in ta:
                 if key not in ("minScore", "marginMin", "mediumScore", "bigramWeight",
-                               "numberWeight", "minChars"):
+                               "numberWeight", "minChars",
+                               "coverageMin", "worksheetMarginMin", "matchScore",
+                               "alignMinChars"):
                     errs.append(f"tagAudit.{key} 未知字段")
     types = rules.get("types") or {}
     for kind, cfg in types.items():

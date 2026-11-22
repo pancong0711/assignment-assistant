@@ -331,7 +331,7 @@ def _normalize_analysis_shape(analysis: dict) -> "tuple[dict, list[str]]":
 
 
 def build_user_prompt(items: list[dict], markdown_text: str, student: str = "",
-                      ws=None) -> str:
+                      ws=None, align: "dict | None" = None) -> str:
     """构造绑定题目的评阅 prompt（生产主路径）。
 
     D177：**实现已合并到 `prompts.build_grade_prompt`** —— 此前这里与
@@ -343,7 +343,7 @@ def build_user_prompt(items: list[dict], markdown_text: str, student: str = "",
     ws: workspace（读 grading-rules.json 的规则摘要与受控词表）；None=内置默认规则。
     """
     from .prompts import build_grade_prompt
-    return build_grade_prompt(items, markdown_text, student=student, ws=ws)
+    return build_grade_prompt(items, markdown_text, student=student, ws=ws, align=align)
 
 
 def _format_json_parse_error(e: json.JSONDecodeError) -> str:
@@ -925,7 +925,8 @@ def _enrich_questions(analysis: dict, items: "list[dict] | None", t_data: dict) 
 
 def evaluate_student(client: LLMClient, transcript_file: Path, items: list[dict],
                      out_dir: Path, homework_name: str = "",
-                     model: str | None = None, ws=None) -> Path:
+                     model: str | None = None, ws=None,
+                     align: "dict | None" = None) -> Path:
     """评阅一份转录 → evaluations/<student>.json + .md 批语。
 
     D130：`ws` 用于读 `<ws>/grading-rules.json`（规则卡改数值后**新批阅**生效）
@@ -938,7 +939,22 @@ def evaluate_student(client: LLMClient, transcript_file: Path, items: list[dict]
     markdown_text = transcript_to_markdown(t_data)
     quality = t_data.get("quality")
 
-    analysis = analyze(client, build_user_prompt(items, markdown_text, student, ws=ws),
+    # D216：用程序对齐结果给每题补**真实题库**（kindSource=align），并按对齐结论裁剪提示词
+    if isinstance(align, dict) and align.get("questionMap"):
+        kb_by_no = {str(m.get("padNo") or ""): str(m.get("kb") or "")
+                    for m in align["questionMap"] if isinstance(m, dict)}
+        patched = []
+        for it in items or []:
+            it2 = dict(it)
+            k = str(it2.get("序号") or it2.get("no") or "")
+            kb = kb_by_no.get(k)
+            if kb and not str(it2.get("kb") or "").strip():
+                it2["kb"] = kb
+                it2["_kindSource"] = "align"
+            patched.append(it2)
+        items = patched
+    analysis = analyze(client, build_user_prompt(items, markdown_text, student, ws=ws,
+                                                 align=align),
                        ws=ws,
                        model=model)
     # D179：analyze 返回后立即归一化，确保顶层非 dict 等异常结构先降级，
@@ -960,16 +976,37 @@ def evaluate_student(client: LLMClient, transcript_file: Path, items: list[dict]
         substitution = (match.get("status") is False)
     result = score_from_analysis(analysis, quality=quality, items=items, ws=ws)
     result["analysis"] = analysis
+    if isinstance(align, dict):
+        # D216：对齐证据（只读）：verdict / 覆盖率 / 建议作业纸 / 逐题 kb
+        result["align"] = align
     if quality:
         result["quality"] = quality
-    if substitution:
+    # D216：程序对齐（mismatch 仅警告、仍出分）与模型判断合并：
+    #   - align=mismatch → 记 suspected-substitution（供教师核对），但不阻断、不扣分；
+    #   - question_match 保留模型证据（reason/note），并标注来源与对齐结论。
+    _align_verdict = str((align or {}).get("verdict") or "") if isinstance(align, dict) else ""
+    _align_mismatch = (_align_verdict == "mismatch")
+    if substitution or _align_mismatch:
         result["verdict"] = "suspected-substitution"
         # D127：**不再**写进 deductions（会出现在学生报告正文里，等于给学生贴标签）。
         # 仅保留在 evaluations/*.json + 教师侧提示，供人工确认是否为学生自制作业纸。
-        logger.warning(f"[{student}] 题目与作业纸不一致：{match.get('reason') or match.get('note')}")
+        logger.warning(f"[{student}] 题目与作业纸不一致："
+                       f"{(align or {}).get('reason') or match.get('reason') or match.get('note')}")
     else:
         result["verdict"] = "normal"
-    result["question_match"] = match
+    if isinstance(align, dict):
+        result["question_match"] = {
+            **(match if isinstance(match, dict) else {}),
+            "status": (not _align_mismatch) and bool((match or {}).get("status", True)),
+            "source": "align-python",
+            "alignVerdict": _align_verdict,
+            "alignReason": str(align.get("reason") or ""),
+            "coverage": align.get("coverage"),
+            "bestTag": align.get("bestTag"),
+            "bestPadId": align.get("bestPadId"),
+        }
+    else:
+        result["question_match"] = match
 
     result["feedback_md"] = build_feedback_md(result, student, homework_name,
                                               analysis=analysis)

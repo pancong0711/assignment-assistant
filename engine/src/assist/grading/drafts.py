@@ -82,6 +82,12 @@ def save_drafts_from_grading(ws, *, class_id: str, work_id: str, task_id: str,
                     logger.warning(f"报告 PNG 生成失败（{student}）：{str(exc)[:120]}")
         # D92-R2：写入**双套**结构；AI 产物落 ai 套（人工审核另写 human/修订，不覆盖此基线）
         ai_set = {"score": score, "comment": comment, "reportImages": images or []}
+        # D216：把批阅证据一起写进草稿（此前 verdict/question_match 在草稿层丢失，
+        # 导致 PWA 的草稿版报告与逐生审核看不到“题目是否对得上”）。
+        for _k in ("align", "question_match", "verdict",
+                   "per_question_rules", "kind_fallback_questions"):
+            if ev.get(_k) is not None:
+                ai_set[_k] = ev[_k]
         # D126-FIX：AI 套同时带上转写原文。`run_task` 的 transcribe 步已写过一次，
         # 但"先生成报告再回读落草稿"（如 refill/重算）这条路径不经过那里 →
         # 逐生审核会只剩批语、没有转写。合并写入（save_draft_sets 只并新增字段），
