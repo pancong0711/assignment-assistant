@@ -1164,6 +1164,16 @@ class Handler(BaseHTTPRequestHandler):
 
         def worker():
             t0 = time.time()
+            # D218：任务第一行打印引擎版本+commit，便于判断“修复是否真的加载了”
+            # （教师端引擎来自 CI 打包的 engine-main.zip，不是仓库最新提交）。
+            try:
+                from . import __version__ as _ver
+                from . import get_commit as _gc
+                _banner = f"[engine] version={_ver} commit={_gc()} python={sys.version.split()[0]}"
+                q_.put(_banner); out.append(_banner)
+                print(f"[{prefix}] {_banner}", flush=True)
+            except Exception:  # noqa: BLE001 —— 诊断行失败不影响任务
+                pass
             # D70/D72：Popen 逐行读取，避免长任务等待期间 terminal 空白。
             try:
                 proc = subprocess.Popen(

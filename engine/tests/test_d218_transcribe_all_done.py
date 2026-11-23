@@ -86,3 +86,39 @@ def test_source_contract_for_d218():
         encoding="utf-8")
     assert "全部学生都已有转写" in src
     assert "return []" in src
+
+
+# ---------------- D218-FIX2：空的 items 任何入口都不再崩 ----------------
+
+def test_batchrun_empty_items_returns_report(tmp_path: Path):
+    from assist.grading.batchrun import run_items
+    rep = run_items([], lambda it: {"ok": True}, kind="transcribe",
+                    out_dir=tmp_path)
+    assert rep["total"] == 0 and rep["ok"] == 0 and rep["failed"] == 0
+    assert rep.get("empty") is True
+    assert (tmp_path / "batch-report.json").is_file()
+
+
+def test_transcribe_batch_empty_items_returns_report(tmp_path: Path):
+    from assist.grading.transcribe import transcribe_batch
+    rep = transcribe_batch(None, [], tmp_path / "transcripts")
+    assert rep["total"] == 0 and rep.get("empty") is True
+
+
+def test_flow_converts_items_error_to_readable(tmp_path: Path):
+    """即使有未知路径传空 items，也要给可读提示而不是 ItemsError 原文。"""
+    from assist.grading.flow import GradingInputError, _run_transcribe
+    import assist.grading.flow as F
+
+    names = ["学生甲"]
+    tdir = _transcripts(tmp_path, names)
+
+    # 让 screening 后仍进入 normalize_items（模拟“有 group 但 id 非法/为空”）
+    ctx = _ctx(tmp_path, names=names, force=True)
+    ctx["plan"] = {"students": [{"name": "", "images": [str(tmp_path / "a.png")]}]}
+    try:
+        _run_transcribe(ctx, client=None, transcripts_dir=tdir)
+    except GradingInputError as exc:      # 可读业务错误
+        assert "转录阶段没有可处理的学生" in str(exc) or "没有任何学生图片" in str(exc)
+    except Exception as exc:              # 绝不能是 ItemsError 原始文本
+        raise AssertionError(f"应抛 GradingInputError，实际 {type(exc).__name__}: {exc}")

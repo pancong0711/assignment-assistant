@@ -41,6 +41,24 @@ def run_items(items: list[dict], worker, *, kind: str, concurrency: int = 3,
     cons = max(1, int(concurrency or 3))
     started = time.strftime("%Y-%m-%d %H:%M:%S")
     t0 = time.time()
+    items = list(items or [])
+    if not items:
+        # D218-FIX2：空 items 是“这次没有要处理的条目”的正常状态，
+        # 不应让调用方崩在 normalize_items / run_items 上。
+        report = {"kind": str(kind), "startedAt": started,
+                  "finishedAt": time.strftime("%Y-%m-%d %H:%M:%S"),
+                  "ms": 0, "total": 0, "ok": 0, "failed": 0,
+                  "concurrency": cons, "items": [],
+                  "empty": True,
+                  "note": "本次没有需要处理的条目（可能全部已完成或被过滤）"}
+        if out_dir:
+            p = Path(out_dir) / "batch-report.json"
+            p.parent.mkdir(parents=True, exist_ok=True)
+            atomic_write_text(p, json.dumps(report, ensure_ascii=False, indent=1))
+            report["reportPath"] = str(p)
+        if emit:
+            emit("[SKIP] 没有需要处理的条目（全部已完成或被过滤）")
+        return report
     results: dict[int, dict] = {}
 
     def _one(idx: int, item: dict) -> tuple[int, dict]:

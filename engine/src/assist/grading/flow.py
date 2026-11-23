@@ -255,10 +255,20 @@ def _run_transcribe(ctx: dict, client, transcripts_dir: Path) -> list[Path]:
             # 表现为「点转写+批阅就失败」。正确行为是跳过转录，继续后续步骤（评阅）。
             logger.info("[转录] 全部学生都已有转写，本次跳过转录（要重跑请用「强制重做」）")
             return []
-    items = normalize_items([
-        {"id": student, "question": "请转录这份物理作业图片", "images": [str(p) for p in imgs]}
-        for student, imgs in sorted(groups.items())
-    ])
+    from .items import ItemsError as _ItemsError
+    try:
+        items = normalize_items([
+            {"id": student, "question": "请转录这份物理作业图片",
+             "images": [str(p) for p in imgs]}
+            for student, imgs in sorted(groups.items())
+        ])
+    except _ItemsError as exc:
+        # D218-FIX2：正常情况这里不该再为空（上面已保护）；万一仍发生，
+        # 给出可操作提示，而不是把 ItemsError: items 必须是非空数组 抛给教师。
+        raise GradingInputError(
+            f"转录阶段没有可处理的学生（{exc}）。可能原因：全部学生都已有转写"
+            f"（请勾「强制重做」重跑）、或名单里没有人有作答图。"
+        ) from None
     concurrency = int(ctx.get("concurrency") or 3)
     report = transcribe_batch(client, items, transcripts_dir, model=model,
                               concurrency=concurrency,
