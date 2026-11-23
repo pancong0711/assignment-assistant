@@ -249,6 +249,12 @@ def _run_transcribe(ctx: dict, client, transcripts_dir: Path) -> list[Path]:
         if _before != len(groups):
             logger.info(f"[转录] 跳过 {_before - len(groups)} 名已有转写的学生"
                         f"（要重跑请用「强制重跑」）")
+        if not groups:
+            # D218：全班都已有转写 → 过滤后为空。
+            # 旧实现在这里直接 normalize_items([]) → ItemsError「items 必须是非空数组」，
+            # 表现为「点转写+批阅就失败」。正确行为是跳过转录，继续后续步骤（评阅）。
+            logger.info("[转录] 全部学生都已有转写，本次跳过转录（要重跑请用「强制重做」）")
+            return []
     items = normalize_items([
         {"id": student, "question": "请转录这份物理作业图片", "images": [str(p) for p in imgs]}
         for student, imgs in sorted(groups.items())

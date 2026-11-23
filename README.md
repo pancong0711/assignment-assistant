@@ -122,6 +122,7 @@
 - `docs/158-D215-align-before-grade-design.md` — **D215 设计（已定）：程序对齐替代模型题目比对；mismatch 仅警告仍出分、unknown 沿用现状、不加新按钮**
 - `docs/159-D216-align-implementation.md` — **D216 实施：程序对齐落地（省 token、逐题 kb、结果贯通 plan/草稿/报告/逐生审核表）**
 - `docs/160-D217-mismatch-upload-guard.md` — **D217 疑似错卷：照常批阅 + 上传前默认拦截（对照表标红/批量排除/逐生二次确认/引擎兜底）**
+- `docs/161-D218-transcribe-all-done-error.md` — **D218 修复：全班已有转写时「转写+批阅」报 items 非空（改为跳过转录继续评阅）**
 
 > **当前活动需求单 = `docs/112-D168`（口径/快照）+ `docs/113-D169`（路线/架构）**；
 > 历史条目保留供追溯，与最新口径冲突时以这两份为准。
