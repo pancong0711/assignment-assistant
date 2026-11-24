@@ -88,6 +88,27 @@ _JOBS: dict[str, dict] = {}
 # D194：报告生成单实例（同一作业并发点两次会抢写同名报告文件）。
 _RENDER_LOCK = threading.Lock()
 _RENDER_RUNNING: set = set()
+# D219：批阅任务单实例（同一 作业范围 同时只允许一个 job；避免“全局任务还在跑、
+# 教师又点逐生批阅”造成两个任务并发抢同一份转写/评阅目录）。
+_GRADE_LOCK = threading.Lock()
+_GRADE_RUNNING: dict = {}   # scope_key -> job_id
+
+
+def _grade_scope_key(cid: str, kid: str, work: str, task_id: str) -> str:
+    return f"{cid}:{kid}:{work}:{task_id}"
+
+
+def _grade_job_running(scope_key: str) -> "str | None":
+    """该作业范围正在运行的批阅 job（已完成/失败自动清理）。"""
+    with _GRADE_LOCK:
+        jid = _GRADE_RUNNING.get(scope_key) or ""
+        if not jid:
+            return None
+        info = _JOBS.get(jid) or {}
+        if str(info.get("status") or "") == "running":
+            return jid
+        _GRADE_RUNNING.pop(scope_key, None)
+        return None
 # D192：登录任务超过这个时长仍 running，视为卡死的旧任务（CLI 等待窗口 1800s + 余量）。
 _XXT_LOGIN_MAX_AGE = 1900
 _RESTART_ARGS: tuple = (  # ('serve', --workspace …)：python -c 入口的 click argv
@@ -3110,6 +3131,15 @@ class Handler(BaseHTTPRequestHandler):
                 args += ["--steps", ",".join(str(x) for x in steps_)]
             if payload.get("allowPartial") is True:
                 args += ["--allow-partial"]
+            # D219：同一作业范围单实例——先接上正在跑的任务，不再并发。
+            _scope_key = _grade_scope_key(cid, kid, work, task_id)
+            _running_job = _grade_job_running(_scope_key)
+            if _running_job:
+                self._json({"ok": False, "stage": "busy", "job_id": _running_job,
+                            "error": "该作业已有批阅任务在运行，已为你接上该任务",
+                            "hint": ("页面会继续显示它的进度；如需中止请点「取消任务」，"
+                                     "完成或取消后再点新的批阅")}, 409)
+                return
             # D118：启动前先装配 plan 做**前置体检**——没有任何学生作答图时直接给可读错误，
             # 而不是等引擎跑到转录步才抛 FileNotFoundError（Windows 上表现为 WinError 3）。
             pads_dir_arg = ""
@@ -3130,6 +3160,8 @@ class Handler(BaseHTTPRequestHandler):
                 self._json({"ok": False, "error": "engine 无法 import assist.cli", "detail": detail}, 500)
                 return
             job_id = secrets.token_urlsafe(6)
+            with _GRADE_LOCK:
+                _GRADE_RUNNING[_scope_key] = job_id
             self._start_stream_job(job_id, _xxt_cli_cmd(args), env, "xxt_grade_ai", "xxt-grade-ai", cwd,
                                    journal_kind="xxt_grade_ai",
                                    journal_params={"courseId": cid, "classId": kid, "workId": work,

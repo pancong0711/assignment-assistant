@@ -2777,6 +2777,17 @@ def grade(obj, task_path, pads_dir, images_dir, rerun, steps, allow_partial, xxt
     except GradingInputError as exc:
         raise click.ClickException(str(exc)) from None
     click.echo(f"完成 run_id={rec['run_id']} steps={rec['steps_done']}\n产物目录={rec['bucket']}")
+    # D219：如实汇报本次评阅做了什么（避免“什么都没做也显示✅完成”）
+    _es = rec.get("evaluate_summary") or {}
+    if _es:
+        click.echo(f"评阅统计：新评 {_es.get('evaluated', 0)} 人 · "
+                   f"跳过（已有结果）{_es.get('skippedExisting', 0)} 人 · "
+                   f"跳过（无题目）{_es.get('skippedNoItems', 0)} 人 · "
+                   f"失败 {_es.get('failed', 0)} 人")
+        try:
+            click.echo("__GRADE_SUMMARY__" + json.dumps(_es, ensure_ascii=False))
+        except Exception:  # noqa: BLE001
+            pass
     # D178：整班批阅时若有学生被跳过，必须打出来（否则教师只看到"完成"却少了人）
     _skipped = rec.get("evaluate_skipped") or []
     if _skipped:

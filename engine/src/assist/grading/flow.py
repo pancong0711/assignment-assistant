@@ -183,13 +183,21 @@ def _diag(ctx: dict, **fields) -> None:
 
 
 def _plan_student_images(ctx: dict) -> "dict[str, list]":
-    """plan 模式下 学生→图片 路径（绝对路径直接可用）。"""
+    """plan 模式下 学生→图片 路径（绝对路径直接可用）。
+
+    D219：**必须遵守 `only_students`**。此前逐生点「转写」也会把全班都转写一遍，
+    与“只处理这一行学生”的预期不符（现场反馈“键的功能错位”）。
+    """
     from pathlib import Path as _P
+    only = _only_students(ctx)
     out: dict = {}
     for stu in ((ctx.get("plan") or {}).get("students") or []):
+        name = str(stu.get("name") or "")
+        if only and name not in only:
+            continue
         imgs = [_P(x) for x in (stu.get("images") or [])]
-        if stu.get("name") and imgs:
-            out[str(stu["name"])] = imgs
+        if name and imgs:
+            out[name] = imgs
     return out
 
 
@@ -431,7 +439,13 @@ def _run_evaluate(ctx: dict, client, evaluations_dir: Path) -> list[Path]:
     only = _only_students(ctx)
     outs = []
     skipped: list[str] = []          # D178：跳过的学生及原因（供上层给教师可见反馈）
+    # D219：本次评阅到底做了什么（新评/跳过已有/跳过无题目/失败），供 UI 如实展示，
+    # 避免“什么都没做也显示✅完成”。
+    stat = {"evaluated": 0, "skippedExisting": 0, "skippedNoItems": 0,
+            "failed": 0, "scanned": 0}
+    ctx["evaluate_summary"] = stat
     for tf in sorted(ctx["transcripts_dir"].glob("[!_]*.json")):
+        stat["scanned"] += 1
         # D156：**只评阅指定学生**（此前进度只过滤了转写，评阅会扫描整个
         # transcripts 目录 → 出现"批张紫涵却报张松"的困惑）。
         if only and tf.stem not in only:
@@ -441,6 +455,7 @@ def _run_evaluate(ctx: dict, client, evaluations_dir: Path) -> list[Path]:
         _ev = evaluations_dir / f"{tf.stem}.json"
         if _ev.is_file() and not ctx.get("force"):
             logger.info(f"[评阅] 跳过 {tf.stem}（已有评阅结果；要重跑请用「强制重跑」）")
+            stat["skippedExisting"] += 1
             outs.append(_ev)
             continue
         items = _plan_items_for(ctx, tf.stem) if ctx.get("plan") else None
@@ -455,6 +470,7 @@ def _run_evaluate(ctx: dict, client, evaluations_dir: Path) -> list[Path]:
                 "ts": time.strftime("%Y-%m-%d %H:%M:%S"),
                 "run_id": ctx["run_id"], "step": "evaluate",
                 "student": tf.stem, "status": "fail", "error": msg[:300]})
+            stat["skippedNoItems"] += 1
             skipped.append(msg)
             continue
         # D216：批阅前置「程序对齐」——纯 Python 判断学生做的是哪份卷（0 token）。
@@ -481,6 +497,7 @@ def _run_evaluate(ctx: dict, client, evaluations_dir: Path) -> list[Path]:
             outs.append(evaluate_student(client, tf, items or tasks_items, evaluations_dir,
                                          homework_name=ctx.get("homework", ""), model=model,
                                          ws=ctx.get("ws"), align=align))
+            stat["evaluated"] += 1
             logger.info(f"[评阅] OK {tf.stem}")
         except Exception as e:  # noqa: BLE001 —— 单生失败不阻断全班
             logger.error(f"[评阅] FAIL {tf.stem}: {e}")
@@ -488,6 +505,7 @@ def _run_evaluate(ctx: dict, client, evaluations_dir: Path) -> list[Path]:
                 "ts": time.strftime("%Y-%m-%d %H:%M:%S"),
                 "run_id": ctx["run_id"], "step": "evaluate",
                 "student": tf.stem, "status": "fail", "error": str(e)[:300]})
+            stat["failed"] += 1
             skipped.append(f"学生「{tf.stem}」评阅失败：{e}")
     # D178：**逐生补批**（只点名 1 人）却一人未产出 → 必须报可读错误。
     # 此前只是 continue，任务仍以 done 结束，PWA 显示「✅ 完成」，
@@ -751,6 +769,8 @@ def run_task(task_path: Path, ws: Path, images_dir: Path | None = None,
                    "bucket": str(base), "usage": ctx.get("usage") or {}}
     if ctx.get("evaluate_skipped"):
         summary_rec["evaluate_skipped"] = list(ctx["evaluate_skipped"])
+    if ctx.get("evaluate_summary"):
+        summary_rec["evaluate_summary"] = dict(ctx["evaluate_summary"])
     journal_append(journal, summary_rec)
     return summary_rec
 

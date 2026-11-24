@@ -11,6 +11,7 @@ import {
   extractJobError, fetchLlmConfig, fetchXxtClassMap, fetchXxtGradeDrafts, fetchXxtLoginJob,
   fetchXxtReviewIndex, fetchXxtReviewStudents, postLlmProvider, postXxtClassMap,
   startXxtGradeAi, startXxtGradeUpload, renderReportsFromDrafts, testLlmStages,
+  cancelXxtJob,
   fetchXxtUploadPreview, fetchXxtReportVersions, fetchReportProgress,
   cleanupXxtReports, compactXxtReportVersions,
   applyTagAudit, fetchTagAudit, fetchTagAuditHistory, runTagAudit, undoTagAudit,
@@ -278,7 +279,7 @@ async function runOne(s: any, mode: 'transcribe' | 'evaluate' | 'full') {
       try { taskpad = raw ? JSON.parse(raw) : null } catch { taskpad = null }
     }
     if (!taskpad) { msg.value = '请先选择作业包（或单张作业纸）'; return }
-    const jobId = await startXxtGradeAi(props.engineAddr, props.token, {
+    const start = await startXxtGradeAi(props.engineAddr, props.token, {
       courseId: w.courseId, classId: w.classId, cpi: w.cpi, workId: w.workId,
       ...(packId.value ? { packId: packId.value } : {}),
       taskpad,
@@ -293,7 +294,12 @@ async function runOne(s: any, mode: 'transcribe' | 'evaluate' | 'full') {
       imageMode: imageMode.value, svgRedraw: svgRedraw.value,
       allowPartial: true,
     })
-    await pollJob(jobId, `「${s.name}」${label}`, s.name)
+    if (start.kind === 'busy') {
+      // D219：同一作业已有批阅任务在跑 → 接上它（不并发、不误报失败）
+      rowMsg.value = { ...rowMsg.value,
+        [s.name]: `⏳ ${start.error}（已接上该任务）` }
+    }
+    await pollJob(start.jobId, `「${s.name}」${label}`, s.name)
     await loadStudents()
   } catch (e) {
     rowMsg.value = { ...rowMsg.value,
@@ -304,8 +310,45 @@ async function runOne(s: any, mode: 'transcribe' | 'evaluate' | 'full') {
 }
 
 /** 轮询 job 直到结束（逐生补批共用；D154：结果写**行内**）。 */
+/* D219：批阅任务持久化 + 取消
+ * 现场：整班批阅超过 UI 轮询上限就显示“超时/失败”，但引擎仍在后台跑；
+ * 教师随后点逐生批阅，实际是那个后台任务把全班评完了 → 看起来“两个键功能错位”。
+ * 现在：任务 id 落 localStorage（刷新/切页后可接上），并可显式取消。 */
+const GRADE_JOB_KEY = 'assignment-assistant.grade-job.v1'
+const gradeJob = ref<{ id: string; label: string; rowName: string; startedAt: number } | null>(null)
+
+function rememberGradeJob(id: string, label: string, rowName = '') {
+  gradeJob.value = { id, label, rowName, startedAt: Date.now() }
+  try { localStorage.setItem(GRADE_JOB_KEY, JSON.stringify(gradeJob.value)) } catch { /* noop */ }
+}
+function forgetGradeJob() {
+  gradeJob.value = null
+  try { localStorage.removeItem(GRADE_JOB_KEY) } catch { /* noop */ }
+}
+function loadGradeJob() {
+  try {
+    const raw = localStorage.getItem(GRADE_JOB_KEY)
+    if (!raw) return null
+    const o = JSON.parse(raw) as { id?: string; label?: string; rowName?: string; startedAt?: number }
+    return o?.id ? { id: String(o.id), label: String(o.label || '批阅'),
+                    rowName: String(o.rowName || ''), startedAt: Number(o.startedAt || 0) } : null
+  } catch { return null }
+}
+/** D219：取消正在运行的批阅任务（引擎侧真 terminate）。 */
+async function cancelGradeJob() {
+  const g = gradeJob.value
+  if (!g) return
+  if (!window.confirm(`取消正在运行的「${g.label}」任务？\n\n`
+    + '已生成的部分结果会保留；取消后可重新发起。')) return
+  const r = await cancelXxtJob(props.engineAddr, props.token, g.id)
+  progress.value = r?.ok ? '⏹ 已发送取消请求（任务将很快停止）'
+    : `取消失败：${r?.error || '未知错误'}`
+  if (r?.ok) forgetGradeJob()
+}
+
 async function pollJob(jobId: string, label: string, rowName = '') {
-  for (let i = 0; i < 600; i++) {
+  rememberGradeJob(jobId, label, rowName)
+  for (let i = 0; i < 1200; i++) {          // D219：40 分钟（原 20 分钟）
     await new Promise((r) => window.setTimeout(r, 2000))
     const job = await fetchXxtLoginJob(props.engineAddr, props.token, jobId)
     const line = (job.lines || []).slice(-1)[0] || ''
@@ -313,15 +356,37 @@ async function pollJob(jobId: string, label: string, rowName = '') {
     if (rowName) rowMsg.value = { ...rowMsg.value, [rowName]: text }
     else msg.value = text
     if (job.status !== 'running') {
+      forgetGradeJob()
+      // D219：解析引擎的评阅统计，如实显示“新评 N / 跳过 M”，
+      // 避免“什么都没做也显示 ✅完成”。
+      let st: { evaluated?: number; skippedExisting?: number
+                skippedNoItems?: number; failed?: number } = {}
+      const marker = (job.lines || []).filter(l => l.startsWith('__GRADE_SUMMARY__')).slice(-1)[0]
+      if (marker) {
+        try { st = JSON.parse(marker.slice('__GRADE_SUMMARY__'.length)) } catch { /* ignore */ }
+      }
+      const detail = marker
+        ? `（新评 ${st.evaluated ?? 0} · 跳过已有 ${st.skippedExisting ?? 0}`
+          + ` · 无题目 ${st.skippedNoItems ?? 0} · 失败 ${st.failed ?? 0}）`
+        : ''
       const done = job.status === 'done'
-      const final = done ? `✅ ${label}完成`
-        : `❌ ${label}失败：${(job.lines || []).slice(-2).join(' ')}`
+      let final: string
+      if (!done) {
+        final = `❌ ${label}失败：${(job.lines || []).slice(-2).join(' ')}`
+      } else if (marker && (st.evaluated ?? 0) === 0 && !(st.failed ?? 0)) {
+        final = `⚠️ ${label}：本次没有新评阅${detail}。`
+          + (st.skippedExisting ? '如需重评请勾「强制重做」。' : '')
+      } else {
+        final = `✅ ${label}完成${detail}`
+      }
       if (rowName) rowMsg.value = { ...rowMsg.value, [rowName]: final }
       else msg.value = final
       return
     }
   }
-  const to = `⚠️ ${label}超时（仍在后台执行）`
+  // D219：超时不等于失败——任务仍在后台跑，保留 job 以便取消/接续
+  const to = `⏳ ${label}超过 40 分钟仍在后台执行（任务 ${jobId}）。`
+    + '可点「⏹ 取消任务」或稍后刷新本页自动接上。'
   if (rowName) rowMsg.value = { ...rowMsg.value, [rowName]: to }
   else msg.value = to
 }
@@ -952,7 +1017,7 @@ async function startAi(steps?: string[]) {
   busy.value = true
   progress.value = `正在装配任务清单并启动${jobName}……`
   try {
-    const jobId = await startXxtGradeAi(props.engineAddr, props.token, {
+    const start = await startXxtGradeAi(props.engineAddr, props.token, {
       courseId: w.courseId, classId: w.classId, cpi: w.cpi, workId: w.workId, taskpad,
       // D127：作业包模式显式传 packId 作为批阅作用域键（与下方读草稿同口径）
       ...(packId.value ? { packId: packId.value } : {}),
@@ -966,6 +1031,10 @@ async function startAi(steps?: string[]) {
       ...(allowPartial.value ? { allowPartial: true } : {}),   // D126-FIX：部分失败仍继续
     })
     stopPoll()
+    if (start.kind === 'busy') {
+      progress.value = `⏳ ${start.error}（已接上该任务）`
+    }
+    const jobId = start.jobId
     const tick = async () => {
       try {
         const job = await fetchXxtLoginJob(props.engineAddr, props.token, jobId)
@@ -1547,7 +1616,7 @@ async function uploadAll(force: boolean, only?: string[]) {
   if (!n) { msg.value = '还没有本地草稿：先跑 AI 批阅或逐生填写后保存'; return }
   if (force && !only && !window.confirm(`强制覆盖：将上传 ${n} 份本地草稿（含打分）并覆盖平台已批阅内容？`)) return
   try {
-    const jobId = await startXxtGradeUpload(props.engineAddr, props.token, {
+    const uploadJobId = await startXxtGradeUpload(props.engineAddr, props.token, {
       courseId: w.courseId, classId: w.classId, cpi: w.cpi, workId: w.workId,
       send: true, force, reportOnly: uploadReportOnly.value,
       classDir: curWorkDir.value,
@@ -1563,7 +1632,8 @@ async function uploadAll(force: boolean, only?: string[]) {
     stopPoll()
     const tick = async () => {
       try {
-        const job = await fetchXxtLoginJob(props.engineAddr, props.token, jobId)
+        // uploadAll 的 job id 变量在作用域上方（startXxtGradeUpload 返回 string）
+        const job = await fetchXxtLoginJob(props.engineAddr, props.token, uploadJobId)
         const lines = job.lines || []
         if (job.status === 'running') {
           progress.value = `上传中：${(lines.slice(-1)[0] || '').slice(-140)}`
@@ -1605,6 +1675,12 @@ onMounted(async () => {
   await loadWorks()
   // D117：自动选中的作业同样要拉学生/草稿（否则「逐生审核」空白）
   if (workKey.value) void loadStudents()
+  // D219：刷新/切页后接上未完成的批阅任务（避免重复发起或误以为失败）
+  const pending = loadGradeJob()
+  if (pending) {
+    gradeJob.value = pending
+    void pollJob(pending.id, pending.label, pending.rowName)
+  }
 })
 </script>
 
@@ -1844,7 +1920,12 @@ onMounted(async () => {
         有学生转录失败时仍继续（默认中止）
       </label>
     </div>
-    <p v-if="progress" class="hint" style="margin-top:6px">{{ progress }}</p>
+    <p v-if="progress" class="hint" style="margin-top:6px">
+      {{ progress }}
+      <button v-if="gradeJob" class="btn small"
+              style="margin-left:8px; border-color:#dc2626; color:#b91c1c"
+              @click="cancelGradeJob">⏹ 取消任务</button>
+    </p>
 
     <h3 style="margin-top:14px">④ 逐生审核（左右两栏弹窗）</h3>
     <p class="hint" style="margin:0 0 6px">

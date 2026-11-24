@@ -1238,6 +1238,11 @@ export async function postXxtClassMap(
   return (await res.json().catch(() => ({}))) as XxtClassMap
 }
 
+/** D219：批阅启动结果——`busy` 表示已有任务在跑，页面应接上它而不是报错。 */
+export type XxtGradeStart =
+  | { kind: 'started'; jobId: string }
+  | { kind: 'busy'; jobId: string; error: string }
+
 /** POST /xxt/grade/ai-run：把作业包 + 班级/作业交给引擎跑 AI 两段式（返回 job_id）。 */
 export async function startXxtGradeAi(
   engineAddr: string, token: string | undefined,
@@ -1258,20 +1263,24 @@ export async function startXxtGradeAi(
     students?: string[]
     /** D157：强制重跑（已有转写/评阅也重新生成） */
     force?: boolean },
-): Promise<string> {
+): Promise<XxtGradeStart> {
   const base = normalizeEngineAddr(engineAddr)
   const res = await fetch(engineUrlWithToken(base, '/xxt/grade/ai-run', token), {
     method: 'POST', headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify(payload),
   })
-  if (!res.ok) {
-    let detail = `HTTP ${res.status}`
-    try { const o = (await res.json()) as { error?: string }; if (o?.error) detail = o.error } catch { /* keep */ }
-    throw new Error(detail)
+  const o = (await res.json().catch(() => ({}))) as {
+    job_id?: string; error?: string; hint?: string; stage?: string }
+  // D219：409 busy = 该作业已有批阅任务在跑 → 接上它（不是失败）
+  if (res.status === 409 && o.stage === 'busy' && o.job_id) {
+    return { kind: 'busy', jobId: String(o.job_id),
+             error: String(o.error || '该作业已有批阅任务在运行') }
   }
-  const o = (await res.json()) as { job_id?: string }
+  if (!res.ok) {
+    throw new Error(o.error || o.hint || `HTTP ${res.status}`)
+  }
   if (!o?.job_id) throw new Error('引擎未返回 job_id')
-  return o.job_id
+  return { kind: 'started', jobId: String(o.job_id) }
 }
 
 /** POST /xxt/grade/render-drafts：按 task 产物的批阅结果重新生成本地草稿 + 报告 PNG。 */
