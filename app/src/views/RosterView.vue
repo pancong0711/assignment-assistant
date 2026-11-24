@@ -610,12 +610,27 @@ function makeClassSidecar(purpose: 'print' | 'download'): SheetSidecar | null {
   }
 }
 
+/** D225：导出文件名工具——必须带**班级名 + 完整时间戳**。
+ *  旧实现只用日期（class-sheet-2026-11-23.json），同一天连续导出多个班级会互相覆盖。
+ */
+function exportStamp(): string {
+  const d = new Date()
+  const p = (n: number) => String(n).padStart(2, '0')
+  return `${d.getFullYear()}${p(d.getMonth() + 1)}${p(d.getDate())}`
+    + `-${p(d.getHours())}${p(d.getMinutes())}${p(d.getSeconds())}`
+}
+
+/** 文件名里的班级标签（取当前班级名；去掉 Windows 非法字符）。 */
+function exportClassLabel(): string {
+  const nm = String(roster.activeMeta?.name || '').trim() || 'class'
+  return nm.replace(/[\\/:*?"<>|\s]+/g, '_').slice(0, 40) || 'class'
+}
+
 /** 写入 sidecar：已连目录则写同目录，否则下载（与 HTML 同批产出）。 */
 function emitClassSidecar(purpose: 'print' | 'download') {
   const sc = makeClassSidecar(purpose)
   if (!sc) return
-  const stamp = new Date().toISOString().slice(0, 10)
-  const name = sidecarFileName(`class-sheet-${stamp}.html`)
+  const name = sidecarFileName(`class-sheet-${exportClassLabel()}-${exportStamp()}.html`)
   try {
     downloadData(JSON.stringify(sc, null, 1), name, 'application/json')
   } catch { /* 下载失败不阻断打印 */ }
@@ -655,7 +670,8 @@ async function downloadClassPreviewHtml() {
     downloadData(html, `class-sheet-preview-${new Date().toISOString().slice(0, 10)}.html`, 'text/html')
     emitClassSidecar('download')     // D168-T13：与 HTML 同批产出追溯 JSON
   } catch {
-    downloadData(classPreviewHtml.value, `class-sheet-preview-${new Date().toISOString().slice(0, 10)}.html`, 'text/html')
+    downloadData(classPreviewHtml.value,
+      `class-sheet-preview-${exportClassLabel()}-${exportStamp()}.html`, 'text/html')
     emitClassSidecar('download')
   }
 }

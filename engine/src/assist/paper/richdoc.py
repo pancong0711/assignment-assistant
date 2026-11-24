@@ -295,25 +295,46 @@ _BLOCK_TAG_RE = re.compile(r"<(table|ul|ol|li|h[1-6]|blockquote|pre|svg|div|p)(?
 
 
 def render_rich_inline(text: str) -> str:
-    """行内渲染：让「题号 + 正文」排在同一行（D105 / D222）。
+    """行内渲染：让「题号 + 正文」排在同一行（D105 / D222 / D225）。
 
-    - 首个 `<p>` 内只有行内元素（**含 `<br>`**）→ 去掉该 `<p>` 包裹；
-    - 多段内容 → **只行内化第一段**，其余段落保持块级
-      （题号与首行同排，后续段落正常换行）；
-    - 首块即块级（table/svg/列表…）→ 原样返回。
+    - 首块 `<p>`（内部仅行内元素，含 `<br>`）→ 去包裹；
+    - 多段 → 只行内化第一段，其余保持块级；
+    - 首块 `<div>`（内部仅行内）→ 去包裹；
+    - 首块 `<ul>/<ol>` → 各项用 `<br>` 连接（题号与第一项同排）；
+    - 首块 `<blockquote>` → 取第一段文字行内化；
+    - 表格 / SVG / 代码块 → 保持原样。
     """
     html = render_rich(text)
     if not html:
         return ""
     trimmed = html.strip()
-    m = re.match(r"<p>((?:(?!</p>)[\s\S])*)</p>([\s\S]*)$", trimmed)
-    if not m:
-        return html
-    inner = m.group(1)
-    rest = (m.group(2) or "").strip()
-    if _BLOCK_TAG_RE.search(inner):
-        return html
-    return inner + rest if rest else inner
+
+    pm = re.match(r"<p>((?:(?!</p>)[\s\S])*)</p>([\s\S]*)$", trimmed)
+    if pm and not _BLOCK_TAG_RE.search(pm.group(1)):
+        rest = (pm.group(2) or "").strip()
+        return pm.group(1) + rest if rest else pm.group(1)
+
+    dm = re.match(r"<div[^>]*>((?:(?!</div>)[\s\S])*)</div>([\s\S]*)$", trimmed)
+    if dm and not _BLOCK_TAG_RE.search(dm.group(1)):
+        rest = (dm.group(2) or "").strip()
+        return dm.group(1) + rest if rest else dm.group(1)
+
+    lm = re.match(r"<(ul|ol)[^>]*>([\s\S]*?)</\1>([\s\S]*)$", trimmed)
+    if lm:
+        lis = [x.strip() for x in re.findall(r"<li[^>]*>((?:(?!</li>)[\s\S])*)</li>",
+                                             lm.group(2)) if x.strip()]
+        if lis:
+            rest = (lm.group(3) or "").strip()
+            joined = "<br>".join(lis)
+            return joined + rest if rest else joined
+
+    bm = re.match(r"<blockquote[^>]*>\s*<p>((?:(?!</p>)[\s\S])*)</p>[\s\S]*?</blockquote>([\s\S]*)$",
+                  trimmed)
+    if bm and not _BLOCK_TAG_RE.search(bm.group(1)):
+        rest = (bm.group(2) or "").strip()
+        return bm.group(1) + rest if rest else bm.group(1)
+
+    return html
 
 
 # ---------------- 纯文本派生 ----------------

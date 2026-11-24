@@ -216,13 +216,38 @@ export function renderRichInline(text: string): string {
   const html = renderRich(text)
   if (!html) return ''
   const trimmed = html.trim()
-  // 取“第一个 <p>…</p>”及其后的剩余块
-  const m = /^<p>((?:(?!<\/p>)[\s\S])*)<\/p>([\s\S]*)$/.exec(trimmed)
-  if (!m) return html
-  const inner = m[1]
-  const rest = (m[2] || '').trim()
-  if (BLOCK_TAG_RE.test(inner)) return html
-  return rest ? inner + rest : inner
+
+  // 1) 首块是 <p>：内部无块级 → 去掉包裹（多段时只行内化第一段）
+  const pm = /^<p>((?:(?!<\/p>)[\s\S])*)<\/p>([\s\S]*)$/.exec(trimmed)
+  if (pm && !BLOCK_TAG_RE.test(pm[1])) {
+    const rest = (pm[2] || '').trim()
+    return rest ? pm[1] + rest : pm[1]
+  }
+  // 2) <div>（内部仅行内元素）→ 去掉这层 div
+  const dm = /^<div[^>]*>((?:(?!<\/div>)[\s\S])*)<\/div>([\s\S]*)$/.exec(trimmed)
+  if (dm && !BLOCK_TAG_RE.test(dm[1])) {
+    const rest = (dm[2] || '').trim()
+    return rest ? dm[1] + rest : dm[1]
+  }
+  // 3) <ul>/<ol> → 各项用 <br> 连接（题号与第一项同排；translation 题常见）
+  const lm = /^<(ul|ol)[^>]*>([\s\S]*?)<\/\1>([\s\S]*)$/.exec(trimmed)
+  if (lm) {
+    const lis = [...lm[2].matchAll(/<li[^>]*>((?:(?!<\/li>)[\s\S])*)<\/li>/g)]
+      .map((x) => x[1].trim()).filter(Boolean)
+    if (lis.length) {
+      const rest = (lm[3] || '').trim()
+      const joined = lis.join('<br>')
+      return rest ? joined + rest : joined
+    }
+  }
+  // 4) <blockquote> → 取第一段文字行内化
+  const bm = /^<blockquote[^>]*>\s*<p>((?:(?!<\/p>)[\s\S])*)<\/p>[\s\S]*?<\/blockquote>([\s\S]*)$/.exec(trimmed)
+  if (bm && !BLOCK_TAG_RE.test(bm[1])) {
+    const rest = (bm[2] || '').trim()
+    return rest ? bm[1] + rest : bm[1]
+  }
+  // 5) 表格 / SVG / 代码块等：保持块级
+  return html
 }
 
 /** md+html → 纯文本（检索 / Excel 摘要 / xlsx solution 列）。 */
