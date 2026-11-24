@@ -4,7 +4,7 @@ import {
   type KbBook, type KbKind, type KbRow,
 } from '../lib/kb'
 import { readKbXlsx, writeKbXlsx } from '../lib/kbXlsx'
-import { downloadData, pickDirectory, writeFileInDir } from '../lib/fsAccess'
+import { downloadData, pickDirectory } from '../lib/fsAccess'
 import { demoBooks } from '../demo/demoData'
 import { fetchKbSolutionIndex, solutionScopeKey, type KbSolutionEntry } from '../lib/engineClient'
 import { pickEffectiveSolution, type SolutionLike } from '../lib/sheetHtml'
@@ -439,11 +439,30 @@ export const useKbStore = defineStore('kb', {
       const bin = writeKbXlsx(this.books[kind])
       const dirHandle = getKbDirHandle()
       if (dirHandle) {
-        await writeFileInDir(dirHandle, `kb/${kind}.xlsx`, bin)
+        // D221：自动识别“连的是 workspace 根 还是 kb 目录本身”，避免写到 kb/kb/。
+        const { listDirEntryNames, readFileInDir, writeFileInDir } = await import('../lib/fsAccess')
+        const { resolveKbWriteTarget, historyBackupPath, historyStamp } =
+          await import('../lib/kbLayout')
+        const rootNames = await listDirEntryNames(dirHandle)
+        const target = resolveKbWriteTarget(this.fsDirName, rootNames, kind)
+        // D221：写前备份旧文件到 <kb>/.history/<ts>/（引擎路径本来就有快照，
+        // File System Access 回退路径此前没有 —— 覆盖即丢失）。
+        let backupNote = ''
+        try {
+          const oldFile = await readFileInDir(dirHandle, target.path)
+          if (oldFile) {
+            const stamp = historyStamp()
+            const bak = historyBackupPath(target.kbDir, kind, stamp)
+            await writeFileInDir(dirHandle, bak, await oldFile.arrayBuffer())
+            backupNote = `（旧文件已备份到 ${bak}）`
+          }
+        } catch (e) {
+          backupNote = `（旧文件备份失败：${(e as Error).message}；已继续写回）`
+        }
+        await writeFileInDir(dirHandle, target.path, bin)
         this.savedAt = new Date().toLocaleTimeString()
-        // TODO(阶段1 engine 已具备)：真实快照由 engine `assist kb snapshot` 负责
         this.dirty = false
-        return `已写回 ${this.fsDirName}/kb/${kind}.xlsx${engineNote}`
+        return `已写回 ${this.fsDirName}/${target.path}${backupNote}${engineNote}`
       }
       this.downloadKind(kind)
       return `当前浏览器不支持原地写回，已导出 ${kind}.xlsx（可用其替换本地文件；或改用 Chrome/Edge 获得直接写回）${engineNote}`

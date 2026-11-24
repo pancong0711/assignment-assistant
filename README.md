@@ -125,6 +125,7 @@
 - `docs/161-D218-transcribe-all-done-error.md` — **D218 修复：全班已有转写时「转写+批阅」报 items 非空（改为跳过转录继续评阅）**
 - `docs/162-D219-grade-scope-and-summary.md` — **D219 修复：逐生批阅只评该生、评阅如实统计、任务单实例/接续/取消（解决“键功能错位”）**
 - `docs/163-D220-kb-editor-input-focus.md` — **D220 修复：题库编辑器 id 栏每输一个字就失焦（行 key 改为与输入值无关 + 防抖草稿/写回分层）**
+- `docs/164-D221-kb-writeback-path-and-backup.md` — **D221 修复：题库写回落到 kb/kb（路径自动识别）+ 覆盖前 .history 时间戳备份**
 
 > **当前活动需求单 = `docs/112-D168`（口径/快照）+ `docs/113-D169`（路线/架构）**；
 > 历史条目保留供追溯，与最新口径冲突时以这两份为准。

@@ -84,6 +84,18 @@ export async function ensurePermission(handle: PermissionHandle, mode: 'read' | 
   return (await handle.requestPermission({ mode })) === 'granted'
 }
 
+/** 列出目录下的一级条目名（用于识别“连的是 workspace 还是 kb 目录”）。 */
+export async function listDirEntryNames(dir: FileSystemDirectoryHandle): Promise<string[]> {
+  const out: string[] = []
+  try {
+    const it = (dir as unknown as { values: () => AsyncIterable<{ name: string }> }).values()
+    for await (const e of it) out.push(String(e.name || ''))
+  } catch {
+    return out
+  }
+  return out
+}
+
 /** 在目录句柄下写入文件（自动创建父目录）。 */
 export async function writeFileInDir(
   dir: FileSystemDirectoryHandle,

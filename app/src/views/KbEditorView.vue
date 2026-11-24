@@ -3,6 +3,8 @@ import { computed, nextTick, onMounted, ref, watch } from 'vue'
 import { KB_KINDS, KB_KIND_LABELS, type KbKind } from '../lib/kb'
 import { useKbStore, getKbDirHandle } from '../stores/kb'
 import { createRowKeyer } from '../lib/stableRowKey'
+import { listDirEntryNames } from '../lib/fsAccess'
+import { looksLikeKbDir, nestedKbWarning } from '../lib/kbLayout'
 import { detectCapabilities, fsWriteHint, writeFileInDir } from '../lib/fsAccess'
 import { useSettingsStore } from '../stores/settings'
 import { fetchKbSolutions, mutateKbSolution, type SolutionVersion,
@@ -380,11 +382,24 @@ function selectXlsx(ev: Event) {
 }
 
 function connectWorkspace() {
-  void kb.connectWorkspaceDir().then((ok) => {
+  void kb.connectWorkspaceDir().then(async (ok) => {
     if (ok) {
       const h = getKbDirHandle()
-      if (h) status.value = `已连接目录 ${h.name}（保存时写入 <目录>/kb/<kind>.xlsx，docs/05-D3）`
-      else status.value = '连接目录成功，但句柄过期，请重试。'
+      if (!h) { status.value = '连接目录成功，但句柄过期，请重试。'; return }
+      // D221：识别连的是 workspace 根 还是 kb 目录本身；并检测历史误写的 kb/kb
+      const names = await listDirEntryNames(h)
+      const isKbDir = looksLikeKbDir(h.name, names)
+      let nested = false
+      try {
+        const kbSub = await h.getDirectoryHandle('kb')
+        await kbSub.getDirectoryHandle('kb')
+        nested = true
+      } catch { /* 不存在属正常 */ }
+      const where = isKbDir
+        ? `已连接目录 ${h.name}（识别为 <b>kb 目录</b>，写回 <目录>/<kind>.xlsx）`
+        : `已连接目录 ${h.name}（识别为 <b>workspace 根</b>，写回 <目录>/kb/<kind>.xlsx）`
+      const warn = nestedKbWarning(nested, isKbDir ? 'kb-dir' : 'workspace')
+      status.value = where + (warn ? `\n⚠ ${warn}` : '')
     } else {
       status.value = caps.full ? '已取消选择目录。' : (caps.insecure ? writeHint : caps.browserHint)
     }
@@ -418,6 +433,7 @@ function addChapter() {
       <p class="hint">
         列结构与 engine <code>assist kb</code> 兼容：id / content / img_path / page / related / type / solution / note。
         教师既有 xlsx 可直接读入编辑；写回优先由引擎 <code>POST /kb/write</code> 做样式保留写回（openpyxl 只改 cell.value + 自动快照），引擎离线时回退 File System Access API 原地保存或导出文件替换。
+        连接目录时可选择 <b>workspace 根</b> 或 <b>kb 目录本身</b>（自动识别，不会写进 kb/kb）；两种回退路径都会在覆盖前把旧文件备份到 <code>.history/&lt;时间戳&gt;/</code>。
       </p>
       <p>
         <label class="btn as-label btn-file" for="kb-file">载入教师 xlsx…</label>
@@ -430,8 +446,8 @@ function addChapter() {
         <button class="btn" style="margin-left:8px" @click="loadDemoData">载入示例数据</button>
         <button class="btn" style="margin-left:8px" @click="kb.downloadExample(activeKind)">⬇ 下载示例 xlsx（{{ activeKind }}-example.xlsx）</button>
         <button class="btn" style="margin-left:8px" :disabled="!caps.directoryPicker" @click="connectWorkspace"
-          :title="caps.insecure ? writeHint : '需 Chrome/Edge（File System Access API），本机 localhost/https 打开'">
-          {{ getKbDirHandle() ? `工作目录：${kb.fsDirName}` : '连接本地题库目录（Chrome/Edge）…' }}
+          :title="caps.insecure ? writeHint : '可连接 workspace 根目录（其下有 kb/）或直接连接 kb 目录；引擎会按目录内容自动识别，不会写进 kb/kb'">
+          {{ getKbDirHandle() ? `工作目录：${kb.fsDirName}` : '连接 workspace/kb 目录（自动识别，Chrome/Edge）…' }}
         </button>
       </p>
       <div class="notice" v-if="caps.insecure" style="margin-top:6px">
@@ -529,8 +545,8 @@ function addChapter() {
       <p style="margin-top:10px" v-if="activeChap">
         <button class="btn" @click="kb.addRow(activeKind, activeChap); kb.persist()">＋新增一行（题）</button>
         <button class="btn primary" style="margin-left:10px" @click="saveOrExport(activeKind)"
-          :title="getKbDirHandle() ? `原地写回 ${kb.fsDirName}/kb/${activeKind}.xlsx` : (caps.insecure ? 'LAN 预览下下载文件，教师手动放回 workspace 的 kb/；原地写回需本机 localhost/https 打开' : '导出 xlsx 文件（可用其替换本地文件）')">
-          {{ getKbDirHandle() ? `写回 ${kb.fsDirName}/kb/${activeKind}.xlsx` : (caps.insecure ? `下载 ${activeKind}.xlsx（手动放回 workspace）` : `导出 ${activeKind}.xlsx`) }}
+          :title="getKbDirHandle() ? `写回 ${kb.fsDirName}/…/${activeKind}.xlsx（自动识别 workspace 根或 kb 目录；覆盖前自动备份到 .history/<时间戳>/）` : (caps.insecure ? 'LAN 预览下下载文件，教师手动放回 workspace 的 kb/；原地写回需本机 localhost/https 打开' : '导出 xlsx 文件（可用其替换本地文件）')">
+          {{ getKbDirHandle() ? `写回 ${activeKind}.xlsx` : (caps.insecure ? `下载 ${activeKind}.xlsx（手动放回 workspace）` : `导出 ${activeKind}.xlsx`) }}
         </button>
         <button class="btn" style="margin-left:8px" @click="kb.downloadKind(activeKind, '.copy')">导出副本（另存）</button>
       </p>
