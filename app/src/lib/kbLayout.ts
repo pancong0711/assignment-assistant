@@ -39,6 +39,12 @@ export function looksLikeKbDir(dirName: string, rootEntries: string[]): boolean 
   return KB_KINDS.some((k) => names.has(`${k}.xlsx`))
 }
 
+/** 已连接目录下，kb 相对前缀：连的是 kb 目录本身 → ''，workspace 根 → 'kb'。
+ *  写 xlsx（D221）与写 fig（D223）必须用同一口径，否则又会出现 kb/kb。 */
+export function resolveKbDirPrefix(dirName: string, rootEntries: string[]): '' | 'kb' {
+  return looksLikeKbDir(dirName, rootEntries) ? '' : 'kb'
+}
+
 /** 解析某 kind 的写回目标。 */
 export function resolveKbWriteTarget(
   dirName: string,
@@ -46,7 +52,7 @@ export function resolveKbWriteTarget(
   kind: string,
 ): KbWriteTarget {
   const k = String(kind || '').trim()
-  if (looksLikeKbDir(dirName, rootEntries)) {
+  if (resolveKbDirPrefix(dirName, rootEntries) === '') {
     return { path: `${k}.xlsx`, kbDir: '', mode: 'kb-dir',
              note: `已识别为 kb 目录，写入 ${k}.xlsx` }
   }

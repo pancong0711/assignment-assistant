@@ -301,20 +301,29 @@ async function uploadFig(row: { id: string; content: string; img_path: string; p
   const dataUrl = await new Promise<string>((res) => { reader.onload = () => res(String(reader.result ?? '')); reader.readAsDataURL(file) })
   if (!dataUrl.startsWith('data:image')) { status.value = '不是有效的图片文件。'; return }
   settings.persistFigAsset(file.name, dataUrl)
-  if (!row.img_path) row.img_path = `fig/${file.name}`
+  // D223：**始终替换**该行的 img_path。旧实现 `if (!row.img_path)` 只在空路径时赋值，
+  // 于是“换一张图”后路径仍指向旧文件名 → 预览永远显示旧图（现场反馈“不能更换图片”）。
+  const prev = String(row.img_path || '')
+  row.img_path = `fig/${file.name}`
   kb.touch(); kb.persist()
   // 尽力写回 workspace（FSA 可用时）；失败不影响浏览器内预览
   let wrote = ''
   const dir = getKbDirHandle()
   if (dir) {
     try {
-      await writeFileInDir(dir, `kb/fig/${file.name}`, dataUrlToBlob(dataUrl))
-      wrote = '｜已写回 kb/fig/' + file.name + '（引擎 CLI 出图可用）'
-    } catch { wrote = '｜⚠ 写回 kb/fig/ 失败（仅本浏览器预览生效）' }
+      // D223：按连接目录自动决定 kb 前缀（连 kb 目录时不再写成 kb/kb/fig）
+      const { listDirEntryNames } = await import('../lib/fsAccess')
+      const { resolveKbDirPrefix } = await import('../lib/kbLayout')
+      const prefix = resolveKbDirPrefix(kb.fsDirName, await listDirEntryNames(dir))
+      const rel = `${prefix ? prefix + '/' : ''}fig/${file.name}`
+      await writeFileInDir(dir, rel, dataUrlToBlob(dataUrl))
+      wrote = '｜已写回 ' + rel + '（引擎 CLI 出图可用）'
+    } catch { wrote = '｜⚠ 写回 fig/ 失败（仅本浏览器预览生效）' }
   } else {
     wrote = '｜未连接 kb 目录：图片仅存本浏览器预览；教师可手动把图放到 workspace 的 kb/fig/ 后由引擎内嵌'
   }
-  status.value = `题图 ${file.name} 已入库（img_path=${row?.img_path || '（该行原有路径保留）'}）${wrote}`
+  status.value = `题图 ${file.name} 已入库（img_path=${row.img_path}`
+    + (prev && prev !== row.img_path ? `；原 ${prev} 已替换` : '') + `）${wrote}`
 }
 
 function dataUrlToBlob(dataUrl: string): Blob {
