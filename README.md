@@ -128,6 +128,7 @@
 - `docs/164-D221-kb-writeback-path-and-backup.md` — **D221 修复：题库写回落到 kb/kb（路径自动识别）+ 覆盖前 .history 时间戳备份**
 - `docs/165-D222-sheet-question-inline-break.md` — **D222 修复：作业纸预览第2题题号独占一行（软换行 `<br>` 误判为块级）**
 - `docs/166-D223-kb-fig-replace.md` — **D223 修复：题库编辑器选图后无法更换（img_path 无条件更新）+ fig 写回按 kb 前缀识别**
+- `docs/167-D224-kb-fig-upload-robust.md` — **D224 选图链路加固：input 挂载 DOM、取消/超时兜底、存图校验、figRev 强制刷新、✕ 清除题图**
 
 > **当前活动需求单 = `docs/112-D168`（口径/快照）+ `docs/113-D169`（路线/架构）**；
 > 历史条目保留供追溯，与最新口径冲突时以这两份为准。

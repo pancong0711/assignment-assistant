@@ -288,23 +288,57 @@ function solCell(r: { id: string; solution: string }): SolCellView {
  * 行内 📷 按钮 → 选图片 → dataURL 存 settings.figAssets[basename]（预览即时显真图）；
  * 同时把 img_path 写入该行（缺省 fig/<文件名>）；已连接 workspace kb 目录时
  * 尽力写回 <dir>/kb/fig/<文件名>（引擎 CLI 通道 base64 内嵌即可用真图）。 */
+/** D224：题图缩略图刷新计数。
+ *  同一文件名被覆盖（重新上传同名图）时，`img_path` 不变但数据变了；
+ *  `<img :src>` 的值若完全相同不会重绘 —— 用该计数参与 :key 强制刷新。 */
+const figRev = ref(0)
+
+/** D224：选图（可重复更换；支持清空）。
+ *  加固点（现场“选图似乎还有问题”）：
+ *   1. input 必须挂到 DOM 再 click()（部分浏览器对游离 input 不弹窗/不触发 change）；
+ *   2. 支持取消（oncancel）与超时兜底，避免 Promise 永久挂起导致按钮“没反应”；
+ *   3. 存图后校验确实进了 figAssets，否则明确报错（localStorage 配额等）；
+ *   4. 无条件替换 img_path + figRev++ 强制刷新缩略图。
+ */
 async function uploadFig(row: { id: string; content: string; img_path: string; page: string; related: string; type: string; solution: string; note: string }) {
-  const input = document.createElement('input')
-  input.type = 'file'
-  input.accept = 'image/*'
   const file = await new Promise<File | null>((res) => {
-    input.onchange = () => res(input.files?.[0] ?? null)
+    const input = document.createElement('input')
+    input.type = 'file'
+    input.accept = 'image/*'
+    input.style.cssText = 'position:fixed;left:-9999px;top:0;width:1px;height:1px;opacity:0'
+    document.body.appendChild(input)
+    let done = false
+    const finish = (f: File | null) => {
+      if (done) return
+      done = true
+      try { input.remove() } catch { /* noop */ }
+      res(f)
+    }
+    input.onchange = () => finish(input.files?.[0] ?? null)
+    // Chrome 113+：用户取消时触发 cancel（老浏览器靠下面的超时兜底）
+    ;(input as any).oncancel = () => finish(null)
+    const timer = window.setTimeout(() => finish(input.files?.[0] ?? null), 120000)
+    const oldFinish = finish
+    // 包装一次，保证清理 timer
+    const wrapped = (f: File | null) => { window.clearTimeout(timer); oldFinish(f) }
+    input.onchange = () => wrapped(input.files?.[0] ?? null)
+    ;(input as any).oncancel = () => wrapped(null)
     input.click()
   })
-  if (!file) return
+  if (!file) { status.value = '已取消选择图片（未做任何修改）。'; return }
   const reader = new FileReader()
   const dataUrl = await new Promise<string>((res) => { reader.onload = () => res(String(reader.result ?? '')); reader.readAsDataURL(file) })
   if (!dataUrl.startsWith('data:image')) { status.value = '不是有效的图片文件。'; return }
   settings.persistFigAsset(file.name, dataUrl)
-  // D223：**始终替换**该行的 img_path。旧实现 `if (!row.img_path)` 只在空路径时赋值，
-  // 于是“换一张图”后路径仍指向旧文件名 → 预览永远显示旧图（现场反馈“不能更换图片”）。
+  // D224：写入后立即校验（超出 localStorage 配额时内存有、落盘失败；这里至少确认内存态）
+  if (!settings.figAssets[file.name]) {
+    status.value = `❌ 图片未能存入浏览器（${file.name}）：可能是 localStorage 配额不足，请压缩图片后重试。`
+    return
+  }
+  // D223：**始终替换**该行的 img_path（旧实现只在空路径时赋值 → 换图无效）。
   const prev = String(row.img_path || '')
   row.img_path = `fig/${file.name}`
+  figRev.value += 1
   kb.touch(); kb.persist()
   // 尽力写回 workspace（FSA 可用时）；失败不影响浏览器内预览
   let wrote = ''
@@ -322,8 +356,11 @@ async function uploadFig(row: { id: string; content: string; img_path: string; p
   } else {
     wrote = '｜未连接 kb 目录：图片仅存本浏览器预览；教师可手动把图放到 workspace 的 kb/fig/ 后由引擎内嵌'
   }
+  // D224：状态里带上“缩略图是否命中”，下次反馈问题时可直接判断是存图还是渲染问题
+  const hit = !!figThumb(row.img_path)
   status.value = `题图 ${file.name} 已入库（img_path=${row.img_path}`
-    + (prev && prev !== row.img_path ? `；原 ${prev} 已替换` : '') + `）${wrote}`
+    + (prev && prev !== row.img_path ? `；原 ${prev} 已替换` : '')
+    + `；缩略图${hit ? '已刷新' : '未命中（请检查文件名/素材库）'}）${wrote}`
 }
 
 function dataUrlToBlob(dataUrl: string): Blob {
@@ -332,6 +369,15 @@ function dataUrlToBlob(dataUrl: string): Blob {
   const bin = atob(m[2])
   const bytes = Uint8Array.from(bin, (c) => c.charCodeAt(0))
   return new Blob([bytes], { type: m[1] })
+}
+
+/** D224：清除该行题图（只清 img_path，不删除素材文件，便于误删后重新选）。 */
+function clearFig(row: { img_path: string }) {
+  if (!row.img_path) return
+  row.img_path = ''
+  figRev.value += 1
+  kb.touch(); kb.persistDebounced()
+  status.value = '已清除该行题图（素材文件仍保留，可重新选择）'
 }
 
 function figThumb(imgPath: string): string {
@@ -516,11 +562,14 @@ function addChapter() {
               <template v-if="col === 'img_path'">
                 <div style="display:flex; align-items:center; gap:4px">
                   <input v-model="r.img_path" @change="kb.touch(); kb.persistDebounced()" placeholder="fig/xxx.png" style="min-width:70px" />
-                  <img v-if="figThumb(r.img_path)" :src="figThumb(r.img_path)" alt="题图缩略"
+                  <img v-if="figThumb(r.img_path)" :key="`${r.img_path}#${figRev}`"
+                    :src="figThumb(r.img_path)" alt="题图缩略"
                     style="height:26px; max-width:60px; object-fit:contain; border:1px solid var(--c-border); border-radius:4px"
                     title="本浏览器素材库命中（B3/D46-5）：预览/打印显示此真图" />
-                  <button class="btn small" title="B3/D46-5：上传题图→本浏览器素材库即时预览；已连 kb 目录时写回 kb/fig/（引擎通道 base64 内嵌）"
+                  <button class="btn small" title="B3/D46-5：上传题图→本浏览器素材库即时预览；已连 kb 目录时写回 fig/（引擎通道 base64 内嵌）。再次点击=更换图片"
                     @click="uploadFig(r)">📷</button>
+                  <button v-if="r.img_path" class="btn small" title="清除该行题图（只改 img_path，不删素材文件）"
+                    @click="clearFig(r)">✕</button>
                 </div>
               </template>
               <template v-else-if="col === 'related'">
