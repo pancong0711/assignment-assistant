@@ -2,6 +2,7 @@
 import { computed, nextTick, onMounted, ref, watch } from 'vue'
 import { KB_KINDS, KB_KIND_LABELS, type KbKind } from '../lib/kb'
 import { useKbStore, getKbDirHandle } from '../stores/kb'
+import { createRowKeyer } from '../lib/stableRowKey'
 import { detectCapabilities, fsWriteHint, writeFileInDir } from '../lib/fsAccess'
 import { useSettingsStore } from '../stores/settings'
 import { fetchKbSolutions, mutateKbSolution, type SolutionVersion,
@@ -353,6 +354,9 @@ function switchKind() {
   pickChapter()
 }
 
+/** D220：行对象的稳定 key（实现见 lib/stableRowKey.ts，便于单测）。 */
+const rowKey = createRowKeyer()
+
 const visibleRows = computed(() => {
   const chap = kb.book(activeKind.value).chapters.find((c) => c.name === activeChap.value)
   if (!chap) return []
@@ -478,12 +482,15 @@ function addChapter() {
           </tr>
         </thead>
         <tbody>
-          <tr v-for="(r, idx) in visibleRows" :key="r.id + idx">
+          <!-- D220：行 key 必须与可编辑字段（尤其 id）无关。
+               旧写法把 id 拼进 key，会在输入 id 时每敲一个字就换 key →
+               Vue 销毁并重建整行 → 输入框失焦，只能“一次输入一个字再点回来”。 -->
+          <tr v-for="(r, idx) in visibleRows" :key="rowKey(r, idx)">
             <td v-for="col in (['id','content','img_path','page','related','type','solution','note'] as const)" :key="col"
                 :class="col === 'content' ? 'cell-content' : ''">
               <template v-if="col === 'img_path'">
                 <div style="display:flex; align-items:center; gap:4px">
-                  <input v-model="r.img_path" @change="kb.touch(); kb.persist()" placeholder="fig/xxx.png" style="min-width:70px" />
+                  <input v-model="r.img_path" @change="kb.touch(); kb.persistDebounced()" placeholder="fig/xxx.png" style="min-width:70px" />
                   <img v-if="figThumb(r.img_path)" :src="figThumb(r.img_path)" alt="题图缩略"
                     style="height:26px; max-width:60px; object-fit:contain; border:1px solid var(--c-border); border-radius:4px"
                     title="本浏览器素材库命中（B3/D46-5）：预览/打印显示此真图" />
@@ -493,7 +500,7 @@ function addChapter() {
               </template>
               <template v-else-if="col === 'related'">
                 <div style="display:flex; align-items:center; gap:4px">
-                  <input v-model="r.related" @change="kb.touch(); kb.persist()"
+                  <input v-model="r.related" @change="kb.touch(); kb.persistDebounced()"
                          style="min-width:60px" />
                   <button class="btn small" title="查看知识点版本 / 词表命中，并可编辑写回（D166）"
                           @click="openRelated(r)">🔍</button>
@@ -510,7 +517,7 @@ function addChapter() {
               </template>
               <input v-else
                 v-model="r[col]"
-                @change="kb.touch(); kb.persist()"
+                @change="kb.touch(); kb.persistDebounced()"
               />
             </td>
             <td>
