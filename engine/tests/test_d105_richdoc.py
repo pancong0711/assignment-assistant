@@ -207,6 +207,23 @@ def test_render_rich_inline_keeps_soft_break_inline():
     assert "<br" in out and "求加速度" in out
 
 
+@pytest.mark.parametrize("src,needles", [
+    ("- Sentence one.\n\n- Sentence two.", ["Sentence one.", "Sentence two."]),
+    ('<p class="translation">Sentence one.<br>Sentence two.</p>',
+     ["Sentence one.", "Sentence two."]),
+    ('<div class="q"><p>第一段</p><p>第二段</p></div>', ["第一段", "第二段"]),
+    ("$$E=mc^2$$\n\n求能量。", ["E=mc^2", "求能量"]),
+    ("- <p>第一句</p>\n- <p>第二句</p>", ["第一句", "第二句"]),
+])
+def test_render_rich_inline_d226_loose_lists_and_classed_blocks(src, needles):
+    """D226：松散列表的 <li><p>、带 class 的 <p>、嵌套 div 首段都应行内化。"""
+    from assist.paper.richdoc import render_rich_inline
+    out = render_rich_inline(src)
+    assert not out.strip().startswith(("<p", "<div", "<ul", "<ol", "<blockquote")), out
+    for needle in needles:
+        assert needle in out, f"内容丢失：{needle}；实际 {out}"
+
+
 def test_report_md_to_html_sanitized(tmp_path):
     """批阅报告正文也必须净化（AI 输出直接进报告 PNG）。"""
     from assist.grading.report import _md_to_html

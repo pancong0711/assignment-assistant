@@ -802,8 +802,8 @@ export async function fetchXxtRun(engineAddr: string, token: string | undefined,
   return (await getJson2(engineUrlWithToken(base, `/xxt/run/${encodeURIComponent(runId)}`, token)))
 }
 
-async function getJson2(url: string): Promise<unknown> {
-  const res = await fetch(url)
+async function getJson2(url: string, init?: RequestInit): Promise<unknown> {
+  const res = await fetch(url, init)
   if (!res.ok) throw new Error(`HTTP ${res.status}`)
   return res.json()
 }
@@ -2606,8 +2606,12 @@ export async function fetchKbCatalog(
 ): Promise<{ ok?: boolean; kinds?: KbCatalogKind[]; error?: string }> {
   const base = normalizeEngineAddr(engineAddr)
   try {
-    return (await getJson2(engineUrlWithToken(base, '/kb/catalog', token))) as
-      { ok?: boolean; kinds?: KbCatalogKind[]; error?: string }
+    // D226：题库目录必须绕开浏览器缓存；教师刚写回 xlsx 后，AI+ 的题目预览应立刻可见。
+    const url = engineUrlWithToken(base, `/kb/catalog?_=${Date.now()}`, token)
+    return (await getJson2(url, {
+      cache: 'no-store',
+      headers: { Accept: 'application/json' },
+    })) as { ok?: boolean; kinds?: KbCatalogKind[]; error?: string }
   } catch (e) {
     // D162：**不再静默返回空**（否则章节下拉空白且无任何提示，极难排查）
     return { ok: false, kinds: [], error: String((e as Error).message || e) }
@@ -3248,6 +3252,13 @@ export interface MaterialsFile {
   mtime: string
   kind: string
   sha256?: string
+  /** D228：该原件是否已有索引/抽取结果（AI 建议知识点前至少要有抽取） */
+  indexed?: boolean
+  extracted?: boolean
+  extractMode?: string
+  extractChars?: number
+  extractImages?: number
+  extractedAt?: string
   error?: string
 }
 
@@ -3299,28 +3310,38 @@ export async function createMaterialsChap(
   return o
 }
 
-/** D137：抽取某章资料（无 LLM 成本）。 */
+/** D137：抽取某章资料（无 LLM 成本）。
+ *  D228：`files` 非空时只抽选中文件；未选中的旧索引保持不动。 */
 export async function extractMaterials(
-  engineAddr: string, token: string | undefined, chap: string, force = false,
-): Promise<{ ok?: boolean; error?: string; chap?: string }> {
+  engineAddr: string, token: string | undefined, chap: string,
+  force = false, files: string[] = [],
+): Promise<{ ok?: boolean; error?: string; chap?: string
+             selected_files?: number; skipped_unchanged?: string[]
+             skipped_unselected?: string[]
+             errors?: Array<{ file?: string; error?: string }> }> {
   const base = normalizeEngineAddr(engineAddr)
   const res = await fetch(engineUrlWithToken(base, '/materials/extract', token), {
     method: 'POST', headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ chap, force }),
+    body: JSON.stringify({ chap, force, files }),
   })
   const o = (await res.json().catch(() => ({}))) as any
   if (!res.ok && !o?.error) throw new Error(`HTTP ${res.status}`)
   return o
 }
 
-/** D137：AI 抽取知识点建议（**会花模型钱**；只写 .ai.json，不生效）。 */
+/** D137：AI 抽取知识点建议（**会花模型钱**；只写 .ai.json，不生效）。
+ *  D228：provider 下拉框真正生效；files 可控只识别选中文件。 */
 export async function suggestMaterials(
   engineAddr: string, token: string | undefined, chap: string, model = '',
-): Promise<{ ok?: boolean; error?: string; chap?: string }> {
+  provider = '', files: string[] = [],
+): Promise<{ ok?: boolean; error?: string; chap?: string; term_count?: number
+             provider?: string; model?: string
+             source?: { files?: number; fileNames?: string[]; mode?: string
+                        chars?: number; truncated?: boolean } }> {
   const base = normalizeEngineAddr(engineAddr)
   const res = await fetch(engineUrlWithToken(base, '/materials/suggest', token), {
     method: 'POST', headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ chap, model }),
+    body: JSON.stringify({ chap, model, provider, files }),
   })
   const o = (await res.json().catch(() => ({}))) as any
   if (!res.ok && !o?.error) throw new Error(`HTTP ${res.status}`)

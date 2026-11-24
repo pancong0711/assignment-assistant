@@ -7,7 +7,7 @@
  *
  *  D152 新增：☑ 同时标注知识点到题库（一次调用完成 解答+要点+知识点）。
  */
-import { computed, onMounted, ref, watch } from 'vue'
+import { computed, onBeforeUnmount, onMounted, ref, watch } from 'vue'
 import { useKbStore } from '../stores/kb'
 import {
   fetchKbCatalog, fetchPromptTemplates, fetchXxtLoginJob, mutatePromptTemplate,
@@ -21,6 +21,8 @@ const kbStore = useKbStore()
 /* ---------- 题库目录 ---------- */
 const kbCatalog = ref<{ kinds?: any[] }>({ kinds: [] })
 const kbCatalogErr = ref('')
+const kbCatalogBusy = ref(false)
+const kbCatalogAt = ref('')
 const kbKind = ref(''); const kbChap = ref(''); const kbIdsSel = ref<string[]>([]); const kbModel = ref('')
 const kbKinds = computed<string[]>(() => (kbCatalog.value.kinds || []).map((k: any) => k.kind))
 const kbChapters = computed<string[]>(() => {
@@ -37,17 +39,47 @@ const kbPreview = computed(() => {
   const picked = kbIdList.value.filter((i) => !want.size || want.has(i.id))
   return picked.map((i) => `${i.id}: ${i.content ?? ''}`).join('   ｜   ')
 })
+/** D226：题目目录刷新。
+ *  AI 作答读的是引擎已写回的 xlsx，因此这里也以引擎目录为准；窗口重新聚焦、
+ *  题库写回时间变化、以及教师手动点「刷新题目」时都会重拉，且请求禁止浏览器缓存。 */
 async function loadKbCatalog() {
+  if (kbCatalogBusy.value) return
+  kbCatalogBusy.value = true
   kbCatalogErr.value = ''
-  const r = await fetchKbCatalog(props.engineAddr, props.token)
-  kbCatalog.value = { kinds: r.kinds || [] }
-  if (r.ok === false || !(r.kinds || []).length) {
-    kbCatalogErr.value = r.error
-      ? `读取题库目录失败：${r.error}（引擎在线吗？）`
-      : '题库为空：请先在「题库编辑器」载入 xlsx'
+  const prevKind = kbKind.value
+  const prevChap = kbChap.value
+  const prevIds = new Set(kbIdsSel.value)
+  try {
+    const r = await fetchKbCatalog(props.engineAddr, props.token)
+    if (r.ok === false || !(r.kinds || []).length) {
+      // 保留旧目录，避免引擎瞬时离线时下拉被清空；错误提示仍可见。
+      kbCatalogErr.value = r.error
+        ? `读取题库目录失败：${r.error}（引擎在线吗？）`
+        : '题库为空：请先在「题库编辑器」载入 xlsx'
+      if (r.kinds) kbCatalog.value = { kinds: r.kinds }
+      return
+    }
+    kbCatalog.value = { kinds: r.kinds || [] }
+    kbCatalogAt.value = new Date().toLocaleTimeString()
+    // 尽量保留当前选择；只有确实不存在的 kind/chap/id 才清掉。
+    if (prevKind && !kbKinds.value.includes(prevKind)) kbKind.value = ''
+    if (!kbKind.value) kbKind.value = kbKinds.value.includes('problems') ? 'problems' : (kbKinds.value[0] || '')
+    const sameKind = prevKind === kbKind.value
+    kbChap.value = sameKind && kbChapters.value.includes(prevChap) ? prevChap : ''
+    kbIdsSel.value = sameKind
+      ? kbIdList.value.filter((i) => prevIds.has(i.id)).map((i) => i.id)
+      : []
+  } catch (e) {
+    kbCatalogErr.value = `读取题库目录失败：${String((e as Error).message || e)}（引擎在线吗？）`
+  } finally {
+    kbCatalogBusy.value = false
   }
-  if (!kbKind.value && kbKinds.value.length) {
-    kbKind.value = kbKinds.value.includes('problems') ? 'problems' : kbKinds.value[0]
+}
+
+/** 窗口重新聚焦/页面重新可见时刷新（多窗口编辑题库、切回 AI+ 都生效）。 */
+function refreshCatalogIfVisible() {
+  if (typeof document === 'undefined' || document.visibilityState === 'visible') {
+    void loadKbCatalog()
   }
 }
 watch(kbKind, () => { kbChap.value = ''; kbIdsSel.value = [] })
@@ -211,7 +243,16 @@ async function solveByKb() {
 onMounted(async () => {
   await loadKbCatalog()
   await loadPromptTemplates()
+  // D226：题库可能在另一个窗口/引擎任务里被更新；回到本页时自动刷新目录。
+  window.addEventListener('focus', refreshCatalogIfVisible)
+  document.addEventListener('visibilitychange', refreshCatalogIfVisible)
 })
+onBeforeUnmount(() => {
+  window.removeEventListener('focus', refreshCatalogIfVisible)
+  document.removeEventListener('visibilitychange', refreshCatalogIfVisible)
+})
+// 同页内若有写回动作（savedAt 更新），立即重拉目录。
+watch(() => kbStore.savedAt, () => { void loadKbCatalog() })
 defineExpose({ loadKbCatalog, loadPromptTemplates })
 </script>
 
@@ -220,6 +261,10 @@ defineExpose({ loadKbCatalog, loadPromptTemplates })
     <div style="display:flex; gap:8px; align-items:center; flex-wrap:wrap">
       <span v-if="kbCatalogErr" class="hint" style="color:#b45309">{{ kbCatalogErr }}</span>
       <button v-if="kbCatalogErr" class="btn small" @click="loadKbCatalog">重试</button>
+      <button class="btn small" :disabled="kbCatalogBusy" @click="loadKbCatalog"
+              title="重新读取引擎已写回的题库目录与题目内容">
+        {{ kbCatalogBusy ? '刷新中…' : '🔄 刷新题目' }}
+      </button>
       <span class="hint" style="margin:0">题库：</span>
       <select v-model="kbKind" style="min-width:120px">
         <option value="">（选择题库）</option>
@@ -256,6 +301,13 @@ defineExpose({ loadKbCatalog, loadPromptTemplates })
     </div>
     <p v-if="kbWithRubric" class="hint" style="margin:2px 0 0">
       ⓘ 要点与解答**同一次生成**。默认<b>不置顶</b>；<code>copy</code>/<code>summary</code> 按口径不生成 AI 要点。
+    </p>
+    <p v-if="kbStore.dirty" class="hint" style="margin:2px 0 0; color:#b45309">
+      ⚠ 浏览器里的题库还有<b>未写回</b>修改；AI 作答读取的是引擎侧已写回 xlsx。
+      请先在「题库编辑器」写回，再点「🔄 刷新题目」。
+    </p>
+    <p v-else-if="kbCatalogAt" class="hint" style="margin:2px 0 0">
+      题目目录已更新于 {{ kbCatalogAt }}（窗口切回时自动刷新）。
     </p>
 
     <div style="margin:6px 0">

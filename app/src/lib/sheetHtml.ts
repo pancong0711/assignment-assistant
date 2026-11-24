@@ -240,7 +240,15 @@ body {
 .sheet-body:not(.divided) .sheet-frame { border-bottom: none; }
 .q-id { font-weight: 700; color: var(--accent); font-size: 11pt; }
 .q-tag { font-weight: 400; color: var(--muted); font-size: 9pt; }
-.q-content { font-size: 11.5pt; line-height: 1.8; white-space: pre-wrap; }
+.q-content { font-size: 11.5pt; line-height: 1.8; white-space: pre-wrap;
+  display: flex; align-items: flex-start; }
+/* D226：题号独立于正文容器；即使正文首块是列表/表格/行间公式，题号也不会独占一行。 */
+.q-content > .q-no { flex: 0 0 auto; margin-right: 1.6mm; white-space: pre; }
+.q-content > .q-content-body { flex: 1 1 auto; min-width: 0; }
+.q-content > .q-content-body > :first-child { margin-top: 0; }
+/* KaTeX auto-render 会在公式外包一层 span；首块行间公式的 margin-top 也要清零。 */
+.q-content > .q-content-body > :first-child .katex-display:first-child,
+.q-content > .q-content-body > .katex-display:first-child { margin-top: 0; }
 .q-img { max-width: 100%; max-height: 52mm; object-fit: contain; align-self: flex-start; }
 .q-img-ph { color: var(--muted); font-size: 10pt; font-style: italic; border: 1px dashed var(--hairline);
   border-radius: 2mm; padding: 4mm; text-align: center; }
@@ -600,6 +608,13 @@ export interface SheetHtmlCellView {
   imgPath?: string
 }
 
+/** D226：题号与正文分两个 flex 子项，避免正文首块是块级元素时把题号挤到上一行。 */
+function qContentHtml(no: string, body: string, contMark = ''): string {
+  const noText = String(no || '').replace(/\s+$/, '')
+  const noHtml = noText ? `<span class="q-no">${escapeHtml(noText)}</span>` : ''
+  return `<div class="q-content">${noHtml}<div class="q-content-body">${contMark}${body}</div></div>`
+}
+
 /** 渲染一格的内部内容：题干（带题号）/ 答案（带「（题 N 续）」标注）。 */
 function cellBodyHtml(cell: SheetHtmlCellView, includeSolution: boolean, indentCls: string): string {
   const parts: string[] = []
@@ -610,7 +625,7 @@ function cellBodyHtml(cell: SheetHtmlCellView, includeSolution: boolean, indentC
       // D105 修复：题干用**行内**渲染，题号与正文同一行（此前 renderRich 的 <p>
       // 让题号独占一行 → 用户反馈"题号后空一行"）
       const body = renderRichInline(b.text) || escapeHtml(stripMarkup(b.text))
-      parts.push(`<div class="q-content">${contMark}${escapeHtml(no)}${body}</div>`)
+      parts.push(qContentHtml(no, body, contMark))
     } else if (includeSolution) {
       const scaleStyle = b.scale && b.scale < 1
         ? ` style="display:inline-block;transform:scale(${b.scale});transform-origin:left top;"`
@@ -677,7 +692,7 @@ function pageBlockHtml(pad: Taskpad, items: SheetHtmlItem[], stu: SheetHtmlStude
     </div>`).join('\n    ')
       : items.map((fr) => `<div class="sheet-frame pos-${normalizeFigurePos(pad.layout.figure?.pos)}">
       <div class="q-body indent-${normalizeIndent(pad.layout.indent)}">
-        <div class="q-content">${escapeHtml(fr.no ? `${fr.no}  ` : '')}${renderRichInline(fr.content) || escapeHtml(fr.content)}</div>
+        ${qContentHtml(fr.no || '', renderRichInline(fr.content) || escapeHtml(fr.content))}
         ${(includeSolution && fr.solution) ? `<div class="q-solution">参考答案：${renderRich(fr.solution)}</div>` : ''}
       </div>
       ${figHtml(fr.imgPath, figAssets, pad.layout.figure)}

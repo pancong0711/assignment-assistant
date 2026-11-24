@@ -546,3 +546,123 @@ def test_pptx_extracted_by_python_backend(ws: Path, monkeypatch):
     import json as _json
     idx = _json.loads(Path(rep["index"]).read_text(encoding="utf-8"))
     assert idx["sources"][0]["extract"]["engine"] == "python-pptx", idx["sources"][0]
+
+
+# ---------------- D228：按文件抽取 / 按文件识别知识点 ----------------
+def test_extract_selected_files_preserves_unselected_index(ws: Path):
+    d = M.ensure_chap(ws, "chap04")
+    (d / "_source" / "a.md").write_text("A 文件第一版：动量守恒", encoding="utf-8")
+    (d / "_source" / "b.md").write_text("B 文件：完全弹性碰撞", encoding="utf-8")
+    rep0 = M.extract_chap(ws, "chap04")
+    assert rep0["ok"] and rep0["sources"] == 2
+
+    idx0 = M.read_index(ws, "chap04")
+    b0 = next(s for s in idx0["sources"] if s["file"] == "_source/b.md")
+
+    # 只更新 a：重抽选中 a；b 的索引条目必须原样保留（不要求全章重跑）。
+    (d / "_source" / "a.md").write_text("A 文件第二版：角动量守恒与冲量", encoding="utf-8")
+    rep1 = M.extract_chap(ws, "chap04", files=["_source/a.md"])
+    assert rep1["ok"] and rep1["selected_files"] == 1
+    assert rep1["skipped_unselected"] == ["_source/b.md"]
+    idx1 = M.read_index(ws, "chap04")
+    assert len(idx1["sources"]) == 2
+    a1 = next(s for s in idx1["sources"] if s["file"] == "_source/a.md")
+    b1 = next(s for s in idx1["sources"] if s["file"] == "_source/b.md")
+    assert "第二版" in (d / a1["extract"]["text_file"]).read_text(encoding="utf-8")
+    assert b1 == b0
+
+
+def test_extract_missing_selected_file_reports_clear_error(ws: Path):
+    M.ensure_chap(ws, "chap04")
+    rep = M.extract_chap(ws, "chap04", files=["_source/not-there.md"])
+    assert rep["ok"] is False
+    assert rep["errors"] and "未找到该原件" in rep["errors"][0]["error"]
+
+
+def test_files_of_marks_extracted_state(ws: Path):
+    d = M.ensure_chap(ws, "chap04")
+    (d / "_source" / "a.md").write_text("动量守恒", encoding="utf-8")
+    (d / "_source" / "b.md").write_text("完全弹性碰撞", encoding="utf-8")
+    M.extract_chap(ws, "chap04", files=["_source/a.md"])
+    rows = {x["file"]: x for x in M.files_of(ws, "chap04")}
+    assert rows["_source/a.md"]["extracted"] is True
+    assert rows["_source/b.md"]["extracted"] is False
+
+
+def test_suggest_only_selected_file(ws: Path):
+    d = M.ensure_chap(ws, "chap04")
+    (d / "_source" / "a.md").write_text("A_ONLY 动量守恒", encoding="utf-8")
+    (d / "_source" / "b.md").write_text("B_ONLY 完全弹性碰撞", encoding="utf-8")
+    M.extract_chap(ws, "chap04")
+    c = _Client(_SUGGEST)
+    rep = M.suggest_knowledge(c, ws, "chap04", files=["_source/b.md"])
+    assert rep["source"]["fileNames"] == ["_source/b.md"]
+    assert rep["source"]["selected"] == ["_source/b.md"]
+    assert "B_ONLY" in c.prompts[0] and "A_ONLY" not in c.prompts[0]
+
+
+def test_suggest_rejects_unextracted_selected_file(ws: Path):
+    d = M.ensure_chap(ws, "chap04")
+    (d / "_source" / "a.md").write_text("动量守恒", encoding="utf-8")
+    (d / "_source" / "b.md").write_text("完全弹性碰撞", encoding="utf-8")
+    M.extract_chap(ws, "chap04", files=["_source/a.md"])
+    with pytest.raises(M.MaterialsError) as ei:
+        M.suggest_knowledge(_Client(_SUGGEST), ws, "chap04", files=["_source/b.md"])
+    assert "还没有抽取结果" in str(ei.value) and "b.md" in str(ei.value)
+
+
+def test_cli_extract_multiple_files(ws: Path):
+    from click.testing import CliRunner
+    from assist.cli import cli
+    d = M.ensure_chap(ws, "chap04")
+    (d / "_source" / "a.md").write_text("A 内容", encoding="utf-8")
+    (d / "_source" / "b.md").write_text("B 内容", encoding="utf-8")
+    out = CliRunner().invoke(cli, [
+        "materials", "extract", "--chap", "chap04",
+        "--file", "_source/a.md", "--file", "_source/b.md", "-w", str(ws),
+    ])
+    assert out.exit_code == 0, out.output
+    assert '"selected_files": 2' in out.output
+
+
+def test_serve_materials_suggest_passes_provider_and_files(ws: Path, monkeypatch):
+    """D228 回归：PWA 选的 provider / 文件列表必须真正传到引擎。"""
+    import socket, threading, time, urllib.request
+    from assist import serve as S
+    from assist.grading import llm as L
+
+    seen: dict = {}
+
+    def fake_build(ws_arg, provider="", model="", **kw):
+        seen["provider"] = provider
+        seen["model"] = model
+        return object(), (model or "used-model")
+
+    def fake_suggest(client, ws_arg, chap, **kw):
+        seen["files"] = kw.get("files")
+        return {"ok": True, "term_count": 1, "knowledge": [],
+                "source": {"files": 0, "fileNames": []}}
+
+    monkeypatch.setattr(L, "build_client_for", fake_build)
+    monkeypatch.setattr(M, "suggest_knowledge", fake_suggest)
+    S.Handler.ws = ws
+    S.Handler.token = ""
+    s0 = socket.socket(); s0.bind(("127.0.0.1", 0)); port = s0.getsockname()[1]; s0.close()
+    httpd = S.ThreadingHTTPServer(("127.0.0.1", port), S.Handler)
+    threading.Thread(target=httpd.serve_forever, daemon=True).start()
+    time.sleep(0.2)
+    try:
+        body = json.dumps({"chap": "chap04", "provider": "picked-provider",
+                           "model": "picked-model",
+                           "files": ["_source/a.md"]}).encode("utf-8")
+        req = urllib.request.Request(
+            f"http://127.0.0.1:{port}/materials/suggest", data=body, method="POST",
+            headers={"Content-Type": "application/json"})
+        with urllib.request.urlopen(req, timeout=5) as r:
+            out = json.loads(r.read().decode())
+    finally:
+        httpd.shutdown()
+    assert out["ok"] is True
+    assert seen["provider"] == "picked-provider"
+    assert seen["model"] == "picked-model"
+    assert seen["files"] == ["_source/a.md"]

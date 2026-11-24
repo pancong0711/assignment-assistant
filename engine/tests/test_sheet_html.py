@@ -227,11 +227,11 @@ def test_sheet_html_cli_dual_layout_and_template_markers(ws: Path):
                    "wm-page-text", "data-wm-item", "data-wm-pos", "sf-line",
                    "katex@", "0.16.4", "auto-render.min.js", "renderMathInElement",
                    # D82-C：题号+题干悬挂缩进两列 + 题图右上最大框（与模板同构）
-                   ".q-body", "q-content", "q-img", "max-height:", "max-width:"]:
+                   ".q-body", "q-content", "q-no", "q-content-body", "q-img", "max-height:", "max-width:"]:
         assert marker in ts_src, f"TS 同构缺少标记: {marker}"
     # 模板侧同样具备 D82-C 两列/悬挂缩进标记
     tpl = (REPO / "engine" / "templates" / "assignment.html.j2").read_text(encoding="utf-8")
-    for marker in [".q-body", "q-content", "q-img", "doc.figure.max_w_mm",
+    for marker in [".q-body", "q-content", "q-no", "q-content-body", "q-img", "doc.figure.max_w_mm",
                    "doc.figure.max_h_mm", "fr.no"]:
         assert marker in tpl, f"模板缺少 D82-C 标记: {marker}"
 
@@ -283,8 +283,9 @@ def test_sheet_html_auto_numbering_sequential(ws: Path):
                               "--workspace", str(ws), "-o", str(out), "--no-measure"])
     assert res.exit_code == 0, res.output
     html = out.read_text(encoding="utf-8")
-    assert "1.  " in html
-    assert "2.  " in html
+    # D226：题号改为独立 .q-no 容器，不再靠尾随空格与正文拼接。
+    assert '<span class="q-no">1.</span>' in html
+    assert '<span class="q-no">2.</span>' in html
 
 
 @pytest.mark.parametrize("pos,expect_align", [

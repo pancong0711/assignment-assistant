@@ -43,6 +43,37 @@ const fileMsg = ref('')
 const pendingRemove = ref<MaterialsFile | null>(null)
 const pendingRestore = ref<MaterialsFile | null>(null)
 
+/* D228：原件多选——抽取与 AI 知识点识别都可只处理选中文件。
+ * 更新一个文件时只需选它重抽（sha256 变才真正处理）；未选文件/索引保持不动。 */
+const selectedSourceFiles = ref<Set<string>>(new Set())
+const knownSourceFiles = ref<Set<string>>(new Set())
+const selectionChapter = ref('')
+const forceExtract = ref(false)
+const sourceFiles = computed(() => files.value.filter((f) => f.dir === '_source' && !f.error))
+const selectedFileList = computed(() => sourceFiles.value
+  .filter((f) => selectedSourceFiles.value.has(f.file))
+  .map((f) => f.file))
+const selectedUnextracted = computed(() => sourceFiles.value
+  .filter((f) => selectedSourceFiles.value.has(f.file) && !f.extracted))
+const allFilesSelected = computed(() => !!sourceFiles.value.length
+  && sourceFiles.value.every((f) => selectedSourceFiles.value.has(f.file)))
+
+function toggleFile(file: string, checked: boolean) {
+  const next = new Set(selectedSourceFiles.value)
+  if (checked) next.add(file); else next.delete(file)
+  selectedSourceFiles.value = next
+}
+function selectAllFiles() {
+  selectedSourceFiles.value = new Set(sourceFiles.value.map((f) => f.file))
+}
+function clearFileSelection() {
+  selectedSourceFiles.value = new Set()
+}
+function invertFileSelection() {
+  selectedSourceFiles.value = new Set(sourceFiles.value
+    .filter((f) => !selectedSourceFiles.value.has(f.file)).map((f) => f.file))
+}
+
 /** D171-T7：AI 建议知识点的 provider / 模型。
  *  默认**跟随评阅段配置**（教师建议），但可显式覆盖（存 localStorage）。 */
 const suggestProviders = ref<LlmProvider[]>([])
@@ -85,21 +116,29 @@ const confirmOverwrite = ref(false)
 
 async function doExtract() {
   if (!active.value) return
+  const picked = selectedFileList.value
+  if (!picked.length) {
+    stepMsg.value = '请先勾选要抽取的文件（可用「全选」）。'
+    return
+  }
   stepBusy.value = 'extract'
   stepMsg.value = ''
   try {
-    const r = await extractMaterials(settings.engineUrl, settings.engineToken, active.value)
-    // D170-T6：把逐文件原因展示出来（此前只看到"HTTP 400"，无从下手）
+    const r = await extractMaterials(settings.engineUrl, settings.engineToken,
+                                     active.value, forceExtract.value, picked)
     const errs = (r as any)?.errors as Array<{ file?: string; error?: string }> | undefined
+    const skipped = (r?.skipped_unchanged || []).length
     if (r?.ok) {
-      stepMsg.value = '✅ 已抽取（可继续「AI 建议知识点」）'
+      stepMsg.value = `✅ 已处理选中 ${picked.length} 个文件`
+        + (skipped ? `；其中 ${skipped} 个内容未变、按 sha256 增量跳过` : '')
+        + '。可继续「② AI 建议知识点」。'
     } else {
       const detail = (errs || [])
         .map((e) => `${e.file || '（整体）'}：${e.error || ''}`)
         .filter(Boolean).join('；')
       stepMsg.value = `❌ ${r?.error || '抽取失败'}`
         + (detail ? `\n明细：${detail}` : '')
-        + '\n常见原因：该章节 `_source/` 里还没有原件；或文件类型不支持（支持 pptx/docx/xlsx/pdf/图片/md/txt）。'
+        + '\n常见原因：选中文件不存在、类型不支持（支持 pptx/docx/xlsx/pdf/图片/md/txt），或 PDF 缺 poppler-utils。'
     }
     await refresh()
   } catch (e) {
@@ -109,18 +148,38 @@ async function doExtract() {
 
 async function doSuggest() {
   if (!active.value) return
-  if (!window.confirm('「AI 建议知识点」会**调用模型**（产生费用），继续？')) return
+  const picked = selectedFileList.value
+  if (!picked.length) {
+    stepMsg.value = '请先勾选要识别知识点的文件（可用「全选」）。'
+    return
+  }
+  if (selectedUnextracted.value.length) {
+    stepMsg.value = `选中文件中有 ${selectedUnextracted.value.length} 个尚未抽取；请先点「① 抽取选中文件」。`
+    return
+  }
+  const scope = picked.length === sourceFiles.value.length
+    ? `全部 ${picked.length} 个文件`
+    : `选中的 ${picked.length} 个文件`
+  if (!window.confirm(
+    `「AI 建议知识点」将基于${scope}调用模型（产生费用），继续？\n`
+    + `模型：${suggestModelLabel.value}`)) return
   stepBusy.value = 'suggest'
-  stepMsg.value = '正在让 AI 抽取知识点，请稍候…'
+  stepMsg.value = `正在基于${scope}让 AI 识别知识点，请稍候…`
   try {
     const r = await suggestMaterials(settings.engineUrl, settings.engineToken, active.value,
-                                     suggestModel.value.trim())
-    stepMsg.value = r?.ok
-      ? '✅ 已生成 AI 建议（尚未生效，请核对后点「确认生效」）'
-      : `❌ ${r?.error || '生成失败'}`
+                                     suggestModel.value.trim(), suggestProvider.value, picked)
+    if (r?.ok) {
+      const mode = r?.source?.mode === 'vision' ? '图片/多模态' : '文本'
+      const nFiles = r?.source?.files ?? picked.length
+      const nTerms = r?.term_count ?? 0
+      stepMsg.value = `✅ 已生成 AI 建议：${nTerms} 个知识点（来源 ${nFiles} 个文件，${mode}）`
+        + '；尚未生效，请核对后点「③ 确认生效」。'
+    } else {
+      stepMsg.value = `❌ ${r?.error || '知识点识别失败'}`
+    }
     await refresh()
   } catch (e) {
-    stepMsg.value = `生成失败：${String((e as Error).message || e)}`
+    stepMsg.value = `知识点识别失败：${String((e as Error).message || e)}`
   } finally { stepBusy.value = '' }
 }
 
@@ -186,6 +245,12 @@ async function refresh() {
 }
 
 async function showKnowledge(chap: string) {
+  if (active.value !== chap) {
+    // 切换章节：清空上一章的文件选择，loadFiles 会默认全选本章原件。
+    selectedSourceFiles.value = new Set()
+    knownSourceFiles.value = new Set()
+    selectionChapter.value = ''
+  }
   active.value = chap
   try {
     const r = await fetchMaterialsKnowledge(settings.engineUrl, settings.engineToken, chap)
@@ -206,8 +271,24 @@ async function loadFiles() {
     const r = await fetchMaterialsFiles(settings.engineUrl, settings.engineToken,
                                         active.value, showTrash.value)
     files.value = r?.files || []
+    const current = new Set(sourceFiles.value.map((f) => f.file))
+    if (selectionChapter.value !== active.value) {
+      // 首次进入该章：默认全选，保持旧行为「一键抽取全部」。
+      selectedSourceFiles.value = new Set(current)
+      selectionChapter.value = active.value
+    } else {
+      // 同章刷新：保留教师已勾选，只把新上传文件自动加入选择。
+      const kept = new Set([...selectedSourceFiles.value].filter((x) => current.has(x)))
+      for (const f of sourceFiles.value) {
+        if (!knownSourceFiles.value.has(f.file)) kept.add(f.file)
+      }
+      selectedSourceFiles.value = kept
+    }
+    knownSourceFiles.value = current
   } catch {
     files.value = []
+    selectedSourceFiles.value = new Set()
+    knownSourceFiles.value = new Set()
   }
 }
 
@@ -481,11 +562,34 @@ defineExpose({ refresh })
         </p>
         <table v-else class="tbl" style="margin-bottom:8px">
           <thead>
-            <tr><th>文件</th><th>大小</th><th>修改时间</th><th>位置</th><th></th></tr>
+            <tr>
+              <th style="width:28px">
+                <input type="checkbox" :checked="allFilesSelected"
+                       title="全选原件"
+                       @change="($event.target as HTMLInputElement).checked ? selectAllFiles() : clearFileSelection()" />
+              </th>
+              <th>文件</th><th>抽取状态</th><th>大小</th><th>修改时间</th><th>位置</th><th></th>
+            </tr>
           </thead>
           <tbody>
             <tr v-for="f in files" :key="f.dir + '/' + f.file">
+              <td>
+                <input v-if="f.dir === '_source' && !f.error" type="checkbox"
+                       :checked="selectedSourceFiles.has(f.file)"
+                       @change="toggleFile(f.file, ($event.target as HTMLInputElement).checked)" />
+              </td>
               <td>{{ f.name }}</td>
+              <td class="c">
+                <template v-if="f.dir === '_source'">
+                  <b v-if="f.extracted" style="color:#14532d">已抽取</b>
+                  <span v-else style="color:#b45309">未抽取</span>
+                  <span v-if="f.extracted" class="hint" style="margin-left:4px">
+                    {{ f.extractMode || '—' }}<template v-if="f.extractChars"> · {{ f.extractChars }} 字</template>
+                    <template v-if="f.extractImages"> · {{ f.extractImages }} 图</template>
+                  </span>
+                </template>
+                <span v-else class="hint">—</span>
+              </td>
               <td class="c">{{ fmtBytes(f.bytes) }}</td>
               <td class="c">{{ f.mtime }}</td>
               <td class="c">{{ f.dir === '_source' ? '原件' : '回收站' }}</td>
@@ -500,11 +604,27 @@ defineExpose({ refresh })
             </tr>
           </tbody>
         </table>
+        <div v-if="sourceFiles.length" style="display:flex; gap:8px; align-items:center;
+             flex-wrap:wrap; margin:0 0 8px">
+          <span class="hint" style="margin:0">
+            已选 <b>{{ selectedFileList.length }}</b> / {{ sourceFiles.length }} 个原件
+          </span>
+          <button class="btn sm" @click="selectAllFiles">全选</button>
+          <button class="btn sm" @click="clearFileSelection">全不选</button>
+          <button class="btn sm" @click="invertFileSelection">反选</button>
+          <label class="hint" style="display:flex; gap:4px; align-items:center; margin:0">
+            <input v-model="forceExtract" type="checkbox" /> 强制重抽（忽略 sha256）
+          </label>
+          <span class="hint" style="margin:0">
+            更新文件后只需勾选该文件重抽；未勾选文件及其索引保持不变。
+          </span>
+        </div>
 
         <h4 style="margin:4px 0">下一步</h4>
         <div style="display:flex; gap:8px; flex-wrap:wrap; align-items:center; margin:4px 0">
-          <button class="btn" :disabled="stepBusy !== '' || !cur.sources" @click="doExtract">
-            {{ stepBusy === 'extract' ? '抽取中…' : '① 抽取' }}
+          <button class="btn" :disabled="stepBusy !== '' || !selectedFileList.length" @click="doExtract">
+            {{ stepBusy === 'extract' ? '抽取中…'
+              : (allFilesSelected ? '① 抽取全部（增量）' : `① 抽取选中 ${selectedFileList.length} 个`) }}
           </button>
           <label class="field" title="默认跟随评阅段配置；如需单独指定可在此选择（会记住）">
             建议用模型
@@ -518,8 +638,13 @@ defineExpose({ refresh })
             <input v-model="suggestModel" placeholder="模型名（空=默认）" style="width:150px"
                    @change="saveSuggestChoice" />
           </label>
-          <button class="btn" :disabled="stepBusy !== '' || !cur.extracted" @click="doSuggest">
-            {{ stepBusy === 'suggest' ? '生成中…' : '② AI 建议知识点' }}
+          <button class="btn"
+                  :disabled="stepBusy !== '' || !selectedFileList.length || selectedUnextracted.length > 0"
+                  @click="doSuggest"
+                  :title="selectedUnextracted.length
+                    ? '选中文件中有未抽取项，请先抽取'
+                    : '只基于当前勾选的文件识别知识点'">
+            {{ stepBusy === 'suggest' ? '识别中…' : '② AI 建议知识点' }}
           </button>
           <span class="hint" style="margin:0">当前模型：{{ suggestModelLabel }}</span>
           <button class="btn primary" :disabled="stepBusy !== '' || !cur.hasAiSuggest"
@@ -531,7 +656,10 @@ defineExpose({ refresh })
             {{ atopiaBusy ? '读取中…' : '📥 从 Atopia 复制' }}
           </button>
         </div>
-        <p v-if="stepMsg" class="hint" style="margin:2px 0">{{ stepMsg }}</p>
+        <p v-if="stepMsg" class="hint" style="margin:2px 0; white-space:pre-wrap">{{ stepMsg }}</p>
+        <p v-if="selectedUnextracted.length" class="hint" style="margin:2px 0; color:#b45309">
+          选中文件中有 {{ selectedUnextracted.length }} 个尚未抽取，需先点「① 抽取选中文件」。
+        </p>
         <p class="hint" style="margin:2px 0">
           {{ nextStep(cur) }}
         </p>

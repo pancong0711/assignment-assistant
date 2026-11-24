@@ -142,12 +142,69 @@ def list_sources(ws, chap: str) -> list[Path]:
                   key=lambda p: str(p))
 
 
+def _norm_source_rel(raw: str) -> str:
+    """把 `_source/plan/a.pptx`、`plan/a.pptx` 统一为 `_source/plan/a.pptx`。"""
+    s = str(raw or "").strip().replace("\\", "/").lstrip("/")
+    if not s:
+        return ""
+    if not s.startswith(f"{SOURCE}/"):
+        s = f"{SOURCE}/{s}"
+    return s
+
+
+def resolve_source_selection(ws, chap: str, files: "list[str] | tuple[str, ...] | None" = None
+                             ) -> "tuple[list[Path], list[str]]":
+    """D228：把教师选中的文件解析成 `_source/` 下的真实路径。
+
+    支持三种写法：`_source/plan/a.pptx`、`plan/a.pptx`、唯一的 `a.pptx`。
+    选中列表为空 = 全部文件。返回 `(paths, missing_labels)`。
+    """
+    d = chap_dir(ws, chap)
+    base = (d / SOURCE).resolve()
+    all_paths = list_sources(ws, chap)
+    if not files:
+        return all_paths, []
+    by_rel = {str(p.relative_to(d)).replace("\\", "/"): p for p in all_paths}
+    by_name: dict[str, list[Path]] = {}
+    for p in all_paths:
+        by_name.setdefault(p.name, []).append(p)
+    out: list[Path] = []
+    missing: list[str] = []
+    seen: set[str] = set()
+    for raw in files:
+        rel = _norm_source_rel(raw)
+        if not rel:
+            continue
+        # 路径穿越红线：解析后必须仍在 `_source/` 内。
+        candidate = (d / rel).resolve()
+        try:
+            candidate.relative_to(base)
+        except ValueError:
+            raise MaterialsError(f"资料路径非法（必须位于 _source/）：{raw!r}")
+        p = by_rel.get(rel)
+        if p is None and rel.count("/") == 1:
+            hits = by_name.get(rel[len(SOURCE) + 1:], [])
+            if len(hits) == 1:
+                p = hits[0]
+        if p is None or not p.is_file():
+            missing.append(rel)
+            continue
+        key = str(p)
+        if key not in seen:
+            seen.add(key)
+            out.append(p)
+    return out, missing
+
+
 def files_of(ws, chap: str, *, include_trash: bool = False) -> list[dict]:
     """D134-T3b：列出 `_source/` 里的原件（文件名/大小/时间/sha/类型）。
 
     只读操作；**不修改**任何文件。`include_trash=True` 时一并列出回收站里的。
     """
     d = chap_dir(ws, chap)
+    idx = read_index(ws, chap)
+    idx_by_file = {str(s.get("file")): s for s in (idx.get("sources") or [])
+                   if isinstance(s, dict) and s.get("file")}
     out: list[dict] = []
     dirs = [(SOURCE, d / SOURCE)]
     if include_trash:
@@ -159,7 +216,8 @@ def files_of(ws, chap: str, *, include_trash: bool = False) -> list[dict]:
                          and not x.name.startswith(".")), key=lambda x: str(x)):
             try:
                 st = p.stat()
-                entry = {"file": str(p.relative_to(d)).replace("\\", "/"),
+                rel = str(p.relative_to(d)).replace("\\", "/")
+                entry = {"file": rel,
                          "name": p.name, "dir": label,
                          "kindDir": (p.parent.name if p.parent != (d / SOURCE)
                                      else ""),
@@ -168,6 +226,14 @@ def files_of(ws, chap: str, *, include_trash: bool = False) -> list[dict]:
                          "kind": classify(p)}
                 if label == SOURCE:
                     entry["sha256"] = sha256_of(p)
+                    src = idx_by_file.get(rel) or {}
+                    ex = src.get("extract") or {}
+                    entry["indexed"] = bool(src)
+                    entry["extracted"] = bool(ex)
+                    entry["extractMode"] = str(ex.get("engine") or "")
+                    entry["extractChars"] = int(ex.get("chars") or 0)
+                    entry["extractImages"] = len(ex.get("images") or [])
+                    entry["extractedAt"] = str(src.get("mtime") or "")
                 out.append(entry)
             except OSError as exc:
                 out.append({"file": str(p.name), "dir": label,
@@ -499,15 +565,31 @@ def pdf_to_images(pdf: Path, out_dir: Path, *, dpi: int = 150,
 
 
 # ---------------- 抽取总入口（增量） ----------------
-def extract_chap(ws, chap: str, *, force: bool = False) -> dict:
-    """抽取某章节全部资料 → 写 `索引.json` + `_extract/`（sha256 增量）。"""
+def extract_chap(ws, chap: str, *, force: bool = False,
+                 files: "list[str] | tuple[str, ...] | None" = None) -> dict:
+    """抽取某章节资料 → 写 `索引.json` + `_extract/`（sha256 增量）。
+
+    D228：`files` 非空时只处理选中文件；未选中的已抽取条目原样保留，
+    因此教师更新一个 PPT 后只需重抽该文件，不必全章重跑。
+    """
     d = ensure_chap(ws, chap)
     ex = d / EXTRACT
     old = {s.get("file"): s for s in (read_index(ws, chap).get("sources") or [])
            if isinstance(s, dict)}
+    selected_paths, missing = resolve_source_selection(ws, chap, files)
+    selected_rels = {str(p.relative_to(d)).replace("\\", "/") for p in selected_paths}
     out_sources: list[dict] = []
     skipped, errors = [], []
-    for p in list_sources(ws, chap):
+    # 只抽选中文件时：保留未选中的旧索引项（且只保留源文件仍存在的项）。
+    if files:
+        for rel, prev in old.items():
+            if rel in selected_rels:
+                continue
+            if (d / rel).is_file():
+                out_sources.append(prev)
+    for rel in missing:
+        errors.append({"file": rel, "error": "未找到该原件（检查是否已上传/路径是否正确）"})
+    for p in selected_paths:
         rel = str(p.relative_to(d)).replace("\\", "/")
         sha = sha256_of(p)
         prev = old.get(rel)
@@ -564,17 +646,26 @@ def extract_chap(ws, chap: str, *, force: bool = False) -> dict:
                                      for s in out_sources)}}
     write_index(ws, chap, idx)
     return {"ok": not errors, "chap": str(chap), "index": str(index_path(ws, chap)),
-            "sources": len(out_sources), "skipped_unchanged": skipped,
+            "sources": len(out_sources), "selected_files": len(selected_paths),
+            "skipped_unchanged": skipped,
+            "skipped_unselected": [r for r in old if r not in selected_rels]
+                                  if files else [],
             "chars": total_chars, "errors": errors}
 
 
-def read_source_text(ws, chap: str, *, max_chars: int = 0) -> dict:
-    """汇总本章全部抽取文本（供 AI 抽取知识点）。返回 {text, chars, files, missing}。"""
+def read_source_text(ws, chap: str, *, max_chars: int = 0,
+                     files: "list[str] | tuple[str, ...] | None" = None) -> dict:
+    """汇总本章抽取文本（供 AI 抽取知识点）。D228：可按 files 只读选中文件。"""
     idx = read_index(ws, chap)
     d = chap_dir(ws, chap)
+    wanted = {_norm_source_rel(x) for x in (files or []) if str(x or "").strip()}
     parts: list[str] = []
-    files = 0
+    files_n = 0
+    names: list[str] = []
     for s in idx.get("sources") or []:
+        rel = str(s.get("file") or "")
+        if wanted and rel not in wanted:
+            continue
         tf = str((s.get("extract") or {}).get("text_file") or "")
         if not tf:
             continue
@@ -586,14 +677,15 @@ def read_source_text(ws, chap: str, *, max_chars: int = 0) -> dict:
         txt = p.read_text(encoding="utf-8", errors="replace")
         if txt.strip():
             parts.append(f"===== {s.get('file')} =====\n{txt}")
-            files += 1
+            files_n += 1
+            names.append(rel)
     text = "\n\n".join(parts)
     truncated = False
     if max_chars and len(text) > max_chars:
         text = text[:max_chars]
         truncated = True
-    return {"text": text, "chars": len(text), "files": files,
-            "truncated": truncated,
+    return {"text": text, "chars": len(text), "files": files_n,
+            "fileNames": names, "truncated": truncated,
             "has_index": bool((idx.get("sources") or []))}
 
 
@@ -603,15 +695,20 @@ _VISION_TEXT_THRESHOLD = 200
 _VISION_MAX_IMAGES = 20
 
 
-def read_source_images(ws, chap: str, *, max_images: int = _VISION_MAX_IMAGES) -> dict:
-    """汇总本章可送多模态的图片（PDF 页图 + 教师直接放的图片）。
+def read_source_images(ws, chap: str, *, max_images: int = _VISION_MAX_IMAGES,
+                       files: "list[str] | tuple[str, ...] | None" = None) -> dict:
+    """汇总可送多模态的图片（PDF 页图 + 教师直接放的图片）。
 
-    只返回**已渲染好且在盘上**的图片；被删掉的缓存自动跳过。
+    D228：可按 files 只读取选中文件的图片；只返回盘上仍存在的图片。
     """
     idx = read_index(ws, chap)
     d = chap_dir(ws, chap)
+    wanted = {_norm_source_rel(x) for x in (files or []) if str(x or "").strip()}
     out: list[str] = []
     for s in idx.get("sources") or []:
+        rel = str(s.get("file") or "")
+        if wanted and rel not in wanted:
+            continue
         ex = s.get("extract") or {}
         cand = list(ex.get("images") or [])
         for one in cand:
@@ -674,20 +771,38 @@ def build_knowledge_prompt(text: str, *, chap: str, terms: "list[str] | None" = 
 
 def suggest_knowledge(client, ws, chap: str, *, model: "str | None" = None,
                       max_chars: int = 60000,
-                      max_images: int = _VISION_MAX_IMAGES) -> dict:
-    """读抽取文本 → LLM 抽知识点 → 写 `知识点清单.ai.json`（**不**生成生效 .md）。"""
+                      max_images: int = _VISION_MAX_IMAGES,
+                      files: "list[str] | tuple[str, ...] | None" = None) -> dict:
+    """读抽取文本 → LLM 抽知识点 → 写 `知识点清单.ai.json`（**不**生成生效 .md）。
+
+    D228：`files` 非空时只基于选中文件识别知识点；适合教师逐文件排查/多选。
+    """
     from ..grading.transcribe import parse_llm_json
     from ..grading.vocab import load_vocab
 
-    src = read_source_text(ws, chap, max_chars=max_chars)
+    selected = [_norm_source_rel(x) for x in (files or []) if str(x or "").strip()]
+    selected = list(dict.fromkeys(selected))
+    idx = read_index(ws, chap)
+    idx_files = {str(s.get("file")) for s in (idx.get("sources") or [])
+                 if isinstance(s, dict) and s.get("file")}
+    if selected:
+        missing = [x for x in selected if x not in idx_files]
+        if missing:
+            raise MaterialsError(
+                "以下选中文件还没有抽取结果，请先点「① 抽取选中文件」或运行 "
+                f"`assist materials extract --chap {chap} --file ...`：\n- "
+                + "\n- ".join(missing))
+    src = read_source_text(ws, chap, max_chars=max_chars, files=selected or None)
     # D131 补漏：图片型/扫描型 PDF 抽不到文字（`pdftotext` 给空），但 `pdftoppm`
     # 已把页图渲染出来。此时必须走**多模态**，否则"能抽取但 AI 看不到内容"。
-    vision = read_source_images(ws, chap, max_images=max_images)
+    vision = read_source_images(ws, chap, max_images=max_images, files=selected or None)
     if not src["text"].strip() and not vision["images"]:
+        where = ("选中的文件" if selected else f"章节 {chap}")
         raise MaterialsError(
-            f"章节 {chap} 没有可用的抽取文本或页图。请先 "
-            f"`assist materials extract --chap {chap}`，"
-            f"并把 PPT/PDF 放进 {chap_dir(ws, chap) / SOURCE}。")
+            f"{where} 没有可用的抽取文本或页图。请先 "
+            f"`assist materials extract --chap {chap}`" +
+            (f" --file ..." if selected else "") +
+            f"，并确认文件在 {chap_dir(ws, chap) / SOURCE}。")
     try:
         vocab_terms = [t.get("term") for t in load_vocab(ws).get("terms", []) if t.get("term")]
     except Exception:  # noqa: BLE001
@@ -739,8 +854,9 @@ def suggest_knowledge(client, ws, chap: str, *, model: "str | None" = None,
            "knowledge": knowledge,
            "logic": [x for x in (data.get("logic") or []) if isinstance(x, dict)],
            "notes": str(data.get("notes") or ""),
-           "source": {"files": src["files"], "chars": src["chars"],
-                      "truncated": src["truncated"],
+           "source": {"files": src["files"], "fileNames": src.get("fileNames") or [],
+                      "chars": src["chars"], "truncated": src["truncated"],
+                      "selected": selected,
                       # 审计：本次是"纯文本"还是"看图"抽取（教师据此判断可信度）
                       "mode": "vision" if use_vision else "text",
                       "images_used": (len(vision["images"][:vision["max_images"]])

@@ -90,7 +90,15 @@ body {
 .q-body.indent-hanging { padding-left: 7mm; text-indent: -7mm; }
 .q-id { font-weight: 700; color: var(--accent); font-size: 11pt; }
 .q-tag { font-weight: 400; color: var(--muted); font-size: 9pt; }
-.q-content { font-size: 11.5pt; line-height: 1.8; white-space: pre-wrap; }
+.q-content { font-size: 11.5pt; line-height: 1.8; white-space: pre-wrap;
+  display: flex; align-items: flex-start; }
+/* D226：题号独立于正文容器；即使正文首块是列表/表格/行间公式，题号也不会独占一行。 */
+.q-content > .q-no { flex: 0 0 auto; margin-right: 1.6mm; white-space: pre; }
+.q-content > .q-content-body { flex: 1 1 auto; min-width: 0; }
+.q-content > .q-content-body > :first-child { margin-top: 0; }
+/* KaTeX auto-render 会在公式外包一层 span；首块行间公式的 margin-top 也要清零。 */
+.q-content > .q-content-body > :first-child .katex-display:first-child,
+.q-content > .q-content-body > .katex-display:first-child { margin-top: 0; }
 .q-img { max-width: 100%; max-height: {{ doc.figure.max_h_mm }}mm; object-fit: contain; align-self: flex-start; }
 .q-img-ph { color: var(--muted); font-size: 10pt; font-style: italic; border: 1px dashed var(--hairline);
   border-radius: 2mm; padding: 4mm; text-align: center; }
@@ -184,7 +192,7 @@ body {
       <div class="q-body indent-{{ doc.indent }}">
         {% for b in c.blocks %}
         {%- if b.kind == 'content' %}
-        <div class="q-content">{% if b.cont %}<span class="q-cont">（题 {{ c.no|replace('.', '') }} 续）</span>{% elif c.no %}{{ c.no }}  {% endif %}{{ b.html_inline|safe if b.html_inline else b.text }}</div>
+        <div class="q-content">{% if not b.cont and c.no %}<span class="q-no">{{ c.no }}</span>{% endif %}<div class="q-content-body">{% if b.cont %}<span class="q-cont">（题 {{ c.no|replace('.', '') }} 续）</span>{% endif %}{{ b.html_inline|safe if b.html_inline else b.text }}</div></div>
         {%- elif doc.include_solution %}
         <div class="q-solution{% if b.show_sol_label %} q-sol-first{% else %} q-solution-cont{% endif %}">{% if b.cont %}<span class="q-cont">（题 {{ c.no|replace('.', '') }} 续）</span>{% endif %}{% if b.show_sol_label %}<span class="q-sol-label">参考答案：</span>{% endif %}{% if b.scale and b.scale < 1 %}<span style="display:inline-block;transform:scale({{ b.scale }});transform-origin:left top;">{{ b.html|safe if b.html else b.text }}</span>{% else %}{{ b.html|safe if b.html else b.text }}{% endif %}</div>
         {%- endif %}
@@ -196,7 +204,7 @@ body {
     {%- else %}{% for fr in pg.frames %}
     <div class="sheet-frame pos-{{ doc.figure.pos }}">
       <div class="q-body indent-{{ doc.indent }}">
-        <div class="q-content">{% if fr.no %}{{ fr.no }}  {% endif %}{{ fr.content_html_inline|safe if fr.content_html_inline else fr.content }}{% if fr.tag %} <span class="q-tag">【{{ fr.tag }}】</span>{% endif %}</div>
+        <div class="q-content">{% if fr.no %}<span class="q-no">{{ fr.no }}</span>{% endif %}<div class="q-content-body">{{ fr.content_html_inline|safe if fr.content_html_inline else fr.content }}{% if fr.tag %} <span class="q-tag">【{{ fr.tag }}】</span>{% endif %}</div></div>
         {% if doc.include_solution and fr.solution %}<div class="q-solution">参考答案：{{ fr.solution_html|safe if fr.solution_html else fr.solution }}</div>{% endif %}
       </div>
       {%- set fig_w = '%.1f'|format(doc.figure.max_w_mm * doc.figure.scale) %}

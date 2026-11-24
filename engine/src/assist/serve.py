@@ -2335,9 +2335,15 @@ class Handler(BaseHTTPRequestHandler):
             if not chap:
                 self._json({"ok": False, "error": "缺少 chap"}, 400)
                 return
+            raw_files = payload.get("files")
+            if isinstance(raw_files, str):
+                raw_files = [raw_files]
+            if not isinstance(raw_files, list):
+                raw_files = []
             try:
                 rep = _mx.extract_chap(Path(self.ws).resolve(), chap,
-                                       force=bool(payload.get("force")))
+                                       force=bool(payload.get("force")),
+                                       files=raw_files or None)
             except _mx.MaterialsError as exc:
                 # D170-T6：这是**业务状态**（没有原件/类型不支持），不是请求错误 →
                 # 返回 200 + ok:false，让前端能展示具体原因（此前 400 只显示状态码）
@@ -2359,26 +2365,42 @@ class Handler(BaseHTTPRequestHandler):
                 self._json({"ok": False, "error": f"bad json: {exc}"}, 400)
                 return
             from .files import materials as _ms
-            from .grading.llm import LLMConfigError, LLMClient
+            from .grading.llm import (LLMAPIError, LLMConfigError,
+                                      build_client_for)
             chap = str(payload.get("chap") or "").strip()
             if not chap:
                 self._json({"ok": False, "error": "缺少 chap"}, 400)
                 return
+            raw_files = payload.get("files")
+            if isinstance(raw_files, str):
+                raw_files = [raw_files]
+            if not isinstance(raw_files, list):
+                raw_files = []
             ws_ = Path(self.ws).resolve()
+            provider = str(payload.get("provider") or "").strip()
+            model = str(payload.get("model") or "").strip()
             try:
-                client = LLMClient(ws=ws_)
-                rep = _ms.suggest_knowledge(client, ws_, chap,
-                                            model=str(payload.get("model") or "") or None)
+                # D228：PWA 上选择的 provider 必须传进来；此前只传 model，
+                # 下拉框看似可选择但实际仍走评阅段 provider，容易表现为“识别失败”。
+                client, used_model = build_client_for(ws_, provider, model,
+                                                      session_prefix="materials")
+                rep = _ms.suggest_knowledge(client, ws_, chap, model=model or None,
+                                            files=raw_files or None)
             except _ms.MaterialsError as exc:
                 self._json({"ok": False, "error": str(exc)}, 400)
                 return
             except LLMConfigError as exc:
                 self._json({"ok": False, "error": f"LLM 未配置：{exc}"}, 400)
                 return
+            except LLMAPIError as exc:
+                self._json({"ok": False, "error": f"知识点识别失败：{str(exc)[:800]}"}, 500)
+                return
             except Exception as exc:  # noqa: BLE001
-                self._json({"ok": False, "error": str(exc)[:400]}, 500)
+                self._json({"ok": False, "error": f"{type(exc).__name__}: {str(exc)[:800]}"}, 500)
                 return
             rep["chap"] = chap
+            rep["provider"] = provider
+            rep["model"] = str(used_model or model or "")
             self._json(rep)
             return
         if u.path == "/materials/confirm":

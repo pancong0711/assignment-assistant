@@ -203,51 +203,104 @@ export function isDataImage(src: string): boolean {
  */
 const BLOCK_TAG_RE = /<(table|ul|ol|li|h[1-6]|blockquote|pre|svg|div|p)(\s|>|\/)/i
 
-/** 行内渲染：去掉最外层 `<p>...</p>` 包裹，使「题号 + 正文」能排在同一行。
- *
- *  D105：题干直接插在题号后时，`<p>` 是块级 → 题号独占一行。
- *  D222：进一步处理两种情况：
- *    1. 段落内只有行内元素（**含** `<br>`）→ 去 `<p>` 包裹（题号与首行同排）；
- *    2. 多段内容 → **只把第一段行内化**，其余段落保持块级
- *       （题号仍与第一行同排，后续段落正常换行）。
- *  表格/SVG/列表等首块即块级的，保持原样。
- */
-export function renderRichInline(text: string): string {
-  const html = renderRich(text)
-  if (!html) return ''
-  const trimmed = html.trim()
+/** 取字符串开头的某个元素的 inner/rest；按同名标签计数处理嵌套。 */
+function takeElement(html: string, tag: string): { inner: string; rest: string } | null {
+  const open = new RegExp(`^<${tag}\\b[^>]*>`, 'i').exec(html)
+  if (!open) return null
+  const tagRe = new RegExp(`<\\/?${tag}\\b[^>]*>`, 'gi')
+  tagRe.lastIndex = open[0].length
+  let depth = 1
+  let m: RegExpExecArray | null
+  while ((m = tagRe.exec(html))) {
+    if (/^<\//.test(m[0])) depth -= 1
+    else depth += 1
+    if (depth === 0) {
+      return {
+        inner: html.slice(open[0].length, m.index),
+        rest: html.slice(tagRe.lastIndex),
+      }
+    }
+  }
+  return null
+}
 
-  // 1) 首块是 <p>：内部无块级 → 去掉包裹（多段时只行内化第一段）
-  const pm = /^<p>((?:(?!<\/p>)[\s\S])*)<\/p>([\s\S]*)$/.exec(trimmed)
-  if (pm && !BLOCK_TAG_RE.test(pm[1])) {
-    const rest = (pm[2] || '').trim()
-    return rest ? pm[1] + rest : pm[1]
+/** 把一段 HTML 的**首个块级元素**行内化，其余块保持原样。 */
+function inlineLeading(html: string): string {
+  const trimmed = String(html ?? '').trim()
+  if (!trimmed) return ''
+
+  // p：常见路径。内部若还有块级元素，不强行拆（避免破坏表格/图等语义）。
+  const p = takeElement(trimmed, 'p')
+  if (p && !BLOCK_TAG_RE.test(p.inner.trim())) {
+    const inner = p.inner.trim()
+    const rest = p.rest.trim()
+    return rest ? inner + rest : inner
   }
-  // 2) <div>（内部仅行内元素）→ 去掉这层 div
-  const dm = /^<div[^>]*>((?:(?!<\/div>)[\s\S])*)<\/div>([\s\S]*)$/.exec(trimmed)
-  if (dm && !BLOCK_TAG_RE.test(dm[1])) {
-    const rest = (dm[2] || '').trim()
-    return rest ? dm[1] + rest : dm[1]
+
+  // div：D226 支持 div 内再嵌首段（如 <div class=x><p>第一段</p><p>第二段</p></div>）。
+  const d = takeElement(trimmed, 'div')
+  if (d) {
+    const inner = inlineLeading(d.inner)
+    const rest = d.rest.trim()
+    return rest ? inner + rest : inner
   }
-  // 3) <ul>/<ol> → 各项用 <br> 连接（题号与第一项同排；translation 题常见）
-  const lm = /^<(ul|ol)[^>]*>([\s\S]*?)<\/\1>([\s\S]*)$/.exec(trimmed)
-  if (lm) {
-    const lis = [...lm[2].matchAll(/<li[^>]*>((?:(?!<\/li>)[\s\S])*)<\/li>/g)]
-      .map((x) => x[1].trim()).filter(Boolean)
+
+  // 引用块：首段行内化，后续段落/引用仍保留。
+  const bq = takeElement(trimmed, 'blockquote')
+  if (bq) {
+    const inner = inlineLeading(bq.inner)
+    const rest = bq.rest.trim()
+    return rest ? inner + rest : inner
+  }
+
+  // 标题：题干极少数以标题开头；题号仍应与标题文字同排。
+  for (const h of ['h1', 'h2', 'h3', 'h4', 'h5', 'h6']) {
+    const hm = takeElement(trimmed, h)
+    if (hm) {
+      const inner = inlineLeading(hm.inner)
+      const rest = hm.rest.trim()
+      return rest ? inner + rest : inner
+    }
+  }
+
+  // 列表：D226 关键修复——Markdown 松散列表会生成 <li><p>…</p></li>；
+  // 旧实现只拼 <li>，首项仍以 <p> 开头 → 题号独占一行（translation 现场）。
+  for (const tag of ['ul', 'ol']) {
+    const lm = takeElement(trimmed, tag)
+    if (!lm) continue
+    const lis: string[] = []
+    let restIn = lm.inner.trim()
+    while (restIn) {
+      const at = restIn.search(/<li\b/i)
+      if (at < 0) break
+      const item = takeElement(restIn.slice(at), 'li')
+      if (!item) break
+      lis.push(inlineLeading(item.inner))
+      restIn = item.rest.trim()
+    }
     if (lis.length) {
-      const rest = (lm[3] || '').trim()
-      const joined = lis.join('<br>')
+      const rest = lm.rest.trim()
+      const joined = lis.filter(Boolean).join('<br>')
       return rest ? joined + rest : joined
     }
   }
-  // 4) <blockquote> → 取第一段文字行内化
-  const bm = /^<blockquote[^>]*>\s*<p>((?:(?!<\/p>)[\s\S])*)<\/p>[\s\S]*?<\/blockquote>([\s\S]*)$/.exec(trimmed)
-  if (bm && !BLOCK_TAG_RE.test(bm[1])) {
-    const rest = (bm[2] || '').trim()
-    return rest ? bm[1] + rest : bm[1]
-  }
-  // 5) 表格 / SVG / 代码块等：保持块级
-  return html
+
+  // 表格 / SVG / 代码块 / 纯行内内容：保持原样。
+  return trimmed
+}
+
+/** 行内渲染：去掉首个块级容器，使「题号 + 正文」能排在同一行。
+ *
+ *  D105：题干直接插在题号后时，`<p>` 是块级 → 题号独占一行。
+ *  D222：段落内只有行内元素（**含** `<br>`）→ 去 `<p>` 包裹。
+ *  D225：列表/div/引用也参与行内化。
+ *  D226：修复 D225 未覆盖的松散列表（`<li><p>`）、带 class 的 `<p>`、
+ *        嵌套 div 首段，以及 `$$…$$` 被 Markdown 单独成段的情况；
+ *        同时让模板用独立 `.q-no` 与 `.q-content-body` 排版，即使正文
+ *        首块确实是表格/行间公式，题号也不会独占一行。
+ */
+export function renderRichInline(text: string): string {
+  return inlineLeading(renderRich(text))
 }
 
 /** md+html → 纯文本（检索 / Excel 摘要 / xlsx solution 列）。 */

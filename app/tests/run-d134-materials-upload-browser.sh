@@ -126,7 +126,7 @@ try:
             'sourceOnlyOneLeft': len(list(src.glob('*.md'))) <= 1,
         })
         # ---- D135：从回收站恢复（二次确认后移回 _source/）----
-        pg.locator('input[type=checkbox]').check()          # 显示回收站
+        pg.get_by_role('checkbox', name='显示回收站').check()   # D228 文件多选后需按文案定位
         pg.wait_for_function(
             "() => document.body.innerText.includes('回收站')", timeout=15000)
         pg.wait_for_function(

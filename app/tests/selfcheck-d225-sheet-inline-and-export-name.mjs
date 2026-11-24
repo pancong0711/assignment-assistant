@@ -28,11 +28,17 @@ must(blocky(renderRichInline('|a|b|\n|-|-|\n|1|2|')), '表格题干应保持块�
 // 3) 导出文件名：班级名 + 完整时间戳
 must(/function exportStamp\(\)/.test(roster), '缺少 exportStamp()')
 must(/function exportClassLabel\(\)/.test(roster), '缺少 exportClassLabel()')
-must(/class-sheet-\$\{exportClassLabel\(\)\}-\$\{exportStamp\(\)\}\.html/.test(roster),
-  'sidecar 文件名未带班级名+时间戳')
-must(!/class-sheet-\$\{stamp\}\.html/.test(roster), '仍在使用仅日期文件名')
-must(/class-sheet-preview-\$\{exportClassLabel\(\)\}-\$\{exportStamp\(\)\}\.html/.test(roster),
+// D226：统一经 classExportBase(prefix) 生成「前缀-班级-时间戳」基名。
+must(/function classExportBase\(prefix: string\)/.test(roster), '缺少 classExportBase()')
+must(/exportClassLabel\(\)\}-\$\{exportStamp\(\)\}/.test(roster),
+  '导出基名未带班级名+时间戳')
+must(/classExportBase\('class-sheet-preview'\)/.test(roster),
   '整班 HTML 下载名未带班级名+时间戳')
+must(/downloadData\(html, htmlName, 'text\/html'\)/.test(roster),
+  '下载成功路径未复用带班级名+时间戳的 htmlName')
+must(/emitClassSidecar\('download', htmlName\)/.test(roster),
+  'sidecar 未与 HTML 使用同一基名')
+must(!/class-sheet[^\n]{0,160}toISOString\(\)\.slice\(0, 10\)/.test(roster), '仍存在仅日期的作业纸导出文件名')
 // 时间戳必须到秒（8 位日期 + 6 位时间）
 must(/padStart\(2, '0'\)[\s\S]{0,200}p\(d\.getSeconds\(\)\)/.test(roster),
   '时间戳未包含时分秒')

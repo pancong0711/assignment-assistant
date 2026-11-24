@@ -130,6 +130,9 @@
 - `docs/166-D223-kb-fig-replace.md` — **D223 修复：题库编辑器选图后无法更换（img_path 无条件更新）+ fig 写回按 kb 前缀识别**
 - `docs/167-D224-kb-fig-upload-robust.md` — **D224 选图链路加固：input 挂载 DOM、取消/超时兜底、存图校验、figRev 强制刷新、✕ 清除题图**
 - `docs/168-D225-sheet-inline-blocks-and-export-name.md` — **D225 列表/div/引用题干也与题号同排 + 班级导出文件名带班级名与时间戳**
+- `docs/169-D226-inline-formula-kb-refresh-export.md` — **D226 松散列表/公式题号不再独占行 + 整班 HTML/JSON 命名配对 + 题库 AI+ 目录实时刷新**
+- `docs/170-D227-personalized-assignment-plan.md` — **D227 规划：发题台账/重复题预检 → 作答与进度分析 → 可解释个性化组卷（暂不 AI 生成新题）**
+- `docs/171-D228-materials-file-selection.md` — **D228 课堂资料按文件抽取/识别知识点（多选/全选）+ provider 选择真正生效**
 
 > **当前活动需求单 = `docs/112-D168`（口径/快照）+ `docs/113-D169`（路线/架构）**；
 > 历史条目保留供追溯，与最新口径冲突时以这两份为准。

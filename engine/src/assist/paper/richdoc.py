@@ -294,47 +294,99 @@ def render_rich(text: str) -> str:
 _BLOCK_TAG_RE = re.compile(r"<(table|ul|ol|li|h[1-6]|blockquote|pre|svg|div|p)(?=[\s>/])", re.I)
 
 
+def _take_element(html_text: str, tag: str) -> "tuple[str, str] | None":
+    """取字符串开头的某个元素的 (inner, rest)；按同名标签计数处理嵌套。"""
+    m = re.match(rf"^<{tag}\b[^>]*>", html_text, flags=re.I)
+    if not m:
+        return None
+    tag_re = re.compile(rf"<\s*/?\s*{tag}\b[^>]*>", re.I)
+    depth = 1
+    pos = m.end()
+    while True:
+        tm = tag_re.search(html_text, pos)
+        if not tm:
+            return None
+        if tm.group(0).lstrip().startswith("</"):
+            depth -= 1
+        else:
+            depth += 1
+        if depth == 0:
+            return html_text[m.end():tm.start()], html_text[tm.end():]
+        pos = tm.end()
+
+
+def _inline_leading(html_text: str) -> str:
+    """把一段 HTML 的**首个块级元素**行内化，其余块保持原样（D226）。"""
+    trimmed = str(html_text or "").strip()
+    if not trimmed:
+        return ""
+
+    # p：常见路径。内部若还有块级元素，不强行拆（避免破坏表格/图等语义）。
+    p = _take_element(trimmed, "p")
+    if p and not _BLOCK_TAG_RE.search(p[0].strip()):
+        inner = p[0].strip()
+        rest = p[1].strip()
+        return inner + rest if rest else inner
+
+    # div：支持 div 内再嵌首段（如 <div class=x><p>第一段</p><p>第二段</p></div>）。
+    d = _take_element(trimmed, "div")
+    if d:
+        inner = _inline_leading(d[0])
+        rest = d[1].strip()
+        return inner + rest if rest else inner
+
+    # 引用块：首段行内化，后续段落/引用仍保留。
+    bq = _take_element(trimmed, "blockquote")
+    if bq:
+        inner = _inline_leading(bq[0])
+        rest = bq[1].strip()
+        return inner + rest if rest else inner
+
+    # 标题：题干极少数以标题开头；题号仍应与标题文字同排。
+    for h in ("h1", "h2", "h3", "h4", "h5", "h6"):
+        hm = _take_element(trimmed, h)
+        if hm:
+            inner = _inline_leading(hm[0])
+            rest = hm[1].strip()
+            return inner + rest if rest else inner
+
+    # 列表：D226 关键修复——Markdown 松散列表会生成 <li><p>…</p></li>；
+    # 旧实现只拼 <li>，首项仍以 <p> 开头 → 题号独占一行（translation 现场）。
+    for tag in ("ul", "ol"):
+        lm = _take_element(trimmed, tag)
+        if not lm:
+            continue
+        lis: list[str] = []
+        rest_in = lm[0].strip()
+        while rest_in:
+            at = re.search(r"<li\b", rest_in, flags=re.I)
+            if not at:
+                break
+            item = _take_element(rest_in[at.start():], "li")
+            if not item:
+                break
+            lis.append(_inline_leading(item[0]))
+            rest_in = item[1].strip()
+        if lis:
+            rest = lm[1].strip()
+            joined = "<br>".join(x for x in lis if x)
+            return joined + rest if rest else joined
+
+    # 表格 / SVG / 代码块 / 纯行内内容：保持原样。
+    return trimmed
+
+
 def render_rich_inline(text: str) -> str:
-    """行内渲染：让「题号 + 正文」排在同一行（D105 / D222 / D225）。
+    """行内渲染：让「题号 + 正文」排在同一行（D105 / D222 / D225 / D226）。
 
     - 首块 `<p>`（内部仅行内元素，含 `<br>`）→ 去包裹；
     - 多段 → 只行内化第一段，其余保持块级；
-    - 首块 `<div>`（内部仅行内）→ 去包裹；
-    - 首块 `<ul>/<ol>` → 各项用 `<br>` 连接（题号与第一项同排）；
-    - 首块 `<blockquote>` → 取第一段文字行内化；
+    - 首块 `<div>`（含嵌套首段）→ 递归去包裹；
+    - 首块 `<ul>/<ol>` → 每一项先递归行内化，再用 `<br>` 连接；
+    - 首块 `<blockquote>` / 标题 → 递归行内化；
     - 表格 / SVG / 代码块 → 保持原样。
     """
-    html = render_rich(text)
-    if not html:
-        return ""
-    trimmed = html.strip()
-
-    pm = re.match(r"<p>((?:(?!</p>)[\s\S])*)</p>([\s\S]*)$", trimmed)
-    if pm and not _BLOCK_TAG_RE.search(pm.group(1)):
-        rest = (pm.group(2) or "").strip()
-        return pm.group(1) + rest if rest else pm.group(1)
-
-    dm = re.match(r"<div[^>]*>((?:(?!</div>)[\s\S])*)</div>([\s\S]*)$", trimmed)
-    if dm and not _BLOCK_TAG_RE.search(dm.group(1)):
-        rest = (dm.group(2) or "").strip()
-        return dm.group(1) + rest if rest else dm.group(1)
-
-    lm = re.match(r"<(ul|ol)[^>]*>([\s\S]*?)</\1>([\s\S]*)$", trimmed)
-    if lm:
-        lis = [x.strip() for x in re.findall(r"<li[^>]*>((?:(?!</li>)[\s\S])*)</li>",
-                                             lm.group(2)) if x.strip()]
-        if lis:
-            rest = (lm.group(3) or "").strip()
-            joined = "<br>".join(lis)
-            return joined + rest if rest else joined
-
-    bm = re.match(r"<blockquote[^>]*>\s*<p>((?:(?!</p>)[\s\S])*)</p>[\s\S]*?</blockquote>([\s\S]*)$",
-                  trimmed)
-    if bm and not _BLOCK_TAG_RE.search(bm.group(1)):
-        rest = (bm.group(2) or "").strip()
-        return bm.group(1) + rest if rest else bm.group(1)
-
-    return html
+    return _inline_leading(render_rich(text))
 
 
 # ---------------- 纯文本派生 ----------------

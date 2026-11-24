@@ -1778,15 +1778,20 @@ def materials_list(obj, workspace, verbose):
 @materials_grp.command("extract")
 @click.option("--chap", required=True, help="章节名（与题库 sheet 同名，如 chap04）")
 @click.option("--force", is_flag=True, help="忽略 sha256 缓存，强制重新抽取")
+@click.option("--file", "files", multiple=True,
+              help="只抽取指定文件（相对 _source/，可多次；缺省=全部）")
 @click.option("--workspace", "-w", default=None)
 @click.option("--verbose", "-v", is_flag=True)
 @click.pass_obj
-def materials_extract(obj, chap, force, workspace, verbose):
-    """抽取 `_source/` 里的 PPT/PDF/图片/文本 → `索引.json` + `_extract/`（增量）。"""
+def materials_extract(obj, chap, force, files, workspace, verbose):
+    """抽取 `_source/` 里的 PPT/PDF/图片/文本 → `索引.json` + `_extract/`（增量）。
+
+    D228：`--file` 可多次传入，只重抽指定文件；未选中的旧索引项保持不变。
+    """
     from .files import materials as M
     ws = _setup(verbose or obj.get("verbose"), workspace)
     try:
-        rep = M.extract_chap(ws, chap, force=force)
+        rep = M.extract_chap(ws, chap, force=force, files=list(files) or None)
     except M.MaterialsError as exc:
         raise click.ClickException(str(exc))
     click.echo(json.dumps(rep, ensure_ascii=False, indent=2))
@@ -1871,7 +1876,10 @@ def materials_show(obj, chap, show_text, workspace, verbose):
 
 @materials_grp.command("suggest")
 @click.option("--chap", required=True)
+@click.option("--provider", default="", help="覆盖 LLM provider（空=评阅段 provider）")
 @click.option("--model", default="", help="覆盖模型")
+@click.option("--file", "files", multiple=True,
+              help="只识别指定文件（相对 _source/，可多次；缺省=全部）")
 @click.option("--max-chars", default=60000, type=int, show_default=True,
               help="送入模型的文本上限（超出截断并标记）")
 @click.option("--max-images", default=20, type=int, show_default=True,
@@ -1879,16 +1887,29 @@ def materials_show(obj, chap, show_text, workspace, verbose):
 @click.option("--workspace", "-w", default=None)
 @click.option("--verbose", "-v", is_flag=True)
 @click.pass_obj
-def materials_suggest(obj, chap, model, max_chars, max_images, workspace, verbose):
-    """AI 抽取「本章知识点 + 逻辑关系」→ `知识点清单.ai.json`（**不**自动生效）。"""
+def materials_suggest(obj, chap, provider, model, files, max_chars, max_images,
+                      workspace, verbose):
+    """AI 抽取「知识点 + 逻辑关系」→ `知识点清单.ai.json`（**不**自动生效）。
+
+    D228：`--provider` 显式覆盖 provider；`--file` 可多次传入，只识别选中文件。
+    """
     from .files import materials as M
+    from .grading.llm import LLMAPIError, LLMConfigError, build_client_for
     ws = _setup(verbose or obj.get("verbose"), workspace)
-    client = _rubric_client(ws)
     try:
+        client, used_model = build_client_for(ws, provider, model,
+                                              session_prefix="materials")
         rep = M.suggest_knowledge(client, ws, chap, model=model or None,
-                                  max_chars=max_chars, max_images=max_images)
+                                  max_chars=max_chars, max_images=max_images,
+                                  files=list(files) or None)
     except M.MaterialsError as exc:
         raise click.ClickException(str(exc))
+    except LLMConfigError as exc:
+        raise click.ClickException(f"LLM 未配置：{exc}")
+    except LLMAPIError as exc:
+        raise click.ClickException(f"知识点识别失败：{str(exc)[:800]}")
+    rep["provider"] = str(provider or "")
+    rep["model"] = str(used_model or model or "")
     click.echo(json.dumps(rep, ensure_ascii=False, indent=2))
     click.echo(f"\n提示：核对后用 `assist materials confirm --chap {chap}` 生成本章知识点清单。",
                err=True)

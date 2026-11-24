@@ -626,11 +626,17 @@ function exportClassLabel(): string {
   return nm.replace(/[\\/:*?"<>|\s]+/g, '_').slice(0, 40) || 'class'
 }
 
-/** 写入 sidecar：已连目录则写同目录，否则下载（与 HTML 同批产出）。 */
-function emitClassSidecar(purpose: 'print' | 'download') {
+/** D226：所有整班输出统一用「前缀-班级-时间戳」基名，HTML 与 JSON 精确配对。 */
+function classExportBase(prefix: string): string {
+  return `${prefix}-${exportClassLabel()}-${exportStamp()}`
+}
+
+/** 写入 sidecar：已连目录则写同目录，否则下载（与 HTML 同批产出）。
+ *  D226：传入 htmlName 时 sidecar 与 HTML 同名换 .json；否则用独立 class-sheet 基名。 */
+function emitClassSidecar(purpose: 'print' | 'download', htmlName?: string) {
   const sc = makeClassSidecar(purpose)
   if (!sc) return
-  const name = sidecarFileName(`class-sheet-${exportClassLabel()}-${exportStamp()}.html`)
+  const name = sidecarFileName(htmlName || `${classExportBase('class-sheet')}.html`)
   try {
     downloadData(JSON.stringify(sc, null, 1), name, 'application/json')
   } catch { /* 下载失败不阻断打印 */ }
@@ -654,6 +660,8 @@ watch([classIncludeAnswers, classIncludeWatermark, classIncludePageText], () => 
 
 async function downloadClassPreviewHtml() {
   if (!classPreviewHtml.value) return
+  // D226：成功/回退两条路径共用同一个文件名，避免时间戳跨秒导致 HTML/JSON 对不上。
+  const htmlName = `${classExportBase('class-sheet-preview')}.html`
   try {
     // D94-T2：下载同样按点名册顺序；自包含 KaTeX 内联（file:// 离线可开）
     const { fetchSelfContainedKatex } = await import('../lib/sheetHtml')
@@ -667,12 +675,11 @@ async function downloadClassPreviewHtml() {
       figAssets: settingsStore.figAssets,
       katex: 'raw', katexRaw: raw,
     })
-    downloadData(html, `class-sheet-preview-${new Date().toISOString().slice(0, 10)}.html`, 'text/html')
-    emitClassSidecar('download')     // D168-T13：与 HTML 同批产出追溯 JSON
+    downloadData(html, htmlName, 'text/html')
+    emitClassSidecar('download', htmlName)     // D168-T13：与 HTML 同批产出追溯 JSON
   } catch {
-    downloadData(classPreviewHtml.value,
-      `class-sheet-preview-${exportClassLabel()}-${exportStamp()}.html`, 'text/html')
-    emitClassSidecar('download')
+    downloadData(classPreviewHtml.value, htmlName, 'text/html')
+    emitClassSidecar('download', htmlName)
   }
 }
 
