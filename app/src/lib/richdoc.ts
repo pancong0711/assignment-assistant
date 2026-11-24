@@ -195,22 +195,34 @@ export function isDataImage(src: string): boolean {
   return DATA_IMG_RE.test(String(src ?? '').trim())
 }
 
+/** 块级标签（用于判断“第一个 <p> 内部能否直接行内化”）。
+ *
+ *  注意：**不包含 `<br>`** —— `<br>` 是行内换行符。题干里一个软换行
+ *  （markdown-it `breaks: true`）就会产生它；把 `<br>` 当块级会让整段放弃行内化，
+ *  于是“题号独占一行、题干另起一行”（现场 Q2 就是这种情况）。
+ */
+const BLOCK_TAG_RE = /<(table|ul|ol|li|h[1-6]|blockquote|pre|svg|div|p)(\s|>|\/)/i
+
 /** 行内渲染：去掉最外层 `<p>...</p>` 包裹，使「题号 + 正文」能排在同一行。
  *
- *  D105 修复：之前题干用 renderRich 直接插在题号后，`<p>` 是块级元素 →
- *  题号独占一行、正文另起一行（用户反馈的"题号后空一行"）。
- *  仅当内容为**单一段落**时去包裹；多段/表格/SVG 等保持原样（需要块级）。
+ *  D105：题干直接插在题号后时，`<p>` 是块级 → 题号独占一行。
+ *  D222：进一步处理两种情况：
+ *    1. 段落内只有行内元素（**含** `<br>`）→ 去 `<p>` 包裹（题号与首行同排）；
+ *    2. 多段内容 → **只把第一段行内化**，其余段落保持块级
+ *       （题号仍与第一行同排，后续段落正常换行）。
+ *  表格/SVG/列表等首块即块级的，保持原样。
  */
 export function renderRichInline(text: string): string {
   const html = renderRich(text)
   if (!html) return ''
   const trimmed = html.trim()
-  // 必须**整体**就是一个 <p>…</p>（内部不得再出现 </p> 或块级标签）
-  const m = /^<p>((?:(?!<\/p>)[\s\S])*)<\/p>$/.exec(trimmed)
+  // 取“第一个 <p>…</p>”及其后的剩余块
+  const m = /^<p>((?:(?!<\/p>)[\s\S])*)<\/p>([\s\S]*)$/.exec(trimmed)
   if (!m) return html
   const inner = m[1]
-  if (/<(table|ul|ol|li|h[1-6]|blockquote|pre|svg|div|p|br\/?)>/i.test(inner)) return html
-  return inner
+  const rest = (m[2] || '').trim()
+  if (BLOCK_TAG_RE.test(inner)) return html
+  return rest ? inner + rest : inner
 }
 
 /** md+html → 纯文本（检索 / Excel 摘要 / xlsx solution 列）。 */

@@ -289,22 +289,31 @@ def render_rich(text: str) -> str:
     return _sanitize(_normalize_svg_size(html))
 
 
-def render_rich_inline(text: str) -> str:
-    """行内渲染：去掉最外层 `<p>`，让「题号 + 正文」排在同一行（D105 修复）。
+# D222：块级标签判定（**不含 `br`**）。`breaks=True` 会把题干里的一个软换行渲染成
+# `<br>`；旧实现把 br 当块级 → 整段放弃行内化 → 题号独占一行、题干另起一行。
+_BLOCK_TAG_RE = re.compile(r"<(table|ul|ol|li|h[1-6]|blockquote|pre|svg|div|p)(?=[\s>/])", re.I)
 
-    仅当整体就是单个 `<p>…</p>`（内部无块级标签）时去包裹。
+
+def render_rich_inline(text: str) -> str:
+    """行内渲染：让「题号 + 正文」排在同一行（D105 / D222）。
+
+    - 首个 `<p>` 内只有行内元素（**含 `<br>`**）→ 去掉该 `<p>` 包裹；
+    - 多段内容 → **只行内化第一段**，其余段落保持块级
+      （题号与首行同排，后续段落正常换行）；
+    - 首块即块级（table/svg/列表…）→ 原样返回。
     """
     html = render_rich(text)
     if not html:
         return ""
     trimmed = html.strip()
-    m = re.fullmatch(r"<p>((?:(?!</p>)[\s\S])*)</p>", trimmed)
+    m = re.match(r"<p>((?:(?!</p>)[\s\S])*)</p>([\s\S]*)$", trimmed)
     if not m:
         return html
     inner = m.group(1)
-    if re.search(r"<(table|ul|ol|li|h[1-6]|blockquote|pre|svg|div|p|br/?)[\s>]", inner, re.I):
+    rest = (m.group(2) or "").strip()
+    if _BLOCK_TAG_RE.search(inner):
         return html
-    return inner
+    return inner + rest if rest else inner
 
 
 # ---------------- 纯文本派生 ----------------

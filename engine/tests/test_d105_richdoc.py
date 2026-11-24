@@ -191,10 +191,20 @@ def test_render_rich_inline_strips_single_p():
 
 
 def test_render_rich_inline_keeps_block_content():
-    """多段/表格必须保持块级（不能拆）。"""
+    """首块即块级的（表格）保持原样；多段时只把**首段**行内化（D222）。"""
     from assist.paper.richdoc import render_rich_inline
-    assert render_rich_inline("第一段\n\n第二段").strip().startswith("<p>")
+    multi = render_rich_inline("第一段\n\n第二段")
+    assert not multi.strip().startswith("<p>"), "首段应行内化（题号与之同排）"
+    assert "<p>" in multi, "后续段落应保留块级"
     assert render_rich_inline("| a |\n|---|\n| 1 |").strip().startswith("<table>")
+
+
+def test_render_rich_inline_keeps_soft_break_inline():
+    """D222：题干含软换行（渲染为 <br>）时仍应行内化，不能题号独占一行。"""
+    from assist.paper.richdoc import render_rich_inline
+    out = render_rich_inline("求加速度\n并说明理由")
+    assert not out.strip().startswith("<p>"), f"软换行不应阻断行内化：{out}"
+    assert "<br" in out and "求加速度" in out
 
 
 def test_report_md_to_html_sanitized(tmp_path):
