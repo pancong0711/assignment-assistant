@@ -62,6 +62,11 @@ jobs:
         with:
           path: app/dist
 
+      # GitHub 偶发“artifact 已上传但 deploy-pages 立刻查不到”的最终一致性竞态；
+      # 给上传后的 Pages artifact 一个短暂稳定窗口，再部署。
+      - name: Wait for Pages artifact consistency
+        run: sleep 15
+
       - name: Deploy to GitHub Pages
         id: deployment
         uses: actions/deploy-pages@v4
