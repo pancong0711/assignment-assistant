@@ -12,7 +12,8 @@ import {
   confirmMaterials, copyFromAtopia, createMaterialsChap, extractMaterials,
   fetchAtopiaWork, fetchMaterialsList, fetchMaterialsSuggestPreview,
   fetchMaterialsExtractInfo, fetchMaterialsSuggestDiagnostics,
-  removeMaterialsFile, restoreMaterialsFile, suggestMaterials, uploadMaterialsFiles,
+  removeMaterialsFile, restoreMaterialsFile, suggestMaterials, transcribeMaterials,
+  uploadMaterialsFiles,
   fetchLlmConfig, type LlmProvider, type MaterialsExtractInfo,
   type MaterialsSuggestDiagnostics,
   type MaterialsChap, type MaterialsFile,
@@ -129,10 +130,21 @@ const suggestStageWarning = computed(() => {
   }
   return ''
 })
+const transcribeStage = computed(() => suggestStages.value.transcription || {})
+const transcribeModelLabel = computed(() => {
+  if (suggestProvider.value) {
+    return `${suggestProvider.value} / ${suggestModel.value.trim()
+      || String(suggestProviderObj.value?.models?.[0] || '默认模型')}（本面板显式指定）`
+  }
+  return `${String(transcribeStage.value.provider || '未配置')} / `
+    + `${String(transcribeStage.value.model || '默认模型')}（跟随转录段 transcription）`
+})
 
 /* D137：抽取 / AI 建议 / 确认生效 */
-const stepBusy = ref<'extract' | 'suggest' | 'confirm' | ''>('')
+const stepBusy = ref<'extract' | 'transcribe' | 'suggest' | 'confirm' | ''>('')
 const stepMsg = ref('')
+const transcribeEngine = ref<'auto' | 'local' | 'vision'>('auto')
+const transcribeForce = ref(false)
 const suggestDiag = ref<MaterialsSuggestDiagnostics & { request?: Record<string, unknown> } | null>(null)
 const diagBusy = ref(false)
 const diagMsg = ref('')
@@ -200,6 +212,50 @@ async function doExtract() {
     await refresh()
   } catch (e) {
     stepMsg.value = `抽取失败：${String((e as Error).message || e)}`
+  } finally { stepBusy.value = '' }
+}
+
+async function doTranscribe() {
+  if (!active.value) return
+  const picked = selectedFileList.value
+  if (!picked.length) {
+    stepMsg.value = '请先勾选要转写的文件（可用「全选」）。'
+    return
+  }
+  if (selectedUnextracted.value.length) {
+    stepMsg.value = `选中文件中有 ${selectedUnextracted.value.length} 个尚未抽取；请先点「① 抽取选中文件」。`
+    return
+  }
+  const scope = picked.length === sourceFiles.value.length
+    ? `全部 ${picked.length} 个文件`
+    : `选中的 ${picked.length} 个文件`
+  const engineLabel = transcribeEngine.value === 'local' ? '本地 OCR'
+    : transcribeEngine.value === 'vision' ? 'AI 视觉转写'
+    : '自动（本地 OCR 优先，失败页走视觉）'
+  if (!window.confirm(
+    `将对${scope}执行转写（可能调用模型并产生费用）。\n`
+    + `引擎：${engineLabel}\n模型：${transcribeModelLabel.value}`)) return
+  stepBusy.value = 'transcribe'
+  stepMsg.value = `正在转写${scope}（${engineLabel}）…`
+  try {
+    const r = await transcribeMaterials(
+      settings.engineUrl, settings.engineToken, active.value, picked,
+      { engine: transcribeEngine.value, provider: suggestProvider.value,
+        model: suggestModel.value.trim(), force: transcribeForce.value })
+    if (r?.ok) {
+      stepMsg.value = `✅ 转写完成：${r.transcribed || 0} 个文件`
+        + `；跳过 ${r.skipped || 0} 个已有文字层的文件。`
+        + (r.warning ? `\n提示：${r.warning}` : '')
+    } else {
+      const failures = (r?.errors || []).map((e) => `${e.file || ''}：${e.error || ''}`)
+        .filter(Boolean).join('；')
+      stepMsg.value = `❌ ${r?.error || r?.detail || '转写未全部完成'}`
+        + (failures ? `\n明细：${failures.slice(0, 1200)}` : '')
+        + '\n可只勾选失败文件重试；已成功的页会复用。'
+    }
+    await refresh()
+  } catch (e) {
+    stepMsg.value = `转写失败：${String((e as Error).message || e)}`
   } finally { stepBusy.value = '' }
 }
 
@@ -686,6 +742,20 @@ defineExpose({ refresh })
                     {{ f.extractMode || '—' }}<template v-if="f.extractChars"> · {{ f.extractChars }} 字</template>
                     <template v-if="f.extractImages"> · {{ f.extractImages }} 图</template>
                   </span>
+                  <div v-if="f.extracted" class="hint" style="margin-top:2px">
+                    <template v-if="f.transcribed">
+                      <b style="color:#14532d">已转写</b>
+                      · {{ f.transcriptPages || 0 }}/{{ f.transcriptPagesTotal || 0 }} 页
+                      · {{ f.transcriptChars || 0 }} 字
+                      <span v-if="f.transcriptEngine"> · {{ f.transcriptEngine }}</span>
+                      <span v-if="f.transcriptFailedPages?.length" style="color:#b45309">
+                        · 失败页 {{ f.transcriptFailedPages.join(',') }}
+                      </span>
+                    </template>
+                    <span v-else-if="f.extractImages && !f.extractChars" style="color:#b45309">
+                      纯页图，未转写
+                    </span>
+                  </div>
                 </template>
                 <span v-else class="hint">—</span>
               </td>
@@ -716,6 +786,9 @@ defineExpose({ refresh })
           <label class="hint" style="display:flex; gap:4px; align-items:center; margin:0">
             <input v-model="forceExtract" type="checkbox" /> 强制重抽（忽略 sha256）
           </label>
+          <label class="hint" style="display:flex; gap:4px; align-items:center; margin:0">
+            <input v-model="transcribeForce" type="checkbox" /> 强制重转写
+          </label>
           <span class="hint" style="margin:0">
             更新文件后只需勾选该文件重抽；未勾选文件及其索引保持不变。
           </span>
@@ -726,6 +799,17 @@ defineExpose({ refresh })
           <button class="btn" :disabled="stepBusy !== '' || !selectedFileList.length" @click="doExtract">
             {{ stepBusy === 'extract' ? '抽取中…'
               : (allFilesSelected ? '① 抽取全部（增量）' : `① 抽取选中 ${selectedFileList.length} 个`) }}
+          </button>
+          <select v-model="transcribeEngine" style="font-size:13px"
+                  title="转写引擎：自动=本地 OCR 优先，失败页走视觉">
+            <option value="auto">转写：自动（OCR→视觉）</option>
+            <option value="local">转写：仅本地 OCR</option>
+            <option value="vision">转写：仅 AI 视觉</option>
+          </select>
+          <button class="btn" :disabled="stepBusy !== '' || !selectedFileList.length
+                    || selectedUnextracted.length > 0" @click="doTranscribe"
+                  title="把选中图片型资料的页图转写为可查看文本；已成功的页可复用">
+            {{ stepBusy === 'transcribe' ? '转写中…' : `📝 转写选中 ${selectedFileList.length} 个` }}
           </button>
           <label class="field" title="默认跟随评阅段配置；如需单独指定可在此选择（会记住）">
             建议用模型
@@ -752,7 +836,8 @@ defineExpose({ refresh })
                   title="不调用模型：检查实际 provider/model、key 与选中文件的抽取内容">
             {{ diagBusy ? '检查中…' : '🔎 检查识别配置' }}
           </button>
-          <span class="hint" style="margin:0">实际将使用：{{ suggestModelLabel }}</span>
+          <span class="hint" style="margin:0">知识点识别将使用：{{ suggestModelLabel }}</span>
+          <span class="hint" style="margin:0">转写将使用：{{ transcribeModelLabel }}</span>
           <button class="btn primary" :disabled="stepBusy !== '' || !cur.hasAiSuggest"
                   @click="askConfirm">
             {{ stepBusy === 'confirm' ? '处理中…' : '③ 确认生效' }}
@@ -777,6 +862,10 @@ defineExpose({ refresh })
         </div>
         <p v-if="selectedUnextracted.length" class="hint" style="margin:2px 0; color:#b45309">
           选中文件中有 {{ selectedUnextracted.length }} 个尚未抽取，需先点「① 抽取选中文件」。
+        </p>
+        <p v-if="suggestDiag?.source?.needsTranscription" class="hint"
+           style="margin:2px 0; color:#b45309">
+          当前选中资料没有文字层/转写文本，将直接走视觉模型；建议先点「📝 转写选中」。
         </p>
         <p class="hint" style="margin:2px 0">
           {{ nextStep(cur) }}
@@ -831,6 +920,22 @@ defineExpose({ refresh })
           <p v-if="extractInfo.textTruncated" class="hint">
             仅显示前 {{ extractInfo.textPreview?.length || 0 }} 字（全文 {{ extractInfo.textCharsTotal || 0 }} 字）。
           </p>
+          <template v-if="extractInfo.transcript">
+            <h4 style="margin:10px 0 4px">转写文本</h4>
+            <p class="hint" style="margin:0 0 4px">
+              引擎 {{ extractInfo.transcript.engine || '—' }} ·
+              {{ extractInfo.transcript.pages || 0 }}/{{ extractInfo.transcript.pagesTotal || 0 }} 页 ·
+              {{ extractInfo.transcript.chars || 0 }} 字
+              <span v-if="extractInfo.transcript.failedPages?.length" style="color:#b45309">
+                · 失败页 {{ extractInfo.transcript.failedPages.join(',') }}
+              </span>
+              <span v-if="extractInfo.transcript.provider || extractInfo.transcript.model">
+                · {{ extractInfo.transcript.provider }} / {{ extractInfo.transcript.model }}
+              </span>
+            </p>
+            <pre class="md" style="max-height:360px; white-space:pre-wrap">{{ extractInfo.transcriptPreview || '（转写文本为空）' }}</pre>
+            <p v-if="extractInfo.transcriptTruncated" class="hint">转写文本仅显示预览。</p>
+          </template>
           <template v-if="extractInfo.images?.length">
             <h4 style="margin:8px 0 4px">页图/图片清单（{{ extractInfo.images.length }}）</h4>
             <div class="hint" style="max-height:160px; overflow:auto">

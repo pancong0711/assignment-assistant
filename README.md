@@ -134,6 +134,7 @@
 - `docs/170-D227-personalized-assignment-plan.md` — **D227 规划：发题台账/重复题预检 → 作答与进度分析 → 可解释个性化组卷（暂不 AI 生成新题）**
 - `docs/171-D228-materials-file-selection.md` — **D228 课堂资料按文件抽取/识别知识点（多选/全选）+ provider 选择真正生效**
 - `docs/172-D229-materials-diagnostics-and-extract-info.md` — **D229 课堂资料识别诊断（实际 provider/model/session 头/detail/JSON）+ 单文件抽取信息预览**
+- `docs/173-D230-materials-transcription-layer.md` — **D230 课堂资料独立转写层：本地 OCR / 多模态分批、失败页续跑、转写文本可审查并优先用于知识点识别**
 
 > **当前活动需求单 = `docs/112-D168`（口径/快照）+ `docs/113-D169`（路线/架构）**；
 > 历史条目保留供追溯，与最新口径冲突时以这两份为准。

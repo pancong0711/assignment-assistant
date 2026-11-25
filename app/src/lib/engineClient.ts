@@ -3259,6 +3259,13 @@ export interface MaterialsFile {
   extractChars?: number
   extractImages?: number
   extractedAt?: string
+  /** D230：图片型资料的独立转写状态 */
+  transcribed?: boolean
+  transcriptChars?: number
+  transcriptPages?: number
+  transcriptPagesTotal?: number
+  transcriptEngine?: string
+  transcriptFailedPages?: number[]
   error?: string
 }
 
@@ -3285,6 +3292,12 @@ export interface MaterialsExtractInfo {
   engine?: string; chars?: number; slides?: number; pages?: number
   imageCount?: number; textFile?: string; textPreview?: string
   textTruncated?: boolean; textCharsTotal?: number
+  transcript?: {
+    engine?: string; chars?: number; pages?: number; pagesTotal?: number
+    failedPages?: number[]; generatedAt?: string; provider?: string
+    model?: string; textFile?: string
+  }
+  transcriptPreview?: string; transcriptTruncated?: boolean
   images?: Array<{ name: string; exists: boolean }>
   error?: string
 }
@@ -3311,7 +3324,9 @@ export interface MaterialsSuggestDiagnostics {
   source?: {
     ok?: boolean; selectedFiles?: string[]; selectedCount?: number
     missingPhysical?: string[]; missingIndexed?: string[]; textFiles?: string[]
-    chars?: number; imageCount?: number; mode?: string; warnings?: string[]
+    transcriptFiles?: string[]
+    chars?: number; imageCount?: number; mode?: string
+    needsTranscription?: boolean; warnings?: string[]
   }
 }
 
@@ -3394,6 +3409,38 @@ export async function suggestMaterials(
   const res = await fetch(engineUrlWithToken(base, '/materials/suggest', token), {
     method: 'POST', headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({ chap, model, provider, files }),
+  })
+  const o = (await res.json().catch(() => ({}))) as any
+  if (!res.ok && !o?.error) throw new Error(`HTTP ${res.status}`)
+  return o
+}
+
+/** D230：图片型资料转写（本地 OCR / 多模态），返回逐文件转写结果。 */
+export async function transcribeMaterials(
+  engineAddr: string, token: string | undefined, chap: string,
+  files: string[], opts: {
+    engine?: 'auto' | 'local' | 'vision'; provider?: string; model?: string
+    force?: boolean; pagesPerCall?: number; maxPages?: number
+  } = {},
+): Promise<{
+  ok?: boolean; chap?: string; transcribed?: number; skipped?: number
+  warning?: string; error?: string; detail?: string
+  files?: Array<{ file?: string; ok?: boolean; skipped?: boolean; chars?: number
+    pages?: number; pages_total?: number; failedPages?: number[]
+    engine?: string; reason?: string; error?: string; transcript?: string }>
+  errors?: Array<{ file?: string; error?: string }>
+  diagnostics?: MaterialsSuggestDiagnostics
+}> {
+  const base = normalizeEngineAddr(engineAddr)
+  const res = await fetch(engineUrlWithToken(base, '/materials/transcribe', token), {
+    method: 'POST', headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({
+      chap, files, engine: opts.engine || 'auto',
+      provider: opts.provider || '', model: opts.model || '',
+      force: !!opts.force,
+      pagesPerCall: opts.pagesPerCall || 4,
+      maxPages: opts.maxPages || 60,
+    }),
   })
   const o = (await res.json().catch(() => ({}))) as any
   if (!res.ok && !o?.error) throw new Error(`HTTP ${res.status}`)

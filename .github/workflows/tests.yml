@@ -23,7 +23,7 @@ jobs:
       - name: 安装中文字体与 PDF 抽取工具
         run: |
           sudo apt-get update -qq
-          sudo apt-get install -y -qq fonts-wqy-microhei poppler-utils
+          sudo apt-get install -y -qq fonts-wqy-microhei poppler-utils tesseract-ocr tesseract-ocr-chi-sim
       - name: pytest (engine)
         working-directory: engine
         run: |

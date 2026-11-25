@@ -234,6 +234,13 @@ def files_of(ws, chap: str, *, include_trash: bool = False) -> list[dict]:
                     entry["extractChars"] = int(ex.get("chars") or 0)
                     entry["extractImages"] = len(ex.get("images") or [])
                     entry["extractedAt"] = str(src.get("mtime") or "")
+                    tr = ex.get("transcript") if isinstance(ex.get("transcript"), dict) else {}
+                    entry["transcribed"] = bool(tr)
+                    entry["transcriptChars"] = int((tr or {}).get("chars") or 0)
+                    entry["transcriptPages"] = int((tr or {}).get("pages") or 0)
+                    entry["transcriptPagesTotal"] = int((tr or {}).get("pages_total") or 0)
+                    entry["transcriptEngine"] = str((tr or {}).get("engine") or "")
+                    entry["transcriptFailedPages"] = list((tr or {}).get("failedPages") or [])
                 out.append(entry)
             except OSError as exc:
                 out.append({"file": str(p.name), "dir": label,
@@ -653,6 +660,285 @@ def extract_chap(ws, chap: str, *, force: bool = False,
             "chars": total_chars, "errors": errors}
 
 
+# ---------------- D230：图片型资料转写（本地 OCR / 多模态） ----------------
+_TRANSCRIPT_ENGINES = ("auto", "local", "vision")
+_TESS_LANGS: "str | None" = None
+
+
+def _transcript_key(rel: str) -> str:
+    s = str(rel or "").replace("\\", "/")
+    if s.startswith(f"{SOURCE}/"):
+        s = s[len(SOURCE) + 1:]
+    return Path(s).with_suffix("").as_posix().replace("/", "__")
+
+
+def transcript_paths(ws, chap: str, rel: str) -> "tuple[Path, Path]":
+    d = chap_dir(ws, chap)
+    key = _transcript_key(rel)
+    return (d / EXTRACT / f"{key}.transcript.json",
+            d / EXTRACT / f"{key}.transcript.md")
+
+
+def _read_text_path(p: Path, d: Path) -> str:
+    if not str(p or "").strip():
+        return ""
+    q = Path(p)
+    if not q.is_file():
+        q = d / str(p)
+    if not q.is_file():
+        return ""
+    return q.read_text(encoding="utf-8", errors="replace")
+
+
+def _tesseract_languages() -> str:
+    """优先中英混合；当前 tesseract 未装 chi_sim 时退化为 eng。"""
+    global _TESS_LANGS
+    if _TESS_LANGS is not None:
+        return _TESS_LANGS
+    langs = "eng"
+    rc, out, _err = _run(["tesseract", "--list-langs"], timeout=20)
+    if rc == 0 and "chi_sim" in out:
+        langs = "chi_sim+eng"
+    _TESS_LANGS = langs
+    return langs
+
+
+def _ocr_page_tesseract(image_path: Path) -> dict:
+    """单页本地 OCR；返回 {text, engine, error}。"""
+    if not which("tesseract"):
+        return {"text": "", "engine": "", "error": "未安装 tesseract"}
+    langs = _tesseract_languages()
+    rc, out, err = _run(["tesseract", str(image_path), "stdout",
+                         "-l", langs, "--psm", "6"], timeout=180)
+    if rc != 0:
+        return {"text": "", "engine": "tesseract",
+                "error": f"tesseract 失败：{err[:200]}"}
+    return {"text": str(out or "").strip(), "engine": "tesseract", "error": ""}
+
+
+def _parse_vision_pages(raw: str, page_numbers: "list[int]") -> "dict[int, str]":
+    """解析多模态转写结果中的 `--- page N ---`；无分隔时单页直接采用。"""
+    import re as _re
+    text = str(raw or "").strip()
+    if not text:
+        return {}
+    if len(page_numbers) == 1:
+        return {int(page_numbers[0]): text}
+    pat = _re.compile(r"(?im)^\s*[-#*]*\s*page\s*(\d+)\s*[-#*:：]*\s*$")
+    hits = list(pat.finditer(text))
+    out: dict[int, str] = {}
+    for i, m in enumerate(hits):
+        try:
+            page = int(m.group(1))
+        except Exception:  # noqa: BLE001
+            continue
+        end = hits[i + 1].start() if i + 1 < len(hits) else len(text)
+        body = text[m.end():end].strip()
+        if body:
+            out[page] = body
+    return out
+
+
+def _vision_transcribe_batch(client, image_paths: "list[Path]", page_numbers: "list[int]",
+                             *, rel: str, model: "str | None") -> dict:
+    """多模态转写一批页图；返回 {page: text} 或抛异常。"""
+    nums = "、".join(str(x) for x in page_numbers)
+    prompt = (
+        f"这是课堂资料「{rel}」的第 {nums} 页图片。"
+        "请逐页转写页面上的全部教学内容，要求：\n"
+        "1. 保留页标记，严格输出 `--- page N ---`，每页一段；\n"
+        "2. 文字、公式、定义、定理、例题题干尽量完整；公式用 LaTeX；\n"
+        "3. 示意图不要臆造内容，用「[示意图：...]」简短描述；\n"
+        "4. 看不清的字符写「[不清]」，不要编造；\n"
+        "5. 只输出转写正文，不要额外解释。"
+    )
+    raw = client.chat_with_images(
+        system_prompt="这是大学物理课堂资料转写，内容完全学术。只输出逐页转写文本。",
+        user_text=prompt, image_paths=[str(x) for x in image_paths],
+        model=model or None, temperature=0.1, max_tokens=8192,
+        step="transcription")
+    parsed = _parse_vision_pages(raw, page_numbers)
+    if not parsed:
+        raise MaterialsError("AI 转写返回为空或未按 `--- page N ---` 分页")
+    return parsed
+
+
+def transcribe_chap_file(client, ws, chap: str, rel: str, *, engine: str = "auto",
+                         provider: str = "", model: str = "",
+                         force: bool = False, pages_per_call: int = 4,
+                         max_pages: int = 60) -> dict:
+    """D230：把单个图片型资料的页图转写为可审查文本。
+
+    - `engine=auto`：先本地 tesseract OCR，缺失/过短页再走多模态；
+    - `engine=local`：只用 tesseract；
+    - `engine=vision`：只用多模态视觉模型；
+    - 结果落 `_extract/<文件>.transcript.json/.md`，并写回 `索引.json`。
+    """
+    engine = str(engine or "auto").strip().lower()
+    if engine not in _TRANSCRIPT_ENGINES:
+        raise MaterialsError(f"未知转写引擎：{engine}（可选 auto/local/vision）")
+    d = chap_dir(ws, chap)
+    idx = read_index(ws, chap)
+    src = next((s for s in (idx.get("sources") or [])
+                if isinstance(s, dict) and str(s.get("file") or "") == rel), None)
+    if not src:
+        raise MaterialsError(f"文件尚未抽取：{rel}")
+    ex = src.get("extract") or {}
+    p = d / rel
+    if not p.is_file():
+        raise MaterialsError(f"原件不存在：{rel}")
+    # 有可靠文字层时不默认转写（明确 force 才重做）。
+    text_layer = _read_text_path(str(ex.get("text_file") or ""), d)
+    if text_layer.strip() and len(text_layer.strip()) >= _VISION_TEXT_THRESHOLD and not force:
+        return {"ok": True, "skipped": True, "file": rel,
+                "reason": f"已有文字层（{len(text_layer.strip())} 字），无需图片转写",
+                "chars": len(text_layer.strip())}
+    images: list[Path] = []
+    for one in (ex.get("images") or [])[:max(1, int(max_pages))]:
+        ip = Path(str(one))
+        if not ip.is_file():
+            ip2 = d / str(one)
+            if ip2.is_file():
+                ip = ip2
+        if ip.is_file():
+            images.append(ip)
+    if not images:
+        return {"ok": False, "file": rel,
+                "error": "没有可转写的页图；请先抽取该文件"}
+    json_path, md_path = transcript_paths(ws, chap, rel)
+    existing: dict = {}
+    if json_path.is_file() and not force:
+        try:
+            old = json.loads(json_path.read_text(encoding="utf-8"))
+            if old.get("sourceSha256") == str(src.get("sha256") or ""):
+                existing = old
+        except Exception:  # noqa: BLE001
+            existing = {}
+    page_map: dict[int, dict] = {}
+    for x in (existing.get("pages") or []):
+        if not isinstance(x, dict):
+            continue
+        try:
+            pn = int(x.get("page"))
+        except Exception:  # noqa: BLE001
+            continue
+        if str(x.get("text") or "").strip():
+            page_map[pn] = dict(x)
+    page_numbers = list(range(1, len(images) + 1))
+    missing = [n for n in page_numbers if n not in page_map]
+    errors: list[dict] = []
+    used_engines: set[str] = set()
+    if engine in ("auto", "local"):
+        t_ok = bool(which("tesseract"))
+        if not t_ok and engine == "local":
+            errors.append({"page": 0, "error": "未安装 tesseract，无法执行本地 OCR"})
+        if t_ok:
+            for n in list(missing):
+                rep = _ocr_page_tesseract(images[n - 1])
+                if rep.get("text"):
+                    page_map[n] = {"page": n, "image": images[n - 1].name,
+                                   "text": rep["text"], "engine": "tesseract",
+                                   "error": ""}
+                    used_engines.add("tesseract")
+                    missing.remove(n)
+                elif rep.get("error"):
+                    errors.append({"page": n, "error": rep["error"]})
+    if engine == "vision" or (engine == "auto" and missing):
+        if client is None:
+            errors.append({"page": 0, "error": "未配置视觉模型，无法执行 AI 转写"})
+        else:
+            batch_n = max(1, int(pages_per_call))
+            for i in range(0, len(missing), batch_n):
+                batch = missing[i:i + batch_n]
+                try:
+                    got = _vision_transcribe_batch(
+                        client, [images[n - 1] for n in batch], batch,
+                        rel=rel, model=model or None)
+                except Exception as exc:  # noqa: BLE001
+                    errors.extend({"page": n, "error": str(exc)[:400]} for n in batch)
+                    continue
+                for n in batch:
+                    txt = str(got.get(n) or "").strip()
+                    if txt:
+                        page_map[n] = {"page": n, "image": images[n - 1].name,
+                                       "text": txt, "engine": "vision", "error": ""}
+                        used_engines.add("vision")
+                    else:
+                        errors.append({"page": n, "error": "AI 未返回该页转写"})
+    pages_out = [page_map[n] for n in sorted(page_map)]
+    total_chars = sum(len(str(x.get("text") or "")) for x in pages_out)
+    failed_pages = sorted({int(e.get("page") or 0) for e in errors if e.get("page")})
+    if not pages_out:
+        return {"ok": False, "file": rel, "engine": engine,
+                "errors": errors, "failedPages": failed_pages,
+                "pages_total": len(images), "chars": 0,
+                "error": "没有转写出任何文字"}
+    engine_name = ("mixed" if len(used_engines) > 1 else
+                   (next(iter(used_engines)) if used_engines else engine))
+    generated_at = time.strftime("%Y-%m-%d %H:%M:%S")
+    data = {"version": 1, "chap": str(chap), "file": rel,
+            "sourceSha256": str(src.get("sha256") or ""),
+            "engine": engine_name, "provider": provider, "model": model,
+            "pages_total": len(images), "pages": pages_out,
+            "errors": errors, "failedPages": failed_pages,
+            "chars": total_chars, "generatedAt": generated_at}
+    md_lines = [f"# 课堂资料转写：{rel}", "",
+                f"> 引擎：{engine_name}；页数：{len(pages_out)}/{len(images)}；"
+                f"字数：{total_chars}；生成于 {generated_at}", ""]
+    for x in pages_out:
+        md_lines += [f"--- page {x.get('page')} ---", "",
+                     str(x.get("text") or "").strip(), ""]
+    ex_dir = d / EXTRACT
+    ex_dir.mkdir(parents=True, exist_ok=True)
+    json_path.write_text(json.dumps(data, ensure_ascii=False, indent=1), encoding="utf-8")
+    md_path.write_text("\n".join(md_lines), encoding="utf-8")
+    transcript_meta = {
+        "engine": engine_name, "provider": provider, "model": model,
+        "text_file": str(md_path), "chars": total_chars,
+        "pages": len(pages_out), "pages_total": len(images),
+        "failedPages": failed_pages, "generatedAt": generated_at,
+        "sourceSha256": str(src.get("sha256") or ""),
+    }
+    src.setdefault("extract", {})["transcript"] = transcript_meta
+    write_index(ws, chap, idx)
+    return {"ok": not failed_pages, "partial": bool(failed_pages),
+            "file": rel, "engine": engine_name, "chars": total_chars,
+            "pages": len(pages_out), "pages_total": len(images),
+            "failedPages": failed_pages, "errors": errors,
+            "transcript": str(md_path), "provider": provider, "model": model}
+
+
+def transcribe_materials(client, ws, chap: str,
+                         files: "list[str] | tuple[str, ...] | None" = None, *,
+                         engine: str = "auto", provider: str = "",
+                         model: str = "", force: bool = False,
+                         pages_per_call: int = 4, max_pages: int = 60) -> dict:
+    """D230：按文件转写图片型资料；支持多选/全选与失败页重跑。"""
+    selected_paths, missing = resolve_source_selection(ws, chap, files)
+    d = chap_dir(ws, chap)
+    results: list[dict] = []
+    errors: list[dict] = [{"file": x, "error": "未找到该原件"} for x in missing]
+    for p in selected_paths:
+        rel = str(p.relative_to(d)).replace("\\", "/")
+        try:
+            results.append(transcribe_chap_file(
+                client, ws, chap, rel, engine=engine, provider=provider,
+                model=model, force=force, pages_per_call=pages_per_call,
+                max_pages=max_pages))
+        except MaterialsError as exc:
+            results.append({"ok": False, "file": rel, "error": str(exc)})
+        except Exception as exc:  # noqa: BLE001
+            results.append({"ok": False, "file": rel,
+                            "error": f"{type(exc).__name__}: {str(exc)[:400]}"})
+    bad = [r for r in results if not r.get("ok")]
+    return {"ok": not errors and not bad, "chap": str(chap),
+            "engine": engine, "provider": provider, "model": model,
+            "files": results, "transcribed": sum(1 for r in results if r.get("chars")),
+            "skipped": sum(1 for r in results if r.get("skipped")),
+            "errors": errors + [{"file": r.get("file"), "error": r.get("error")}
+                                for r in bad if r.get("error")]}
+
+
 def read_source_text(ws, chap: str, *, max_chars: int = 0,
                      files: "list[str] | tuple[str, ...] | None" = None) -> dict:
     """汇总本章抽取文本（供 AI 抽取知识点）。D228：可按 files 只读选中文件。"""
@@ -662,11 +948,15 @@ def read_source_text(ws, chap: str, *, max_chars: int = 0,
     parts: list[str] = []
     files_n = 0
     names: list[str] = []
+    transcript_files: list[str] = []
     for s in idx.get("sources") or []:
         rel = str(s.get("file") or "")
         if wanted and rel not in wanted:
             continue
-        tf = str((s.get("extract") or {}).get("text_file") or "")
+        ex = s.get("extract") or {}
+        tr = ex.get("transcript") if isinstance(ex.get("transcript"), dict) else {}
+        # D230：优先使用独立转写文本；没有转写时才回退原始文字层。
+        tf = str((tr or {}).get("text_file") or ex.get("text_file") or "")
         if not tf:
             continue
         p = Path(tf)
@@ -679,13 +969,16 @@ def read_source_text(ws, chap: str, *, max_chars: int = 0,
             parts.append(f"===== {s.get('file')} =====\n{txt}")
             files_n += 1
             names.append(rel)
+            if tr:
+                transcript_files.append(rel)
     text = "\n\n".join(parts)
     truncated = False
     if max_chars and len(text) > max_chars:
         text = text[:max_chars]
         truncated = True
     return {"text": text, "chars": len(text), "files": files_n,
-            "fileNames": names, "truncated": truncated,
+            "fileNames": names, "transcriptFiles": transcript_files,
+            "truncated": truncated,
             "has_index": bool((idx.get("sources") or []))}
 
 
@@ -807,8 +1100,10 @@ def suggest_knowledge(client, ws, chap: str, *, model: "str | None" = None,
         vocab_terms = [t.get("term") for t in load_vocab(ws).get("terms", []) if t.get("term")]
     except Exception:  # noqa: BLE001
         vocab_terms = []
-    # 纯图片资料：文本为空，只能靠多模态看图（PPT/PDF 里的公式与受力图本来也抽不成文字）
-    use_vision = bool(vision["images"]) and len(src["text"].strip()) < _VISION_TEXT_THRESHOLD
+    # D230：已有独立转写文本时优先用文本（即使图片还在）；否则纯图片资料才走多模态直读。
+    has_transcript = bool(src.get("transcriptFiles"))
+    use_vision = (bool(vision["images"]) and not has_transcript
+                  and len(src["text"].strip()) < _VISION_TEXT_THRESHOLD)
     if use_vision:
         imgs = vision["images"][:vision["max_images"]]
         prompt = build_knowledge_prompt(
@@ -855,6 +1150,7 @@ def suggest_knowledge(client, ws, chap: str, *, model: "str | None" = None,
            "logic": [x for x in (data.get("logic") or []) if isinstance(x, dict)],
            "notes": str(data.get("notes") or ""),
            "source": {"files": src["files"], "fileNames": src.get("fileNames") or [],
+                      "transcriptFiles": src.get("transcriptFiles") or [],
                       "chars": src["chars"], "truncated": src["truncated"],
                       "selected": selected,
                       # 审计：本次是"纯文本"还是"看图"抽取（教师据此判断可信度）
@@ -1072,6 +1368,27 @@ def extract_info(ws, chap: str, file_name: str, *, preview_chars: int = 6000) ->
             out["textPreview"] = txt[:max(1, int(preview_chars))]
             out["textTruncated"] = len(txt) > int(preview_chars)
             out["textCharsTotal"] = len(txt)
+    # D230：若已做图片转写，单独展示转写文本预览与元数据。
+    tr = ex.get("transcript") if isinstance(ex.get("transcript"), dict) else {}
+    if tr:
+        out["transcript"] = {
+            "engine": str(tr.get("engine") or ""),
+            "chars": int(tr.get("chars") or 0),
+            "pages": int(tr.get("pages") or 0),
+            "pagesTotal": int(tr.get("pages_total") or 0),
+            "failedPages": list(tr.get("failedPages") or []),
+            "generatedAt": str(tr.get("generatedAt") or ""),
+            "provider": str(tr.get("provider") or ""),
+            "model": str(tr.get("model") or ""),
+            "textFile": str(tr.get("text_file") or ""),
+        }
+        ttp = Path(str(tr.get("text_file") or ""))
+        if not ttp.is_file():
+            ttp = d / str(tr.get("text_file") or "")
+        if ttp.is_file():
+            ttxt = ttp.read_text(encoding="utf-8", errors="replace")
+            out["transcriptPreview"] = ttxt[:max(1, int(preview_chars))]
+            out["transcriptTruncated"] = len(ttxt) > int(preview_chars)
     # 图片清单（PDF 页图/直接图片）：只回文件名与存在性，避免暴露整段绝对路径。
     imgs = []
     for one in (ex.get("images") or []):
@@ -1099,7 +1416,10 @@ def source_selection_diagnostics(ws, chap: str,
     vision = read_source_images(ws, chap, files=selected or None)
     text = str(src.get("text") or "").strip()
     images = list(vision.get("images") or [])
-    mode = "vision" if images and len(text) < _VISION_TEXT_THRESHOLD else ("text" if text else "none")
+    transcript_files = src.get("transcriptFiles") or []
+    mode = ("vision" if (images and not transcript_files
+                         and len(text) < _VISION_TEXT_THRESHOLD)
+            else ("text" if text else "none"))
     warnings: list[str] = []
     if missing_physical:
         warnings.append("有选中原件不存在：" + "、".join(missing_physical))
@@ -1111,6 +1431,11 @@ def source_selection_diagnostics(ws, chap: str,
         warnings.append(f"文本约 {len(text)} 字，可能接近模型上下文上限；建议只选 1–2 个文件分批识别。")
     if images and len(images) > _VISION_MAX_IMAGES:
         warnings.append(f"页图共 {len(images)} 张，本次最多送 {_VISION_MAX_IMAGES} 张。")
+    needs_transcription = bool(images) and not text and not transcript_files
+    if needs_transcription:
+        warnings.append(
+            "当前资料没有文字层也没有转写文本，将直接走视觉模型；建议先执行「转写选中文件」"
+            "以便核对转写内容并降低识别失败风险。")
     return {
         "ok": not missing_physical and not missing_indexed and bool(text or images),
         "chap": chap,
@@ -1119,8 +1444,10 @@ def source_selection_diagnostics(ws, chap: str,
         "missingPhysical": missing_physical,
         "missingIndexed": missing_indexed,
         "textFiles": src.get("fileNames") or [],
+        "transcriptFiles": transcript_files,
         "chars": len(text),
         "imageCount": len(images),
         "mode": mode,
+        "needsTranscription": needs_transcription,
         "warnings": warnings,
     }

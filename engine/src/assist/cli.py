@@ -1915,6 +1915,52 @@ def materials_suggest(obj, chap, provider, model, files, max_chars, max_images,
                err=True)
 
 
+@materials_grp.command("transcribe")
+@click.option("--chap", required=True)
+@click.option("--file", "files", multiple=True,
+              help="只转写指定文件（相对 _source/，可多次；缺省=全部）")
+@click.option("--engine", type=click.Choice(["auto", "local", "vision"]),
+              default="auto", show_default=True,
+              help="auto=本地OCR→视觉；local=仅 tesseract；vision=仅多模态")
+@click.option("--provider", default="", help="覆盖 LLM provider（空=转录段 provider）")
+@click.option("--model", default="", help="覆盖模型")
+@click.option("--pages-per-call", default=4, type=int, show_default=True,
+              help="视觉转写每批送几张页图")
+@click.option("--max-pages", default=60, type=int, show_default=True,
+              help="单文件最多转写多少页")
+@click.option("--force", is_flag=True, help="忽略已有转写，全部重做")
+@click.option("--workspace", "-w", default=None)
+@click.option("--verbose", "-v", is_flag=True)
+@click.pass_obj
+def materials_transcribe(obj, chap, files, engine, provider, model,
+                         pages_per_call, max_pages, force, workspace, verbose):
+    """D230：图片型 PDF/PPT/图片 → 可审查的转写文本（本地 OCR / 多模态）。"""
+    from .files import materials as M
+    from .grading.llm import LLMConfigError, build_client_for
+    ws = _setup(verbose or obj.get("verbose"), workspace)
+    client = None
+    used_model = ""
+    if engine != "local":
+        try:
+            client, used_model = build_client_for(
+                ws, provider, model, session_prefix="materials-transcribe",
+                stage="transcription")
+        except LLMConfigError as exc:
+            if engine == "vision":
+                raise click.ClickException(f"视觉转写配置不可用：{exc}")
+            click.echo(f"[WARN] 视觉模型不可用，将只尝试本地 OCR：{exc}", err=True)
+    try:
+        rep = M.transcribe_materials(
+            client, ws, chap, list(files) or None, engine=engine,
+            provider=provider, model=used_model or model,
+            force=force, pages_per_call=pages_per_call, max_pages=max_pages)
+    except M.MaterialsError as exc:
+        raise click.ClickException(str(exc))
+    click.echo(json.dumps(rep, ensure_ascii=False, indent=2))
+    if not rep.get("ok"):
+        raise click.ClickException("转写未全部完成（见 files/errors）")
+
+
 @materials_grp.command("confirm")
 @click.option("--chap", required=True)
 @click.option("--force", is_flag=True, help="覆盖已有 `知识点清单.md`（教师已确认版）")

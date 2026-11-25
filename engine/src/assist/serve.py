@@ -2438,6 +2438,73 @@ class Handler(BaseHTTPRequestHandler):
                                           "model": rep["model"]}}
             self._json(rep)
             return
+        if u.path == "/materials/transcribe":
+            # D230：图片型资料转写（本地 OCR / 多模态），结果可预览、可续跑。
+            payload: dict = {}
+            try:
+                length = int(self.headers.get("Content-Length") or 0)
+                if length:
+                    payload = json.loads(self.rfile.read(length).decode("utf-8")) or {}
+            except Exception as exc:  # noqa: BLE001
+                self._json({"ok": False, "error": f"bad json: {exc}"}, 400)
+                return
+            from .files import materials as _mt
+            from .grading.llm import LLMConfigError, build_client_for
+            from .grading import providers as _mtp
+            chap = str(payload.get("chap") or "").strip()
+            if not chap:
+                self._json({"ok": False, "error": "缺少 chap"}, 400)
+                return
+            raw_files = payload.get("files")
+            if isinstance(raw_files, str):
+                raw_files = [raw_files]
+            if not isinstance(raw_files, list):
+                raw_files = []
+            engine_kind = str(payload.get("engine") or "auto").strip().lower()
+            if engine_kind not in ("auto", "local", "vision"):
+                self._json({"ok": False, "error": f"未知 engine：{engine_kind}"}, 400)
+                return
+            provider = str(payload.get("provider") or "").strip()
+            model = str(payload.get("model") or "").strip()
+            ws_ = Path(self.ws).resolve()
+            client = None
+            used_model = ""
+            warning = ""
+            if engine_kind != "local":
+                try:
+                    client, used_model = build_client_for(
+                        ws_, provider, model, session_prefix="materials-transcribe",
+                        stage="transcription")
+                except LLMConfigError as exc:
+                    if engine_kind == "vision":
+                        self._json({"ok": False, "error": "视觉转写配置不可用",
+                                    "detail": str(exc),
+                                    "diagnostics": _mtp.effective_endpoint_info(
+                                        ws_, provider=provider, model=model,
+                                        stage="transcription")}, 400)
+                        return
+                    warning = f"视觉模型不可用，只尝试本地 OCR：{exc}"
+            try:
+                rep = _mt.transcribe_materials(
+                    client, ws_, chap, raw_files or None, engine=engine_kind,
+                    provider=provider, model=used_model or model,
+                    force=bool(payload.get("force")),
+                    pages_per_call=int(payload.get("pagesPerCall") or 4),
+                    max_pages=int(payload.get("maxPages") or 60))
+            except _mt.MaterialsError as exc:
+                self._json({"ok": False, "error": str(exc)}, 400)
+                return
+            except Exception as exc:  # noqa: BLE001
+                self._json({"ok": False, "error": "转写失败",
+                            "detail": f"{type(exc).__name__}: {str(exc)[:800]}"}, 500)
+                return
+            rep["chap"] = chap
+            rep["warning"] = warning
+            rep["diagnostics"] = _mtp.effective_endpoint_info(
+                ws_, provider=provider, model=used_model or model,
+                stage="transcription")
+            self._json(rep)
+            return
         if u.path == "/materials/confirm":
             # D137：把 AI 建议固化为**生效**清单。
             # 安全口径（D131 原意不放松）：教师显式点击 + 弹窗先看全文 +

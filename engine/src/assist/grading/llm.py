@@ -180,14 +180,15 @@ def _error_hint(body: str) -> str:
 
 
 def build_client_for(ws, provider: str = "", model: str = "", *,
-                     session_prefix: str = "assist") -> "tuple[LLMClient, str]":
+                     session_prefix: str = "assist",
+                     stage: str = "evaluation") -> "tuple[LLMClient, str]":
     """按 `provider`/`model` 构造 LLMClient（**Playground 与 Atopia 共用**）。
 
     D146：此前 Playground 与 Atopia 各写一套构造逻辑，容易出现"一边能选 provider、
     另一边只能吃评阅段配置"的口径漂移。统一到这里：
 
     - 指定 `provider`：用它的 base_url / key / headers / user_agent；
-    - 未指定：沿用 D86「评阅段」endpoint（= 改动前行为）；
+    - 未指定：沿用 `stage` 段 endpoint（默认 D86「评阅段」= 改动前行为）；
     - 返回 `(client, 实际使用的模型名)`；
     - 会话 id **自动生成**（`<prefix>-<hex>`），同一 client 内复用。
 
@@ -210,7 +211,7 @@ def build_client_for(ws, provider: str = "", model: str = "", *,
             raise LLMConfigError(f"provider「{name}」未配置 api_key")
         used = str(model or (p.get("models") or [""])[0] or "")
         return _finish(LLMClient(settings={**p, "model": used}), used)
-    ep = _prov.stage_endpoint(ws, "evaluation")
+    ep = _prov.stage_endpoint(ws, stage)
     used = str(model or ep.get("model") or "")
     return _finish(LLMClient(settings={**ep, "model": used}), used)
 

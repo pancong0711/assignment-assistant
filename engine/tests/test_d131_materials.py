@@ -790,3 +790,94 @@ def test_effective_endpoint_info_flags_opencode_go_missing_session(ws: Path):
                                       model="deepseek-v4.1-flash")
     assert info2["hasSessionHeader"] is True
     assert not any("x-opencode-session" in w for w in info2["warnings"])
+
+
+# ---------------- D230：图片型资料转写 ----------------
+class _TranscribeVisionClient:
+    """假多模态转写客户端：按页标记返回文本。"""
+    evaluation_model = "fake-vision"
+
+    def __init__(self):
+        self.calls: list[list[str]] = []
+
+    def chat_with_images(self, *, system_prompt, user_text, image_paths,
+                         model=None, **kw):
+        self.calls.append([str(x) for x in image_paths])
+        lines = []
+        for i, _p in enumerate(image_paths, start=1):
+            # 从 prompt 中捞页号：batch 调用时由调用方给出 page markers；
+            # 测试里用调用次数无法推页号，简单用连续编号即可（第二次重跑可能只有第 2 页）。
+            lines.append(f"--- page {i} ---\n第 {i} 页转写内容：动量守恒")
+        return "\n".join(lines)
+
+
+def test_transcribe_vision_writes_transcript_and_text_is_preferred(ws: Path):
+    d = M.ensure_chap(ws, "chap11")
+    _make_pdf(d / "_source" / "scan.pdf", pages=2)
+    M.extract_chap(ws, "chap11")
+    c = _TranscribeVisionClient()
+    rep = M.transcribe_materials(c, ws, "chap11", engine="vision",
+                                 provider="test-provider", model="vision-model")
+    assert rep["ok"] and rep["transcribed"] == 1
+    idx = M.read_index(ws, "chap11")
+    src = next(s for s in idx["sources"] if s["file"] == "_source/scan.pdf")
+    tr = src["extract"]["transcript"]
+    assert tr["chars"] > 0 and tr["pages"] == 2
+    assert Path(tr["text_file"]).is_file()
+
+    # read_source_text 优先使用转写文本
+    src_text = M.read_source_text(ws, "chap11")
+    assert "第 1 页转写内容" in src_text["text"]
+    assert src_text["transcriptFiles"] == ["_source/scan.pdf"]
+
+    # 诊断从 vision 变成 text
+    diag = M.source_selection_diagnostics(ws, "chap11")
+    assert diag["mode"] == "text"
+    assert diag["needsTranscription"] is False
+    assert diag["transcriptFiles"] == ["_source/scan.pdf"]
+
+    # 抽取信息弹窗能看到转写预览
+    info = M.extract_info(ws, "chap11", "_source/scan.pdf")
+    assert info["transcript"]["pages"] == 2
+    assert "第 1 页转写内容" in info["transcriptPreview"]
+
+
+class _PartialVisionClient:
+    def __init__(self):
+        self.calls = 0
+
+    def chat_with_images(self, *, system_prompt, user_text, image_paths,
+                         model=None, **kw):
+        self.calls += 1
+        if self.calls == 1:
+            return "--- page 1 ---\n第一页内容"
+        return "--- page 2 ---\n第二页内容"
+
+
+def test_transcribe_partial_then_resume_only_missing_pages(ws: Path):
+    d = M.ensure_chap(ws, "chap12")
+    _make_pdf(d / "_source" / "scan.pdf", pages=2)
+    M.extract_chap(ws, "chap12")
+    c = _PartialVisionClient()
+    r1 = M.transcribe_materials(c, ws, "chap12", engine="vision")
+    assert r1["ok"] is False
+    f1 = r1["files"][0]
+    assert f1["partial"] and f1["failedPages"] == [2]
+    r2 = M.transcribe_materials(c, ws, "chap12", engine="vision")
+    assert r2["ok"] is True
+    assert c.calls == 2, "第二次应只重试缺失页，不应整文件重跑"
+    idx = M.read_index(ws, "chap12")
+    src = next(s for s in idx["sources"] if s["file"] == "_source/scan.pdf")
+    assert src["extract"]["transcript"]["pages"] == 2
+
+
+def test_suggest_uses_transcript_instead_of_direct_vision(ws: Path):
+    d = M.ensure_chap(ws, "chap13")
+    _make_pdf(d / "_source" / "scan.pdf", pages=1)
+    M.extract_chap(ws, "chap13")
+    M.transcribe_materials(_TranscribeVisionClient(), ws, "chap13", engine="vision")
+    c = _Client(_SUGGEST)
+    rep = M.suggest_knowledge(c, ws, "chap13")
+    assert "第 1 页转写内容" in c.prompts[0]
+    assert rep["source"]["mode"] == "text"
+    assert rep["source"]["transcriptFiles"] == ["_source/scan.pdf"]
