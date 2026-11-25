@@ -11,7 +11,7 @@ import {
   MATERIALS_UPLOAD_EXTS, fetchMaterialsFiles, fetchMaterialsKnowledge,
   confirmMaterials, copyFromAtopia, createMaterialsChap, extractMaterials,
   fetchAtopiaWork, fetchMaterialsList, fetchMaterialsSuggestPreview,
-  fetchMaterialsExtractInfo, fetchMaterialsSuggestDiagnostics,
+  fetchMaterialsExtractInfo, fetchMaterialsSuggestDiagnostics, testLlmStages,
   removeMaterialsFile, restoreMaterialsFile, suggestMaterials, transcribeMaterials,
   uploadMaterialsFiles,
   fetchLlmConfig, type LlmProvider, type MaterialsExtractInfo,
@@ -82,8 +82,14 @@ function invertFileSelection() {
 const suggestProviders = ref<LlmProvider[]>([])
 const suggestProvider = ref('')
 const suggestModel = ref('')
+const suggestModelCustom = ref(false)
 const suggestStages = ref<Record<string, { provider?: string; model?: string }>>({})
 const LS_SUGGEST_MODEL = 'assignment-assistant.materials.suggestModel.v1'
+
+function modelsForProvider(name: string): string[] {
+  const p = suggestProviders.value.find((x) => x.name === name)
+  return (p?.models || []) as string[]
+}
 
 async function loadSuggestProviders() {
   try {
@@ -96,6 +102,7 @@ async function loadSuggestProviders() {
         const o = JSON.parse(saved)
         suggestProvider.value = String(o.provider || '')
         suggestModel.value = String(o.model || '')
+        suggestModelCustom.value = !!o.custom
       } catch { /* 忽略坏值 */ }
     }
   } catch { suggestProviders.value = [] }
@@ -103,12 +110,27 @@ async function loadSuggestProviders() {
 
 function saveSuggestChoice() {
   localStorage.setItem(LS_SUGGEST_MODEL,
-    JSON.stringify({ provider: suggestProvider.value, model: suggestModel.value }))
+    JSON.stringify({ provider: suggestProvider.value, model: suggestModel.value,
+                     custom: suggestModelCustom.value }))
 }
 
 const evalStage = computed(() => suggestStages.value.evaluation || {})
 const suggestProviderObj = computed(() =>
   suggestProviders.value.find((p) => p.name === suggestProvider.value) || null)
+/** 模型候选：优先当前显式 provider；否则用评阅段 provider 的 models[]。 */
+const suggestModelOptions = computed(() => modelsForProvider(
+  suggestProvider.value || String(evalStage.value.provider || '')))
+function onSuggestProviderChange() {
+  if (suggestModel.value && !suggestModelCustom.value
+      && !suggestModelOptions.value.includes(suggestModel.value)) {
+    suggestModel.value = ''
+  }
+  saveSuggestChoice()
+}
+function toggleSuggestModelCustom() {
+  suggestModelCustom.value = !suggestModelCustom.value
+  saveSuggestChoice()
+}
 const effectiveProviderName = computed(() =>
   suggestProvider.value || String(evalStage.value.provider || '未配置'))
 const effectiveModelName = computed(() => {
@@ -148,6 +170,8 @@ const transcribeForce = ref(false)
 const suggestDiag = ref<MaterialsSuggestDiagnostics & { request?: Record<string, unknown> } | null>(null)
 const diagBusy = ref(false)
 const diagMsg = ref('')
+const modelTesting = ref(false)
+const modelTestMsg = ref('')
 const pendingConfirm = ref<{ preview: string; terms: string[]; hasConfirmed: boolean } | null>(null)
 const confirmOverwrite = ref(false)
 
@@ -162,6 +186,29 @@ async function copySuggestDiag() {
     diagMsg.value = '复制失败；可直接选中下方 JSON 手动复制'
   }
 }
+async function testSelectedModel() {
+  modelTesting.value = true
+  modelTestMsg.value = '正在测试当前 provider/model（转录段=多模态探针，评阅段=文本探针）…'
+  try {
+    const r = await testLlmStages(
+      settings.engineUrl, settings.engineToken, 'both',
+      { provider: suggestProvider.value, model: suggestModel.value.trim() })
+    const lines = (r.results || []).map((x: any) => {
+      const tag = x.stage === 'transcription' ? '转录段' : '评阅段'
+      const head = `${tag}：${x.provider || '-'} / ${x.model || '-'} @ ${x.base_url || '-'}`
+      return x.ok
+        ? `✅ ${head}（${x.ms || 0}ms，回复：${String(x.reply || '').slice(0, 40)}）`
+        : `❌ ${head}\n    原因：${String(x.error || '未知错误').slice(0, 800)}`
+    })
+    modelTestMsg.value = (lines.join('\n') || r.error || '（无测试结果）')
+      + (r.ok ? '' : `\n\n${r.error || '失败原因见上'}`)
+  } catch (e) {
+    modelTestMsg.value = `测试请求失败：${String((e as Error).message || e)}`
+  } finally {
+    modelTesting.value = false
+  }
+}
+
 async function runSuggestDiagnostics() {
   if (!active.value) return
   diagBusy.value = true
@@ -813,15 +860,29 @@ defineExpose({ refresh })
           </button>
           <label class="field" title="默认跟随评阅段配置；如需单独指定可在此选择（会记住）">
             建议用模型
-            <select v-model="suggestProvider" @change="saveSuggestChoice"
+            <select v-model="suggestProvider" @change="onSuggestProviderChange"
                     style="font-size:13px; max-width:150px">
               <option value="">（跟随评阅配置）</option>
               <option v-for="p in suggestProviders" :key="p.name" :value="p.name">
                 {{ p.name }}{{ p.has_key ? '' : '（无 key）' }}
               </option>
             </select>
-            <input v-model="suggestModel" placeholder="模型名（空=默认）" style="width:150px"
-                   @change="saveSuggestChoice" />
+            <template v-if="suggestModelOptions.length && !suggestModelCustom">
+              <select v-model="suggestModel" @change="saveSuggestChoice"
+                      style="font-size:13px; min-width:190px">
+                <option value="">（默认模型）</option>
+                <option v-for="m in suggestModelOptions" :key="m" :value="m">{{ m }}</option>
+              </select>
+              <button class="btn sm" @click="toggleSuggestModelCustom"
+                      title="切换为手动填写模型名">自定义</button>
+            </template>
+            <template v-else>
+              <input v-model="suggestModel" placeholder="模型名（空=默认）" style="width:190px"
+                     @change="saveSuggestChoice" />
+              <button v-if="suggestModelOptions.length" class="btn sm"
+                      @click="toggleSuggestModelCustom"
+                      title="切换回该 provider 的模型下拉">用下拉</button>
+            </template>
           </label>
           <button class="btn"
                   :disabled="stepBusy !== '' || !selectedFileList.length || selectedUnextracted.length > 0"
@@ -835,6 +896,11 @@ defineExpose({ refresh })
                   @click="runSuggestDiagnostics"
                   title="不调用模型：检查实际 provider/model、key 与选中文件的抽取内容">
             {{ diagBusy ? '检查中…' : '🔎 检查识别配置' }}
+          </button>
+          <button class="btn" :disabled="modelTesting || stepBusy !== ''"
+                  @click="testSelectedModel"
+                  title="真实调用一次文本探针 + 一次图片探针，确认 provider/model 是否可用">
+            {{ modelTesting ? '测试中…' : '🧪 测试模型' }}
           </button>
           <span class="hint" style="margin:0">知识点识别将使用：{{ suggestModelLabel }}</span>
           <span class="hint" style="margin:0">转写将使用：{{ transcribeModelLabel }}</span>
@@ -851,6 +917,8 @@ defineExpose({ refresh })
           ⚠ {{ suggestStageWarning }}
         </p>
         <p v-if="stepMsg" class="hint" style="margin:2px 0; white-space:pre-wrap">{{ stepMsg }}</p>
+        <pre v-if="modelTestMsg" class="md" style="margin:6px 0; max-height:260px;
+             white-space:pre-wrap; border:1px solid var(--c-border); padding:8px">{{ modelTestMsg }}</pre>
         <div v-if="suggestDiag" style="margin:6px 0; padding:8px; border:1px solid var(--c-border);
              border-radius:6px; background:#fafafa">
           <div style="display:flex; gap:8px; align-items:center; flex-wrap:wrap">

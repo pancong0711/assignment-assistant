@@ -2044,15 +2044,24 @@ class Handler(BaseHTTPRequestHandler):
                 payload = {}
             stage = str(payload.get("stage") or "both").lower()
             stages = (["transcription", "evaluation"] if stage == "both" else [stage])
-            from .grading.llm import LLMAPIError, LLMClient
+            from .grading.llm import LLMAPIError, LLMClient, build_client_for
             ws_ = Path(self.ws).resolve()
+            explicit_provider = str(payload.get("provider") or "").strip()
+            explicit_model = str(payload.get("model") or "").strip()
             results = []
             for st in stages:
                 item: dict = {"stage": st, "ok": False}
                 try:
-                    client = LLMClient(ws=ws_)
+                    if explicit_provider or explicit_model:
+                        # D231：PWA「测试模型」用当前显式 provider/model，而不是只测阶段默认。
+                        client, used_model = build_client_for(
+                            ws_, explicit_provider, explicit_model,
+                            session_prefix="llm-test", stage=st)
+                        item["model"] = used_model
+                    else:
+                        client = LLMClient(ws=ws_)
                     ep = client._step_endpoint(st)
-                    item.update({"provider": ep.get("provider") or "",
+                    item.update({"provider": explicit_provider or ep.get("provider") or "",
                                  "type": ep.get("type") or "api",
                                  "base_url": ep.get("base_url") or "",
                                  "model": ep.get("model") or "",

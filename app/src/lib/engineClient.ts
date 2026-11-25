@@ -2482,12 +2482,14 @@ export async function mutatePromptTemplate(
 
 /** D125：按段测试 LLM 配置（转录=多模态 / 评阅=纯文本）。 */
 export async function testLlmStages(
-  engineAddr: string, token: string | undefined, stage: 'both' | 'transcription' | 'evaluation' = 'both',
+  engineAddr: string, token: string | undefined,
+  stage: 'both' | 'transcription' | 'evaluation' = 'both',
+  opts: { provider?: string; model?: string } = {},
 ): Promise<{ ok?: boolean; results?: Array<Record<string, unknown>>; error?: string }> {
   const base = normalizeEngineAddr(engineAddr)
   const res = await fetch(engineUrlWithToken(base, '/llm/test', token), {
     method: 'POST', headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ stage }),
+    body: JSON.stringify({ stage, provider: opts.provider || '', model: opts.model || '' }),
   })
   const o = (await res.json().catch(() => ({}))) as
     { ok?: boolean; results?: Array<Record<string, unknown>>; error?: string }
