@@ -881,3 +881,34 @@ def test_suggest_uses_transcript_instead_of_direct_vision(ws: Path):
     assert "第 1 页转写内容" in c.prompts[0]
     assert rep["source"]["mode"] == "text"
     assert rep["source"]["transcriptFiles"] == ["_source/scan.pdf"]
+
+
+# ---------------- D232：转写提示词只读查看 ----------------
+def test_materials_transcribe_prompt_emphasizes_verbatim_no_omission():
+    sys_p = M.MATERIAL_TRANSCRIBE_SYSTEM_PROMPT
+    user_p = M.build_materials_transcribe_prompt("_source/plan/a.pdf", [1, 2, 3])
+    for text in (sys_p, user_p):
+        assert "忠实" in text or "原文" in text
+    assert "不得总结" in user_p and "省略" in user_p
+    assert "不得总结、概括、省略、合并、改写、润色、补充或推断" in user_p
+    assert "每一页都必须输出" in user_p
+    assert "--- page N ---" in user_p
+    assert "[不清]" in user_p and "[本页无文字]" in user_p
+    assert "第 1、2、3 页" in user_p
+
+
+def test_serve_transcribe_prompt_endpoint(ws: Path):
+    import urllib.request
+    base, httpd = _serve_ws(ws)
+    try:
+        with urllib.request.urlopen(
+            f"{base}/materials/transcribe-prompt?file=_source/plan/a.pdf&pages=1-2",
+            timeout=5) as r:
+            out = json.loads(r.read().decode())
+        assert out["ok"]
+        assert out["pageNumbers"] == [1, 2]
+        assert "不得总结、概括、省略" in out["userPrompt"]
+        assert "忠实转写" in out["systemPrompt"]
+        assert "本地 OCR" in out["note"]
+    finally:
+        httpd.shutdown()

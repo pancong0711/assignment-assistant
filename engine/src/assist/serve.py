@@ -4930,6 +4930,32 @@ class Handler(BaseHTTPRequestHandler):
                 return
             self._json({"ok": True, "chap": chap, "count": len(rows), "files": rows})
             return
+        elif u.path == "/materials/transcribe-prompt":
+            # D232：只读查看当前 AI 视觉转写提示词（单一事实源在 materials.py）。
+            from .files import materials as _mtp
+            q = urllib.parse.parse_qs(u.query)
+            rel = str((q.get("file") or [""])[0]).strip()
+            pages_raw = str((q.get("pages") or ["1-4"])[0]).strip()
+            pages: list[int] = []
+            try:
+                if "-" in pages_raw:
+                    a, b = pages_raw.split("-", 1)
+                    pages = list(range(int(a), int(b) + 1))
+                else:
+                    pages = [int(x) for x in pages_raw.split(",") if x.strip()]
+            except Exception:  # noqa: BLE001
+                pages = [1, 2, 3, 4]
+            pages = (pages or [1, 2, 3, 4])[:12]
+            self._json({
+                "ok": True,
+                "file": rel,
+                "pageNumbers": pages,
+                "systemPrompt": _mtp.MATERIAL_TRANSCRIBE_SYSTEM_PROMPT,
+                "userPrompt": _mtp.build_materials_transcribe_prompt(rel, pages),
+                "note": ("本地 OCR（tesseract）不经过提示词；以上为「AI 视觉转写」"
+                         "实际使用的系统提示词与用户提示词。"),
+            })
+            return
         elif u.path == "/materials/extract-info":
             # D229：查看单文件“抽取出了什么”（元数据 + 文本预览 + 图片清单）
             from .files import materials as _mxi

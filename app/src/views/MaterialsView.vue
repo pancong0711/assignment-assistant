@@ -12,6 +12,7 @@ import {
   confirmMaterials, copyFromAtopia, createMaterialsChap, extractMaterials,
   fetchAtopiaWork, fetchMaterialsList, fetchMaterialsSuggestPreview,
   fetchMaterialsExtractInfo, fetchMaterialsSuggestDiagnostics, testLlmStages,
+  fetchMaterialsTranscribePrompt, type MaterialsTranscribePrompt,
   removeMaterialsFile, restoreMaterialsFile, suggestMaterials, transcribeMaterials,
   uploadMaterialsFiles,
   fetchLlmConfig, type LlmProvider, type MaterialsExtractInfo,
@@ -167,6 +168,26 @@ const stepBusy = ref<'extract' | 'transcribe' | 'suggest' | 'confirm' | ''>('')
 const stepMsg = ref('')
 const transcribeEngine = ref<'auto' | 'local' | 'vision'>('auto')
 const transcribeForce = ref(false)
+const transcribePrompt = ref<MaterialsTranscribePrompt | null>(null)
+const transcribePromptBusy = ref(false)
+const transcribePromptMsg = ref('')
+
+async function showTranscribePrompt() {
+  transcribePromptBusy.value = true
+  transcribePromptMsg.value = ''
+  try {
+    transcribePrompt.value = await fetchMaterialsTranscribePrompt(
+      settings.engineUrl, settings.engineToken,
+      selectedFileList.value[0] || '', '1-4')
+    if (!transcribePrompt.value?.ok) {
+      transcribePromptMsg.value = transcribePrompt.value?.error || '读取转写提示词失败'
+    }
+  } catch (e) {
+    transcribePromptMsg.value = `读取转写提示词失败：${String((e as Error).message || e)}`
+  } finally {
+    transcribePromptBusy.value = false
+  }
+}
 const suggestDiag = ref<MaterialsSuggestDiagnostics & { request?: Record<string, unknown> } | null>(null)
 const diagBusy = ref(false)
 const diagMsg = ref('')
@@ -858,6 +879,10 @@ defineExpose({ refresh })
                   title="把选中图片型资料的页图转写为可查看文本；已成功的页可复用">
             {{ stepBusy === 'transcribe' ? '转写中…' : `📝 转写选中 ${selectedFileList.length} 个` }}
           </button>
+          <button class="btn" :disabled="transcribePromptBusy" @click="showTranscribePrompt"
+                  title="只读查看 AI 视觉转写实际使用的系统提示词/用户提示词">
+            {{ transcribePromptBusy ? '读取中…' : '📜 转写提示词' }}
+          </button>
           <label class="field" title="默认跟随评阅段配置；如需单独指定可在此选择（会记住）">
             建议用模型
             <select v-model="suggestProvider" @change="onSuggestProviderChange"
@@ -919,6 +944,20 @@ defineExpose({ refresh })
         <p v-if="stepMsg" class="hint" style="margin:2px 0; white-space:pre-wrap">{{ stepMsg }}</p>
         <pre v-if="modelTestMsg" class="md" style="margin:6px 0; max-height:260px;
              white-space:pre-wrap; border:1px solid var(--c-border); padding:8px">{{ modelTestMsg }}</pre>
+        <p v-if="transcribePromptMsg" class="hint" style="color:#b45309">{{ transcribePromptMsg }}</p>
+        <details v-if="transcribePrompt?.ok" open style="margin:6px 0; padding:8px;
+                 border:1px solid var(--c-border); border-radius:6px; background:#fafafa">
+          <summary style="cursor:pointer; font-weight:600">
+            📜 只读 · AI 视觉转写实际提示词
+          </summary>
+          <p class="hint" style="margin:6px 0 2px">
+            {{ transcribePrompt.note }}
+          </p>
+          <p class="hint" style="margin:6px 0 2px"><b>系统提示词</b></p>
+          <pre class="md" style="max-height:220px; white-space:pre-wrap">{{ transcribePrompt.systemPrompt }}</pre>
+          <p class="hint" style="margin:6px 0 2px"><b>用户提示词</b></p>
+          <pre class="md" style="max-height:320px; white-space:pre-wrap">{{ transcribePrompt.userPrompt }}</pre>
+        </details>
         <div v-if="suggestDiag" style="margin:6px 0; padding:8px; border:1px solid var(--c-border);
              border-radius:6px; background:#fafafa">
           <div style="display:flex; gap:8px; align-items:center; flex-wrap:wrap">

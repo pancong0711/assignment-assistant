@@ -716,6 +716,33 @@ def _ocr_page_tesseract(image_path: Path) -> dict:
     return {"text": str(out or "").strip(), "engine": "tesseract", "error": ""}
 
 
+MATERIAL_TRANSCRIBE_SYSTEM_PROMPT = (
+    "你是大学物理课堂资料转写助手。你的唯一任务是把资料页图**忠实转写**为可检索文本。"
+    "必须逐页、逐段、逐句保留原文；不得总结、概括、省略、合并、改写、润色、补充或推断。"
+    "看不清的字符写「[不清]」，示意图只做简短客观描述。只输出转写正文，不解释。"
+)
+
+
+def build_materials_transcribe_prompt(rel: str, page_numbers: "list[int]") -> str:
+    """D232：AI 视觉转写提示词（单一事实源；PWA 可只读查看）。"""
+    nums = "、".join(str(x) for x in (page_numbers or [1]))
+    return (
+        f"这是课堂资料「{rel or '（选中文件）'}」的第 {nums} 页图片。\n"
+        "请逐页转写页面上的全部教学内容。\n\n"
+        "【最高优先级：忠实原文】\n"
+        "1. 必须逐页、逐段、逐句转写页面可见原文；"
+        "**不得总结、概括、省略、合并、改写、润色、补充或推断**。\n"
+        "2. 每一页都必须输出，严格使用页标记 `--- page N ---`；"
+        "即使该页没有文字，也要输出 `--- page N ---` 和 `[本页无文字]`，不能跳过。\n"
+        "3. 保留标题、正文、编号、定义、定理、例题题干、表格文字、页脚等可见内容；"
+        "页眉页脚也按原文保留。\n"
+        "4. 公式保留原有结构和含义，使用 LaTeX 表示；不要自行改写公式。\n"
+        "5. 示意图不臆造内容，写成「[示意图：客观描述]」；图中文字仍须转写。\n"
+        "6. 看不清的字符写「[不清]」；不得猜测或补全。\n"
+        "7. 不要输出总结、评语、解释、建议或与原文无关的内容。"
+    )
+
+
 def _parse_vision_pages(raw: str, page_numbers: "list[int]") -> "dict[int, str]":
     """解析多模态转写结果中的 `--- page N ---`；无分隔时单页直接采用。"""
     import re as _re
@@ -742,18 +769,9 @@ def _parse_vision_pages(raw: str, page_numbers: "list[int]") -> "dict[int, str]"
 def _vision_transcribe_batch(client, image_paths: "list[Path]", page_numbers: "list[int]",
                              *, rel: str, model: "str | None") -> dict:
     """多模态转写一批页图；返回 {page: text} 或抛异常。"""
-    nums = "、".join(str(x) for x in page_numbers)
-    prompt = (
-        f"这是课堂资料「{rel}」的第 {nums} 页图片。"
-        "请逐页转写页面上的全部教学内容，要求：\n"
-        "1. 保留页标记，严格输出 `--- page N ---`，每页一段；\n"
-        "2. 文字、公式、定义、定理、例题题干尽量完整；公式用 LaTeX；\n"
-        "3. 示意图不要臆造内容，用「[示意图：...]」简短描述；\n"
-        "4. 看不清的字符写「[不清]」，不要编造；\n"
-        "5. 只输出转写正文，不要额外解释。"
-    )
+    prompt = build_materials_transcribe_prompt(rel, page_numbers)
     raw = client.chat_with_images(
-        system_prompt="这是大学物理课堂资料转写，内容完全学术。只输出逐页转写文本。",
+        system_prompt=MATERIAL_TRANSCRIBE_SYSTEM_PROMPT,
         user_text=prompt, image_paths=[str(x) for x in image_paths],
         model=model or None, temperature=0.1, max_tokens=8192,
         step="transcription")

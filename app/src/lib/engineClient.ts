@@ -3313,6 +3313,23 @@ export async function fetchMaterialsExtractInfo(
     base, `/materials/extract-info?${qs.toString()}`, token))) as MaterialsExtractInfo
 }
 
+/** D232：查看当前 AI 视觉转写提示词（只读）。 */
+export interface MaterialsTranscribePrompt {
+  ok?: boolean; file?: string; pageNumbers?: number[]
+  systemPrompt?: string; userPrompt?: string; note?: string; error?: string
+}
+
+export async function fetchMaterialsTranscribePrompt(
+  engineAddr: string, token: string | undefined, file = '', pages = '1-4',
+): Promise<MaterialsTranscribePrompt> {
+  const base = normalizeEngineAddr(engineAddr)
+  const qs = new URLSearchParams()
+  if (file) qs.set('file', file)
+  if (pages) qs.set('pages', pages)
+  return (await getJson2(engineUrlWithToken(
+    base, `/materials/transcribe-prompt?${qs.toString()}`, token))) as MaterialsTranscribePrompt
+}
+
 /** D229：识别前诊断（不调模型）——provider/model/host/key + 选中文件抽取情况。 */
 export interface MaterialsSuggestDiagnostics {
   ok?: boolean; chap?: string; error?: string
