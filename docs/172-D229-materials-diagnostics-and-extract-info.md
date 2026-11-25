@@ -131,3 +131,53 @@ GET /materials/extract-info?chap=...&file=...
 - PWA `selfcheck-d229-materials-diagnostics.mjs`；
 - D134 课堂资料上传/移除浏览器回归仍通过；
 - 前端 build 通过。
+
+---
+
+## 4. 现场诊断补充：opencode-go + 纯图片 PDF
+
+教师提供的诊断：
+
+```json
+{
+  "llm": {
+    "provider": "opencode-go",
+    "model": "deepseek-v4.1-flash",
+    "baseHost": "opencode.ai",
+    "hasKey": true,
+    "warnings": []
+  },
+  "source": {
+    "chars": 0,
+    "imageCount": 12,
+    "mode": "vision"
+  }
+}
+```
+
+判断：
+
+1. provider/model/key 基础配置存在；
+2. 选中文件抽到 **0 字 + 12 张页图**，所以必然走多模态；
+3. `deepseek-v4.1-flash` 的公开模型元数据声明支持 `text + image/jpeg + image/png + image/gif + image/webp`，所以“模型绝对不支持图片”不是首要嫌疑；
+4. 但 **opencode-go 的 `/inference/go/` 路由要求 `x-opencode-session`**。如果 provider 没配这个请求头，典型错误是 400 missing x-opencode-session，而此前诊断只检查 `hasKey`，不会提示这一点。
+
+### 追加诊断字段
+
+`effective_endpoint_info()` 现在额外返回：
+
+- `basePath`：确认是否走了 `/inference/go/...`；
+- `headerNames`：已配置的请求头名称（不含值）；
+- `hasSessionHeader`：是否配置 `x-opencode-session`；
+- `userAgent`；
+- 当 host=opencode.ai、path=/inference/go/ 且无 session header 时，
+  `warnings` 直接提示去 provider 设置勾选「需要会话头」。
+
+### 还需的最终错误
+
+若 diagnostic 的 `warnings` 为空但仍失败，请复制点击「② AI 建议知识点」后识别诊断里的：
+
+- `detail`
+- `errorType`
+
+其中应包含 API `status=...` 和响应 body，可直接判断是 session 头、图片格式、限流还是模型参数问题。

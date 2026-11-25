@@ -3304,7 +3304,9 @@ export interface MaterialsSuggestDiagnostics {
   llm?: {
     ok?: boolean; requestedProvider?: string; requestedModel?: string
     stage?: string; provider?: string; model?: string; baseHost?: string
-    type?: string; hasKey?: boolean; warnings?: string[]; error?: string
+    basePath?: string; type?: string; hasKey?: boolean
+    headerNames?: string[]; hasSessionHeader?: boolean; userAgent?: string
+    warnings?: string[]; error?: string
   }
   source?: {
     ok?: boolean; selectedFiles?: string[]; selectedCount?: number

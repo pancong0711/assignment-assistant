@@ -768,3 +768,25 @@ def test_serve_suggest_failure_returns_structured_diagnostics(ws: Path):
         assert "provider" in diag["llm"] and "model" in diag["llm"]
     finally:
         httpd.shutdown()
+
+
+def test_effective_endpoint_info_flags_opencode_go_missing_session(ws: Path):
+    from assist.grading import providers as P
+    P.save_provider(ws, "opencode-go",
+                    base_url="https://opencode.ai/inference/go/openai/v1",
+                    api_key="k-test-1234567890",
+                    model="deepseek-v4.1-flash")
+    info = P.effective_endpoint_info(ws, provider="opencode-go",
+                                     model="deepseek-v4.1-flash")
+    assert info["provider"] == "opencode-go"
+    assert info["basePath"].startswith("/inference/go/")
+    assert info["hasSessionHeader"] is False
+    assert any("x-opencode-session" in w for w in info["warnings"])
+    # 配置会话头后警告消失
+    P.save_provider(ws, "opencode-go",
+                    base_url="https://opencode.ai/inference/go/openai/v1",
+                    headers={"x-opencode-session": "{session}"})
+    info2 = P.effective_endpoint_info(ws, provider="opencode-go",
+                                      model="deepseek-v4.1-flash")
+    assert info2["hasSessionHeader"] is True
+    assert not any("x-opencode-session" in w for w in info2["warnings"])

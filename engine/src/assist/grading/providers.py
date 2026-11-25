@@ -466,6 +466,8 @@ def effective_endpoint_info(ws, *, provider: str = "", model: str = "",
         used_model = req_model or str((p.get("models") or [""])[0] or "")
         name = req_provider
         src_stage = "explicit"
+        headers = _provider_headers(p)
+        user_agent = str(p.get("user_agent") or "")
     else:
         ep = stage_endpoint(ws, stage)
         name = str(ep.get("provider") or LEGACY_PROVIDER_NAME)
@@ -474,12 +476,25 @@ def effective_endpoint_info(ws, *, provider: str = "", model: str = "",
         ptype = str(ep.get("type") or "api")
         used_model = req_model or str(ep.get("model") or "")
         src_stage = str(stage)
+        headers = dict(ep.get("headers") or {})
+        user_agent = str(ep.get("user_agent") or "")
     if ptype != "command" and not key:
         warnings.append(f"provider「{name}」没有可用 api_key。")
     if not used_model:
         warnings.append(f"provider「{name}」没有指定模型。")
+    host = host_of(base)
+    header_names = sorted(str(k) for k in headers)
+    has_session_header = any(str(k).lower() == "x-opencode-session" for k in headers)
+    # opencode-go 的 Go 路由要求稳定会话头；缺失时通常返回 400 missing x-opencode-session。
+    if "opencode.ai" in host and "/inference/go/" in base.lower() and not has_session_header:
+        warnings.append(
+            "opencode-go 的 Go 路由要求 x-opencode-session 请求头；请在 provider 设置里"
+            "勾选“需要会话头”（或配置 headers: {\"x-opencode-session\": \"{session}\"}）。")
+    from urllib.parse import urlparse as _urlparse
     return {"ok": not warnings, "requestedProvider": req_provider,
             "requestedModel": req_model, "stage": src_stage,
-            "provider": name, "model": used_model, "baseHost": host_of(base),
+            "provider": name, "model": used_model, "baseHost": host,
+            "basePath": _urlparse(base).path,
             "type": ptype, "hasKey": bool(key) or ptype == "command",
-            "warnings": warnings}
+            "headerNames": header_names, "hasSessionHeader": has_session_header,
+            "userAgent": user_agent, "warnings": warnings}

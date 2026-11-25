@@ -133,7 +133,7 @@
 - `docs/169-D226-inline-formula-kb-refresh-export.md` — **D226 松散列表/公式题号不再独占行 + 整班 HTML/JSON 命名配对 + 题库 AI+ 目录实时刷新**
 - `docs/170-D227-personalized-assignment-plan.md` — **D227 规划：发题台账/重复题预检 → 作答与进度分析 → 可解释个性化组卷（暂不 AI 生成新题）**
 - `docs/171-D228-materials-file-selection.md` — **D228 课堂资料按文件抽取/识别知识点（多选/全选）+ provider 选择真正生效**
-- `docs/172-D229-materials-diagnostics-and-extract-info.md` — **D229 课堂资料识别诊断（实际 provider/model/detail/JSON）+ 单文件抽取信息预览**
+- `docs/172-D229-materials-diagnostics-and-extract-info.md` — **D229 课堂资料识别诊断（实际 provider/model/session 头/detail/JSON）+ 单文件抽取信息预览**
 
 > **当前活动需求单 = `docs/112-D168`（口径/快照）+ `docs/113-D169`（路线/架构）**；
 > 历史条目保留供追溯，与最新口径冲突时以这两份为准。
