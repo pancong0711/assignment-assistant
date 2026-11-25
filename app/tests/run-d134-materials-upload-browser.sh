@@ -105,6 +105,28 @@ try:
             'noticeShown': 'plan-2.md' in pg.inner_text('body'),
         }
 
+        # ---- D229：抽取后查看单文件抽取信息；再检查识别配置 ----
+        pg.locator('button', has_text='抽取全部').first.click()
+        pg.wait_for_function(
+            "() => document.body.innerText.includes('已处理选中')", timeout=30000)
+        pg.locator('button', has_text='抽取信息').first.click()
+        pg.wait_for_selector('text=抽取文本预览', timeout=15000)
+        info_body = pg.inner_text('body')
+        out['extractInfo'] = {
+            'dialogShown': '抽取信息 · plan' in info_body,
+            'previewShown': ('第4章 动量守恒' in info_body or 'v2' in info_body),
+            'engineInfoShown': ('read-text' in info_body or '文本字数' in info_body),
+        }
+        pg.locator('button', has_text='关闭').first.click()
+        pg.locator('button', has_text='检查识别配置').first.click()
+        pg.wait_for_selector('text=识别诊断', timeout=15000)
+        diag_body = pg.inner_text('body')
+        out['diagnostics'] = {
+            'panelShown': '识别诊断' in diag_body,
+            'providerShown': ('provider' in diag_body or '评阅段' in diag_body),
+            'filesShown': ('_source' in diag_body or 'selectedFiles' in diag_body),
+        }
+
         # ---- 移除：必须先二次确认，确认后才进回收站 ----
         pg.locator('button', has_text='移除').first.click()
         pg.wait_for_selector('text=确认移除原件？', timeout=10000)
@@ -159,12 +181,16 @@ assert u['saved'] and u['contentOk'], f"上传未落盘：{u}"
 assert u['exeRejected'] and u['rejectShown'], f"危险扩展名未被拒绝：{u}"
 assert u['listedInTable'], f"上传后未出现在文件列表：{u}"
 assert s['originalIntact'] and s['renamed'] and s['noticeShown'], f"同名未安全改名：{s}"
+ei = out['extractInfo']
+assert ei['dialogShown'] and ei['previewShown'] and ei['engineInfoShown'], f"抽取信息弹窗异常：{ei}"
+dg = out['diagnostics']
+assert dg['panelShown'] and dg['providerShown'] and dg['filesShown'], f"识别诊断面板异常：{dg}"
 assert r['dialogShown'] and r['notYetMoved'], f"移除未经二次确认就执行：{r}"
 assert r['inTrash'] and r['contentPreserved'], f"移除未进回收站或内容丢失：{r}"
 rs = out['restore']
 assert rs['dialogShown'] and rs['notYetRestored'], f"恢复未经二次确认：{rs}"
 assert rs['backInSource'] and rs['trashEmptied'], f"恢复未把文件移回：{rs}"
-print('OK d134-upload：扩展名白名单 · 同名不覆盖（自动 -2）· 移除二次确认 · 只进回收站不真删 · 可从回收站恢复')
+print('OK d134-upload：上传/改名/抽取信息/识别诊断/回收站恢复 全链路通过')
 PY
 RC=$?
 rm -f "$APP_DIR/tests/_d134.upload.html" "$APP_DIR/tests/.d134-upload.bundle.js" \

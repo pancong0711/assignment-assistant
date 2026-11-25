@@ -441,3 +441,45 @@ def stage_endpoint(ws, stage: str) -> dict:
             "input_mode": str(prov.get("input_mode") or "stdin"),
             "output_mode": str(prov.get("output_mode") or "stdout-json"),
             "timeout_s": int(prov.get("timeout_s") or 300)}
+
+
+def effective_endpoint_info(ws, *, provider: str = "", model: str = "",
+                            stage: str = "evaluation") -> dict:
+    """D229：返回**可安全展示**的识别/LLM 配置诊断（不含 api_key）。
+
+    教师反馈“页面信息太少、无法判断 provider 到底用了谁”。这里统一给出：
+    requested / effective provider、model、base host、是否具备 key、类型与提醒。
+    """
+    req_provider = str(provider or "").strip()
+    req_model = str(model or "").strip()
+    warnings: list[str] = []
+    if req_provider:
+        p = get_provider(ws, req_provider)
+        if not p:
+            return {"ok": False, "requestedProvider": req_provider,
+                    "requestedModel": req_model, "stage": "explicit",
+                    "error": f"provider 不存在：{req_provider}",
+                    "warnings": [f"provider 不存在：{req_provider}"]}
+        ptype = str(p.get("type") or "api")
+        base = str(p.get("base_url") or DEFAULT_BASE_URL)
+        key = str(p.get("api_key") or "")
+        used_model = req_model or str((p.get("models") or [""])[0] or "")
+        name = req_provider
+        src_stage = "explicit"
+    else:
+        ep = stage_endpoint(ws, stage)
+        name = str(ep.get("provider") or LEGACY_PROVIDER_NAME)
+        base = str(ep.get("base_url") or DEFAULT_BASE_URL)
+        key = str(ep.get("api_key") or "")
+        ptype = str(ep.get("type") or "api")
+        used_model = req_model or str(ep.get("model") or "")
+        src_stage = str(stage)
+    if ptype != "command" and not key:
+        warnings.append(f"provider「{name}」没有可用 api_key。")
+    if not used_model:
+        warnings.append(f"provider「{name}」没有指定模型。")
+    return {"ok": not warnings, "requestedProvider": req_provider,
+            "requestedModel": req_model, "stage": src_stage,
+            "provider": name, "model": used_model, "baseHost": host_of(base),
+            "type": ptype, "hasKey": bool(key) or ptype == "command",
+            "warnings": warnings}

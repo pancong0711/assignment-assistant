@@ -2379,6 +2379,29 @@ class Handler(BaseHTTPRequestHandler):
             ws_ = Path(self.ws).resolve()
             provider = str(payload.get("provider") or "").strip()
             model = str(payload.get("model") or "").strip()
+            from .grading import providers as _provs
+            # D229：先做不做模型调用的诊断，失败时把 provider/model/来源文件/字符数等
+            # 一起回传；前端不再只显示一行“失败”。
+            try:
+                src_diag = _ms.source_selection_diagnostics(ws_, chap, raw_files or None)
+                llm_diag = _provs.effective_endpoint_info(
+                    ws_, provider=provider, model=model)
+            except _ms.MaterialsError as exc:
+                self._json({"ok": False, "error": str(exc), "diagnostics": {}}, 400)
+                return
+            diagnostics = {"llm": llm_diag, "source": src_diag,
+                           "request": {"provider": provider, "model": model,
+                                       "files": raw_files or []}}
+            if not src_diag.get("ok"):
+                detail = "；".join(src_diag.get("warnings") or []) or "选中的文件没有可识别内容"
+                self._json({"ok": False, "error": "知识点识别前置检查未通过",
+                            "detail": detail, "diagnostics": diagnostics}, 400)
+                return
+            if not llm_diag.get("ok"):
+                detail = "；".join(llm_diag.get("warnings") or []) or llm_diag.get("error") or "LLM 配置不完整"
+                self._json({"ok": False, "error": "知识点识别配置未通过",
+                            "detail": detail, "diagnostics": diagnostics}, 400)
+                return
             try:
                 # D228：PWA 上选择的 provider 必须传进来；此前只传 model，
                 # 下拉框看似可选择但实际仍走评阅段 provider，容易表现为“识别失败”。
@@ -2387,20 +2410,32 @@ class Handler(BaseHTTPRequestHandler):
                 rep = _ms.suggest_knowledge(client, ws_, chap, model=model or None,
                                             files=raw_files or None)
             except _ms.MaterialsError as exc:
-                self._json({"ok": False, "error": str(exc)}, 400)
+                self._json({"ok": False, "error": str(exc),
+                            "detail": str(exc), "diagnostics": diagnostics}, 400)
                 return
             except LLMConfigError as exc:
-                self._json({"ok": False, "error": f"LLM 未配置：{exc}"}, 400)
+                self._json({"ok": False, "error": "LLM 配置不可用",
+                            "detail": str(exc), "diagnostics": diagnostics}, 400)
                 return
             except LLMAPIError as exc:
-                self._json({"ok": False, "error": f"知识点识别失败：{str(exc)[:800]}"}, 500)
+                self._json({"ok": False, "error": "知识点识别失败",
+                            "detail": str(exc)[:1200],
+                            "errorType": type(exc).__name__,
+                            "diagnostics": diagnostics}, 500)
                 return
             except Exception as exc:  # noqa: BLE001
-                self._json({"ok": False, "error": f"{type(exc).__name__}: {str(exc)[:800]}"}, 500)
+                self._json({"ok": False, "error": "知识点识别失败",
+                            "detail": str(exc)[:1200],
+                            "errorType": type(exc).__name__,
+                            "diagnostics": diagnostics}, 500)
                 return
             rep["chap"] = chap
-            rep["provider"] = provider
-            rep["model"] = str(used_model or model or "")
+            rep["provider"] = str(llm_diag.get("provider") or provider)
+            rep["model"] = str(used_model or llm_diag.get("model") or model or "")
+            rep["diagnostics"] = {**diagnostics,
+                                  "llm": {**llm_diag,
+                                          "provider": rep["provider"],
+                                          "model": rep["model"]}}
             self._json(rep)
             return
         if u.path == "/materials/confirm":
@@ -4818,6 +4853,46 @@ class Handler(BaseHTTPRequestHandler):
                 self._json({"ok": False, "error": str(exc)}, 400)
                 return
             self._json({"ok": True, "chap": chap, "count": len(rows), "files": rows})
+            return
+        elif u.path == "/materials/extract-info":
+            # D229：查看单文件“抽取出了什么”（元数据 + 文本预览 + 图片清单）
+            from .files import materials as _mxi
+            q = urllib.parse.parse_qs(u.query)
+            chap = str((q.get("chap") or [""])[0]).strip()
+            file_name = str((q.get("file") or [""])[0]).strip()
+            if not chap or not file_name:
+                self._json({"ok": False, "error": "缺少 chap 或 file"}, 400)
+                return
+            try:
+                out = _mxi.extract_info(Path(self.ws).resolve(), chap, file_name)
+            except _mxi.MaterialsError as exc:
+                self._json({"ok": False, "error": str(exc)}, 400)
+                return
+            self._json(out)
+            return
+        elif u.path == "/materials/suggest-diagnostics":
+            # D229：识别前诊断（不调模型）——provider/model/host/key + 选中文件抽取情况
+            from .files import materials as _msd
+            from .grading import providers as _provd
+            q = urllib.parse.parse_qs(u.query)
+            chap = str((q.get("chap") or [""])[0]).strip()
+            if not chap:
+                self._json({"ok": False, "error": "缺少 chap"}, 400)
+                return
+            files_q = q.get("file") or q.get("files") or []
+            if len(files_q) == 1 and "," in files_q[0]:
+                files_q = [x for x in files_q[0].split(",") if x]
+            ws_ = Path(self.ws).resolve()
+            try:
+                src_diag = _msd.source_selection_diagnostics(ws_, chap, files_q or None)
+                llm_diag = _provd.effective_endpoint_info(
+                    ws_, provider=str((q.get("provider") or [""])[0]),
+                    model=str((q.get("model") or [""])[0]))
+            except _msd.MaterialsError as exc:
+                self._json({"ok": False, "error": str(exc)}, 400)
+                return
+            self._json({"ok": bool(src_diag.get("ok") and llm_diag.get("ok")),
+                        "chap": chap, "llm": llm_diag, "source": src_diag})
             return
         elif u.path == "/materials/list":
             # D131-T21d：课堂资料章节清单（PWA 只读展示；抽取/确认仍走 CLI 以保教师把关）

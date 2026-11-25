@@ -3278,6 +3278,54 @@ export async function fetchMaterialsFiles(
     base, `/materials/files?${qs.toString()}`, token))) as any
 }
 
+/** D229：单文件抽取详情（元数据 + 文本预览 + 图片清单）。 */
+export interface MaterialsExtractInfo {
+  ok?: boolean; chap?: string; file?: string; indexed?: boolean; exists?: boolean
+  kind?: string; bytes?: number; mtime?: string; sha256?: string
+  engine?: string; chars?: number; slides?: number; pages?: number
+  imageCount?: number; textFile?: string; textPreview?: string
+  textTruncated?: boolean; textCharsTotal?: number
+  images?: Array<{ name: string; exists: boolean }>
+  error?: string
+}
+
+export async function fetchMaterialsExtractInfo(
+  engineAddr: string, token: string | undefined, chap: string, file: string,
+): Promise<MaterialsExtractInfo> {
+  const base = normalizeEngineAddr(engineAddr)
+  const qs = new URLSearchParams({ chap, file })
+  return (await getJson2(engineUrlWithToken(
+    base, `/materials/extract-info?${qs.toString()}`, token))) as MaterialsExtractInfo
+}
+
+/** D229：识别前诊断（不调模型）——provider/model/host/key + 选中文件抽取情况。 */
+export interface MaterialsSuggestDiagnostics {
+  ok?: boolean; chap?: string; error?: string
+  llm?: {
+    ok?: boolean; requestedProvider?: string; requestedModel?: string
+    stage?: string; provider?: string; model?: string; baseHost?: string
+    type?: string; hasKey?: boolean; warnings?: string[]; error?: string
+  }
+  source?: {
+    ok?: boolean; selectedFiles?: string[]; selectedCount?: number
+    missingPhysical?: string[]; missingIndexed?: string[]; textFiles?: string[]
+    chars?: number; imageCount?: number; mode?: string; warnings?: string[]
+  }
+}
+
+export async function fetchMaterialsSuggestDiagnostics(
+  engineAddr: string, token: string | undefined, chap: string,
+  provider = '', model = '', files: string[] = [],
+): Promise<MaterialsSuggestDiagnostics> {
+  const base = normalizeEngineAddr(engineAddr)
+  const qs = new URLSearchParams({ chap })
+  if (provider) qs.set('provider', provider)
+  if (model) qs.set('model', model)
+  for (const f of files) qs.append('file', f)
+  return (await getJson2(engineUrlWithToken(
+    base, `/materials/suggest-diagnostics?${qs.toString()}`, token))) as MaterialsSuggestDiagnostics
+}
+
 /** 上传附件到 `materials/<chap>/_source/`（引擎侧同名不覆盖，自动 -2）。 */
 export async function uploadMaterialsFiles(
   engineAddr: string, token: string | undefined, chap: string,
@@ -3334,8 +3382,10 @@ export async function extractMaterials(
 export async function suggestMaterials(
   engineAddr: string, token: string | undefined, chap: string, model = '',
   provider = '', files: string[] = [],
-): Promise<{ ok?: boolean; error?: string; chap?: string; term_count?: number
+): Promise<{ ok?: boolean; error?: string; detail?: string; errorType?: string
+             chap?: string; term_count?: number
              provider?: string; model?: string
+             diagnostics?: MaterialsSuggestDiagnostics & { request?: Record<string, unknown> }
              source?: { files?: number; fileNames?: string[]; mode?: string
                         chars?: number; truncated?: boolean } }> {
   const base = normalizeEngineAddr(engineAddr)

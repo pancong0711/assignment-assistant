@@ -630,6 +630,7 @@ def test_serve_materials_suggest_passes_provider_and_files(ws: Path, monkeypatch
     import socket, threading, time, urllib.request
     from assist import serve as S
     from assist.grading import llm as L
+    from assist.grading import providers as P
 
     seen: dict = {}
 
@@ -645,6 +646,14 @@ def test_serve_materials_suggest_passes_provider_and_files(ws: Path, monkeypatch
 
     monkeypatch.setattr(L, "build_client_for", fake_build)
     monkeypatch.setattr(M, "suggest_knowledge", fake_suggest)
+    monkeypatch.setattr(M, "source_selection_diagnostics",
+                        lambda *a, **k: {"ok": True, "warnings": [],
+                                        "selectedFiles": ["_source/a.md"],
+                                        "selectedCount": 1, "chars": 5,
+                                        "imageCount": 0, "mode": "text"})
+    monkeypatch.setattr(P, "effective_endpoint_info",
+                        lambda *a, **k: {"ok": True, "provider": "picked-provider",
+                                        "model": "picked-model", "warnings": []})
     S.Handler.ws = ws
     S.Handler.token = ""
     s0 = socket.socket(); s0.bind(("127.0.0.1", 0)); port = s0.getsockname()[1]; s0.close()
@@ -666,3 +675,96 @@ def test_serve_materials_suggest_passes_provider_and_files(ws: Path, monkeypatch
     assert seen["provider"] == "picked-provider"
     assert seen["model"] == "picked-model"
     assert seen["files"] == ["_source/a.md"]
+
+
+# ---------------- D229：抽取详情 + 识别前诊断 ----------------
+def test_extract_info_returns_preview_and_metadata(ws: Path):
+    d = M.ensure_chap(ws, "chap04")
+    (d / "_source" / "a.md").write_text("第一行知识点\n第二行内容", encoding="utf-8")
+    M.extract_chap(ws, "chap04")
+    info = M.extract_info(ws, "chap04", "_source/a.md")
+    assert info["ok"] and info["indexed"] and info["exists"]
+    assert info["chars"] > 0 and "第一行知识点" in info["textPreview"]
+    assert info["engine"] == "read-text"
+    assert info["textFile"].startswith("_extract/")
+    # 未抽取文件给出明确提示
+    (d / "_source" / "b.md").write_text("尚未抽取", encoding="utf-8")
+    info2 = M.extract_info(ws, "chap04", "_source/b.md")
+    assert info2["ok"] is False and "还没有抽取结果" in info2["error"]
+
+
+def test_source_selection_diagnostics_reports_ready_and_missing(ws: Path):
+    d = M.ensure_chap(ws, "chap04")
+    (d / "_source" / "a.md").write_text("动量守恒", encoding="utf-8")
+    (d / "_source" / "b.md").write_text("完全弹性碰撞", encoding="utf-8")
+    M.extract_chap(ws, "chap04")
+    rep = M.source_selection_diagnostics(ws, "chap04")
+    assert rep["selectedCount"] == 2 and rep["chars"] > 0
+    assert rep["ok"] is True
+    rep2 = M.source_selection_diagnostics(ws, "chap04", ["_source/a.md"])
+    assert rep2["selectedFiles"] == ["_source/a.md"]
+    assert rep2["ok"] is True and rep2["chars"] > 0
+    (d / "_source" / "c.md").write_text("尚未抽取", encoding="utf-8")
+    rep3 = M.source_selection_diagnostics(ws, "chap04", ["_source/a.md", "_source/c.md"])
+    assert rep3["ok"] is False, "c 尚未抽取时诊断应判为未就绪"
+    assert "_source/c.md" in rep3["missingIndexed"]
+
+
+def _serve_ws(ws: Path):
+    """启动一个临时 serve，返回 (base, httpd)。调用方负责 shutdown。"""
+    import socket, threading, time
+    from assist import serve as S
+    S.Handler.ws = ws
+    S.Handler.token = ""
+    s0 = socket.socket(); s0.bind(("127.0.0.1", 0)); port = s0.getsockname()[1]; s0.close()
+    httpd = S.ThreadingHTTPServer(("127.0.0.1", port), S.Handler)
+    threading.Thread(target=httpd.serve_forever, daemon=True).start()
+    time.sleep(0.2)
+    return f"http://127.0.0.1:{port}", httpd
+
+
+def test_serve_extract_info_and_suggest_diagnostics(ws: Path):
+    import urllib.request, urllib.parse
+    d = M.ensure_chap(ws, "chap04")
+    (d / "_source" / "a.md").write_text("动量守恒知识点", encoding="utf-8")
+    M.extract_chap(ws, "chap04")
+    base, httpd = _serve_ws(ws)
+    try:
+        qs = urllib.parse.urlencode({"chap": "chap04", "file": "_source/a.md"})
+        with urllib.request.urlopen(f"{base}/materials/extract-info?{qs}", timeout=5) as r:
+            info = json.loads(r.read().decode())
+        assert info["ok"] and "动量守恒" in info["textPreview"]
+        qs2 = urllib.parse.urlencode({"chap": "chap04", "file": "_source/a.md"})
+        with urllib.request.urlopen(f"{base}/materials/suggest-diagnostics?{qs2}", timeout=5) as r:
+            diag = json.loads(r.read().decode())
+        assert diag["source"]["selectedFiles"] == ["_source/a.md"]
+        assert diag["source"]["chars"] > 0
+        assert "provider" in diag["llm"]
+    finally:
+        httpd.shutdown()
+
+
+def test_serve_suggest_failure_returns_structured_diagnostics(ws: Path):
+    import urllib.request, urllib.error
+    d = M.ensure_chap(ws, "chap04")
+    (d / "_source" / "a.md").write_text("动量守恒知识点", encoding="utf-8")
+    M.extract_chap(ws, "chap04")
+    base, httpd = _serve_ws(ws)
+    try:
+        body = json.dumps({"chap": "chap04", "files": ["_source/a.md"]}).encode("utf-8")
+        req = urllib.request.Request(
+            f"{base}/materials/suggest", data=body, method="POST",
+            headers={"Content-Type": "application/json"})
+        try:
+            urllib.request.urlopen(req, timeout=5)
+            raise AssertionError("未配置 LLM 时应返回 400")
+        except urllib.error.HTTPError as exc:
+            out = json.loads(exc.read().decode())
+        assert out["ok"] is False
+        assert out["error"] and out["detail"]
+        diag = out["diagnostics"]
+        assert diag["source"]["selectedFiles"] == ["_source/a.md"]
+        assert diag["llm"].get("warnings"), "应明确说明 provider/key 的问题"
+        assert "provider" in diag["llm"] and "model" in diag["llm"]
+    finally:
+        httpd.shutdown()

@@ -1027,3 +1027,100 @@ def knowledge_topics(ws, chap: str) -> dict[str, list[str]]:
         if t and "→" not in t:
             out.setdefault(cur, []).append(t)
     return out
+
+
+# ---------------- D229：抽取详情与识别诊断 ----------------
+def extract_info(ws, chap: str, file_name: str, *, preview_chars: int = 6000) -> dict:
+    """查看单个原件「抽取出了什么」：元数据 + 文本预览 + 图片清单。
+
+    PWA 的「抽取信息」弹窗使用；只读，不调用模型。
+    """
+    rel = _norm_source_rel(file_name)
+    idx = read_index(ws, chap)
+    src = next((s for s in (idx.get("sources") or [])
+                if isinstance(s, dict) and str(s.get("file") or "") == rel), None)
+    out: dict = {"ok": True, "chap": chap, "file": rel}
+    if not src:
+        out.update({"ok": False, "indexed": False,
+                    "error": "该文件还没有抽取结果。请先抽取该文件。"})
+        return out
+    d = chap_dir(ws, chap)
+    ex = src.get("extract") or {}
+    p = d / rel
+    out.update({
+        "indexed": True,
+        "exists": p.is_file(),
+        "kind": str(src.get("kind") or ""),
+        "bytes": int(src.get("bytes") or (p.stat().st_size if p.is_file() else 0)),
+        "mtime": str(src.get("mtime") or ""),
+        "sha256": str(src.get("sha256") or ""),
+        "engine": str(ex.get("engine") or ""),
+        "chars": int(ex.get("chars") or 0),
+        "slides": int(ex.get("slides") or 0) if ex.get("slides") is not None else 0,
+        "pages": int(ex.get("pages") or 0),
+        "imageCount": len(ex.get("images") or []),
+    })
+    # 文本预览：兼容绝对路径与相对章节目录两种历史写法。
+    tf = str(ex.get("text_file") or "")
+    if tf:
+        tp = Path(tf)
+        if not tp.is_file():
+            tp = d / tf
+        if tp.is_file():
+            txt = tp.read_text(encoding="utf-8", errors="replace")
+            out["textFile"] = str(tp.relative_to(d)).replace("\\", "/") if tp.is_relative_to(d) else tp.name
+            out["textPreview"] = txt[:max(1, int(preview_chars))]
+            out["textTruncated"] = len(txt) > int(preview_chars)
+            out["textCharsTotal"] = len(txt)
+    # 图片清单（PDF 页图/直接图片）：只回文件名与存在性，避免暴露整段绝对路径。
+    imgs = []
+    for one in (ex.get("images") or []):
+        ip = Path(str(one))
+        if not ip.is_file():
+            ip2 = d / str(one)
+            if ip2.is_file():
+                ip = ip2
+        imgs.append({"name": ip.name, "exists": ip.is_file()})
+    out["images"] = imgs
+    return out
+
+
+def source_selection_diagnostics(ws, chap: str,
+                                 files: "list[str] | tuple[str, ...] | None" = None) -> dict:
+    """D229：不调用模型的识别前诊断——选中文件、抽取文本、页图、可识别性。"""
+    selected_paths, missing_physical = resolve_source_selection(ws, chap, files)
+    selected = [str(p.relative_to(chap_dir(ws, chap))).replace("\\", "/")
+                for p in selected_paths]
+    idx = read_index(ws, chap)
+    idx_files = {str(s.get("file")) for s in (idx.get("sources") or [])
+                 if isinstance(s, dict) and s.get("file")}
+    missing_indexed = [x for x in selected if x not in idx_files]
+    src = read_source_text(ws, chap, files=selected or None)
+    vision = read_source_images(ws, chap, files=selected or None)
+    text = str(src.get("text") or "").strip()
+    images = list(vision.get("images") or [])
+    mode = "vision" if images and len(text) < _VISION_TEXT_THRESHOLD else ("text" if text else "none")
+    warnings: list[str] = []
+    if missing_physical:
+        warnings.append("有选中原件不存在：" + "、".join(missing_physical))
+    if missing_indexed:
+        warnings.append("有选中文件尚未抽取：" + "、".join(missing_indexed))
+    if not text and not images:
+        warnings.append("选中范围没有可用文本或页图，先抽取后再识别。")
+    if text and len(text) >= 50000:
+        warnings.append(f"文本约 {len(text)} 字，可能接近模型上下文上限；建议只选 1–2 个文件分批识别。")
+    if images and len(images) > _VISION_MAX_IMAGES:
+        warnings.append(f"页图共 {len(images)} 张，本次最多送 {_VISION_MAX_IMAGES} 张。")
+    return {
+        "ok": not missing_physical and not missing_indexed and bool(text or images),
+        "chap": chap,
+        "selectedFiles": selected,
+        "selectedCount": len(selected),
+        "missingPhysical": missing_physical,
+        "missingIndexed": missing_indexed,
+        "textFiles": src.get("fileNames") or [],
+        "chars": len(text),
+        "imageCount": len(images),
+        "mode": mode,
+        "warnings": warnings,
+    }

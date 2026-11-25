@@ -11,8 +11,10 @@ import {
   MATERIALS_UPLOAD_EXTS, fetchMaterialsFiles, fetchMaterialsKnowledge,
   confirmMaterials, copyFromAtopia, createMaterialsChap, extractMaterials,
   fetchAtopiaWork, fetchMaterialsList, fetchMaterialsSuggestPreview,
+  fetchMaterialsExtractInfo, fetchMaterialsSuggestDiagnostics,
   removeMaterialsFile, restoreMaterialsFile, suggestMaterials, uploadMaterialsFiles,
-  fetchLlmConfig, type LlmProvider,
+  fetchLlmConfig, type LlmProvider, type MaterialsExtractInfo,
+  type MaterialsSuggestDiagnostics,
   type MaterialsChap, type MaterialsFile,
 } from '../lib/engineClient'
 
@@ -79,12 +81,14 @@ function invertFileSelection() {
 const suggestProviders = ref<LlmProvider[]>([])
 const suggestProvider = ref('')
 const suggestModel = ref('')
+const suggestStages = ref<Record<string, { provider?: string; model?: string }>>({})
 const LS_SUGGEST_MODEL = 'assignment-assistant.materials.suggestModel.v1'
 
 async function loadSuggestProviders() {
   try {
     const r = await fetchLlmConfig(settings.engineUrl, settings.engineToken)
     suggestProviders.value = (r?.providers || []) as LlmProvider[]
+    suggestStages.value = (r?.stages || {}) as Record<string, { provider?: string; model?: string }>
     const saved = localStorage.getItem(LS_SUGGEST_MODEL)
     if (saved) {
       try {
@@ -101,18 +105,71 @@ function saveSuggestChoice() {
     JSON.stringify({ provider: suggestProvider.value, model: suggestModel.value }))
 }
 
-/** 当前生效的模型描述（未指定 = 跟随评阅段配置）。 */
-const suggestModelLabel = computed(() => {
+const evalStage = computed(() => suggestStages.value.evaluation || {})
+const suggestProviderObj = computed(() =>
+  suggestProviders.value.find((p) => p.name === suggestProvider.value) || null)
+const effectiveProviderName = computed(() =>
+  suggestProvider.value || String(evalStage.value.provider || '未配置'))
+const effectiveModelName = computed(() => {
   if (suggestModel.value.trim()) return suggestModel.value.trim()
-  if (suggestProvider.value) return `${suggestProvider.value}（默认模型）`
-  return '跟随评阅段配置（evaluate）'
+  if (suggestProvider.value) return String(suggestProviderObj.value?.models?.[0] || '默认模型')
+  return String(evalStage.value.model || '默认模型')
+})
+/** 当前生效的 provider/模型描述；默认明确显示“评阅段用的是哪个 provider”。 */
+const suggestModelLabel = computed(() =>
+  `${effectiveProviderName.value} / ${effectiveModelName.value}`
+  + (suggestProvider.value ? '（本面板显式指定）' : '（跟随评阅段 evaluation）'))
+const suggestStageWarning = computed(() => {
+  if (!suggestProvider.value && !evalStage.value.provider) {
+    return '评阅段 provider 未配置；请先在设置中心配置 evaluation 段，或在这里显式选择 provider。'
+  }
+  const p = suggestProviderObj.value
+  if (p && !p.has_key && (p as any).type !== 'command') {
+    return `provider「${p.name}」没有可用 api_key。`
+  }
+  return ''
 })
 
 /* D137：抽取 / AI 建议 / 确认生效 */
 const stepBusy = ref<'extract' | 'suggest' | 'confirm' | ''>('')
 const stepMsg = ref('')
+const suggestDiag = ref<MaterialsSuggestDiagnostics & { request?: Record<string, unknown> } | null>(null)
+const diagBusy = ref(false)
+const diagMsg = ref('')
 const pendingConfirm = ref<{ preview: string; terms: string[]; hasConfirmed: boolean } | null>(null)
 const confirmOverwrite = ref(false)
+
+function diagText(): string {
+  return JSON.stringify(suggestDiag.value || {}, null, 2)
+}
+async function copySuggestDiag() {
+  try {
+    await navigator.clipboard.writeText(diagText())
+    diagMsg.value = '诊断信息已复制'
+  } catch {
+    diagMsg.value = '复制失败；可直接选中下方 JSON 手动复制'
+  }
+}
+async function runSuggestDiagnostics() {
+  if (!active.value) return
+  diagBusy.value = true
+  diagMsg.value = ''
+  try {
+    suggestDiag.value = await fetchMaterialsSuggestDiagnostics(
+      settings.engineUrl, settings.engineToken, active.value,
+      suggestProvider.value, suggestModel.value.trim(), selectedFileList.value)
+    const s = suggestDiag.value.source
+    const l = suggestDiag.value.llm
+    diagMsg.value = suggestDiag.value.ok
+      ? `配置与素材检查通过：${l?.provider || '—'} / ${l?.model || '—'}；`
+        + `${s?.selectedCount ?? 0} 个文件，${s?.chars ?? 0} 字，${s?.imageCount ?? 0} 张图`
+      : `检查发现问题：${(l?.warnings || []).concat(s?.warnings || []).join('；') || suggestDiag.value.error || '见下方详情'}`
+  } catch (e) {
+    diagMsg.value = `诊断请求失败：${String((e as Error).message || e)}`
+  } finally {
+    diagBusy.value = false
+  }
+}
 
 async function doExtract() {
   if (!active.value) return
@@ -165,21 +222,34 @@ async function doSuggest() {
     + `模型：${suggestModelLabel.value}`)) return
   stepBusy.value = 'suggest'
   stepMsg.value = `正在基于${scope}让 AI 识别知识点，请稍候…`
+  suggestDiag.value = null
+  diagMsg.value = ''
   try {
     const r = await suggestMaterials(settings.engineUrl, settings.engineToken, active.value,
                                      suggestModel.value.trim(), suggestProvider.value, picked)
+    suggestDiag.value = (r?.diagnostics as any) || {
+      request: { provider: suggestProvider.value, model: suggestModel.value.trim(), files: picked },
+    }
     if (r?.ok) {
       const mode = r?.source?.mode === 'vision' ? '图片/多模态' : '文本'
       const nFiles = r?.source?.files ?? picked.length
       const nTerms = r?.term_count ?? 0
       stepMsg.value = `✅ 已生成 AI 建议：${nTerms} 个知识点（来源 ${nFiles} 个文件，${mode}）`
-        + '；尚未生效，请核对后点「③ 确认生效」。'
+        + `；实际使用：${r?.provider || effectiveProviderName.value} / ${r?.model || effectiveModelName.value}`
+        + '。尚未生效，请核对后点「③ 确认生效」。'
     } else {
       stepMsg.value = `❌ ${r?.error || '知识点识别失败'}`
+        + (r?.detail ? `\n原因：${r.detail}` : '')
+        + (r?.errorType ? `\n错误类型：${r.errorType}` : '')
     }
     await refresh()
   } catch (e) {
-    stepMsg.value = `知识点识别失败：${String((e as Error).message || e)}`
+    const msg = String((e as Error).message || e)
+    stepMsg.value = `知识点识别失败：${msg}`
+    suggestDiag.value = {
+      request: { provider: suggestProvider.value, model: suggestModel.value.trim(), files: picked },
+      error: msg,
+    }
   } finally { stepBusy.value = '' }
 }
 
@@ -290,6 +360,35 @@ async function loadFiles() {
     selectedSourceFiles.value = new Set()
     knownSourceFiles.value = new Set()
   }
+}
+
+/* D229：查看单个文件到底抽取出了什么（文本预览 / 页图 / 元数据）。 */
+const extractInfoOpen = ref(false)
+const extractInfoBusy = ref(false)
+const extractInfo = ref<MaterialsExtractInfo | null>(null)
+const extractInfoName = ref('')
+const extractInfoMsg = ref('')
+async function openExtractInfo(f: MaterialsFile) {
+  if (!active.value) return
+  extractInfoOpen.value = true
+  extractInfoBusy.value = true
+  extractInfoMsg.value = ''
+  extractInfo.value = null
+  extractInfoName.value = f.name
+  try {
+    extractInfo.value = await fetchMaterialsExtractInfo(
+      settings.engineUrl, settings.engineToken, active.value, f.file)
+    if (!extractInfo.value?.ok) {
+      extractInfoMsg.value = extractInfo.value?.error || '读取抽取信息失败'
+    }
+  } catch (e) {
+    extractInfoMsg.value = `读取抽取信息失败：${String((e as Error).message || e)}`
+  } finally { extractInfoBusy.value = false }
+}
+function closeExtractInfo() {
+  extractInfoOpen.value = false
+  extractInfo.value = null
+  extractInfoMsg.value = ''
 }
 
 function pickFiles() { fileInput.value?.click() }
@@ -594,12 +693,14 @@ defineExpose({ refresh })
               <td class="c">{{ f.mtime }}</td>
               <td class="c">{{ f.dir === '_source' ? '原件' : '回收站' }}</td>
               <td class="c">
-                <button v-if="f.dir === '_source'" class="btn sm" @click="askRemove(f)">
-                  移除
-                </button>
-                <button v-else class="btn sm" @click="askRestore(f)">
-                  恢复
-                </button>
+                <template v-if="f.dir === '_source'">
+                  <button class="btn sm" :disabled="!f.extracted" @click="openExtractInfo(f)"
+                          :title="f.extracted ? '查看抽取出的文本/页图/元数据' : '尚未抽取，暂无可查看内容'">
+                    🔍 抽取信息
+                  </button>
+                  <button class="btn sm" @click="askRemove(f)">移除</button>
+                </template>
+                <button v-else class="btn sm" @click="askRestore(f)">恢复</button>
               </td>
             </tr>
           </tbody>
@@ -646,7 +747,12 @@ defineExpose({ refresh })
                     : '只基于当前勾选的文件识别知识点'">
             {{ stepBusy === 'suggest' ? '识别中…' : '② AI 建议知识点' }}
           </button>
-          <span class="hint" style="margin:0">当前模型：{{ suggestModelLabel }}</span>
+          <button class="btn" :disabled="diagBusy || stepBusy !== ''"
+                  @click="runSuggestDiagnostics"
+                  title="不调用模型：检查实际 provider/model、key 与选中文件的抽取内容">
+            {{ diagBusy ? '检查中…' : '🔎 检查识别配置' }}
+          </button>
+          <span class="hint" style="margin:0">实际将使用：{{ suggestModelLabel }}</span>
           <button class="btn primary" :disabled="stepBusy !== '' || !cur.hasAiSuggest"
                   @click="askConfirm">
             {{ stepBusy === 'confirm' ? '处理中…' : '③ 确认生效' }}
@@ -656,7 +762,19 @@ defineExpose({ refresh })
             {{ atopiaBusy ? '读取中…' : '📥 从 Atopia 复制' }}
           </button>
         </div>
+        <p v-if="suggestStageWarning" class="hint" style="margin:2px 0; color:#b45309">
+          ⚠ {{ suggestStageWarning }}
+        </p>
         <p v-if="stepMsg" class="hint" style="margin:2px 0; white-space:pre-wrap">{{ stepMsg }}</p>
+        <div v-if="suggestDiag" style="margin:6px 0; padding:8px; border:1px solid var(--c-border);
+             border-radius:6px; background:#fafafa">
+          <div style="display:flex; gap:8px; align-items:center; flex-wrap:wrap">
+            <b style="font-size:13px">识别诊断</b>
+            <button class="btn sm" @click="copySuggestDiag">复制诊断信息</button>
+            <span v-if="diagMsg" class="hint" style="margin:0">{{ diagMsg }}</span>
+          </div>
+          <pre class="md" style="max-height:280px; margin:6px 0 0; white-space:pre-wrap">{{ diagText() }}</pre>
+        </div>
         <p v-if="selectedUnextracted.length" class="hint" style="margin:2px 0; color:#b45309">
           选中文件中有 {{ selectedUnextracted.length }} 个尚未抽取，需先点「① 抽取选中文件」。
         </p>
@@ -686,6 +804,45 @@ defineExpose({ refresh })
             <pre class="md">{{ knowMd }}</pre>
           </details>
         </template>
+      </div>
+    </div>
+
+    <!-- D229：单文件抽取详情（文本预览 / 页图 / 元数据） -->
+    <div v-if="extractInfoOpen" class="mask" @click.self="closeExtractInfo">
+      <div class="dlg wide" style="max-height:86vh; overflow:auto">
+        <h3 style="margin:0 0 8px">抽取信息 · {{ extractInfoName }}</h3>
+        <p v-if="extractInfoBusy" class="hint">读取中…</p>
+        <p v-else-if="extractInfoMsg" class="hint" style="color:#b45309">{{ extractInfoMsg }}</p>
+        <template v-else-if="extractInfo?.ok">
+          <table class="tbl" style="margin-bottom:8px">
+            <tbody>
+              <tr><th>抽取引擎</th><td>{{ extractInfo.engine || '—' }}</td>
+                  <th>文本字数</th><td>{{ extractInfo.chars || 0 }}</td></tr>
+              <tr><th>幻灯片</th><td>{{ extractInfo.slides || '—' }}</td>
+                  <th>PDF 页数</th><td>{{ extractInfo.pages || '—' }}</td></tr>
+              <tr><th>页图/图片</th><td>{{ extractInfo.imageCount || 0 }}</td>
+                  <th>源文件</th><td>{{ extractInfo.kind || '—' }}</td></tr>
+              <tr v-if="extractInfo.textFile"><th>文本缓存</th>
+                  <td colspan="3"><code>{{ extractInfo.textFile }}</code></td></tr>
+            </tbody>
+          </table>
+          <h4 style="margin:8px 0 4px">抽取文本预览</h4>
+          <pre class="md" style="max-height:320px; white-space:pre-wrap">{{ extractInfo.textPreview || '（无文本；可能是图片/扫描件，将走多模态页图识别）' }}</pre>
+          <p v-if="extractInfo.textTruncated" class="hint">
+            仅显示前 {{ extractInfo.textPreview?.length || 0 }} 字（全文 {{ extractInfo.textCharsTotal || 0 }} 字）。
+          </p>
+          <template v-if="extractInfo.images?.length">
+            <h4 style="margin:8px 0 4px">页图/图片清单（{{ extractInfo.images.length }}）</h4>
+            <div class="hint" style="max-height:160px; overflow:auto">
+              <div v-for="img in extractInfo.images" :key="img.name">
+                {{ img.exists ? '✓' : '✗' }} {{ img.name }}
+              </div>
+            </div>
+          </template>
+        </template>
+        <div style="display:flex; justify-content:flex-end; margin-top:8px">
+          <button class="btn" @click="closeExtractInfo">关闭</button>
+        </div>
       </div>
     </div>
 

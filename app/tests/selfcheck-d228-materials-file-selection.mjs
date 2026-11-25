@@ -30,9 +30,9 @@ must(view.includes('selectedUnextracted'), '没有提示“选中文件尚未抽
 must(view.includes('已抽取') && view.includes('未抽取'), '文件列表缺少逐文件抽取状态')
 
 // 2) engineClient 请求体
-must(/extractMaterials[\s\S]{0,700}JSON\.stringify\(\{ chap, force, files \}\)/.test(client),
+must(client.includes('body: JSON.stringify({ chap, force, files })'),
   'extractMaterials 请求体缺少 files')
-must(/suggestMaterials[\s\S]{0,700}JSON\.stringify\(\{ chap, model, provider, files \}\)/.test(client),
+must(client.includes('body: JSON.stringify({ chap, model, provider, files })'),
   'suggestMaterials 请求体缺少 provider/files')
 
 // 3) 引擎：按文件过滤 + provider 构造
