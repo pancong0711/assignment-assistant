@@ -855,6 +855,54 @@ class _PartialVisionClient:
         return "--- page 2 ---\n第二页内容"
 
 
+class _VersionedVisionClient:
+    """每次调用返回不同版本，用于验证 force 是否真的覆盖旧转写。"""
+
+    def __init__(self):
+        self.calls = 0
+
+    def chat_with_images(self, *, system_prompt, user_text, image_paths,
+                         model=None, **kw):
+        self.calls += 1
+        return f"--- page 1 ---\n第 {self.calls} 版转写内容"
+
+
+def test_transcribe_force_overwrites_existing_transcript(ws: Path):
+    """D235：不勾强制时复用旧页；勾强制时忽略旧页并覆盖 transcript。"""
+    d = M.ensure_chap(ws, "chap14")
+    src = d / "_source" / "scan.pdf"
+    src.write_bytes(b"fake-pdf")
+    img = d / "_extract" / "scan-1.png"
+    img.write_bytes(b"fake-page-image")
+    M.write_index(ws, "chap14", {
+        "version": 1, "chap": "chap14", "sources": [{
+            "file": "_source/scan.pdf", "kind": "pdf", "bytes": 8,
+            "sha256": "fake-sha", "mtime": "",
+            "extract": {"engine": "pdf-pages", "chars": 0, "images": [str(img)]},
+        }],
+    })
+    c = _VersionedVisionClient()
+    r1 = M.transcribe_materials(c, ws, "chap14", engine="vision")
+    assert r1["ok"]
+    first = M.read_source_text(ws, "chap14")["text"]
+    assert "第 1 版转写内容" in first
+
+    # 未强制：已有页直接复用，不再调用模型
+    r2 = M.transcribe_materials(c, ws, "chap14", engine="vision")
+    assert r2["ok"] and c.calls == 1
+    assert "第 1 版转写内容" in M.read_source_text(ws, "chap14")["text"]
+
+    # 强制：重新调用模型并覆盖旧转写
+    r3 = M.transcribe_materials(c, ws, "chap14", engine="vision", force=True)
+    assert r3["ok"] and c.calls == 2
+    forced = M.read_source_text(ws, "chap14")["text"]
+    assert "第 2 版转写内容" in forced
+    assert "第 1 版转写内容" not in forced
+    idx = M.read_index(ws, "chap14")
+    src = next(s for s in idx["sources"] if s["file"] == "_source/scan.pdf")
+    assert src["extract"]["transcript"]["chars"] > 0
+
+
 def test_transcribe_partial_then_resume_only_missing_pages(ws: Path):
     d = M.ensure_chap(ws, "chap12")
     _make_pdf(d / "_source" / "scan.pdf", pages=2)

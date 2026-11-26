@@ -358,7 +358,10 @@ async function doTranscribe() {
     : '自动（本地 OCR 优先，失败页走视觉）'
   if (!window.confirm(
     `将对${scope}执行转写（可能调用模型并产生费用）。\n`
-    + `引擎：${engineLabel}\n模型：${transcribeModelLabel.value}`)) return
+    + `引擎：${engineLabel}\n模型：${transcribeModelLabel.value}\n`
+    + (transcribeForce.value
+        ? '已勾选「强制覆盖已有转写」：将重新调用模型并覆盖旧转写。'
+        : '未强制覆盖：已有成功页会复用，只补缺失页。'))) return
   stepBusy.value = 'transcribe'
   stepMsg.value = `正在转写${scope}（${engineLabel}）…`
   try {
@@ -368,6 +371,7 @@ async function doTranscribe() {
         model: transcribeModel.value.trim(), force: transcribeForce.value })
     if (r?.ok) {
       stepMsg.value = `✅ 转写完成：${r.transcribed || 0} 个文件`
+        + (transcribeForce.value ? '（已按「强制覆盖」重写转写）' : '')
         + `；跳过 ${r.skipped || 0} 个已有文字层的文件。`
         + (r.warning ? `\n提示：${r.warning}` : '')
     } else {
@@ -552,11 +556,53 @@ const extractInfoBusy = ref(false)
 const extractInfo = ref<MaterialsExtractInfo | null>(null)
 const extractInfoName = ref('')
 const extractInfoMsg = ref('')
+/* D235：在「抽取信息 → 转写文本」里直接强制覆盖该文件的历史转写。
+ * 与主区域「强制覆盖已有转写」共用 transcribeForce，避免两套语义。 */
+const infoRetranscribeBusy = ref(false)
+const infoRetranscribeMsg = ref('')
+async function retranscribeFromInfo() {
+  if (!active.value || !extractInfoName.value) return
+  const f = files.value.find((x) => x.dir === '_source' && x.name === extractInfoName.value)
+  if (!f) {
+    infoRetranscribeMsg.value = '找不到当前文件，请刷新后重试。'
+    return
+  }
+  const force = transcribeForce.value
+  if (!window.confirm(
+    `将对「${f.name}」${force ? '强制覆盖已有转写并' : ''}重新调用转写。\n`
+    + `引擎：${transcribeEngine.value}；模型：${transcribeModelLabel.value}\n`
+    + (force ? '旧转写将被本次结果覆盖。\n' : '已有成功页会复用，只补缺失页。\n')
+    + '这会重新消耗模型额度（本地 OCR 除外），确定继续？')) return
+  infoRetranscribeBusy.value = true
+  infoRetranscribeMsg.value = ''
+  try {
+    const r = await transcribeMaterials(
+      settings.engineUrl, settings.engineToken, active.value, [f.file],
+      { engine: transcribeEngine.value, provider: transcribeProvider.value,
+        model: transcribeModel.value.trim(), force })
+    if (!r?.ok) {
+      const failures = (r?.errors || []).map((e) => `${e.file || ''}：${e.error || ''}`)
+        .filter(Boolean).join('；')
+      infoRetranscribeMsg.value = `❌ ${r?.error || r?.detail || '转写未完成'}`
+        + (failures ? `；${failures.slice(0, 500)}` : '')
+      return
+    }
+    infoRetranscribeMsg.value = force ? '✅ 已重新转写并覆盖旧内容' : '✅ 已补全缺失页'
+    await refresh()
+    const fresh = files.value.find((x) => x.dir === '_source' && x.name === f.name)
+    if (fresh) await openExtractInfo(fresh)
+  } catch (e) {
+    infoRetranscribeMsg.value = `转写失败：${String((e as Error).message || e)}`
+  } finally {
+    infoRetranscribeBusy.value = false
+  }
+}
 async function openExtractInfo(f: MaterialsFile) {
   if (!active.value) return
   extractInfoOpen.value = true
   extractInfoBusy.value = true
   extractInfoMsg.value = ''
+  infoRetranscribeMsg.value = ''
   extractInfo.value = null
   extractInfoName.value = f.name
   try {
@@ -573,6 +619,7 @@ function closeExtractInfo() {
   extractInfoOpen.value = false
   extractInfo.value = null
   extractInfoMsg.value = ''
+  infoRetranscribeMsg.value = ''
 }
 
 function pickFiles() { fileInput.value?.click() }
@@ -914,8 +961,9 @@ defineExpose({ refresh })
           <label class="hint" style="display:flex; gap:4px; align-items:center; margin:0">
             <input v-model="forceExtract" type="checkbox" /> 强制重抽（忽略 sha256）
           </label>
-          <label class="hint" style="display:flex; gap:4px; align-items:center; margin:0">
-            <input v-model="transcribeForce" type="checkbox" /> 强制重转写
+          <label class="hint" style="display:flex; gap:4px; align-items:center; margin:0"
+                 title="勾选后忽略已有转写与复用页，重新调用转写并覆盖旧内容">
+            <input v-model="transcribeForce" type="checkbox" /> 强制覆盖已有转写（重新调用模型）
           </label>
           <span class="hint" style="margin:0">
             更新文件后只需勾选该文件重抽；未勾选文件及其索引保持不变。
@@ -1133,6 +1181,18 @@ defineExpose({ refresh })
             </p>
             <pre class="md" style="max-height:360px; white-space:pre-wrap">{{ extractInfo.transcriptPreview || '（转写文本为空）' }}</pre>
             <p v-if="extractInfo.transcriptTruncated" class="hint">转写文本仅显示预览。</p>
+            <div style="display:flex; gap:8px; align-items:center; flex-wrap:wrap; margin-top:6px">
+              <label class="hint" style="display:flex; gap:4px; align-items:center; margin:0"
+                     title="忽略已有转写与复用页，重新调用模型并覆盖该文件的历史转写">
+                <input v-model="transcribeForce" type="checkbox" /> 强制覆盖已有转写
+              </label>
+              <button class="btn sm" :disabled="infoRetranscribeBusy || stepBusy !== ''"
+                      @click="retranscribeFromInfo"
+                      title="按当前转写引擎与模型重新转写当前文件；勾选强制覆盖会重写旧内容">
+                {{ infoRetranscribeBusy ? '重转写中…' : '🔁 重新转写此文件' }}
+              </button>
+              <span v-if="infoRetranscribeMsg" class="hint" style="margin:0">{{ infoRetranscribeMsg }}</span>
+            </div>
           </template>
           <template v-if="extractInfo.images?.length">
             <h4 style="margin:8px 0 4px">页图/图片清单（{{ extractInfo.images.length }}）</h4>
