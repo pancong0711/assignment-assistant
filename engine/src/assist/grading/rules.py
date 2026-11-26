@@ -99,6 +99,8 @@ DEFAULT_RULES: dict = {
         "noSignatureDeduct": 5,
         # 书写规范（潦草/模糊/杂乱）合并扣分上限
         "writingDeduct": 5,
+        # D234：补交/迟交扣分（程序按提交状态自动执行，不交给 AI 判断）
+        "lateSubmissionDeduct": 5,
         # 单题扣分上限 & 总分底线（迁移自 2601 规则，保留）
         "perQuestionCap": 20,
         "floor": 40,
@@ -207,6 +209,7 @@ _NUM_RANGES: dict[str, tuple[float, float]] = {
     "allBriefDeduct": (0, 50),
     "noSignatureDeduct": (0, 50),
     "writingDeduct": (0, 50),
+    "lateSubmissionDeduct": (0, 50),
     "perQuestionCap": (0, 100),
     "floor": (0, 100),
     "perErrorDeduct": (0, 50),

@@ -663,13 +663,35 @@ def _aggregate_summary_meta(result: dict, analysis: dict) -> None:
         result["thin_questions"] = thin
 
 
+_LATE_SUBMISSION_RE = re.compile(r"补交|迟交|逾期|\blate\b", re.I)
+
+
+def is_late_submission(status: "str | None") -> bool:
+    """D234：平台提交状态是否表示补交/迟交。
+
+    只认平台给出的**文字状态**，不根据分数、文件名或 AI 猜测。
+    兼容学习通常见文案（“补交”“迟交”“逾期”）及英文 late。
+    """
+    return bool(_LATE_SUBMISSION_RE.search(str(status or "")))
+
+
+def submission_meta(status: "str | None") -> dict:
+    """把原始提交状态归一成可落盘/可用于报告的结构。"""
+    text = " ".join(str(status or "").split())
+    return {"status": text, "late": is_late_submission(text)}
+
+
 def score_from_analysis(analysis: dict, quality: dict | None = None,
-                        items: "list[dict] | None" = None, ws=None) -> dict:
+                        items: "list[dict] | None" = None, ws=None,
+                        submission_status: str = "") -> dict:
     """D130：按**题目来源**分派扣分算法（不再一刀切"每错 −5"）。
 
     - items 提供每题 kind/题面（与 analysis.questions 按 id/序号对齐）；
     - ws 提供 `<ws>/grading-rules.json`；为 None 用默认规则；
     - 向后兼容：不传 items 时所有题按 `problems / errorCount`（= 旧行为）。
+    - D234：`submission_status` 由平台提交清单传入；若为“补交/迟交”，
+      Python 在**学术评分完成并应用 floor 后**再扣 `lateSubmissionDeduct`。
+      AI 只输出分析 JSON，不参与这个扣分判断。
 
     全局规则（docs/78 §3.3）：
     - 过程简略逐题 −briefProcessDeduct（Python 统一扣，不信模型自报 deduct）；
@@ -751,7 +773,27 @@ def score_from_analysis(analysis: dict, quality: dict | None = None,
             deductions.append(f"书写规范问题 −{d:g}")
 
     floor = float(g.get("floor") or 0)
-    final_score = max(floor, round(score)) if q_list else int(floor)
+    academic_score = max(floor, round(score)) if q_list else int(floor)
+    final_score = academic_score
+
+    # D234：提交状态是**程序侧事实**，在学术分（含 floor）确定后单独调整。
+    # 这样 AI 分析 JSON 不需要、也不允许自己判断“补交扣几分”。
+    submission = submission_meta(submission_status)
+    score_adjustments: list[dict] = []
+    late_deduct = 0.0
+    if submission["late"]:
+        late_deduct = float(g.get("lateSubmissionDeduct") or 0)
+        if late_deduct > 0:
+            final_score = max(0, round(float(final_score) - late_deduct))
+            deductions.append(
+                f"补交/迟交（提交状态：{submission['status'] or '补交'}）"
+                f" −{late_deduct:g}（程序按提交状态扣分）")
+            score_adjustments.append({
+                "kind": "late-submission",
+                "deduct": late_deduct,
+                "status": submission["status"],
+                "reason": "平台提交状态为补交/迟交",
+            })
 
     # 每题分数：均分基线 → 逐题扣 → 差值法回吞全局扣分（保持旧口径）
     per_question_scores: list[float] = []
@@ -776,6 +818,10 @@ def score_from_analysis(analysis: dict, quality: dict | None = None,
 
     return {
         "total_score": final_score,
+        # 便于审计/成绩源核对：AI 学术分 → 程序提交状态调整 → 最终分
+        "academic_score": academic_score,
+        "submission": submission,
+        "score_adjustments": score_adjustments,
         "per_question_scores": per_question_scores,
         "deductions": deductions,
         "strengths": analysis.get("strengths", []),
@@ -824,6 +870,10 @@ def build_feedback_md(result: dict, student_name: str = "学生",
     t = f"# 作业批阅报告：{homework_name}" if homework_name else "# 作业批阅报告"
     lines += [t, f"**学生：{student_name}**", "---", "## 评分",
               f"**总分：{result.get('total_score', '?')} / 100**"]
+    # D234：纯文本批语通道也要能看到平台状态（报告图通道另在 report 中展示）。
+    _sub = result.get("submission") if isinstance(result.get("submission"), dict) else {}
+    if str(_sub.get("status") or "").strip():
+        lines.append(f"**平台状态：** {str(_sub.get('status')).strip()}")
     for d in result.get("deductions", []):
         lines.append(f"- {_as_text(d)}")
     low_items: list[str] = []
@@ -926,7 +976,8 @@ def _enrich_questions(analysis: dict, items: "list[dict] | None", t_data: dict) 
 def evaluate_student(client: LLMClient, transcript_file: Path, items: list[dict],
                      out_dir: Path, homework_name: str = "",
                      model: str | None = None, ws=None,
-                     align: "dict | None" = None) -> Path:
+                     align: "dict | None" = None,
+                     submission_status: str = "") -> Path:
     """评阅一份转录 → evaluations/<student>.json + .md 批语。
 
     D130：`ws` 用于读 `<ws>/grading-rules.json`（规则卡改数值后**新批阅**生效）
@@ -974,7 +1025,8 @@ def evaluate_student(client: LLMClient, transcript_file: Path, items: list[dict]
         substitution = (match.get("match") is False)
     else:
         substitution = (match.get("status") is False)
-    result = score_from_analysis(analysis, quality=quality, items=items, ws=ws)
+    result = score_from_analysis(analysis, quality=quality, items=items, ws=ws,
+                                 submission_status=submission_status)
     result["analysis"] = analysis
     if isinstance(align, dict):
         # D216：对齐证据（只读）：verdict / 覆盖率 / 建议作业纸 / 逐题 kb
@@ -1054,7 +1106,8 @@ def evaluate_student(client: LLMClient, transcript_file: Path, items: list[dict]
 
 def build_result_from_analysis(analysis: dict, *, student: str, quality: "dict | None" = None,
                                homework_name: str = "", model: str = "",
-                               name_match: bool = True, items=None, ws=None) -> dict:
+                               name_match: bool = True, items=None, ws=None,
+                               submission_status: str = "") -> dict:
     """把**单条 analysis**变成与 evaluate_student 同结构的评阅结果（供 batch 回灌）。
 
     D130：`items`/`ws` 与 `evaluate_student` 同口径（按题目来源分派扣分）。
@@ -1069,7 +1122,8 @@ def build_result_from_analysis(analysis: dict, *, student: str, quality: "dict |
     # （写进去就会出现在学生报告正文里，等于给学生贴"顶替"标签）。
     substitution = (match.get("match") is False) if "match" in match \
         else (match.get("status") is False)
-    result = score_from_analysis(analysis or {}, quality=quality, items=items, ws=ws)
+    result = score_from_analysis(analysis or {}, quality=quality, items=items, ws=ws,
+                                 submission_status=submission_status)
     result["analysis"] = analysis
     if quality:
         result["quality"] = quality

@@ -273,6 +273,9 @@ def write_submissions(ws, class_dir: str, pack_id: str, students,
             "tag": str(s.get("tag") or "").strip(),
             "images": imgs,
             "imageCount": len(imgs),
+            # D234：提交状态与补交标记进入快照，便于事后复核“这条扣分依据是什么”。
+            "submissionStatus": str(s.get("submissionStatus") or s.get("status") or "").strip(),
+            "lateSubmission": bool(s.get("lateSubmission")),
         })
     if not rows:
         return {"ok": False, "error": "没有可写入的作答记录（未传 students）"}

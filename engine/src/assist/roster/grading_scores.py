@@ -103,9 +103,15 @@ def grading_scores(ws, class_dir: str, pack_id: str, *,
             score = float(raw) if raw is not None else 0.0
         except (TypeError, ValueError):
             score = 0.0
+        sub = d.get("submission") if isinstance(d.get("submission"), dict) else {}
         scored[name] = {"name": name, "score": round(score, 2),
                         "source": f"grading:{pid}", "weight": 1.0,
-                        "submitted": True, "graded": True}
+                        "submitted": True, "graded": True,
+                        # D234：把提交状态/调整明细带到成绩源，便于核对“为什么总分低了 5”
+                        "submissionStatus": str(sub.get("status") or ""),
+                        "lateSubmission": bool(sub.get("late")),
+                        "academicScore": d.get("academic_score"),
+                        "scoreAdjustments": d.get("score_adjustments") or []}
 
     rows: list[dict] = []
     seen: set[str] = set()
@@ -118,6 +124,8 @@ def grading_scores(ws, class_dir: str, pack_id: str, *,
             # 名单里有、但没批阅/没提交 → 记 0 分（教师口径）
             "name": n, "score": 0.0, "source": f"grading:{pid}", "weight": 1.0,
             "submitted": False, "graded": False,
+            "submissionStatus": "", "lateSubmission": False,
+            "academicScore": None, "scoreAdjustments": [],
         })
     # 批阅产物里有、名单里没传的，也一并给出
     for n, row in scored.items():

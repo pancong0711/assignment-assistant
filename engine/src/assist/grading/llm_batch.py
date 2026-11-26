@@ -306,6 +306,19 @@ def apply_results(ws, results_jsonl, *, evaluated_dir, transcripts_dir=None,
         return {"ok": False, "error": "结果文件为空或格式不符（期望 batch output JSONL）"}
 
     tr_dir = _P(transcripts_dir) if transcripts_dir else None
+    # D234：batch 回灌也复用同一份 plan 的提交状态，避免批量通道漏掉补交扣分。
+    status_by_name: dict[str, str] = {}
+    try:
+        plan_p = _P(evaluated_dir).parent / "plan.json"
+        if plan_p.is_file():
+            plan = json.loads(plan_p.read_text(encoding="utf-8")) or {}
+            for st in (plan.get("students") or []):
+                if isinstance(st, dict) and st.get("name"):
+                    status_by_name[str(st["name"])] = str(
+                        st.get("submissionStatus") or st.get("submitStatus")
+                        or st.get("status") or "")
+    except Exception:  # noqa: BLE001 —— 状态缺失时照常回灌，不阻断批量通道
+        status_by_name = {}
     written, failed, items = 0, 0, []
     for row in rows:
         student = str(row.get("custom_id") or "").strip()
@@ -331,9 +344,11 @@ def apply_results(ws, results_jsonl, *, evaluated_dir, transcripts_dir=None,
                 except Exception:  # noqa: BLE001
                     pass
         try:
-            result = build_result_from_analysis(analysis, student=student, quality=quality,
-                                                homework_name=homework_name, model=model,
-                                                name_match=name_match)
+            result = build_result_from_analysis(
+                analysis, student=student, quality=quality,
+                homework_name=homework_name, model=model,
+                name_match=name_match,
+                submission_status=status_by_name.get(student, ""))
             out = write_result(result, _P(evaluated_dir))
             written += 1
             items.append({"student": student, "ok": True, "out": str(out),

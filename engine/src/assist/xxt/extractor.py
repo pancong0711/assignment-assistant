@@ -54,11 +54,14 @@ JS_READ = """() => {
 JS_REVIEW = """() => {
   const out=[]; document.querySelectorAll('ul.dataBody_td').forEach(ul=>{
     const ne=ul.querySelector('li.taskBody_name div.py_name'); const pb=ul.querySelector('a.cz_py');
-    if(!ne||!pb) return; let st='';
+    if(!ne||!pb) return; const sts=[];
     ul.querySelectorAll('li').forEach(li=>{const t=li.textContent.trim();
       // D206：界面可能是英文（Reviewed/Unreview），中文仍是主口径
       // D207：真实平台提交后显示 "Completed（教师提交）"，英文版可能是 Completed
-      if(/待批阅|已批阅|补交|未交|Reviewed|Unreview|Unsubmitted|Completed|完成|教师提交/i.test(t)) st=t;});
+      if(/待批阅|已批阅|补交|迟交|逾期|未交|Reviewed|Unreview|Unsubmitted|Completed|完成|教师提交|late/i.test(t)) sts.push(t.slice(0,80));});
+    // D234：一行可能有多个命中文本（如“补交 / 已批阅”），不能让后一个覆盖补交状态。
+    // 优先保留补交/迟交证据，供程序据此扣分；没有时才取最后一个普通状态。
+    const st=sts.find(x=>/补交|迟交|逾期|\blate\b/i.test(x)) || sts[sts.length-1] || '';
     // D202：读列表行的分数（提交后核验用；取不到则为空串）
     let sc='';
     const si=ul.querySelector('input.scoreInput, input[name="score"], .scoreInput input');
@@ -308,11 +311,13 @@ JS_STUDENT_ROWS = r"""() => {
     if(!ne) return;
     const name=(ne.textContent||'').trim();
     if(!name) return;
-    let status='';
+    const sts=[];
     ul.querySelectorAll('li').forEach(li=>{
       const t=(li.textContent||'').trim();
-      if(/未交|未提交|待批阅|已批阅|补交|已交/.test(t)) status=t.slice(0,40);
+      if(/未交|未提交|待批阅|已批阅|补交|迟交|逾期|已交|late/i.test(t)) sts.push(t.slice(0,40));
     });
+    // D234：补交/迟交优先，避免被同一行的普通状态覆盖。
+    const status=sts.find(x=>/补交|迟交|逾期|\blate\b/i.test(x)) || sts[sts.length-1] || '';
     out.push({name, status});
   });
   return out;

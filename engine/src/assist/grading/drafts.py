@@ -85,7 +85,9 @@ def save_drafts_from_grading(ws, *, class_id: str, work_id: str, task_id: str,
         # D216：把批阅证据一起写进草稿（此前 verdict/question_match 在草稿层丢失，
         # 导致 PWA 的草稿版报告与逐生审核看不到“题目是否对得上”）。
         for _k in ("align", "question_match", "verdict",
-                   "per_question_rules", "kind_fallback_questions"):
+                   "per_question_rules", "kind_fallback_questions",
+                   # D234：提交状态与程序调整必须随草稿进入报告预览/生成
+                   "submission", "score_adjustments", "academic_score"):
             if ev.get(_k) is not None:
                 ai_set[_k] = ev[_k]
         # D126-FIX：AI 套同时带上转写原文。`run_task` 的 transcribe 步已写过一次，

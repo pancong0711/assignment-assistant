@@ -58,6 +58,7 @@ const NUM_FIELDS: { key: string; label: string; hint?: string }[] = [
   { key: 'topicMismatchDeduct', label: '主题不符扣分' },
   { key: 'noSignatureDeduct', label: '无签名扣分' },
   { key: 'writingDeduct', label: '书写规范扣分上限' },
+  { key: 'lateSubmissionDeduct', label: '补交/迟交扣分（程序自动）' },
   { key: 'floor', label: '总分下限' },
 ]
 

@@ -153,7 +153,11 @@ def review_dir_for(class_id: str, work_id: str) -> Path:
 
 
 def read_review_students(class_id: str, work_id: str) -> tuple[Path, list[dict]]:
-    """读批阅下载清单：返回 (目录, [{name, workAnswerId, images:[abs], score}])。"""
+    """读批阅下载清单：返回 (目录, [{name, workAnswerId, status, images:[abs], score}])。
+
+    D234：`status` 是平台提交状态（如“已交/待批阅/补交”），必须原样保留到 plan；
+    后续评阅由 Python 按它判断是否补交扣分，AI 不参与该判断。
+    """
     d = review_dir_for(class_id, work_id)
     man = d / "students.json"
     if not man.is_file():
@@ -173,6 +177,7 @@ def read_review_students(class_id: str, work_id: str) -> tuple[Path, list[dict]]
             if p.is_file():
                 imgs.append(str(p))
         out.append({"name": str(s["name"]), "workAnswerId": str(s.get("workAnswerId") or ""),
+                    "status": str(s.get("status") or "").strip(),
                     "images": imgs, "score": s.get("score") or ""})
     return d, out
 
@@ -251,9 +256,18 @@ def build_plan(ws, *, task_id: str, class_dir: str, class_id: str = "", work_id:
             continue
         r = by_name.get(s["name"]) or {}
         _p = _pad_for(tag)
+        _status = str(r.get("status") or "").strip()
+        try:
+            from .evaluate import is_late_submission
+            _late = is_late_submission(_status)
+        except Exception:  # noqa: BLE001 —— 状态判断失败不阻断 plan 装配
+            _late = False
         students.append({
             "name": s["name"], "number": s.get("number") or "", "tag": tag,
             "workAnswerId": r.get("workAnswerId") or "",
+            # D234：保留平台提交状态；lateSubmission 仅供审计/UI 展示，权威判定仍在算分端
+            "submissionStatus": _status,
+            "lateSubmission": _late,
             "images": list(r.get("images") or []),
             "questions": list(_p.get("questions") or []),
             "padId": _p.get("padId") or "",
@@ -263,8 +277,16 @@ def build_plan(ws, *, task_id: str, class_dir: str, class_id: str = "", work_id:
         if not any(x["name"] == r["name"] for x in students):
             if want:
                 continue
+            _status = str(r.get("status") or "").strip()
+            try:
+                from .evaluate import is_late_submission
+                _late = is_late_submission(_status)
+            except Exception:  # noqa: BLE001
+                _late = False
             students.append({"name": r["name"], "number": "", "tag": "",
                              "workAnswerId": r.get("workAnswerId") or "",
+                             "submissionStatus": _status,
+                             "lateSubmission": _late,
                              "images": list(r.get("images") or []), "questions": [], "padId": ""})
     # D216：把“展开后的作业纸题目（含每题 kb）”写进 plan，供批阅前置对齐复用。
     # 注意：taskpad.items 只有 {kb, chap, ids}，题干必须经 papers_from_taskpads 展开。

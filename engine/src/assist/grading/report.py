@@ -251,6 +251,8 @@ def build_report_md(transcript_path: Path, eval_path: Path) -> str:
               "说明是识别偏差，不影响对思路的判断。", "",
               markdown_text or "（无转写内容）",
               "", "---", "", "## 二、AI 批阅", "", f"**总分：{score} / 100**"]
+    # D234：总分下面明示平台提交状态及是否由程序做了补交扣分。
+    lines += _submission_report_lines(e_data)
     # D127：批阅段**先列作业纸上的正确题目**，便于学生/教师对照"我转写的题目"与"题目原样"；
     # 而不是在报告开头贴"顶替嫌疑"标签（那等于给学生扣帽子）。
     qtext = _correct_questions_md(e_data)
@@ -283,6 +285,34 @@ _KIND_LABEL = {
     "translation": "翻译（长度档、宽松）",
     "summary": "总结（知识点/公式/示意图）",
 }
+
+
+def _submission_report_lines(e_data: dict) -> list[str]:
+    """D234：报告中的提交状态与程序扣分说明。
+
+    状态来自平台下载清单，扣分由 Python 算分时执行；这里只做展示，
+    不根据报告文本反推分数，也不让 AI 参与判断。
+    """
+    data = e_data if isinstance(e_data, dict) else {}
+    sub = data.get("submission") if isinstance(data.get("submission"), dict) else {}
+    status = str(sub.get("status") or "").strip()
+    late = bool(sub.get("late"))
+    lines: list[str] = []
+    if status:
+        lines.append(f"**平台状态：** {status}")
+    if late:
+        deduct = 0.0
+        for a in (data.get("score_adjustments") or []):
+            if isinstance(a, dict) and str(a.get("kind") or "") == "late-submission":
+                try:
+                    deduct += float(a.get("deduct") or 0)
+                except (TypeError, ValueError):
+                    pass
+        text = "⏰ **补交扣分：** 程序已按提交状态自动扣分"
+        if deduct > 0:
+            text += f"（−{deduct:g} 分）"
+        lines.append(text)
+    return lines
 
 
 def _rule_source_md(e_data: dict) -> list[str]:
@@ -471,6 +501,10 @@ def _mode_report_md(*, student: str, ai: dict, human: dict, human_mode: str,
             head.append(f"**评分：** {h_score} / 100（人工改分；AI 原分 {ai_score if ai_score is not None else '—'}）")
         elif ai_score is not None:
             head.append(f"**AI 评分：** {ai_score} / 100")
+        # D234：草稿版报告（PWA 实际生成/上传的那份）同样展示提交状态与程序扣分。
+        _sub_lines = _submission_report_lines(ai or {})
+        if _sub_lines:
+            head += _sub_lines
         head += ["", ai_body]
         # D216：草稿版报告也显示“题目对齐”与“评分依据”
         # （此前只有 legacy build_report_md 有，PWA 用的草稿版完全看不到）

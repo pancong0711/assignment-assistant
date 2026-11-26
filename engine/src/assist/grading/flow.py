@@ -346,7 +346,9 @@ def _write_grade_snapshots(ws, task: dict, plan: dict) -> dict:
         _snap.write_submissions(
             ws, class_dir, pack_id,
             [{"name": s.get("name"), "number": s.get("number"),
-              "tag": s.get("tag"), "images": s.get("images") or []}
+              "tag": s.get("tag"), "images": s.get("images") or [],
+              "submissionStatus": s.get("submissionStatus") or "",
+              "lateSubmission": bool(s.get("lateSubmission"))}
              for s in students],
             source="plan")
     except Exception as exc:  # noqa: BLE001
@@ -493,10 +495,20 @@ def _run_evaluate(ctx: dict, client, evaluations_dir: Path) -> list[Path]:
             ctx.setdefault("align", {})[tf.stem] = align
         except Exception as exc:  # noqa: BLE001 —— 对齐失败不阻断批阅
             logger.warning(f"[对齐] {tf.stem} 失败（不影响评阅）：{str(exc)[:160]}")
+        # D234：提交状态从 plan（平台下载清单）透传到评分端。
+        # 兼容旧 plan 的 `status` 字段；没有状态时不扣分，绝不猜测。
+        _submission_status = ""
+        for _st in ((ctx.get("plan") or {}).get("students") or []):
+            if str(_st.get("name")) == tf.stem:
+                _submission_status = str(_st.get("submissionStatus")
+                                         or _st.get("submitStatus")
+                                         or _st.get("status") or "").strip()
+                break
         try:
             outs.append(evaluate_student(client, tf, items or tasks_items, evaluations_dir,
                                          homework_name=ctx.get("homework", ""), model=model,
-                                         ws=ctx.get("ws"), align=align))
+                                         ws=ctx.get("ws"), align=align,
+                                         submission_status=_submission_status))
             stat["evaluated"] += 1
             logger.info(f"[评阅] OK {tf.stem}")
         except Exception as e:  # noqa: BLE001 —— 单生失败不阻断全班
