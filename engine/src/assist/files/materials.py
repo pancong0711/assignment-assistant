@@ -1163,7 +1163,7 @@ def suggest_knowledge(client, ws, chap: str, *, model: "str | None" = None,
                           # D138：章内主题（AI 归纳；缺失则空，渲染时归入「其他」）
                           "topic": str(k.get("topic") or "").strip(),
                           "evidence": str(k.get("evidence") or "")})
-    out = {"version": 1, "chap": str(chap), "term_count": len(knowledge),
+    out = {"ok": True, "version": 1, "chap": str(chap), "term_count": len(knowledge),
            "knowledge": knowledge,
            "logic": [x for x in (data.get("logic") or []) if isinstance(x, dict)],
            "notes": str(data.get("notes") or ""),

@@ -226,6 +226,7 @@ def test_suggest_writes_ai_json_but_not_effective_md(ws: Path):
     _prep_chap_with_text(ws)
     rep = M.suggest_knowledge(_Client(_SUGGEST), ws, "chap04")
     d = M.chap_dir(ws, "chap04")
+    assert rep["ok"] is True, "成功响应必须带 ok=True，供 PWA 正确判定"
     assert (d / M.KNOW_AI).is_file()
     assert not (d / M.KNOW_MD).is_file(), "AI 建议不得自动成为生效清单"
     assert rep["term_count"] == 2
@@ -641,7 +642,8 @@ def test_serve_materials_suggest_passes_provider_and_files(ws: Path, monkeypatch
 
     def fake_suggest(client, ws_arg, chap, **kw):
         seen["files"] = kw.get("files")
-        return {"ok": True, "term_count": 1, "knowledge": [],
+        # 模拟旧版引擎：成功结果没有 ok 字段；serve 必须补齐 ok=True。
+        return {"term_count": 1, "knowledge": [],
                 "source": {"files": 0, "fileNames": []}}
 
     monkeypatch.setattr(L, "build_client_for", fake_build)

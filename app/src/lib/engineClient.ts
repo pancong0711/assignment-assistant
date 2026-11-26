@@ -3421,7 +3421,7 @@ export async function suggestMaterials(
   provider = '', files: string[] = [],
 ): Promise<{ ok?: boolean; error?: string; detail?: string; errorType?: string
              httpStatus?: number; rawResponse?: string
-             chap?: string; term_count?: number
+             chap?: string; term_count?: number; knowledge?: any[]
              provider?: string; model?: string
              diagnostics?: MaterialsSuggestDiagnostics & { request?: Record<string, unknown> }
              source?: { files?: number; fileNames?: string[]; mode?: string

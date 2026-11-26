@@ -419,7 +419,11 @@ async function doSuggest() {
     suggestDiag.value = (r?.diagnostics as any) || {
       request: { provider: suggestProvider.value, model: suggestModel.value.trim(), files: picked },
     }
-    if (r?.ok) {
+    // D237：旧版引擎成功响应可能没有 ok 字段（只返回 term_count/knowledge）。
+    // 不能把“成功但缺 ok”误判为失败。
+    const suggestOk = r?.ok === true
+      || (r?.ok !== false && (typeof r?.term_count === 'number' || Array.isArray(r?.knowledge)))
+    if (suggestOk) {
       const mode = r?.source?.mode === 'vision' ? '图片/多模态' : '文本'
       const nFiles = r?.source?.files ?? picked.length
       const nTerms = r?.term_count ?? 0

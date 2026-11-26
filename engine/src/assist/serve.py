@@ -2438,6 +2438,7 @@ class Handler(BaseHTTPRequestHandler):
                             "errorType": type(exc).__name__,
                             "diagnostics": diagnostics}, 500)
                 return
+            rep["ok"] = True
             rep["chap"] = chap
             rep["provider"] = str(llm_diag.get("provider") or provider)
             rep["model"] = str(used_model or llm_diag.get("model") or model or "")
