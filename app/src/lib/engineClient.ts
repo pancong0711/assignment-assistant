@@ -3420,6 +3420,7 @@ export async function suggestMaterials(
   engineAddr: string, token: string | undefined, chap: string, model = '',
   provider = '', files: string[] = [],
 ): Promise<{ ok?: boolean; error?: string; detail?: string; errorType?: string
+             httpStatus?: number; rawResponse?: string
              chap?: string; term_count?: number
              provider?: string; model?: string
              diagnostics?: MaterialsSuggestDiagnostics & { request?: Record<string, unknown> }
@@ -3431,8 +3432,22 @@ export async function suggestMaterials(
     method: 'POST', headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({ chap, model, provider, files }),
   })
-  const o = (await res.json().catch(() => ({}))) as any
-  if (!res.ok && !o?.error) throw new Error(`HTTP ${res.status}`)
+  const rawText = await res.text().catch(() => '')
+  let o: any = {}
+  try { o = rawText ? JSON.parse(rawText) : {} } catch { o = {} }
+  if (!res.ok && !o?.error) {
+    // 引擎/反向代理返回非 JSON 时，绝不只显示“知识点识别失败”：
+    // 把 HTTP 状态和响应原文带回前端，便于定位网关、鉴权或服务异常。
+    return {
+      ok: false,
+      error: `知识点识别请求失败（HTTP ${res.status}）`,
+      detail: rawText.slice(0, 4000) || `HTTP ${res.status}，响应体为空`,
+      errorType: 'HTTPError',
+      httpStatus: res.status,
+      rawResponse: rawText.slice(0, 4000),
+    }
+  }
+  if (o && typeof o === 'object' && !o.httpStatus) o.httpStatus = res.status
   return o
 }
 

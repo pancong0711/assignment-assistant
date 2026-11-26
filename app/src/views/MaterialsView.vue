@@ -239,6 +239,9 @@ async function showTranscribePrompt() {
 const suggestDiag = ref<MaterialsSuggestDiagnostics & { request?: Record<string, unknown> } | null>(null)
 const diagBusy = ref(false)
 const diagMsg = ref('')
+/* D236：AI 建议失败时保留完整错误（HTTP 状态 / error / detail / errorType / 原始响应），
+ * 不再只在状态行里显示一句“知识点识别失败”。 */
+const suggestErr = ref<Record<string, any> | null>(null)
 const modelTesting = ref<'' | 'transcribe' | 'knowledge'>('')
 const modelTestMsg = ref('')
 const pendingConfirm = ref<{ preview: string; terms: string[]; hasConfirmed: boolean } | null>(null)
@@ -408,6 +411,7 @@ async function doSuggest() {
   stepBusy.value = 'suggest'
   stepMsg.value = `正在基于${scope}让 AI 识别知识点，请稍候…`
   suggestDiag.value = null
+  suggestErr.value = null
   diagMsg.value = ''
   try {
     const r = await suggestMaterials(settings.engineUrl, settings.engineToken, active.value,
@@ -426,18 +430,38 @@ async function doSuggest() {
         + `；实际使用：${r?.provider || effectiveProviderName.value} / ${r?.model || effectiveModelName.value}`
         + '。尚未生效，请核对后点「③ 确认生效」。'
     } else {
-      stepMsg.value = `❌ ${r?.error || '知识点识别失败'}`
-        + (r?.detail ? `\n原因：${r.detail}` : '')
-        + (r?.errorType ? `\n错误类型：${r.errorType}` : '')
+      suggestErr.value = {
+        error: r?.error || '知识点识别失败',
+        detail: r?.detail || '',
+        errorType: r?.errorType || '',
+        httpStatus: r?.httpStatus || '',
+        rawResponse: r?.rawResponse || '',
+        diagnostics: r?.diagnostics || null,
+      }
+      suggestDiag.value = {
+        ...(r?.diagnostics || {}),
+        request: { provider: suggestProvider.value, model: suggestModel.value.trim(), files: picked },
+        error: suggestErr.value.error,
+        detail: suggestErr.value.detail,
+        errorType: suggestErr.value.errorType,
+        httpStatus: suggestErr.value.httpStatus,
+      } as any
+      stepMsg.value = `❌ ${suggestErr.value.error}`
+        + (suggestErr.value.detail ? `\n原因：${suggestErr.value.detail}` : '\n原因：引擎未返回 detail；请查看下方完整错误/诊断。')
+        + (suggestErr.value.errorType ? `\n错误类型：${suggestErr.value.errorType}` : '')
+        + (suggestErr.value.httpStatus ? `\nHTTP 状态：${suggestErr.value.httpStatus}` : '')
     }
     await refresh()
   } catch (e) {
     const msg = String((e as Error).message || e)
-    stepMsg.value = `知识点识别失败：${msg}`
+    suggestErr.value = { error: '知识点识别请求异常', detail: msg, errorType: 'ClientError' }
+    stepMsg.value = `❌ 知识点识别请求异常：${msg}`
     suggestDiag.value = {
       request: { provider: suggestProvider.value, model: suggestModel.value.trim(), files: picked },
-      error: msg,
-    }
+      error: suggestErr.value.error,
+      detail: msg,
+      errorType: suggestErr.value.errorType,
+    } as any
   } finally { stepBusy.value = '' }
 }
 
@@ -1081,6 +1105,24 @@ defineExpose({ refresh })
           ⚠ {{ suggestStageWarning }}
         </p>
         <p v-if="stepMsg" class="hint" style="margin:2px 0; white-space:pre-wrap">{{ stepMsg }}</p>
+        <div v-if="suggestErr" style="margin:6px 0; padding:8px; border:1px solid #f0a0a0;
+             border-radius:6px; background:#fff5f5">
+          <p style="margin:0 0 4px; font-weight:600; color:#b00020">AI 建议知识点失败 · 完整错误信息</p>
+          <p v-if="suggestErr.errorType" class="hint" style="margin:0 0 2px">
+            错误类型：{{ suggestErr.errorType }}
+            <span v-if="suggestErr.httpStatus"> · HTTP {{ suggestErr.httpStatus }}</span>
+          </p>
+          <p v-if="suggestErr.detail" class="hint" style="margin:0 0 4px; white-space:pre-wrap">{{ suggestErr.detail }}</p>
+          <details v-if="suggestErr.rawResponse && suggestErr.rawResponse !== suggestErr.detail"
+                   style="margin-top:4px">
+            <summary class="hint" style="cursor:pointer">查看原始响应</summary>
+            <pre class="md" style="max-height:220px; white-space:pre-wrap">{{ suggestErr.rawResponse }}</pre>
+          </details>
+          <details v-if="suggestErr.diagnostics" style="margin-top:4px">
+            <summary class="hint" style="cursor:pointer">查看本次请求诊断 JSON</summary>
+            <pre class="md" style="max-height:320px; white-space:pre-wrap">{{ JSON.stringify(suggestErr.diagnostics, null, 2) }}</pre>
+          </details>
+        </div>
         <pre v-if="modelTestMsg" class="md" style="margin:6px 0; max-height:260px;
              white-space:pre-wrap; border:1px solid var(--c-border); padding:8px">{{ modelTestMsg }}</pre>
         <p v-if="transcribePromptMsg" class="hint" style="color:#b45309">{{ transcribePromptMsg }}</p>
