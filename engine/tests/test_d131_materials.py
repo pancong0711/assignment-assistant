@@ -833,6 +833,7 @@ def test_transcribe_vision_writes_transcript_and_text_is_preferred(ws: Path):
     # 诊断从 vision 变成 text
     diag = M.source_selection_diagnostics(ws, "chap11")
     assert diag["mode"] == "text"
+    assert diag["basis"] == "transcript"
     assert diag["needsTranscription"] is False
     assert diag["transcriptFiles"] == ["_source/scan.pdf"]
 
@@ -880,6 +881,7 @@ def test_suggest_uses_transcript_instead_of_direct_vision(ws: Path):
     rep = M.suggest_knowledge(c, ws, "chap13")
     assert "第 1 页转写内容" in c.prompts[0]
     assert rep["source"]["mode"] == "text"
+    assert rep["source"]["basis"] == "transcript"
     assert rep["source"]["transcriptFiles"] == ["_source/scan.pdf"]
 
 

@@ -1173,6 +1173,9 @@ def suggest_knowledge(client, ws, chap: str, *, model: "str | None" = None,
                       "selected": selected,
                       # 审计：本次是"纯文本"还是"看图"抽取（教师据此判断可信度）
                       "mode": "vision" if use_vision else "text",
+                      # 识别依据：transcript=转写文本 / text_layer=原文字层 / vision=直接看图
+                      "basis": ("transcript" if has_transcript else
+                                ("vision" if use_vision else "text_layer")),
                       "images_used": (len(vision["images"][:vision["max_images"]])
                                       if use_vision else 0)},
            "generatedAt": time.strftime("%Y-%m-%d %H:%M:%S")}
@@ -1438,6 +1441,8 @@ def source_selection_diagnostics(ws, chap: str,
     mode = ("vision" if (images and not transcript_files
                          and len(text) < _VISION_TEXT_THRESHOLD)
             else ("text" if text else "none"))
+    basis = ("transcript" if transcript_files else
+             ("text_layer" if text else ("vision" if images else "none")))
     warnings: list[str] = []
     if missing_physical:
         warnings.append("有选中原件不存在：" + "、".join(missing_physical))
@@ -1466,6 +1471,7 @@ def source_selection_diagnostics(ws, chap: str,
         "chars": len(text),
         "imageCount": len(images),
         "mode": mode,
+        "basis": basis,
         "needsTranscription": needs_transcription,
         "warnings": warnings,
     }

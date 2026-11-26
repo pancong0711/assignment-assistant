@@ -14,14 +14,15 @@ const view = fs.readFileSync(join(appRoot, 'src/views/MaterialsView.vue'), 'utf8
 const client = fs.readFileSync(join(appRoot, 'src/lib/engineClient.ts'), 'utf8')
 const serve = fs.readFileSync(join(repo, 'engine/src/assist/serve.py'), 'utf8')
 
-must(view.includes('suggestModelOptions'), '缺少 provider 模型候选列表')
-must(view.includes('suggestModelCustom'), '缺少自定义模型开关')
-must(view.includes('>自定义<') || view.includes('自定义</button>'), '缺少「自定义」按钮')
-must(view.includes('用下拉'), '缺少切回模型下拉按钮')
-must(view.includes('测试模型'), '缺少「测试模型」按钮')
-must(view.includes('testSelectedModel'), '缺少测试模型处理函数')
-must(view.includes("stage: 'both'") || view.includes("'both',"), '测试模型未覆盖文本+多模态')
-must(view.includes('transcribeModelLabel'), '仍缺少转写实际模型展示')
+must(view.includes('suggestModelOptions'), '缺少识别模型候选列表')
+must(view.includes('transcribeModelOptions'), '缺少转写模型候选列表')
+must(view.includes('suggestModelCustom') && view.includes('transcribeModelCustom'),
+  '缺少自定义模型开关')
+must(view.includes('自定义') && view.includes('用下拉'), '缺少自定义/下拉切换')
+must(view.includes('测试转写模型') && view.includes('测试识别模型'), '缺少分模型测试按钮')
+must(view.includes('testModelFor'), '缺少测试模型处理函数')
+must(view.includes('transcribeModelLabel') && view.includes('suggestModelLabel'),
+  '缺少转写/识别实际模型展示')
 
 must(/body: JSON\.stringify\(\{ stage, provider: opts\.provider \|\| '', model: opts\.model \|\| '' \}\)/.test(client),
   'testLlmStages 未把显式 provider/model 传给引擎')
@@ -38,6 +39,6 @@ if (errors.length) {
 }
 console.log('✓ provider 模型候选使用下拉菜单，并保留「自定义」手动填写')
 console.log('✓ 下拉/自定义状态写入本地选择')
-console.log('✓ 新增「测试模型」：同时测试文本与多模态探针')
+console.log('✓ 转写模型 / 识别模型可分别测试对应探针')
 console.log('✓ /llm/test 支持显式 provider/model')
 console.log('✓ D231 selfcheck 已接入 npm run selfcheck')

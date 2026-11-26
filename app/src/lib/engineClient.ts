@@ -3345,6 +3345,7 @@ export interface MaterialsSuggestDiagnostics {
     missingPhysical?: string[]; missingIndexed?: string[]; textFiles?: string[]
     transcriptFiles?: string[]
     chars?: number; imageCount?: number; mode?: string
+    basis?: 'transcript' | 'text_layer' | 'vision' | 'none'
     needsTranscription?: boolean; warnings?: string[]
   }
 }
@@ -3423,6 +3424,7 @@ export async function suggestMaterials(
              provider?: string; model?: string
              diagnostics?: MaterialsSuggestDiagnostics & { request?: Record<string, unknown> }
              source?: { files?: number; fileNames?: string[]; mode?: string
+                        basis?: string; transcriptFiles?: string[]
                         chars?: number; truncated?: boolean } }> {
   const base = normalizeEngineAddr(engineAddr)
   const res = await fetch(engineUrlWithToken(base, '/materials/suggest', token), {

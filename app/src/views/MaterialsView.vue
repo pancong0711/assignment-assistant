@@ -81,15 +81,30 @@ function invertFileSelection() {
 /** D171-T7：AI 建议知识点的 provider / 模型。
  *  默认**跟随评阅段配置**（教师建议），但可显式覆盖（存 localStorage）。 */
 const suggestProviders = ref<LlmProvider[]>([])
+// 知识点识别模型（默认跟随 evaluation 段）
 const suggestProvider = ref('')
 const suggestModel = ref('')
 const suggestModelCustom = ref(false)
+// 转写模型（默认跟随 transcription 段）
+const transcribeProvider = ref('')
+const transcribeModel = ref('')
+const transcribeModelCustom = ref(false)
 const suggestStages = ref<Record<string, { provider?: string; model?: string }>>({})
 const LS_SUGGEST_MODEL = 'assignment-assistant.materials.suggestModel.v1'
+const LS_TRANSCRIBE_MODEL = 'assignment-assistant.materials.transcribeModel.v1'
 
 function modelsForProvider(name: string): string[] {
   const p = suggestProviders.value.find((x) => x.name === name)
   return (p?.models || []) as string[]
+}
+
+function readSavedModelChoice(key: string): any | null {
+  try {
+    const raw = localStorage.getItem(key)
+    return raw ? JSON.parse(raw) : null
+  } catch {
+    return null
+  }
 }
 
 async function loadSuggestProviders() {
@@ -97,14 +112,22 @@ async function loadSuggestProviders() {
     const r = await fetchLlmConfig(settings.engineUrl, settings.engineToken)
     suggestProviders.value = (r?.providers || []) as LlmProvider[]
     suggestStages.value = (r?.stages || {}) as Record<string, { provider?: string; model?: string }>
-    const saved = localStorage.getItem(LS_SUGGEST_MODEL)
-    if (saved) {
-      try {
-        const o = JSON.parse(saved)
-        suggestProvider.value = String(o.provider || '')
-        suggestModel.value = String(o.model || '')
-        suggestModelCustom.value = !!o.custom
-      } catch { /* 忽略坏值 */ }
+    const savedK = readSavedModelChoice(LS_SUGGEST_MODEL)
+    if (savedK) {
+      suggestProvider.value = String(savedK.provider || '')
+      suggestModel.value = String(savedK.model || '')
+      suggestModelCustom.value = !!savedK.custom
+    }
+    const savedT = readSavedModelChoice(LS_TRANSCRIBE_MODEL)
+    if (savedT) {
+      transcribeProvider.value = String(savedT.provider || '')
+      transcribeModel.value = String(savedT.model || '')
+      transcribeModelCustom.value = !!savedT.custom
+    } else if (savedK) {
+      // 兼容升级前只有一个模型选择的版本：先沿用旧值，之后可分别修改。
+      transcribeProvider.value = suggestProvider.value
+      transcribeModel.value = suggestModel.value
+      transcribeModelCustom.value = suggestModelCustom.value
     }
   } catch { suggestProviders.value = [] }
 }
@@ -113,6 +136,12 @@ function saveSuggestChoice() {
   localStorage.setItem(LS_SUGGEST_MODEL,
     JSON.stringify({ provider: suggestProvider.value, model: suggestModel.value,
                      custom: suggestModelCustom.value }))
+}
+
+function saveTranscribeChoice() {
+  localStorage.setItem(LS_TRANSCRIBE_MODEL,
+    JSON.stringify({ provider: transcribeProvider.value, model: transcribeModel.value,
+                     custom: transcribeModelCustom.value }))
 }
 
 const evalStage = computed(() => suggestStages.value.evaluation || {})
@@ -154,14 +183,33 @@ const suggestStageWarning = computed(() => {
   return ''
 })
 const transcribeStage = computed(() => suggestStages.value.transcription || {})
-const transcribeModelLabel = computed(() => {
-  if (suggestProvider.value) {
-    return `${suggestProvider.value} / ${suggestModel.value.trim()
-      || String(suggestProviderObj.value?.models?.[0] || '默认模型')}（本面板显式指定）`
+const transcribeProviderObj = computed(() =>
+  suggestProviders.value.find((p) => p.name === transcribeProvider.value) || null)
+const transcribeModelOptions = computed(() => modelsForProvider(
+  transcribeProvider.value || String(transcribeStage.value.provider || '')))
+const transcribeEffectiveProvider = computed(() =>
+  transcribeProvider.value || String(transcribeStage.value.provider || '未配置'))
+const transcribeEffectiveModel = computed(() => {
+  if (transcribeModel.value.trim()) return transcribeModel.value.trim()
+  if (transcribeProvider.value) {
+    return String(transcribeProviderObj.value?.models?.[0] || '默认模型')
   }
-  return `${String(transcribeStage.value.provider || '未配置')} / `
-    + `${String(transcribeStage.value.model || '默认模型')}（跟随转录段 transcription）`
+  return String(transcribeStage.value.model || '默认模型')
 })
+const transcribeModelLabel = computed(() =>
+  `${transcribeEffectiveProvider.value} / ${transcribeEffectiveModel.value}`
+  + (transcribeProvider.value ? '（本面板显式指定）' : '（跟随转录段 transcription）'))
+function onTranscribeProviderChange() {
+  if (transcribeModel.value && !transcribeModelCustom.value
+      && !transcribeModelOptions.value.includes(transcribeModel.value)) {
+    transcribeModel.value = ''
+  }
+  saveTranscribeChoice()
+}
+function toggleTranscribeModelCustom() {
+  transcribeModelCustom.value = !transcribeModelCustom.value
+  saveTranscribeChoice()
+}
 
 /* D137：抽取 / AI 建议 / 确认生效 */
 const stepBusy = ref<'extract' | 'transcribe' | 'suggest' | 'confirm' | ''>('')
@@ -191,7 +239,7 @@ async function showTranscribePrompt() {
 const suggestDiag = ref<MaterialsSuggestDiagnostics & { request?: Record<string, unknown> } | null>(null)
 const diagBusy = ref(false)
 const diagMsg = ref('')
-const modelTesting = ref(false)
+const modelTesting = ref<'' | 'transcribe' | 'knowledge'>('')
 const modelTestMsg = ref('')
 const pendingConfirm = ref<{ preview: string; terms: string[]; hasConfirmed: boolean } | null>(null)
 const confirmOverwrite = ref(false)
@@ -207,26 +255,30 @@ async function copySuggestDiag() {
     diagMsg.value = '复制失败；可直接选中下方 JSON 手动复制'
   }
 }
-async function testSelectedModel() {
-  modelTesting.value = true
-  modelTestMsg.value = '正在测试当前 provider/model（转录段=多模态探针，评阅段=文本探针）…'
+async function testModelFor(kind: 'transcribe' | 'knowledge') {
+  modelTesting.value = kind
+  const provider = kind === 'transcribe' ? transcribeProvider.value : suggestProvider.value
+  const model = kind === 'transcribe' ? transcribeModel.value.trim() : suggestModel.value.trim()
+  const stage = kind === 'transcribe' ? 'transcription' : 'evaluation'
+  const label = kind === 'transcribe' ? '转写模型' : '知识点识别模型'
+  modelTestMsg.value = `正在测试${label}：${provider || '（跟随阶段默认）'} / ${model || '（默认模型）'}…`
   try {
     const r = await testLlmStages(
-      settings.engineUrl, settings.engineToken, 'both',
-      { provider: suggestProvider.value, model: suggestModel.value.trim() })
+      settings.engineUrl, settings.engineToken, stage,
+      { provider, model })
     const lines = (r.results || []).map((x: any) => {
-      const tag = x.stage === 'transcription' ? '转录段' : '评阅段'
+      const tag = x.stage === 'transcription' ? '多模态探针' : '文本探针'
       const head = `${tag}：${x.provider || '-'} / ${x.model || '-'} @ ${x.base_url || '-'}`
       return x.ok
         ? `✅ ${head}（${x.ms || 0}ms，回复：${String(x.reply || '').slice(0, 40)}）`
         : `❌ ${head}\n    原因：${String(x.error || '未知错误').slice(0, 800)}`
     })
-    modelTestMsg.value = (lines.join('\n') || r.error || '（无测试结果）')
+    modelTestMsg.value = `${label}：\n` + (lines.join('\n') || r.error || '（无测试结果）')
       + (r.ok ? '' : `\n\n${r.error || '失败原因见上'}`)
   } catch (e) {
     modelTestMsg.value = `测试请求失败：${String((e as Error).message || e)}`
   } finally {
-    modelTesting.value = false
+    modelTesting.value = ''
   }
 }
 
@@ -240,9 +292,13 @@ async function runSuggestDiagnostics() {
       suggestProvider.value, suggestModel.value.trim(), selectedFileList.value)
     const s = suggestDiag.value.source
     const l = suggestDiag.value.llm
+    const basisLabel = s?.basis === 'transcript' ? '转写文本'
+      : s?.basis === 'text_layer' ? '原文文字层'
+      : s?.basis === 'vision' ? '视觉直读' : '无可用内容'
     diagMsg.value = suggestDiag.value.ok
       ? `配置与素材检查通过：${l?.provider || '—'} / ${l?.model || '—'}；`
-        + `${s?.selectedCount ?? 0} 个文件，${s?.chars ?? 0} 字，${s?.imageCount ?? 0} 张图`
+        + `${s?.selectedCount ?? 0} 个文件，${s?.chars ?? 0} 字，${s?.imageCount ?? 0} 张图；`
+        + `知识点识别将基于：${basisLabel}`
       : `检查发现问题：${(l?.warnings || []).concat(s?.warnings || []).join('；') || suggestDiag.value.error || '见下方详情'}`
   } catch (e) {
     diagMsg.value = `诊断请求失败：${String((e as Error).message || e)}`
@@ -308,8 +364,8 @@ async function doTranscribe() {
   try {
     const r = await transcribeMaterials(
       settings.engineUrl, settings.engineToken, active.value, picked,
-      { engine: transcribeEngine.value, provider: suggestProvider.value,
-        model: suggestModel.value.trim(), force: transcribeForce.value })
+      { engine: transcribeEngine.value, provider: transcribeProvider.value,
+        model: transcribeModel.value.trim(), force: transcribeForce.value })
     if (r?.ok) {
       stepMsg.value = `✅ 转写完成：${r.transcribed || 0} 个文件`
         + `；跳过 ${r.skipped || 0} 个已有文字层的文件。`
@@ -342,7 +398,8 @@ async function doSuggest() {
     ? `全部 ${picked.length} 个文件`
     : `选中的 ${picked.length} 个文件`
   if (!window.confirm(
-    `「AI 建议知识点」将基于${scope}调用模型（产生费用），继续？\n`
+    `「AI 建议知识点」将基于${scope}已有的转写/抽取内容调用模型（产生费用），继续？\n`
+    + '不会重新 OCR/转写；只有完全无转写和文字层时才走视觉直读。\n'
     + `模型：${suggestModelLabel.value}`)) return
   stepBusy.value = 'suggest'
   stepMsg.value = `正在基于${scope}让 AI 识别知识点，请稍候…`
@@ -358,7 +415,10 @@ async function doSuggest() {
       const mode = r?.source?.mode === 'vision' ? '图片/多模态' : '文本'
       const nFiles = r?.source?.files ?? picked.length
       const nTerms = r?.term_count ?? 0
+      const basis = r?.source?.basis === 'transcript' ? '转写文本'
+        : r?.source?.basis === 'vision' ? '视觉直读' : '原文文字层'
       stepMsg.value = `✅ 已生成 AI 建议：${nTerms} 个知识点（来源 ${nFiles} 个文件，${mode}）`
+        + `；识别依据：${basis}`
         + `；实际使用：${r?.provider || effectiveProviderName.value} / ${r?.model || effectiveModelName.value}`
         + '。尚未生效，请核对后点「③ 确认生效」。'
     } else {
@@ -883,11 +943,37 @@ defineExpose({ refresh })
                   title="只读查看 AI 视觉转写实际使用的系统提示词/用户提示词">
             {{ transcribePromptBusy ? '读取中…' : '📜 转写提示词' }}
           </button>
-          <label class="field" title="默认跟随评阅段配置；如需单独指定可在此选择（会记住）">
-            建议用模型
+          <label class="field" title="转写默认跟随 transcription 段；可单独覆盖并记住">
+            <b>转写模型</b>
+            <select v-model="transcribeProvider" @change="onTranscribeProviderChange"
+                    style="font-size:13px; max-width:150px">
+              <option value="">（跟随转录段）</option>
+              <option v-for="p in suggestProviders" :key="p.name" :value="p.name">
+                {{ p.name }}{{ p.has_key ? '' : '（无 key）' }}
+              </option>
+            </select>
+            <template v-if="transcribeModelOptions.length && !transcribeModelCustom">
+              <select v-model="transcribeModel" @change="saveTranscribeChoice"
+                      style="font-size:13px; min-width:190px">
+                <option value="">（默认模型）</option>
+                <option v-for="m in transcribeModelOptions" :key="m" :value="m">{{ m }}</option>
+              </select>
+              <button class="btn sm" @click="toggleTranscribeModelCustom"
+                      title="切换为手动填写模型名">自定义</button>
+            </template>
+            <template v-else>
+              <input v-model="transcribeModel" placeholder="模型名（空=默认）" style="width:190px"
+                     @change="saveTranscribeChoice" />
+              <button v-if="transcribeModelOptions.length" class="btn sm"
+                      @click="toggleTranscribeModelCustom"
+                      title="切换回该 provider 的模型下拉">用下拉</button>
+            </template>
+          </label>
+          <label class="field" title="知识点识别默认跟随 evaluation 段；可单独覆盖并记住">
+            <b>识别模型</b>
             <select v-model="suggestProvider" @change="onSuggestProviderChange"
                     style="font-size:13px; max-width:150px">
-              <option value="">（跟随评阅配置）</option>
+              <option value="">（跟随评阅段）</option>
               <option v-for="p in suggestProviders" :key="p.name" :value="p.name">
                 {{ p.name }}{{ p.has_key ? '' : '（无 key）' }}
               </option>
@@ -922,13 +1008,18 @@ defineExpose({ refresh })
                   title="不调用模型：检查实际 provider/model、key 与选中文件的抽取内容">
             {{ diagBusy ? '检查中…' : '🔎 检查识别配置' }}
           </button>
-          <button class="btn" :disabled="modelTesting || stepBusy !== ''"
-                  @click="testSelectedModel"
-                  title="真实调用一次文本探针 + 一次图片探针，确认 provider/model 是否可用">
-            {{ modelTesting ? '测试中…' : '🧪 测试模型' }}
+          <button class="btn" :disabled="!!modelTesting || stepBusy !== ''"
+                  @click="testModelFor('transcribe')"
+                  title="用转写模型跑一次多模态探针">
+            {{ modelTesting === 'transcribe' ? '测试中…' : '🧪 测试转写模型' }}
           </button>
-          <span class="hint" style="margin:0">知识点识别将使用：{{ suggestModelLabel }}</span>
+          <button class="btn" :disabled="!!modelTesting || stepBusy !== ''"
+                  @click="testModelFor('knowledge')"
+                  title="用识别模型跑一次文本探针">
+            {{ modelTesting === 'knowledge' ? '测试中…' : '🧪 测试识别模型' }}
+          </button>
           <span class="hint" style="margin:0">转写将使用：{{ transcribeModelLabel }}</span>
+          <span class="hint" style="margin:0">知识点识别将使用：{{ suggestModelLabel }}</span>
           <button class="btn primary" :disabled="stepBusy !== '' || !cur.hasAiSuggest"
                   @click="askConfirm">
             {{ stepBusy === 'confirm' ? '处理中…' : '③ 确认生效' }}
